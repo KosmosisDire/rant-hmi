@@ -20,8 +20,8 @@ struct RantMeshOptions {
     std::string interface_ip;              /* multicast interface; empty = auto probe */
     std::vector<std::string> seed_peers;   /* "ip" or "ip:port" unicast discovery seeds */
     uint16_t max_topics = 128;             /* the node's topic reserve (channels, not entities) */
-    uint16_t discovery_port = 0;           /* 0 = the RANT default (7400) */
-    uint32_t announce_interval_us = 0;     /* 0 = the RANT default (1s) */
+    uint16_t discovery_port = 0;           /* 0 = the Rant default (6730) */
+    uint32_t announce_interval_us = 0;     /* 0 = the Rant default (3 s) */
     bool verbose = false;
 };
 

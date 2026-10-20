@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21 },
+  "configurePresets": [
+    {
+      "name": "windows",
+      "displayName": "Windows (Visual Studio)",
+      "description": "Newest installed Visual Studio, Rant from the pinned release",
+      "binaryDir": "${sourceDir}/../build/${presetName}",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-local",
+      "inherits": "windows",
+      "displayName": "Windows (Visual Studio), local Rant",
+      "description": "Rant from the ../rant working tree",
+      "cacheVariables": { "CPM_rant_SOURCE": "${sourceDir}/../../rant" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows", "configurePreset": "windows", "configuration": "Release" },
+    { "name": "windows-local", "configurePreset": "windows-local", "configuration": "Release" }
+  ]
+}

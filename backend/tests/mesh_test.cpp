@@ -31,7 +31,7 @@ namespace {
 
 constexpr uint16_t kDomain = 41;
 /* own discovery PORT, not just domain: another RANT process on this host (the explorer,
- * a bridge) shares UDP 7400 via REUSEADDR and swallows the unicast seed announces */
+ * a bridge) shares UDP 6730 via REUSEADDR and swallows the unicast seed announces */
 constexpr uint16_t kDiscoveryPort = 17441;
 constexpr const char* kLoopback = "127.0.0.1";
 constexpr uint32_t kAnnounceUs = 100000;
@@ -88,22 +88,6 @@ int bool_at(const Scheduler& sched, int cell) {
 
 int main() {
     /* ---- the peer: what a small controller node looks like on the mesh ---- */
-    auto tank_schema = rant::Schema::compile("Tank { level: f64, label: string<16> }");
-    auto hist_schema =
-        rant::Schema::compile("Hist { temps: f64[4] tags: string<8>[] extras: map }");
-    auto belt_schema = rant::Schema::compile("Belt { speed: f64, running: bool }");
-    auto req_schema = rant::Schema::compile("StatusQ { probe: u8 }");
-    auto rsp_schema = rant::Schema::compile("StatusR { temp: f64 }");
-    auto purge_q = rant::Schema::compile("PurgeQ { target: u8 }");
-    auto purge_p = rant::Schema::compile("PurgeP { pct: f64 }");
-    auto purge_r = rant::Schema::compile("PurgeR { done: u8 }");
-    auto cmd_schema = rant::Schema::compile("Cmd { n: f64 }");
-    CHECK(tank_schema && hist_schema && belt_schema && req_schema && rsp_schema &&
-          purge_q && purge_p && purge_r && cmd_schema);
-    if (!tank_schema || !hist_schema || !belt_schema || !req_schema || !rsp_schema ||
-        !purge_q || !purge_p || !purge_r || !cmd_schema)
-        return check::summary("mesh_test");
-
     rant::NodeOptions peer_options;
     peer_options.domain = kDomain;
     peer_options.multicast_interface = kLoopback;
@@ -112,30 +96,49 @@ int main() {
      * to known peers' data ports, so one landed announce heals both directions) */
     peer_options.seed_peers = {kLoopback};
     peer_options.discovery_port = kDiscoveryPort;
-    peer_options.announce_interval_us = kAnnounceUs;
+    peer_options.announce_interval = std::chrono::microseconds(kAnnounceUs);
     peer_options.max_topics = 32;
-    rant::Node peer(
-        "plant", {}, [](const rant::Event& event) {
-            if (event.is_error()) std::printf("peer: %s\n", event.to_string().c_str());
-        },
-        peer_options);
+    rant::Node peer("plant", peer_options);
+    peer.on_event([](const rant::Event& event) {
+        if (event.is_error()) std::printf("peer: %s\n", event.to_string().c_str());
+    });
     CHECK(peer.valid());
 
-    rant::MessageBuilder initial(*tank_schema);
+    /* every schema below lives in peer's registry, which outlives every other node
+     * this test creates and destroys, so a schema compiled here stays good to hand
+     * to any of them (a Schema is just a pointer into its owning node's registry) */
+    rant::Schema tank_schema = peer.schema("Tank { level: f64, label: string<16> }");
+    rant::Schema hist_schema =
+        peer.schema("Hist { temps: f64[4] tags: string<8>[] extras: map }");
+    rant::Schema belt_schema = peer.schema("Belt { speed: f64, running: bool }");
+    rant::Schema req_schema = peer.schema("StatusQ { probe: u8 }");
+    rant::Schema rsp_schema = peer.schema("StatusR { temp: f64 }");
+    rant::Schema purge_q = peer.schema("PurgeQ { target: u8 }");
+    rant::Schema purge_p = peer.schema("PurgeP { pct: f64 }");
+    rant::Schema purge_r = peer.schema("PurgeR { done: u8 }");
+    rant::Schema cmd_schema = peer.schema("Cmd { n: f64 }");
+    CHECK(tank_schema && hist_schema && belt_schema && req_schema && rsp_schema &&
+          purge_q && purge_p && purge_r && cmd_schema);
+    if (!tank_schema || !hist_schema || !belt_schema || !req_schema || !rsp_schema ||
+        !purge_q || !purge_p || !purge_r || !cmd_schema)
+        return check::summary("mesh_test");
+
+    rant::MessageBuilder initial(tank_schema);
     initial.set_f64("level", 42.5).set_string("label", "ok");
     CHECK(initial.ok());
-    rant::VariableOptions<> tank_options;
+    rant::VariableOptions<rant::Bytes> tank_options;
     tank_options.initial = initial.bytes();
     tank_options.allow_force = true;
-    rant::VariableDefinition<> tank(peer, "tank_level", &*tank_schema, tank_options);
+    rant::VariableDefinition<rant::Bytes> tank =
+        peer.variable_definition<rant::Bytes>("tank_level", tank_options, tank_schema);
     CHECK(tank.valid());
 
-    rant::Publisher<> belt(peer, "belt", &*belt_schema,
-                           rant::Qos{rant::Reliability::Reliable});
+    rant::Publisher<rant::Bytes> belt = peer.publisher<rant::Bytes>(
+        "belt", rant::Qos{rant::Reliability::Reliable}, belt_schema);
     CHECK(belt.valid());
 
     /* a variable with every aggregate kind: fixed f64 array, varr of strings, map */
-    rant::MessageBuilder hist_initial(*hist_schema);
+    rant::MessageBuilder hist_initial(hist_schema);
     {
         const double temps[4] = {1.5, 9.25, 3.0, 0.5};
         hist_initial.set_array("temps", rant::Bytes(
@@ -158,48 +161,53 @@ int main() {
         hist_initial.set_map("extras", extras);
     }
     CHECK(hist_initial.ok());
-    rant::VariableOptions<> hist_options;
+    rant::VariableOptions<rant::Bytes> hist_options;
     hist_options.initial = hist_initial.bytes();
-    rant::VariableDefinition<> hist(peer, "history", &*hist_schema, hist_options);
+    rant::VariableDefinition<rant::Bytes> hist =
+        peer.variable_definition<rant::Bytes>("history", hist_options, hist_schema);
     CHECK(hist.valid());
 
     /* a forceable bool the document only reads from FLOWS (no feed names it): the
      * flow-signature subscription is the only thing that can fill its mirror */
-    auto suck_schema = rant::Schema::compile("Suck { on: bool }");
-    CHECK(suck_schema.has_value());
+    rant::Schema suck_schema = peer.schema("Suck { on: bool }");
+    CHECK(!suck_schema.empty());
     if (!suck_schema) return check::summary("mesh_test");
-    rant::MessageBuilder suck_initial(*suck_schema);
+    rant::MessageBuilder suck_initial(suck_schema);
     suck_initial.set_bool("on", false);
     CHECK(suck_initial.ok());
-    rant::VariableOptions<> suction_options;
+    rant::VariableOptions<rant::Bytes> suction_options;
     suction_options.initial = suck_initial.bytes();
     suction_options.allow_force = true;
-    rant::VariableDefinition<> suction(peer, "suction", &*suck_schema, suction_options);
+    rant::VariableDefinition<rant::Bytes> suction =
+        peer.variable_definition<rant::Bytes>("suction", suction_options, suck_schema);
     CHECK(suction.valid());
 
     /* a variable the document only WRITES (no feed, no flow read anywhere): its
      * accessor exists solely because a flow's signature writes it, and the very
      * first write races the accessor's forming owner match */
-    auto set_schema = rant::Schema::compile("Set { target: f64 }");
-    CHECK(set_schema.has_value());
+    rant::Schema set_schema = peer.schema("Set { target: f64 }");
+    CHECK(!set_schema.empty());
     if (!set_schema) return check::summary("mesh_test");
-    rant::MessageBuilder set_initial(*set_schema);
+    rant::MessageBuilder set_initial(set_schema);
     set_initial.set_f64("target", 0.0);
     CHECK(set_initial.ok());
-    rant::VariableOptions<> setpoint_options;
+    rant::VariableOptions<rant::Bytes> setpoint_options;
     setpoint_options.initial = set_initial.bytes();
-    rant::VariableDefinition<> setpoint(peer, "setpoint", &*set_schema, setpoint_options);
+    rant::VariableDefinition<rant::Bytes> setpoint =
+        peer.variable_definition<rant::Bytes>("setpoint", setpoint_options, set_schema);
     CHECK(setpoint.valid());
 
     std::atomic<int> calls{0};
-    rant::FunctionDefinition<> status(
-        peer, "status", &*req_schema, &*rsp_schema,
-        [&](rant::Request<>& request) {
-            ++calls;
-            rant::MessageBuilder reply(*rsp_schema);
-            reply.set_f64("temp", 21.25);
-            request.reply(reply.bytes());
-        });
+    rant::FunctionDefinition<rant::Bytes, rant::Bytes> status =
+        peer.function_definition<rant::Bytes, rant::Bytes>(
+            "status",
+            [&](rant::Request<rant::Bytes>& request) {
+                ++calls;
+                rant::MessageBuilder reply(rsp_schema);
+                reply.set_f64("temp", 21.25);
+                request.reply(reply.bytes());
+            },
+            {}, req_schema, rsp_schema);
     CHECK(status.valid());
 
     /* the TASK: the handler defers and the TEST drives the pending call from this
@@ -208,61 +216,65 @@ int main() {
     std::atomic<int> purge_calls{0};
     std::atomic<int> purge_target{0};
     std::mutex purge_mu;
-    std::optional<rant::PendingTask<>> purge_pending;
-    rant::TaskDefinition<> purge(
-        peer, "purge", &*purge_q, &*purge_p, &*purge_r,
-        [&](rant::TaskRequest<>& request) {
-            purge_target = static_cast<int>(request.get_uint("target"));
-            ++purge_calls;
-            std::lock_guard<std::mutex> hold(purge_mu);
-            purge_pending.emplace(request.defer());
-        });
+    std::optional<rant::PendingTask<rant::Bytes, rant::Bytes>> purge_pending;
+    rant::TaskDefinition<rant::Bytes, rant::Bytes, rant::Bytes> purge =
+        peer.task_definition<rant::Bytes, rant::Bytes, rant::Bytes>(
+            "purge",
+            [&](rant::TaskRequest<rant::Bytes, rant::Bytes>& request) {
+                purge_target = static_cast<int>(request.get_uint("target"));
+                ++purge_calls;
+                std::lock_guard<std::mutex> hold(purge_mu);
+                purge_pending.emplace(request.defer());
+            },
+            {}, purge_q, purge_p, purge_r);
     CHECK(purge.valid());
 
     std::atomic<int> cmds_seen{0};
     std::atomic<double> cmd_value{0.0};
-    rant::Subscriber<> cmd(peer, "cmd", &*cmd_schema,
-                           [&](const rant::MessageView& msg) {
-                               cmd_value = msg.get_f64("n");
-                               ++cmds_seen;
-                           });
+    rant::Subscriber<rant::Bytes> cmd = peer.subscriber<rant::Bytes>(
+        "cmd",
+        [&](const rant::MessageView& msg) {
+            cmd_value = msg.get_f64("n");
+            ++cmds_seen;
+        },
+        {}, cmd_schema);
     CHECK(cmd.valid());
 
     /* BARE-TYPED topics (the whole schema is one anonymous type, no struct): a bool
      * the HMI publishes to, and an f64 it feeds from; both address the value by "" */
-    auto flag_schema = rant::Schema::compile("bool");
-    auto pressure_schema = rant::Schema::compile("f64");
-    CHECK(flag_schema.has_value() && pressure_schema.has_value());
+    rant::Schema flag_schema = peer.schema("bool");
+    rant::Schema pressure_schema = peer.schema("f64");
+    CHECK(flag_schema && pressure_schema);
     if (!flag_schema || !pressure_schema) return check::summary("mesh_test");
     std::atomic<int> flags_seen{0};
     std::atomic<bool> flag_value{false};
-    rant::Subscriber<> flag(peer, "flag", &*flag_schema,
-                            [&](const rant::MessageView& msg) {
-                                flag_value = msg.get_uint("") != 0;
-                                ++flags_seen;
-                            });
-    CHECK(flag.valid());
-    rant::Publisher<> pressure(peer, "pressure", &*pressure_schema,
-                               rant::Qos{rant::Reliability::Reliable});
-    CHECK(pressure.valid());
-    CHECK(peer.start());
-
-    /* a SECOND provider node the retype section below restarts with a new schema */
-    auto gauge_v1 = rant::Schema::compile("Gauge { value: f64, unit: string<8> }");
-    CHECK(gauge_v1.has_value());
-    if (!gauge_v1) return check::summary("mesh_test");
-    std::optional<rant::Node> prov;
-    std::optional<rant::Publisher<>> gauge_pub;
-    prov.emplace(
-        "plant2", rant::Node::MessageHandler{},
-        [](const rant::Event& event) {
-            if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
+    rant::Subscriber<rant::Bytes> flag = peer.subscriber<rant::Bytes>(
+        "flag",
+        [&](const rant::MessageView& msg) {
+            flag_value = msg.get_uint("") != 0;
+            ++flags_seen;
         },
-        peer_options);
+        {}, flag_schema);
+    CHECK(flag.valid());
+    rant::Publisher<rant::Bytes> pressure = peer.publisher<rant::Bytes>(
+        "pressure", rant::Qos{rant::Reliability::Reliable}, pressure_schema);
+    CHECK(pressure.valid());
+
+    /* a SECOND provider node the retype section below restarts with a new schema.
+     * gauge_v1 lives in prov's own registry (not peer's), since it is only ever used
+     * to type prov's own publisher for as long as this incarnation lives. */
+    std::optional<rant::Node> prov;
+    std::optional<rant::Publisher<rant::Bytes>> gauge_pub;
+    prov.emplace("plant2", peer_options);
+    prov->on_event([](const rant::Event& event) {
+        if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
+    });
     CHECK(prov->valid());
-    gauge_pub.emplace(*prov, "gauge", &*gauge_v1, rant::Qos{rant::Reliability::Reliable});
+    rant::Schema gauge_v1 = prov->schema("Gauge { value: f64, unit: string<8> }");
+    CHECK(!gauge_v1.empty());
+    if (!gauge_v1) return check::summary("mesh_test");
+    gauge_pub = prov->publisher<rant::Bytes>("gauge", rant::Qos{rant::Reliability::Reliable}, gauge_v1);
     CHECK(gauge_pub->valid());
-    CHECK(prov->start());
 
     /* ---- the adapter ---- */
     RantMeshOptions mesh_options;
@@ -294,7 +306,7 @@ int main() {
         if (!reflected) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (!reflected && i % 20 == 19) {
             std::printf("settle %d: peer sees %u peers; %zu/%zu entities [", i,
-                        peer.peer_count(), found, kWanted);
+                        static_cast<unsigned>(peer.reflection().peers().size()), found, kWanted);
             for (const EntityDef& entity : mesh.reflection())
                 std::printf(" %c:%s", "VTFK"[static_cast<int>(entity.kind)],
                             entity.name.c_str());
@@ -304,8 +316,8 @@ int main() {
     CHECK_MSG(reflected, "reflection did not settle");
 
     /* THE PEER'S OWN SUBSCRIPTION STAYS REFLECTED while this node holds the handle it
-       writes through. Consumption creates our Topic handle SubOnly (the pub flips in on
-       the first publish) and the node folds our own records before the peers', so a
+       writes through. Consumption makes our subscriber (the publisher comes with the
+       first publish) and the node folds our own records before the peers', so a
        topic the peer only consumes reads as "from us, nobody provides" the moment we
        hold it — which the leftover rule (an entity only this node consumes) must not
        swallow: the peer's subscriber is what made us hold the handle. Live, this was a
@@ -338,7 +350,7 @@ int main() {
             if (!still) std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
         CHECK_MSG(still, "a topic the peer only consumes vanished from reflection once this "
-                         "node held its SubOnly handle for it");
+                         "node held its subscriber for it");
     }
 
     const EntityDef* tank_def = nullptr;
@@ -622,7 +634,7 @@ int main() {
                 if (!bytes) return false;
                 const rant::detail::RantBytes data =
                     rant::detail::rant_bytes(bytes->data(), bytes->size());
-                return rant::detail::rant_get_f64(data, set_schema->raw(), "target") == 5.5;
+                return rant::detail::rant_get_f64(data, set_schema.raw(), "target") == 5.5;
             },
             2000);
         CHECK_MSG(landed, "the FIRST write to a write-only variable never landed");
@@ -662,7 +674,7 @@ int main() {
 
     /* a topic binding: publish from the peer until the cell shows it */
     {
-        rant::MessageBuilder msg(*belt_schema);
+        rant::MessageBuilder msg(belt_schema);
         msg.set_f64("speed", 3.5).set_bool("running", true);
         CHECK(msg.ok());
         bool seen = false;
@@ -677,7 +689,7 @@ int main() {
     {
         const int pressure_cell = cell_of(sched.program(), pressure_id, "value");
         CHECK(pressure_cell >= 0);
-        rant::MessageBuilder msg(*pressure_schema);
+        rant::MessageBuilder msg(pressure_schema);
         msg.set_f64("", 3.25);
         CHECK(msg.ok());
         bool seen = false;
@@ -707,7 +719,7 @@ int main() {
                     if (!bytes) return false;
                     const rant::detail::RantBytes data =
                         rant::detail::rant_bytes(bytes->data(), bytes->size());
-                    return rant::detail::rant_get_f64(data, tank_schema->raw(), "level") ==
+                    return rant::detail::rant_get_f64(data, tank_schema.raw(), "level") ==
                            77.75;
                 },
                 200);
@@ -718,9 +730,9 @@ int main() {
         if (bytes) {
             const rant::detail::RantBytes data =
                 rant::detail::rant_bytes(bytes->data(), bytes->size());
-            CHECK_EQ(rant::detail::rant_get_f64(data, tank_schema->raw(), "level"), 77.75);
+            CHECK_EQ(rant::detail::rant_get_f64(data, tank_schema.raw(), "level"), 77.75);
             const rant::detail::RantString label =
-                rant::detail::rant_get_string(data, tank_schema->raw(), "label");
+                rant::detail::rant_get_string(data, tank_schema.raw(), "label");
             CHECK_EQ(std::string(label.data ? label.data : "", label.len), std::string("ok"));
         }
         /* and the binding loops the write back into the cell */
@@ -752,7 +764,7 @@ int main() {
         CHECK_MSG(run_until(sched, [&] { return bool_at(sched, purge_run_cell) == 1; }),
                   "running never flipped true");
 
-        rant::MessageBuilder step(*purge_p);
+        rant::MessageBuilder step(purge_p);
         step.set_f64("pct", 40.0);
         CHECK(step.ok());
         {
@@ -763,7 +775,7 @@ int main() {
         CHECK_MSG(run_until(sched, [&] { return num_at(sched, purge_pct_cell) == 40.0; }),
                   "the progress update never arrived");
 
-        rant::MessageBuilder done(*purge_r);
+        rant::MessageBuilder done(purge_r);
         done.set_uint("done", 1);
         CHECK(done.ok());
         {
@@ -854,7 +866,7 @@ int main() {
         CHECK(gauge_cell >= 0);
 
         /* baseline: the v1 subscription feeds the cell */
-        rant::MessageBuilder v1_msg(*gauge_v1);
+        rant::MessageBuilder v1_msg(gauge_v1);
         v1_msg.set_f64("value", 6.5).set_string("unit", "bar");
         CHECK(v1_msg.ok());
         bool seen = false;
@@ -864,29 +876,29 @@ int main() {
         }
         CHECK_MSG(seen, "gauge v1 value never arrived");
 
-        /* the provider restarts with a CHANGED schema (value survives, unit -> extra) */
-        auto gauge_v2 = rant::Schema::compile("Gauge { value: f64, extra: u8 }");
-        CHECK(gauge_v2.has_value());
-        if (!gauge_v2) return check::summary("mesh_test");
+        /* the provider restarts with a CHANGED schema (value survives, unit -> extra).
+         * Same type NAME as v1 (a real retype keeps the name; the reader's subset
+         * check is name based), compiled fresh in the new incarnation's own empty
+         * registry, so there is no shape collision with the dead v1 incarnation's. */
         gauge_pub.reset();
         prov.reset();
-        prov.emplace(
-            "plant2", rant::Node::MessageHandler{},
-            [](const rant::Event& event) {
-                if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
-            },
-            peer_options);
+        prov.emplace("plant2", peer_options);
+        prov->on_event([](const rant::Event& event) {
+            if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
+        });
         CHECK(prov->valid());
-        gauge_pub.emplace(*prov, "gauge", &*gauge_v2, rant::Qos{rant::Reliability::Reliable});
+        rant::Schema gauge_v2 = prov->schema("Gauge { value: f64, extra: u8 }");
+        CHECK(!gauge_v2.empty());
+        if (!gauge_v2) return check::summary("mesh_test");
+        gauge_pub = prov->publisher<rant::Bytes>("gauge", rant::Qos{rant::Reliability::Reliable}, gauge_v2);
         CHECK(gauge_pub->valid());
-        CHECK(prov->start());
 
         /* refresh at control-plane pace until the new type reflects with its fields */
         bool retyped = false;
         for (int i = 0; i < 100 && !retyped; ++i) {
             mesh.refresh();
             for (const EntityDef& entity : mesh.reflection())
-                if (entity.name == "gauge" && entity.schema_hash == gauge_v2->hash() &&
+                if (entity.name == "gauge" && entity.schema_hash == gauge_v2.hash() &&
                     entity.fields.size() == 2)
                     retyped = true;
             if (!retyped) std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -906,7 +918,7 @@ int main() {
 
         const int swapped_cell = cell_of(swapped_sched.program(), gauge_id, "value");
         CHECK(swapped_cell >= 0);
-        rant::MessageBuilder v2_msg(*gauge_v2);
+        rant::MessageBuilder v2_msg(gauge_v2);
         v2_msg.set_f64("value", 8.25).set_uint("extra", 3);
         CHECK(v2_msg.ok());
         seen = false;
@@ -926,51 +938,52 @@ int main() {
      * Its RETURN — same-typed first, then retyped — must resume every feed, every
      * write and the beat flow, and values that survived the outage keep going. */
     {
-        auto cycle_v2 = rant::Schema::compile("Gauge { value: f64, extra: u8 }");
-        auto dial_v1 = rant::Schema::compile("Dial { setting: f64 }");
-        auto meter_q = rant::Schema::compile("MeterQ { q: u8 }");
-        auto meter_r1 = rant::Schema::compile("MeterR { r: f64 }");
-        CHECK(cycle_v2 && dial_v1 && meter_q && meter_r1);
-        if (!cycle_v2 || !dial_v1 || !meter_q || !meter_r1)
-            return check::summary("mesh_test");
+        /* the trio's schemas live in whichever prov incarnation is hosting them: a
+         * fresh, empty registry each restart, so retyping (a shape change under the
+         * SAME type name) never collides with a shape a dead incarnation once held */
+        std::optional<rant::Schema> gauge_schema, dial_schema;
 
-        std::optional<rant::VariableDefinition<>> dial_def;
-        std::optional<rant::FunctionDefinition<>> meter_def;
+        std::optional<rant::VariableDefinition<rant::Bytes>> dial_def;
+        std::optional<rant::FunctionDefinition<rant::Bytes, rant::Bytes>> meter_def;
         double meter_reply = 21.5;
-        auto host_plant2 = [&](const rant::Schema* gauge_schema,
-                               const rant::Schema* dial_schema, double dial_setting,
-                               const rant::Schema* meter_rsp) {
-            prov.emplace(
-                "plant2", rant::Node::MessageHandler{},
-                [](const rant::Event& event) {
-                    if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
-                },
-                peer_options);
+        auto host_plant2 = [&](const char* gauge_text, const char* dial_text,
+                               double dial_setting, const char* meter_rsp_text) {
+            prov.emplace("plant2", peer_options);
+            prov->on_event([](const rant::Event& event) {
+                if (event.is_error()) std::printf("prov: %s\n", event.to_string().c_str());
+            });
             CHECK(prov->valid());
-            gauge_pub.emplace(*prov, "gauge", gauge_schema,
-                              rant::Qos{rant::Reliability::Reliable});
+            gauge_schema.emplace(prov->schema(gauge_text));
+            dial_schema.emplace(prov->schema(dial_text));
+            gauge_pub = prov->publisher<rant::Bytes>(
+                "gauge", rant::Qos{rant::Reliability::Reliable}, *gauge_schema);
             CHECK(gauge_pub->valid());
             rant::MessageBuilder seed(*dial_schema);
             seed.set_f64("setting", dial_setting);
             CHECK(seed.ok());
-            rant::VariableOptions<> dial_opts;
+            rant::VariableOptions<rant::Bytes> dial_opts;
             dial_opts.initial = seed.bytes();
-            dial_def.emplace(*prov, "dial", dial_schema, dial_opts);
+            dial_def = prov->variable_definition<rant::Bytes>("dial", dial_opts, *dial_schema);
             CHECK(dial_def->valid());
-            meter_def.emplace(*prov, "meter", &*meter_q, meter_rsp,
-                              [&meter_reply, meter_rsp](rant::Request<>& request) {
-                                  rant::MessageBuilder reply(*meter_rsp);
-                                  reply.set_f64("r", meter_reply);
-                                  request.reply(reply.bytes());
-                              });
+            rant::Schema meter_q = prov->schema("MeterQ { q: u8 }");
+            rant::Schema meter_rsp = prov->schema(meter_rsp_text);
+            meter_def = prov->function_definition<rant::Bytes, rant::Bytes>(
+                "meter",
+                [&meter_reply, meter_rsp](rant::Request<rant::Bytes>& request) {
+                    rant::MessageBuilder reply(meter_rsp);
+                    reply.set_f64("r", meter_reply);
+                    request.reply(reply.bytes());
+                },
+                {}, meter_q, meter_rsp);
             CHECK(meter_def->valid());
-            CHECK(prov->start());
         };
         auto kill_plant2 = [&] {
             meter_def.reset();
             dial_def.reset();
             gauge_pub.reset();
             prov.reset();
+            gauge_schema.reset();
+            dial_schema.reset();
         };
 
         /* the cycle's own document: gauge feed + beat flow into a global, dial feed +
@@ -1122,13 +1135,14 @@ int main() {
 
         /* plant2 restarts hosting the trio; the cycle doc compiles once they reflect */
         kill_plant2();
-        host_plant2(&*cycle_v2, &*dial_v1, 7.5, &*meter_r1);
-        CHECK_MSG(reflect_trio(cycle_v2->hash(), 1, 1), "cycle: the trio never reflected");
+        host_plant2("Gauge { value: f64, extra: u8 }", "Dial { setting: f64 }", 7.5,
+                    "MeterR { r: f64 }");
+        CHECK_MSG(reflect_trio(gauge_schema->hash(), 1, 1), "cycle: the trio never reflected");
         recompile();
         dump_diags("at baseline");
 
         /* baseline: all three feed, the beat flow mirrors, the write lands */
-        rant::MessageBuilder base_msg(*cycle_v2);
+        rant::MessageBuilder base_msg(*gauge_schema);
         base_msg.set_f64("value", 8.5).set_uint("extra", 1);
         CHECK(base_msg.ok());
         CHECK_MSG(wait_cell(cy_gauge_id, "value", 8.5, 80,
@@ -1139,7 +1153,7 @@ int main() {
                   "cycle baseline: the dial variable never fed");
         CHECK_MSG(wait_cell(cy_meter_id, "value", 21.5, 80, {}),
                   "cycle baseline: the meter poll never answered");
-        CHECK_MSG(write_dial(*dial_v1, 40), "cycle baseline: the dial write never landed");
+        CHECK_MSG(write_dial(*dial_schema, 40), "cycle baseline: the dial write never landed");
         dump_faults("at baseline");
 
         /* ---- the provider dies: entities leave, the refresh loop recompiles, its
@@ -1158,7 +1172,7 @@ int main() {
         CHECK_MSG(vanished, "cycle: the dead provider's entities never left reflection");
         dump_diags("while down");
 
-        rant::MessageBuilder tank_new(*tank_schema);
+        rant::MessageBuilder tank_new(tank_schema);
         tank_new.set_f64("level", 55.25).set_string("label", "up");
         CHECK(tank_new.ok());
         CHECK(tank.set(tank_new.bytes()) == rant::SendStatus::Ok);
@@ -1171,11 +1185,12 @@ int main() {
         /* ---- SAME-TYPED return: every feed, the poll, the beat flow and the write
          * resume with no help ---- */
         meter_reply = 22.75;
-        host_plant2(&*cycle_v2, &*dial_v1, 12.25, &*meter_r1);
-        CHECK_MSG(reflect_trio(cycle_v2->hash(), 1, 1),
+        host_plant2("Gauge { value: f64, extra: u8 }", "Dial { setting: f64 }", 12.25,
+                    "MeterR { r: f64 }");
+        CHECK_MSG(reflect_trio(gauge_schema->hash(), 1, 1),
                   "cycle: the same-typed return never reflected");
         dump_diags("after same-typed return");
-        rant::MessageBuilder back_msg(*cycle_v2);
+        rant::MessageBuilder back_msg(*gauge_schema);
         back_msg.set_f64("value", 9.75).set_uint("extra", 2);
         CHECK(back_msg.ok());
         CHECK_MSG(wait_cell(cy_gauge_id, "value", 9.75, 80,
@@ -1187,7 +1202,7 @@ int main() {
                   "cycle: the same-typed dial variable never resumed");
         CHECK_MSG(wait_cell(cy_meter_id, "value", 22.75, 80, {}),
                   "cycle: the same-typed meter poll never resumed");
-        CHECK_MSG(write_dial(*dial_v1, 40),
+        CHECK_MSG(write_dial(*dial_schema, 40),
                   "cycle: the dial write never landed after the same-typed return");
         dump_faults("after same-typed return");
 
@@ -1206,17 +1221,13 @@ int main() {
         }
         CHECK_MSG(vanished, "cycle: the provider never left before the retyped return");
 
-        auto cycle_v3 = rant::Schema::compile("Gauge { value: f64, mode: u16 }");
-        auto dial_v2 = rant::Schema::compile("Dial { setting: f64, span: u8 }");
-        auto meter_r2 = rant::Schema::compile("MeterR { r: f64, ok: bool }");
-        CHECK(cycle_v3 && dial_v2 && meter_r2);
-        if (!cycle_v3 || !dial_v2 || !meter_r2) return check::summary("mesh_test");
         meter_reply = 64.25;
-        host_plant2(&*cycle_v3, &*dial_v2, 19.5, &*meter_r2);
-        CHECK_MSG(reflect_trio(cycle_v3->hash(), 2, 2),
+        host_plant2("Gauge { value: f64, mode: u16 }", "Dial { setting: f64, span: u8 }", 19.5,
+                    "MeterR { r: f64, ok: bool }");
+        CHECK_MSG(reflect_trio(gauge_schema->hash(), 2, 2),
                   "cycle: the retyped return never reflected");
         dump_diags("after retyped return");
-        rant::MessageBuilder v3_msg(*cycle_v3);
+        rant::MessageBuilder v3_msg(*gauge_schema);
         v3_msg.set_f64("value", 11.5).set_uint("mode", 2);
         CHECK(v3_msg.ok());
         CHECK_MSG(wait_cell(cy_gauge_id, "value", 11.5, 80,
@@ -1228,7 +1239,7 @@ int main() {
                   "cycle: the retyped dial variable never resumed");
         CHECK_MSG(wait_cell(cy_meter_id, "value", 64.25, 80, {}),
                   "cycle: the retyped meter poll never resumed");
-        CHECK_MSG(write_dial(*dial_v2, 40),
+        CHECK_MSG(write_dial(*dial_schema, 40),
                   "cycle: the dial write never landed after the retyped return");
         dump_faults("after retyped return");
     }
@@ -1236,8 +1247,8 @@ int main() {
     /* ---- the built-in @rant/log stream: a peer's log lines reach take_logs, decoded
      * with the publisher's name, the level and a comparable wall stamp ---- */
     {
-        CHECK(peer.log_error("boiler overtemp") == rant::SendStatus::Ok);
-        CHECK(peer.log_info("shift change") == rant::SendStatus::Ok);
+        CHECK(peer.log(rant::LogLevel::Error, "boiler overtemp") == rant::SendStatus::Ok);
+        CHECK(peer.log(rant::LogLevel::Info, "shift change") == rant::SendStatus::Ok);
         std::vector<MeshLogLine> lines;
         bool got_error = false;
         bool got_info = false;

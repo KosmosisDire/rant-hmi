@@ -25,7 +25,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/get_cpm.cmake")
 # Rant at a pinned release. Pass -DCPM_rant_SOURCE=<path to Rant> to build against a working tree.
 CPMAddPackage(NAME rant
   GITHUB_REPOSITORY KosmosisDire/Rant
-  VERSION 0.0.14
+  VERSION 0.0.31
   EXCLUDE_FROM_ALL YES)
 
 # Static CRT to match rant_host. Before any other dependency so every object agrees.

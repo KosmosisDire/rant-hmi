@@ -11,8 +11,7 @@
  *
  * Threading: every MeshPort entry runs on the logic thread. The node's service thread
  * only touches per-record slots behind their own mutex (variable on_change, task
- * progress and outcomes, async call completions); topics queue inside RANT and are
- * taken here.
+ * progress and outcomes, async call completions, topic messages queued for drain).
  * Records are never destroyed while the node lives, so handler captures stay valid. */
 #include "rant_mesh.h"
 
@@ -36,7 +35,7 @@ namespace dc = rant::detail;
 
 using Clock = std::chrono::steady_clock;
 
-constexpr int kTakeBudget = 256;         /* topic messages decoded per entity per tick */
+constexpr int kTakeBudget = 256;         /* topic messages held per entity between drains */
 constexpr uint32_t kEffectWaitUs = 20000;   /* bounded backpressure for effect sends */
 constexpr int kOwnerWaitMs = 50;      /* one write's bounded wait on a still-forming owner match */
 constexpr int kOwnerFormingMs = 2000; /* how long a fresh accessor is credited a forming match */
@@ -290,11 +289,11 @@ struct Rec {
 
     /* handles, created on first need, cached until the entity re-types (refresh
      * retires them and the next apply() recreates them with the new schema) */
-    std::optional<rant::Topic> topic;           /* Topic entity: sub + (role-flipped) pub */
-    bool topic_pub = false;
-    std::optional<rant::RemoteVariable<>> var;
-    std::optional<rant::RemoteTask<>> task;
-    std::optional<rant::RemoteFunction<>> fn;
+    std::optional<rant::Subscriber<rant::Bytes>> sub;   /* Topic entity: the read side */
+    std::optional<rant::Publisher<rant::Bytes>> pub;    /* Topic entity: made on first publish */
+    std::optional<rant::RemoteVariable<rant::Bytes>> var;
+    std::optional<rant::RemoteTask<rant::Bytes, rant::Bytes, rant::Bytes>> task;
+    std::optional<rant::RemoteFunction<rant::Bytes, rant::Bytes>> fn;
 
     /* the owner-match story for writes through the variable accessor: var_created
      * bounds how long a FORMING match is worth waiting on; owner_seen flips the first
@@ -309,6 +308,13 @@ struct Rec {
     std::vector<uint8_t> slot;
     const dc::RantSchema* slot_schema = nullptr;
     bool slot_dirty = false;
+
+    /* TOPIC delivery: the subscriber's handler (service thread) pushes every message
+     * here, drain() pops all of them on the logic thread. Bounded drop-oldest, like
+     * the log stream, so a topic nobody drains can never grow it. */
+    struct TopicMsg { std::vector<uint8_t> data; const dc::RantSchema* schema; };
+    std::mutex topic_mu;
+    std::deque<TopicMsg> topic_queue;
 
     /* TASK call state, behind the same mutex: ONE outstanding call per task from this
      * HMI (the backend is the one caller for every session), its latest progress
@@ -407,18 +413,17 @@ bool RantMesh::start(std::string& err) {
     options.domain = impl_->opts.domain;
     options.max_topics = impl_->opts.max_topics;
     options.fetch_details = true;   /* every peer entity's name + schema, observer style */
-    options.match_wait_ms = 50;     /* effects block briefly for a forming match, never 1s */
+    options.match_wait = std::chrono::milliseconds(50);   /* effects block briefly for a forming match, never 1s */
     options.multicast_interface = impl_->opts.interface_ip;
     options.seed_peers = impl_->opts.seed_peers;
     options.discovery_port = impl_->opts.discovery_port;
-    options.announce_interval_us = impl_->opts.announce_interval_us;
+    options.announce_interval = std::chrono::microseconds(impl_->opts.announce_interval_us);
     Impl* impl = impl_.get();
 #if defined(__cpp_exceptions)
     try {
 #endif
-        impl_->node.emplace(
-            impl_->opts.node_name, rant::Node::MessageHandler{},
-            [impl](const rant::Event& event) {
+        impl_->node.emplace(impl_->opts.node_name, options);
+        impl_->node->on_event([impl](const rant::Event& event) {
                 switch (event.kind()) {
                     case rant::EventKind::PeerUp:
                     case rant::EventKind::PeerDown:
@@ -429,8 +434,7 @@ bool RantMesh::start(std::string& err) {
                 }
                 if (event.is_error() && impl->opts.verbose)
                     std::printf("hmi mesh: %s\n", event.to_string().c_str());
-            },
-            options);
+            });
 #if defined(__cpp_exceptions)
     } catch (const std::exception& e) {
         err = e.what();
@@ -438,45 +442,29 @@ bool RantMesh::start(std::string& err) {
     }
 #endif
     if (!impl_->node || !impl_->node->valid()) {
-        err = rant::Node::last_open_error();
+        dc::RantEvent last = dc::rant_last_error(nullptr);
+        char buf[192];
+        err = dc::rant_event_str(&last, buf, sizeof buf);
         return false;
     }
-    /* The mesh-wide log stream, one subscription per level, registered BEFORE the
-     * service thread starts (on_log widens the node's own log handle, which is setup
-     * work). A widened @rant/log topic is a CONSUMER-QUEUE topic — lines queue inside
-     * RANT and nobody fires the handler until someone dispatches that queue — so
-     * take_logs pumps the three queues on the logic thread; the handler then runs
-     * there, copying the line into the pending ring and nothing else. */
-    for (const rant::LogLevel level :
-         {rant::LogLevel::Error, rant::LogLevel::Warn, rant::LogLevel::Info}) {
-        impl_->node->on_log(level, [impl, level](const rant::LogLine& line) {
-            MeshLogLine copy;
-            copy.level = static_cast<int>(level);
-            copy.node = std::string(line.node);
-            copy.text = std::string(line.text);
-            copy.wall_us = line.wall_us;
-            std::lock_guard<std::mutex> hold(impl->log_mu);
-            if (impl->log_pending.size() >= kLogPendCap) impl->log_pending.pop_front();
-            impl->log_pending.push_back(std::move(copy));
-        });
-    }
-    if (!impl_->node->start()) {
-        err = "mesh service thread failed to start";
-        return false;
-    }
+    /* The mesh-wide log stream at every level. The handler just copies the line into
+     * the pending ring, take_logs drains that ring. */
+    impl_->node->on_log([impl](const rant::LogLine& line) {
+        MeshLogLine copy;
+        copy.level = static_cast<int>(line.level);
+        copy.node = std::string(line.node);
+        copy.text = std::string(line.text);
+        copy.wall_us = line.wall_us;
+        std::lock_guard<std::mutex> hold(impl->log_mu);
+        if (impl->log_pending.size() >= kLogPendCap) impl->log_pending.pop_front();
+        impl->log_pending.push_back(std::move(copy));
+    });
     return true;
 }
 
 void RantMesh::take_logs(std::vector<MeshLogLine>& out) {
-    /* drain exactly the three log queues — never rant_node_dispatch, which would pull
-     * the ENTITY topics' queued messages through the (empty) node handler and eat them
-     * out from under drain()'s take path */
-    if (impl_->node && impl_->node->valid())
-        for (const rant::LogLevel level :
-             {rant::LogLevel::Error, rant::LogLevel::Warn, rant::LogLevel::Info}) {
-            rant::Topic channel = impl_->node->log_topic(level);
-            if (channel.valid()) channel.dispatch(/*max_msgs=*/64, /*timeout_ms=*/0);
-        }
+    /* on_log's handler already ran inline on the service thread and filled
+     * log_pending; nothing left to pump here */
     std::lock_guard<std::mutex> hold(impl_->log_mu);
     for (MeshLogLine& line : impl_->log_pending) out.push_back(std::move(line));
     impl_->log_pending.clear();
@@ -499,13 +487,13 @@ bool RantMesh::refresh() {
      * GENERATION that moves with the provider's identity, any schema, or an attr. An entity
      * nobody provides and ONLY THIS NODE consumes is our own leftover handle, not the mesh.
      * Only this node: the count is what says so, not the schema's origin. Our Topic handle
-     * is a subscriber first (ensure_consumption creates it SubOnly; the first publish
-     * widens it) and the node folds our own records before the peers', so a topic a peer
+     * is a subscriber first (ensure_consumption makes the subscriber, the first publish
+     * adds the publisher) and the node folds our own records before the peers', so a topic a peer
      * only consumes and we only write reads as "from us, nobody provides" the moment we
      * hold it — with the peer's subscriber counted beside ours. Dropping it there hid the
      * robot's jog command from every recompile of exactly the document that wrote it. */
     std::map<std::string, rant::Entity> fold;
-    for (rant::Entity& entity : impl_->node->mesh()) {
+    for (rant::Entity& entity : impl_->node->reflection().mesh()) {
         if (entity.name.empty() || entity.name.compare(0, 2, "0x") == 0)
             continue;   /* details not fetched yet; the next refresh sees them */
         if (!entity.providers && entity.from == impl_->opts.node_name &&
@@ -549,18 +537,17 @@ bool RantMesh::refresh() {
     /* an entity whose GENERATION moved (a provider restarted, re-typed, or appeared):
      * retire the rec's handles and codec now, so the recompile this refresh triggers
      * re-subscribes with the current type (ensure_rec refills from `folded`,
-     * ensure_consumption recreates the handles; Topic::retire releases the name). The
-     * Rec object itself stays: service-thread handler captures remain valid, and the
-     * old handlers went with their channels. */
+     * ensure_consumption recreates the handles; closing the last handle releases the
+     * name). The Rec object itself stays: service-thread handler captures remain valid,
+     * and the old handlers went with their channels. */
     for (const auto& item : fold) {
         auto it = impl_->recs.find(item.first);
         if (it == impl_->recs.end()) continue;
         Rec& rec = *it->second;
         if (rec.generation == 0 || rec.generation == item.second.generation) continue;
         impl_->log("entity changed, re-subscribing with the current type", item.first);
-        if (rec.topic) rec.topic->retire();
-        rec.topic.reset();
-        rec.topic_pub = false;
+        rec.sub.reset();
+        rec.pub.reset();
         impl_->retire_rec_patterns(rec);
         rec.generation = 0;
         rec.compiled.reset();
@@ -581,6 +568,10 @@ bool RantMesh::refresh() {
             rec.prg_slot.clear();
             rec.prg_slot_schema = nullptr;
             rec.prg_dirty = false;
+        }
+        {
+            std::lock_guard<std::mutex> hold(rec.topic_mu);
+            rec.topic_queue.clear();
         }
     }
     impl_->signature = std::move(signature);
@@ -645,35 +636,25 @@ void RantMesh::Impl::fill_rec_schema(Rec& rec, const rant::Entity& entity) const
     }
 }
 
-/* Park + drop the PATTERN handles (variable / task / function). Their standing
- * lanes go DEAF across a provider incarnation change — a fresh accessor provably
- * receives where the standing one does not — and a live old-typed channel would
- * shadow a same-name successor on every peer, refusing each match with
- * schema-mismatch. retire() parks the underlying
- * channels Inactive so the successor owns the name outright. A task retire answers
- * its outstanding call Cancelled through the ordinary response callback, so the
- * read table's `running` goes false honestly. The plain TOPIC
- * handle STAYS: topic subscriptions rematch a returning provider by themselves,
- * and the C++ topic cache would hand a parked channel straight back on a
- * same-schema re-create. */
+/* Drop the pattern handles (variable, task, function): a standing lane goes deaf across a
+ * provider restart. Closing a handle retires its channels, so the successor owns the name. */
 void RantMesh::Impl::retire_rec_patterns(Rec& rec) {
-    if (rec.var) rec.var->retire();
     rec.var.reset();
     rec.owner_seen.store(false, std::memory_order_relaxed);
-    if (rec.task) rec.task->retire();
     rec.task.reset();
-    if (rec.fn) rec.fn->retire();
     rec.fn.reset();
 }
 
 bool RantMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
-    const rant::Schema* schema = rec.compiled ? &*rec.compiled : nullptr;
+    const rant::Schema schema = rec.compiled ? *rec.compiled : rant::Schema{};
+    const rant::Schema rsp_schema = rec.rsp_compiled ? *rec.rsp_compiled : rant::Schema{};
+    const rant::Schema prg_schema = rec.prg_compiled ? *rec.prg_compiled : rant::Schema{};
 #if defined(__cpp_exceptions)
     try {
 #endif
         switch (rec.kind) {
             case EntityKind::Topic: {
-                if (rec.topic) break;
+                if (rec.sub) break;
                 rant::Qos qos;
                 /* request what the provider offers, so the match can never be refused
                  * by the RxO rule; a reliable provider then repairs into our queue */
@@ -681,15 +662,24 @@ bool RantMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
                 qos.reliability = it != folded.end() && it->second.reliable
                                       ? rant::Reliability::Reliable
                                       : rant::Reliability::BestEffort;
-                rec.topic.emplace(*node, rec.name, rant::Role::SubOnly, schema, qos);
-                rec.topic->take(0);   /* switch to QUEUED delivery from the start */
+                Rec* self = &rec;
+                rec.sub = node->subscriber<rant::Bytes>(rec.name,
+                    [self](const rant::MessageView& m) {
+                        std::lock_guard<std::mutex> hold(self->topic_mu);
+                        if (self->topic_queue.size() >= static_cast<size_t>(kTakeBudget))
+                            self->topic_queue.pop_front();
+                        const rant::Bytes data = m.data();
+                        self->topic_queue.push_back(
+                            Rec::TopicMsg{std::vector<uint8_t>(data.begin(), data.end()),
+                                          m.raw_schema()});
+                    }, qos, schema);
                 break;
             }
             case EntityKind::Variable: {
                 if (rec.var) break;
-                rant::VariableOptions<> options;
-                options.backpressure_wait_us = kEffectWaitUs;
-                rec.var.emplace(*node, rec.name, schema, options);
+                rant::VariableOptions<rant::Bytes> options;
+                options.backpressure_wait = std::chrono::microseconds(kEffectWaitUs);
+                rec.var = node->remote_variable<rant::Bytes>(rec.name, options, schema);
                 rec.var_created = Clock::now();
                 Rec* self = &rec;
                 rec.var->on_change([self](const rant::VariableUpdate& update) {
@@ -706,18 +696,17 @@ bool RantMesh::Impl::ensure_consumption(Rec& rec, std::string& err) {
             case EntityKind::Task: {
                 if (rec.task) break;
                 rant::TaskOptions options;
-                options.backpressure_wait_us = kEffectWaitUs;
-                rec.task.emplace(*node, rec.name, schema,
-                                 rec.prg_compiled ? &*rec.prg_compiled : nullptr,
-                                 rec.rsp_compiled ? &*rec.rsp_compiled : nullptr, options);
+                options.backpressure_wait = std::chrono::microseconds(kEffectWaitUs);
+                rec.task = node->remote_task<rant::Bytes, rant::Bytes, rant::Bytes>(
+                    rec.name, options, schema, prg_schema, rsp_schema);
                 break;
             }
             case EntityKind::Function: {
                 if (rec.fn) break;
                 rant::FunctionOptions options;
-                options.backpressure_wait_us = kEffectWaitUs;
-                rec.fn.emplace(*node, rec.name, schema,
-                               rec.rsp_compiled ? &*rec.rsp_compiled : nullptr, options);
+                options.backpressure_wait = std::chrono::microseconds(kEffectWaitUs);
+                rec.fn = node->remote_function<rant::Bytes, rant::Bytes>(
+                    rec.name, options, schema, rsp_schema);
                 break;
             }
         }
@@ -969,18 +958,20 @@ void RantMesh::drain(MeshSink& sink) {
     for (auto& item : impl.recs) {
         Rec& rec = *item.second;
 
-        if (rec.topic) {
-            for (int budget = 0; budget < kTakeBudget; ++budget) {
-                std::optional<rant::Message<>> msg = rec.topic->take(0);
-                if (!msg) break;
-                const rant::Bytes data = msg->data();
-                if (msg->raw_schema()) {
-                    rec.last_payload.assign(data.begin(), data.end());
-                    rec.last_payload_hash = dc::rant_schema_hash(msg->raw_schema());
-                    rec.last_schema = msg->raw_schema();
+        if (rec.sub) {
+            std::deque<Rec::TopicMsg> pending;
+            {
+                std::lock_guard<std::mutex> hold(rec.topic_mu);
+                pending.swap(rec.topic_queue);
+            }
+            for (Rec::TopicMsg& msg : pending) {
+                if (msg.schema) {
+                    rec.last_payload = msg.data;
+                    rec.last_payload_hash = dc::rant_schema_hash(msg.schema);
+                    rec.last_schema = msg.schema;
                 }
                 impl.deliver(sink, rec, rec.fields,
-                             dc::rant_bytes(data.data(), data.size()), msg->raw_schema());
+                             dc::rant_bytes(msg.data.data(), msg.data.size()), msg.schema);
             }
         }
 
@@ -1042,7 +1033,7 @@ void RantMesh::drain(MeshSink& sink) {
             Rec* self = &rec;
             const rant::SendStatus status = rec.fn->call_async(
                 rant::Bytes(rec.default_request.data(), rec.default_request.size()),
-                [self](const rant::ResponseView<>& response) {
+                [self](const rant::ResponseView<rant::Bytes>& response) {
                     if (response.ok() && response.raw_schema()) {
                         const rant::Bytes data = response.data();
                         std::lock_guard<std::mutex> hold(self->slot_mu);
@@ -1397,16 +1388,17 @@ bool RantMesh::execute(const EffectView& effect, std::string& fault) noexcept {
             status = rec->var ? rec->var->force(payload) : rant::SendStatus::NoTopic;
             break;
         case Verb::Publish: {
-            if (!rec->topic) {
+            if (!rec->sub) {
                 fault = "publish target '" + rec->name + "' has no topic";
                 return false;
             }
-            if (!rec->topic_pub) {
-                /* consumption created the topic SubOnly; the first publish widens it */
-                rec->topic->set_role(rant::Role::PubSub);
-                rec->topic_pub = true;
+            if (!rec->pub) {
+                /* consumption created the topic's read side; the first publish makes
+                 * the write side, which shares the same named channel */
+                rec->pub = impl.node->publisher<rant::Bytes>(
+                    rec->name, rant::Qos{}, rec->compiled ? *rec->compiled : rant::Schema{});
             }
-            status = rec->topic->send(payload);
+            status = rec->pub->send(payload);
             break;
         }
         case Verb::Call: {
@@ -1434,7 +1426,7 @@ bool RantMesh::execute(const EffectView& effect, std::string& fault) noexcept {
                 Rec* self = rec;
                 const rant::TaskCall call = rec->task->call_async(
                     payload,
-                    [self](const rant::ProgressView<>& progress) {
+                    [self](const rant::ProgressView<rant::Bytes>& progress) {
                         /* the RUNNING ack arrives empty; either way the call provably
                          * runs. Progress is latest-wins: an HMI paints the newest. */
                         std::lock_guard<std::mutex> hold(self->slot_mu);
@@ -1449,7 +1441,7 @@ bool RantMesh::execute(const EffectView& effect, std::string& fault) noexcept {
                             self->prg_dirty = true;
                         }
                     },
-                    [self](const rant::ResponseView<>& response) {
+                    [self](const rant::ResponseView<rant::Bytes>& response) {
                         std::lock_guard<std::mutex> hold(self->slot_mu);
                         self->call_live = false;
                         self->task_running = false;
@@ -1481,7 +1473,7 @@ bool RantMesh::execute(const EffectView& effect, std::string& fault) noexcept {
             }
             Rec* self = rec;
             status = rec->fn->call_async(
-                payload, [self](const rant::ResponseView<>& response) {
+                payload, [self](const rant::ResponseView<rant::Bytes>& response) {
                     if (response.ok() && response.raw_schema()) {
                         const rant::Bytes data = response.data();
                         std::lock_guard<std::mutex> hold(self->slot_mu);
