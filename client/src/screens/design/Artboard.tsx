@@ -14,7 +14,11 @@ type Handle = (typeof HANDLES)[number];
 
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
-  | { kind: "move" | Handle; id: string; sx: number; sy: number; base: Box; moved: boolean };
+  | { kind: "move" | Handle; id: string; sx: number; sy: number; base: Box; box: Box; n: number };
+
+/** A box shown in place of an element's own until the page carries it. `n` names the drag
+ *  that made it, so a finished drag never clears a newer one's box. */
+type Held = Record<string, { box: Box; n: number }>;
 
 function keysFor(kind: "move" | Handle): (keyof Box)[] {
   if (kind === "move") return ["x", "y"];
@@ -43,9 +47,12 @@ function dragged(kind: "move" | Handle, b: Box, dx: number, dy: number, free: bo
 export function Artboard(p: { page: Page; selected: string | null; onSelect: (id: string | null) => void }) {
   let host!: HTMLDivElement;
   const [view, setView] = createSignal({ k: 0.5, x: 0, y: 0 });
-  const [held, setHeld] = createSignal<Record<string, Box>>({});
-  const overrides = (id: string) => held()[id];
+  const [held, setHeld] = createSignal<Held>({});
+  const overrides = (id: string) => held()[id]?.box;
+  const release = (id: string, n?: number) =>
+    setHeld((all) => (all[id] && (n === undefined || all[id].n === n) ? Object.fromEntries(Object.entries(all).filter(([k]) => k !== id)) : all));
   let drag: Drag | null = null;
+  let drags = 0;
 
   let fittedFor = "";
   const fit = () => {
@@ -84,11 +91,11 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
   // a written drag keeps showing until the page carries its numbers, so nothing jumps back
   createEffect(() => {
     const h = held();
-    const done = Object.keys(h).filter((id) => {
+    for (const id of Object.keys(h)) {
+      if (drag && drag.kind !== "pan" && drag.id === id) continue;
       const e = find(p.page.children, id);
-      return !e || ["x", "y", "w", "h"].every((k) => number(e.props[k]) === h[id][k as keyof Box]);
-    });
-    if (done.length) setHeld((all) => Object.fromEntries(Object.entries(all).filter(([id]) => !done.includes(id))));
+      if (!e || ["x", "y", "w", "h"].every((k) => number(e.props[k]) === h[id].box[k as keyof Box])) release(id);
+    }
   });
 
   const down = (e: PointerEvent) => {
@@ -107,7 +114,8 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
         p.onSelect(id);
         const kind = handle ?? "move";
         if (literal(e2, keysFor(kind))) {
-          drag = { kind, id, sx: e.clientX, sy: e.clientY, base: boxOf(e2), moved: false };
+          const base = boxOf(e2);
+          drag = { kind, id, sx: e.clientX, sy: e.clientY, base, box: base, n: ++drags };
         }
       } else {
         p.onSelect(null);
@@ -125,24 +133,22 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
       return;
     }
     const k = view().k;
-    const box = dragged(drag.kind, drag.base, dx / k, dy / k, e.altKey);
-    drag.moved = true;
-    setHeld({ ...held(), [drag.id]: box });
+    drag.box = dragged(drag.kind, drag.base, dx / k, dy / k, e.altKey);
+    setHeld({ ...held(), [drag.id]: { box: drag.box, n: drag.n } });
   };
 
   const up = () => {
     const d = drag;
     drag = null;
-    if (!d || d.kind === "pan" || !d.moved) return;
-    const box = held()[d.id];
-    if (!box) return;
+    if (!d || d.kind === "pan") return;
     const props: Record<string, string> = {};
     for (const k of ["x", "y", "w", "h"] as (keyof Box)[]) {
-      if (box[k] !== d.base[k]) props[k] = String(box[k]);
+      if (d.box[k] !== d.base[k]) props[k] = String(d.box[k]);
     }
-    if (Object.keys(props).length) setProps(p.page.id, d.id, props);
-    // a refused write must not hold the box forever
-    window.setTimeout(() => setHeld((all) => Object.fromEntries(Object.entries(all).filter(([id]) => id !== d.id))), 3000);
+    if (Object.keys(props).length === 0) return release(d.id, d.n);
+    setProps(p.page.id, d.id, props);
+    // a refused write must not hold its box forever
+    window.setTimeout(() => release(d.id, d.n), 3000);
   };
 
   const ring = createMemo(() => {
