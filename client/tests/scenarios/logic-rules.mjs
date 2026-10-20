@@ -1,7 +1,7 @@
 // A user writes the HMI's own handlers: a counting timer, a warning when the line runs too
 // fast, one that follows Running. A new one opens in the middle, a removed timer stops and
 // comes back with Ctrl Z, and the open page's element handlers are listed with what they read
-// and write, while another page's are not.
+// and write and what their event brings, while another page's are not.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const variable = (name, start) => hmi.send({ type: "set_variable", name, variable: { name, start, per: "hmi" } });
@@ -77,7 +77,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.locator(".handler-list .list-row", { hasText: "Lamp" }).click();
   const rows = () => page.locator(".screen.logic .uses-row").allTextContents();
   await eventually(async () => (await rows()).join() === "Speedvariable, write,tickssets", "the lamp's reads and writes");
-  check((await box.locator(".event-meta").textContent()) === "sets ticks", "the card does not sum up what it does");
+  check((await box.locator(".event-meta").textContent()) === "p = { x, y, angle, on, inside }", "the card does not say what its event brings");
   await box.locator("button", { hasText: "Open in Design" }).click();
   await page.locator(".pages .list-row.selected", { hasText: "Logic page" }).waitFor();
 }

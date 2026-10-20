@@ -6,6 +6,7 @@ import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Import } from "../protocol/Import";
 import type { Kind } from "../protocol/Kind";
 import type { Page } from "../protocol/Page";
+import type { TypeInfo } from "../protocol/TypeInfo";
 import type { Value } from "../protocol/Value";
 import { partNames } from "./bind";
 import { fields, typeLabel } from "./format";
@@ -145,6 +146,74 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   // a word typed out in full needs no list
   if (found.length === 0 || (found.length === 1 && found[0].label === word)) return null;
   return { from, items: found };
+}
+
+/** What a call takes, shown while the caret is inside its brackets. */
+export interface Signature {
+  /** Where the call's name starts. */
+  from: number;
+  /** The call as typed, such as `CageJog.send`. */
+  call: string;
+  /** Its values in order, each a name and a type. */
+  params: { name: string; type: string }[];
+  /** The value the caret is in, from 0. */
+  at: number;
+  /** The type its values make up, which may go as one value instead. */
+  whole?: string;
+  /** What a function answers. */
+  gives?: string;
+  /** Why the values are not known. */
+  unknown?: string;
+}
+
+/** The send or function call the caret is inside, in a handler that reaches the mesh. */
+export function signature(text: string, caret: number, place: Place): Signature | null {
+  if (place !== "handler") return null;
+  const open = opened(text.slice(0, caret));
+  if (!open) return null;
+  const head = text.slice(0, open.at).trimEnd();
+  const path = chain(head);
+  const imp = state.imports.find((i) => i.alias === path[0]);
+  const call = path.join(".");
+  const from = head.length - call.length;
+  const sends = imp?.kind === "topic" && path.length === 2 && path[1] === "send";
+  if (!imp || !(sends || (imp.kind === "function" && path.length === 1))) return null;
+  const e = entity(imp.entity);
+  if (!e?.schema) return { from, call, params: [], at: open.commas, unknown: `its type is not known while ${imp.entity} is off the mesh` };
+  return { from, call, ...takes(e.schema), at: open.commas, gives: sends ? undefined : e.response?.name || (e.response ? typeLabel(e.response.fields[0]) : undefined) };
+}
+
+/** A type as values passed one by one: a bare type is one value, a struct its fields. */
+function takes(t: TypeInfo): Pick<Signature, "params" | "whole"> {
+  const one = bareType(t.fields);
+  if (one) return { params: [{ name: "value", type: one }] };
+  return { params: t.fields.map((f) => ({ name: f.name, type: typeLabel(f) })), whole: (t.fields.length > 0 && t.name) || undefined };
+}
+
+/** The innermost round bracket left open before the end, and how many commas follow it there.
+ *  Strings and comments are passed over. */
+function opened(before: string): { at: number; commas: number } | null {
+  const stack: { ch: string; at: number; commas: number }[] = [];
+  for (let i = 0; i < before.length; i++) {
+    const c = before[i];
+    if (c === '"' || c === "'" || c === "`") {
+      i++;
+      while (i < before.length && before[i] !== c) i += before[i] === "\\" ? 2 : 1;
+    } else if (c === "/" && before[i + 1] === "/") {
+      while (i < before.length && before[i] !== "\n") i++;
+    } else if (c === "/" && before[i + 1] === "*") {
+      const end = before.indexOf("*/", i + 2);
+      i = end < 0 ? before.length : end + 1;
+    } else if (c === "(" || c === "[" || c === "{") {
+      stack.push({ ch: c, at: i, commas: 0 });
+    } else if (c === ")" || c === "]" || c === "}") {
+      stack.pop();
+    } else if (c === "," && stack.length > 0) {
+      stack[stack.length - 1].commas++;
+    }
+  }
+  const top = stack.at(-1);
+  return top?.ch === "(" ? { at: top.at, commas: top.commas } : null;
 }
 
 /** What a part's pointer state holds. */

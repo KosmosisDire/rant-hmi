@@ -455,6 +455,36 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
+/* What the call at the caret takes, over its line. */
+.signature {
+  position: fixed;
+  z-index: 70;
+  max-width: min(560px, calc(100vw - 16px));
+  padding: 5px 9px;
+  font-size: 12px;
+  color: var(--dim);
+  pointer-events: none;
+  background: var(--float);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.sign-at {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sign-type {
+  color: var(--faint);
+}
+
+.sign-or {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
 .suggest-row {
   display: flex;
   align-items: center;

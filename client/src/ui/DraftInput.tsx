@@ -1,8 +1,8 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import type { Completion, Suggestion } from "../state/complete";
+import type { Completion, Signature, Suggestion } from "../state/complete";
 import { painted } from "./highlight";
-import { type Spot, Suggestions } from "./Suggestions";
+import { SignatureHint, type Spot, Suggestions } from "./Suggestions";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
 
@@ -26,6 +26,8 @@ export function DraftInput(p: {
   code?: boolean;
   /** What may be typed at the caret. Nothing is picked until the user picks it. */
   complete?: (text: string, caret: number) => Completion | null;
+  /** What the call at the caret takes, shown over its line. */
+  hint?: (text: string, caret: number) => Signature | null;
   class?: string;
   placeholder?: string;
   title?: string;
@@ -43,13 +45,25 @@ export function DraftInput(p: {
   const [bad, setBad] = createSignal(false);
   const [offer, setOffer] = createSignal<Completion | null>(null);
   const [chosen, setChosen] = createSignal(-1);
+  const [sign, setSign] = createSignal<Signature | null>(null);
+  const signAt = () => setSign(p.hint && document.activeElement === field ? p.hint(field.value, field.selectionStart ?? field.value.length) : null);
 
   const look = () => {
     setChosen(-1);
     setOffer(p.complete && document.activeElement === field ? p.complete(field.value, field.selectionStart ?? field.value.length) : null);
   };
+  // typing opens the list on a name or after a dot, not on a space or a bracket, unless asked
+  const typed = () => {
+    const at = field.selectionStart ?? field.value.length;
+    if (field.value.trim() === "" || /[\w$.]/.test(field.value[at - 1] ?? "")) look();
+    else setOffer(null);
+  };
   // focus opens the list on an empty field only, so passing through filled ones stays quiet
-  const enter = () => (field.value.trim() === "" ? look() : setOffer(null));
+  const enter = () => {
+    signAt();
+    if (field.value.trim() === "") look();
+    else setOffer(null);
+  };
   const take = (s: Suggestion) => {
     const o = offer();
     if (!o) return;
@@ -62,6 +76,7 @@ export function DraftInput(p: {
   };
   const commit = () => {
     setOffer(null);
+    setSign(null);
     const text = draft();
     if (text === null) return;
     if (p.accept && !p.accept(text)) return setBad(true);
@@ -87,6 +102,11 @@ export function DraftInput(p: {
       setOffer(null);
       return;
     }
+    if (p.complete && e.key === " " && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      look();
+      return;
+    }
     if (e.key === "Enter" && (!p.multiline || e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       commit();
@@ -100,6 +120,7 @@ export function DraftInput(p: {
   // moving the caret while the list is open changes what fits there
   const moved = (e: KeyboardEvent) => {
     if (offer() && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) look();
+    signAt();
     follow();
   };
 
@@ -156,8 +177,7 @@ export function DraftInput(p: {
     const line = parseFloat(css.lineHeight) || parseFloat(css.fontSize) * 1.2;
     const top = r.top + parseFloat(css.borderTopWidth) + parseFloat(css.paddingTop) + (lines.length - 1) * line - field.scrollTop;
     const left = r.left + parseFloat(css.borderLeftWidth) + parseFloat(css.paddingLeft) + x - field.scrollLeft;
-    // the list's rows start their names past an icon, so it opens that far to the left
-    return { left: left - 29, top, bottom: top + line, width: r.width };
+    return { left, top, bottom: top + line, width: r.width, word: true };
   };
 
   // a last empty line still takes its height, as it does in the field
@@ -180,7 +200,8 @@ export function DraftInput(p: {
       wrap={p.code ? "off" : undefined}
       onInput={(e: InputEvent & { currentTarget: Field }) => {
         setDraft(e.currentTarget.value);
-        look();
+        typed();
+        signAt();
         queueMicrotask(follow);
       }}
       onScroll={follow}
@@ -201,6 +222,8 @@ export function DraftInput(p: {
           </pre>
         </Show>
         <pre class="hl" classList={{ wrap: p.multiline && !p.code }} ref={colours} aria-hidden="true" innerHTML={shown()} />
+        {/* the list comes later, so where both float it covers the hint */}
+        <Show when={sign()}>{(s) => <SignatureHint sign={s()} at={() => spot(s().from)} />}</Show>
         <Show when={offer()}>{(o) => <Suggestions items={o().items} chosen={chosen()} onTake={take} at={() => spot(o().from)} />}</Show>
       </span>
     </Show>

@@ -64,12 +64,3 @@ export function uses(code: string, names?: Suggestion[]): Uses {
   };
 }
 
-/** A few words for what code does, such as "sets Speed, calls Reset". Reading is said only
- *  of code that writes nothing. */
-export function summary(u: Uses): string {
-  const verbs = new Map<string, string[]>();
-  for (const w of u.writes) verbs.set(w.what, [...(verbs.get(w.what) ?? []), w.name]);
-  const said = [...verbs].map(([verb, names]) => `${verb} ${names.join(", ")}`);
-  if (said.length > 0) return said.join(", ");
-  return u.reads.length > 0 ? `reads ${u.reads.map((r) => r.name).join(", ")}` : "";
-}

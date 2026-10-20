@@ -28,11 +28,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const first = await page.locator(".popover .menu-item").first().textContent();
   check(first.startsWith("move") && first.includes("sends { x, y }"), `the add list starts with ${first}`);
   await page.locator(".popover .menu-item", { has: page.locator(".mono", { hasText: /^move$/ }) }).click();
-  await eventually(async () => (await right.locator(".event-brings").textContent())?.trim() === "p = { x, y }", "the move card to say what p brings");
+  await eventually(async () => (await right.locator(".event-meta").textContent())?.trim() === "p = { x, y }", "the move card to say what p brings");
 
   await d.el(start).click();
   await d.addEvent("tap");
-  await eventually(async () => (await right.locator(".event-brings").textContent())?.trim() === "p = { x, y, angle, on, inside }", "the tap card to say what p brings");
+  await eventually(async () => (await right.locator(".event-meta").textContent())?.trim() === "p = { x, y, angle, on, inside }", "the tap card to say what p brings");
   await d.code("tap").click();
   await page.keyboard.type("p.");
   await eventually(async () => (await names()).join() === "x,y,angle,on,inside", "the fields of p");
@@ -74,5 +74,5 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // the HMI's own handler on a change brings the new value and the old
   await logic.locator('button[title="Add a handler"]').click();
   await logic.locator(".rule-kind").selectOption("changes");
-  await eventually(async () => (await logic.locator(".detail .event-brings").textContent())?.trim() === "p = { value, previous }", "a change rule to say what p brings");
+  await eventually(async () => (await logic.locator(".detail .event-meta").textContent())?.trim() === "p = { value, previous }", "a change rule to say what p brings");
 }
