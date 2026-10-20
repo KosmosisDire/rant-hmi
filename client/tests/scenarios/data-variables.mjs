@@ -1,6 +1,5 @@
-// A user adds HMI state: a jog mode each screen keeps for itself and a press count every
-// screen shares. A button on a page flips the mode and counts, a text shows both, and only
-// the count reaches another screen. A rename is followed by the handler.
+// A user adds a jog mode each screen keeps and a press count every screen shares: a button
+// flips and counts, a text shows both, only the count reaches another screen, renames follow.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const inspector = (label) => page.locator(".screen:not([hidden]) .sidebar.right .field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) });

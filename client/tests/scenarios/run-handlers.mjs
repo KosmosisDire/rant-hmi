@@ -1,6 +1,5 @@
-// An operator uses buttons a designer made: a tap that speeds the line up, a jog that holds a
-// speed only while pressed even when the pointer slides off before letting go, a call to the
-// line's Reset that tells what it answered, and a handler with a typo that says what went wrong.
+// An operator taps to speed the line up, holds a jog even as the pointer slides off, calls
+// Reset and hears its answer, and a handler with a typo says what went wrong.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await hmi.import("Reset", "Line1/Reset", "write");

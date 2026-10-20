@@ -1,7 +1,5 @@
-//! Handlers run here, in QuickJS on a thread of its own. Each run gets a context of its own,
-//! so runs never share names. The app sends what code may read and the runs to start, and
-//! hears back what each run writes, calls and says. A run's writes wait until it ends or
-//! awaits, then go out together, so a run stopped by an unknown value leaves nothing half done.
+//! Handlers run here, in QuickJS on a thread of its own, each run in its own context. A run's
+//! writes go out when it ends or awaits, so a stopped run leaves nothing half done.
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;

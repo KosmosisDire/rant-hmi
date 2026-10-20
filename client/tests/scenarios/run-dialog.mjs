@@ -1,6 +1,5 @@
-// A designer makes a Confirm page shown over others, and a Run button that asks it first. An
-// operator answers No, then Yes, then closes it with Escape and with a tap outside: only Yes
-// runs, and the page beneath stays in sight throughout. Confirm removed while open closes.
+// A Run button asks a Confirm page shown over others: only Yes runs, Escape and a tap outside
+// answer nothing, the page beneath stays in sight, and Confirm removed while open closes.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const cell = await hmi.addPage("Cell");

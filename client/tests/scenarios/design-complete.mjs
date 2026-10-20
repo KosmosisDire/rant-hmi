@@ -1,7 +1,5 @@
-// A new user types expressions with the list's help: names first, then a struct's fields,
-// then a number's format, each picked with the arrows and Enter, or with a click in a
-// handler. Enter with nothing picked keeps exactly what was typed. A handler offers send on a
-// topic imported to write.
+// A new user types expressions with the list's help: names, fields, a number's format, picked
+// by keys or a click. Enter with nothing picked keeps the text, and handlers offer send.
 
 import { props } from "../designer.mjs";
 

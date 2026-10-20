@@ -1,6 +1,5 @@
-// A user imports the robot's pose with the + beside it, uses it on a page and in a handler,
-// then renames it: the page and the handler follow. They change its intent, and a name code
-// already uses is refused with a reason. Each entity picked starts the import form over.
+// A user imports the robot's pose with its +, uses it, renames it so a page and a handler
+// follow, changes its intent, and finds each entity picked starts the import form over.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Data");

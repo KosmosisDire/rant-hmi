@@ -1,6 +1,5 @@
-// A Toggle made in the editor: its tap flips its two way input and sends change. Bound to the
-// line's Running, a tap stops and starts the line and the page's change handler says so.
-// Bound one way it only shows, and a component reading the mesh is refused with a reason.
+// A Toggle whose tap flips its two way input and sends change: bound to Running it stops and
+// starts the line, bound one way it only shows, and reading the mesh inside is refused.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const toggle = await hmi.addComponent("Toggle");

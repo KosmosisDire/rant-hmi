@@ -1,7 +1,5 @@
-//! The project's pages and components, one HTML like file each in `pages/` and `components/`,
-//! its own handlers in `logic/handlers.html`, and the edits that change them. A component is kept as a page with an interface, so every
-//! edit works on both. Every edit goes through the backend, which saves the file and sends the
-//! page to every screen, so all of them show the same page.
+//! The pages and components, one file each, the HMI's own handlers, and the edits that change
+//! them. A component is a page with an interface, so every edit works on both.
 
 pub mod format;
 pub mod js;
@@ -299,9 +297,8 @@ impl Pages {
         self.get(page).and_then(|p| find(&p.children, id))
     }
 
-    /// Writes every use of the name `from` in values and handlers as `to`, as a rename needs,
-    /// and saves each page that changed. Returns those pages. Components read only theirs and
-    /// the theme's, so they follow only where `components` says so.
+    /// Writes every use of `from` as `to` and saves each page that changed, which it returns.
+    /// Components read only their inputs and the theme, so they follow only when `components`.
     pub fn rename(&mut self, from: &str, to: &str, components: bool) -> Result<Vec<String>, String> {
         let mut touched = Vec::new();
         for p in self.list.iter_mut().filter(|p| components || p.interface.is_none()) {

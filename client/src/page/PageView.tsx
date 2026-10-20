@@ -158,9 +158,8 @@ function pointer(el: HTMLElement, e: PointerEvent, on: string | null): Pointer {
   return { x: clamp(dx / r.width), y: clamp(dy / r.height), angle, on, inside: dx >= 0 && dy >= 0 && dx <= r.width && dy <= r.height };
 }
 
-/** A component drawn in an instance's box: its own size scaled to fit, centred, reading the
- *  inputs the instance gives. While a pointer is down on it, what it writes shows at once,
- *  and after release whatever its bindings say. */
+/** A component in an instance's box, scaled to fit and centred. While a pointer is down on it,
+ *  what it writes shows at once, and after release what its bindings say. */
 function Instance(p: { element: Element; scope: Scope; w: number; h: number; design?: boolean; act?: Act }) {
   const name = () => p.element.component ?? "";
   const [held, setHeld] = createSignal<Map<string, unknown> | null>(null);

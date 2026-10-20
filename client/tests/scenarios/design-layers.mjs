@@ -1,6 +1,5 @@
-// A user orders their layers: the list shows the front first, a row dragged onto another's
-// edge restacks, onto a frame's middle goes inside it and stays put on the page, Ctrl Z takes
-// that back, and Ctrl Shift [ sends the selection to the back.
+// A user orders layers, front first: a row dragged onto an edge restacks, onto a frame goes
+// inside and stays put, Ctrl Z takes it back, and Ctrl Shift [ sends to the back.
 
 import { props } from "../designer.mjs";
 

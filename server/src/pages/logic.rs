@@ -1,14 +1,5 @@
-//! The HMI's own handlers, which belong to no element: on a timer, when a condition turns
-//! true, when a datapoint changes, when the HMI starts, or when a screen comes or goes. They
-//! live in `logic/handlers.html`, as raw code like a page's handlers.
-//!
-//! ```html
-//! <logic>
-//!   <on id="h1" name="Too fast" when="Speed > 1.5" for="2000">
-//!     notify("The line runs too fast");
-//!   </on>
-//! </logic>
-//! ```
+//! The HMI's own handlers, which belong to no element, kept in `logic/handlers.html` as
+//! `docs/files.md` shows.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

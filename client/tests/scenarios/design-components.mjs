@@ -1,6 +1,5 @@
-// A new user makes a Lamp component, draws it, and places it on a page twice: the instances
-// draw the component scaled to their boxes and pick as one piece. A rename reaches every
-// instance, a placed component cannot be deleted, and Open it goes to the component.
+// A new user makes a Lamp component and places it twice: instances draw it scaled and pick as
+// one piece, a rename reaches them, a placed component stays, and Open it goes to it.
 
 import { props } from "../designer.mjs";
 

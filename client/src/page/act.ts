@@ -1,6 +1,5 @@
-// Where an element's events go. On a page they go to the backend, which runs the handler
-// there. Inside an instance the component's handler runs here, in the instance's scope, and
-// what it emits goes on to the instance, so events climb out level by level.
+// Where an element's events go: on a page to the backend's handler, inside an instance to the
+// component's handler here, whose emits climb out to the instance.
 
 import { send } from "../net/connection";
 import type { Element } from "../protocol/Element";

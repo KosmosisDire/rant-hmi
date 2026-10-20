@@ -1,0 +1,106 @@
+# Project files
+
+An HMI project is a folder of plain text files. The designer writes them, and they read well
+in a diff.
+
+```
+hmi.toml
+data/imports.toml
+data/variables.toml
+data/theme.toml
+pages/<id>.html
+components/<id>.html
+logic/handlers.html
+```
+
+## hmi.toml
+
+```toml
+name = "Demo line"
+start = "overview"
+```
+
+- `start` is the page operators' screens open on. Without it they open on the first page.
+
+## data
+
+```toml
+# imports.toml: what pages and handlers may read, each under its alias
+[[import]]
+alias = "Speed"
+entity = "Line1/Speed"
+kind = "variable"
+intent = "write"
+
+# variables.toml: the HMI's own state
+[[variable]]
+name = "mode"
+start = "Auto"
+per = "hmi"
+
+# theme.toml: design values code reads as $name
+[[token]]
+name = "accent"
+dark = "#ff8800"
+light = "#0088ff"
+```
+
+- `kind` is `topic`, `variable`, `function` or `task`. `intent` is `read` or `write`.
+- `per` is `hmi` for one value every screen shares, `screen` for one per screen.
+
+## Pages and components
+
+A page is written as the HTML it draws as. A frame is a `div`, a text a `span`, and a
+component placed on a page is a tag named after it.
+
+```html
+<page name="Overview" size="1408x792">
+  <div id="e1" name="Speed card" x="44" y="44" w="264" h="132" style="background: #1e2125">
+    <on event="tap">
+      Speed = Speed + 0.1;
+    </on>
+    <span id="e2" x="22" y="22" w="220" h="44" style="font-size: 32">Speed.toFixed(2)</span>
+  </div>
+  <Meter id="e3" x="352" y="44" w="264" h="176" level="Speed * 10"/>
+</page>
+```
+
+- `name`, `x`, `y`, `w` and `h` are attributes. A span's text is its body. Every other
+  property goes in `style`.
+- Every value but the name is an expression, kept raw: text goes in quotes, and `a < b`
+  needs no escaping.
+- `<on>` holds a handler's code, first inside its element.
+- `shows="over"` on a page opens it over the page beneath, as a dialog.
+
+A component has the same body, with its inputs and the events it sends first.
+
+```html
+<component name="Meter" size="264x176">
+  <prop name="level" default="0" bindable="true"/>
+  <event name="change"/>
+  <span id="e1" x="11" y="11" w="242" h="44">level + "%"</span>
+</component>
+```
+
+- `bindable` lets the component write the input back to what the instance binds it to.
+
+## logic/handlers.html
+
+The HMI's own handlers, which belong to no element.
+
+```html
+<logic>
+  <on id="h1" name="Count" every="1000">
+    ticks = ticks + 1;
+  </on>
+  <on id="h2" name="Too fast" when="Speed > 1.5" for="2000">
+    notify("The line runs too fast");
+  </on>
+  <on id="h3" name="Follow" change="Running">
+    lastRunning = p.value;
+  </on>
+</logic>
+```
+
+- One of `every="ms"`, `when="condition"` with an optional `for="ms"`, `change="name"`,
+  `start=""`, `screen="connects"` or `screen="leaves"` says when a handler runs.

@@ -1,6 +1,5 @@
-// What may be typed next in an expression or a handler: the datapoints and variables by name,
-// then after a dot the fields their schema gives, each with its type and live value. It reads
-// the text before the caret only, so it never needs the code to parse.
+// What may be typed next at the caret: names, then after a dot the fields with their type and
+// live value. It reads only the text before the caret, so the code need not parse.
 
 import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Import } from "../protocol/Import";

@@ -1,11 +1,5 @@
-// Runs every scenario in tests/scenarios against one backend and the demo line, each on a
-// fresh page. A console error fails the scenario. Screenshots and the backend's log land in
-// tests/out.
-//
-//   node tests/run.mjs            every scenario
-//   node tests/run.mjs drag       those whose file name holds "drag"
-//
-// Build first: cargo build -p rant-hmi --bin rant-hmi --example demo, and npm run build.
+// Runs the scenarios in tests/scenarios against one backend and the demo line, each on a fresh
+// page, as `docs/testing.md` says. A console error fails a scenario.
 
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

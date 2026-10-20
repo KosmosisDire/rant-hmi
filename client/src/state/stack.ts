@@ -1,7 +1,5 @@
-// The pages a screen's Run view has open, bottom first. Handlers open and close them through
-// the backend, and Escape closes the top one. In the operator view the browser's history
-// follows the stack, so its back button closes too. A page a handler waits on answers when it
-// closes, with nothing when the person closed it.
+// The pages a screen's Run view has open, bottom first, kept in the browser's history on /run.
+// A page a handler waits on answers when it closes, null when the person closed it.
 
 import { createSignal } from "solid-js";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";

@@ -1,6 +1,5 @@
-// An operator holds a jog button on a second screen, and that screen goes away mid press, as a
-// tablet does when its wifi drops. The jog's release still runs, so the line never keeps
-// jogging for a screen that is gone.
+// A second screen goes away mid press on a jog, as a tablet losing wifi does. The release
+// still runs, so the line never keeps jogging for a screen that is gone.
 
 export default async function ({ page, hmi, sys, d, eventually }) {
   const pageId = await hmi.addPage("Jog");

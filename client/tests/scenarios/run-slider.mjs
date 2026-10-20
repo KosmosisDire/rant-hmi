@@ -1,6 +1,5 @@
-// A Slider made in the editor from frames and one drag handler, bound to the line's Speed:
-// a press on the track jumps there, a drag shows its own value under the pointer while held,
-// and the line's speed ends where the drag let go.
+// A Slider built from frames and one drag handler, bound to Speed: a press jumps there, a drag
+// shows its own value while held, and the speed ends where it let go.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const slider = await hmi.addComponent("Slider");

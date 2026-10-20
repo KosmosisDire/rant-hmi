@@ -1,19 +1,5 @@
-//! A page as an HTML like file. Elements are written as the HTML they render as, a frame a
-//! `div` and a text a `span`. `name`, `x`, `y`, `w` and `h` are attributes, a span's text is
-//! its body, every other property goes in `style`. Every value but the name is an expression,
-//! kept raw, so `a < b && c` needs no escaping and text is in quotes. Handlers come first
-//! inside their element, their code raw too.
-//!
-//! ```html
-//! <page name="Overview" size="1408x792">
-//!   <div id="e1" name="Speed card" x="44" y="44" w="264" h="132" style="background: #1e2125">
-//!     <on event="tap">
-//!       Speed = Speed + 0.1;
-//!     </on>
-//!     <span id="e2" x="22" y="22" w="220" h="44" style="font-size: 32">Speed.toFixed(2)</span>
-//!   </div>
-//! </page>
-//! ```
+//! A page or component as an HTML like file, as `docs/files.md` shows. Values are kept raw,
+//! so an expression needs no escaping and text keeps its quotes.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -104,9 +90,8 @@ pub fn dedent(code: &str) -> String {
     kept[first..last].iter().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n")
 }
 
-/// Double quotes, or single ones when the value holds a double quote, so an expression
-/// with strings stays readable. A value holding both, or text an escape would misread,
-/// is escaped.
+/// Double quotes, or single ones when the value holds a double quote. A value holding both,
+/// or text an escape would misread, is escaped.
 pub(super) fn quote(v: &str) -> String {
     if v.contains("&quot;") || v.contains("&amp;") || (v.contains('"') && v.contains('\'')) {
         format!("\"{}\"", v.replace('&', "&amp;").replace('"', "&quot;"))

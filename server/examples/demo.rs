@@ -1,8 +1,5 @@
-//! A small line to try the HMI on: a conveyor whose speed and running you can set, a jog topic
-//! whose messages set the speed too, a reset that answers how many parts it cleared, and a
-//! robot's pose and joints moving on their own.
-//!
-//! `cargo run --example demo -- --loopback` keeps it on this host, `--domain N` moves it.
+//! A small line to try the HMI on: a conveyor, a jog topic, a reset function and a moving
+//! robot. `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};

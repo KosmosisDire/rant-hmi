@@ -1,6 +1,5 @@
-// Copy, cut, paste and duplicate. The browser's clipboard events carry the data, since the
-// async clipboard API needs https and a plant network serves plain http. An element travels
-// as JSON marked as ours, so a paste of anything else is left alone.
+// Copy, cut, paste and duplicate through the browser's clipboard events, since the async API
+// needs https. An element travels as JSON marked as ours.
 
 import { send } from "../../net/connection";
 import type { Edit } from "../../protocol/Edit";

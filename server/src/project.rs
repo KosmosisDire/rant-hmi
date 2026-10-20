@@ -1,6 +1,5 @@
-//! The project folder: the HMI as plain text files that diff well and that VS Code or an AI
-//! can edit. `hmi.toml` names it, `data/imports.toml` lists its imports,
-//! `data/variables.toml` its variables and `data/theme.toml` its theme tokens.
+//! The project folder: `hmi.toml`, and the imports, variables and theme under `data/`, as
+//! `docs/files.md` shows.
 
 use std::fs;
 use std::path::{Path, PathBuf};

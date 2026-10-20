@@ -1,6 +1,5 @@
-// A designer picks the start page, and an operator on /run moves between pages: a button
-// opens a page, the browser's back button and Escape close it, Back closes from a handler,
-// and a swap replaces the top page so going back skips it.
+// An operator on /run moves between pages: a button opens one, back, Escape and a handler
+// close it, and a swap replaces the top page so going back skips it.
 
 export default async function ({ page, hmi, d, sys, check, eventually }) {
   const add = async (pageId, name, code) => {

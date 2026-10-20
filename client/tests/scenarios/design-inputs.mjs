@@ -1,7 +1,5 @@
-// A user gives a Meter component an input, reads it inside, and fills it per instance from
-// live data. A rename of the input reaches the component's code and every instance, the
-// component's completion offers its inputs and not the mesh, and reading the mesh inside a
-// component is refused with a reason. A rename then a quick click lands as one change.
+// A user gives a Meter an input filled per instance from live data: a rename reaches its code
+// and instances, completion offers inputs only, and a rename then a quick click is one change.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const meter = await hmi.addComponent("Meter");

@@ -1,6 +1,5 @@
-// A user writes the HMI's own handlers in the Logic tab: a timer that counts, a warning when
-// the line runs too fast for a while, and one that follows Running. Removing the timer stops
-// it, and the overview lists element handlers by page.
+// A user writes the HMI's own handlers: a counting timer, a warning when the line runs too
+// fast, one that follows Running. A removed timer stops, and element handlers are listed.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const variable = (name, start) => hmi.send({ type: "set_variable", name, variable: { name, start, per: "hmi" } });

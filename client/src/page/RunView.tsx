@@ -1,6 +1,5 @@
-// The open pages of a screen as an operator sees them. The top full page fills the screen,
-// scaled to fit, and pages over it float centred at its scale above a dimmed backdrop. Pages
-// beneath stay as they were, so closing lands exactly where the screen was.
+// A screen's open pages as an operator sees them: the top full page fits the screen, and
+// pages over it float at its scale above a dimmed backdrop.
 
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { Page } from "../protocol/Page";

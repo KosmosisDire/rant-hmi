@@ -1,7 +1,5 @@
-// What handler code sees, set up in each run's own context. The host gives the `__` functions,
-// this turns them into plain names: an import reads as its value and takes assignment, a
-// function import is called and awaited, `Pages` names every page for open and close, and
-// notify, log and sleep are there.
+// What handler code sees, built in each run's context from the host's `__` functions: the
+// imports as plain names, `Pages`, open and close, notify, log and sleep.
 (imports, pages) => {
   class Unknown extends Error {
     constructor(alias) {

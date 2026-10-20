@@ -1,6 +1,5 @@
-// The page on its artboard: zoom with the wheel, pan with a drag on empty space or the middle
-// button, select by clicking, move by dragging, resize by the grips. Everything snaps to the
-// grid, and Alt lets it slip. A drag shows at once and writes when it ends.
+// The page on its artboard: the wheel zooms, a drag on empty space pans, elements move and
+// resize on the grid (Alt slips it), and a drag writes when it ends.
 
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { type Box, PageView } from "../../page/PageView";

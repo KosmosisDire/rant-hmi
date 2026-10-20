@@ -39,9 +39,8 @@ export function DesignScreen(p: { shown: boolean }) {
     if (id && (!page || !find(page.children, id))) setSelected(null);
   });
 
-  // Ctrl Z undoes this screen's last edit, Ctrl Shift Z or Ctrl Y redoes it. Delete removes,
-  // Escape lets go, the arrows nudge by the grid (Shift by four), Ctrl ] and Ctrl [ bring
-  // forward and send back (Shift all the way), Ctrl D duplicates. A field keeps its own keys.
+  // Ctrl Z undoes, Ctrl Shift Z or Ctrl Y redoes, Delete removes, Escape lets go, arrows nudge,
+  // Ctrl [ and ] restack (Shift all the way), Ctrl D duplicates. A field keeps its own keys.
   onMount(() => {
     const key = (e: KeyboardEvent) => {
       if (!p.shown || (e.target as HTMLElement).closest("input, textarea, select")) return;

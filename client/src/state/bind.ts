@@ -1,7 +1,5 @@
-// A property's value is a JS expression over the names its scope gives: 44, "Running",
-// Speed.toFixed(1). A bare #hex colour reads as its text. It runs in the browser, compiled once
-// per text. Reading a value that is unknown stops it, and the caller shows the unknown look
-// instead of a wrong value.
+// A property's value is a JS expression over its scope's names, compiled once per text, a bare
+// #hex reading as text. Reading an unknown value stops it, so the unknown look shows instead.
 
 import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
@@ -136,9 +134,8 @@ function proxy(s: Scope): object {
 
 const handlers = new Map<string, ((scope: object) => Promise<void>) | string>();
 
-/** Runs a component's handler here, in its instance's scope. It reads the inputs, `p` is
- *  what its event brought, `emit` sends one out, and assigning a two way input writes it
- *  back. Any other name is refused, so nothing leaks onto the page. */
+/** Runs a component's handler here, in its instance's scope: `p`, `emit` and the inputs, a two
+ *  way one written back. Any other name is refused, so nothing leaks onto the page. */
 export function runHandler(code: string, scope: Scope, emit: (name: string, payload?: unknown) => void, p: unknown, label: string) {
   let fn = handlers.get(code);
   if (fn === undefined) {
