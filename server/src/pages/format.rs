@@ -72,7 +72,8 @@ fn element(out: &mut String, e: &Element, depth: usize) {
                 out.push_str(&format!(" {k}={}", quote(v)));
             }
         }
-        let rest = e.props.iter().filter(|(k, _)| !ATTRS.contains(&k.as_str()) && k.as_str() != TEXT && !own.contains(&k.as_str()));
+        // a text input is an instance's like any other, while a span's text is its body
+        let rest = e.props.iter().filter(|(k, _)| !ATTRS.contains(&k.as_str()) && (e.tag == Tag::Use || k.as_str() != TEXT) && !own.contains(&k.as_str()));
         if e.tag == Tag::Use {
             // an instance's inputs are attributes of their own
             for (k, v) in rest {
@@ -503,6 +504,14 @@ mod tests {
         assert_eq!((svg.children[0].tag, svg.children[0].props["r"].as_str()), (Tag::Circle, "40"));
         assert_eq!(svg.children[1].children[0].handlers[0].code, "log(1);");
         assert_eq!((svg.children[2].tag, svg.children[2].props["text"].as_str()), (Tag::SvgText, "Speed.toFixed(1)"));
+        assert_eq!(write(&page), text);
+    }
+
+    #[test]
+    fn an_instance_keeps_a_text_input() {
+        let text = "<page name=\"A\" size=\"1408x792\">\n  <Button id=\"e1\" x=\"44\" text='\"Go\"'/>\n</page>\n";
+        let page = parse(text, "a").unwrap();
+        assert_eq!(page.children[0].props["text"], "\"Go\"");
         assert_eq!(write(&page), text);
     }
 

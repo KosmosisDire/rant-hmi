@@ -476,6 +476,12 @@ function Events(p: { page: string; element: Element }) {
   );
 }
 
+/** What places an instance, which no input or variable may be called, as the backend says. */
+const PLACING = new Set(["name", "repeat", "x", "y", "w", "h"]);
+
+/** A name an input or a component's variable may take. */
+const localName = (t: string) => /^[a-z][A-Za-z0-9]*$/.test(t.trim()) && !PLACING.has(t.trim());
+
 /** Changes a component's interface here at once too, in place, so a change right after builds
  *  on this one. The backend sends the page back should it refuse. */
 function putInterface(page: string, change: (i: Interface) => void) {
@@ -512,7 +518,8 @@ function Inputs(p: { page: string; inputs: Input[] }) {
               <DraftInput
                 class="editor input-name"
                 value={i.name}
-                accept={(t) => /^[a-z][A-Za-z0-9]*$/.test(t.trim())}
+                accept={localName}
+                title="camelCase, and none of name, repeat, x, y, w or h"
                 onCommit={(name) => write(i.name, { ...i, name: name.trim() })}
               />
               <label class="check" title="The component may write it back to what the instance binds it to">
@@ -564,7 +571,8 @@ function Variables(p: { page: string; variables: Local[] }) {
               <DraftInput
                 class="editor input-name"
                 value={v.name}
-                accept={(t) => /^[a-z][A-Za-z0-9]*$/.test(t.trim())}
+                accept={localName}
+                title="camelCase, and none of name, repeat, x, y, w or h"
                 onCommit={(name) => write(v.name, { ...v, name: name.trim() })}
               />
               <button class="icon-btn" title={`Remove the variable ${v.name}`} onClick={() => write(v.name, null)}>
