@@ -59,7 +59,8 @@
   touch-action: none;
 }
 
-.el.live:hover {
+/* only under a mouse: a finger leaves what it touched hovered */
+:root:not([data-pointer="touch"]) .el.live:hover {
   filter: brightness(1.08);
 }
 
@@ -159,10 +160,14 @@
   background: var(--ground);
 }
 
+/* A long press selects nothing and calls up nothing, so it stays a press. */
 .run-view {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .run-layer {

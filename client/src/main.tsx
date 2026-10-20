@@ -9,6 +9,7 @@ import "./styles/components.css";
 import "./styles/shell.css";
 import "./styles/page.css";
 import "./styles/design.css";
+import "./ui/touch";
 
 import { render } from "solid-js/web";
 import { connect, send } from "./net/connection";

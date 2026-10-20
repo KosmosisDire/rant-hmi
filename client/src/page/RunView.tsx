@@ -61,9 +61,11 @@ export function RunView(p: { active: boolean }) {
       class="run-view"
       ref={host}
       onContextMenu={(e) => {
-        // a picture saves to the device, the rest keeps the browser's own menu
+        // a long press never opens a menu, so it stays a press, and a mouse saves a picture
+        if ((e as PointerEvent).pointerType === "touch") return e.stopPropagation();
         const el = (e.target as HTMLElement).closest<HTMLElement>(".el[data-id]");
-        if (el && showsPicture(el)) openMenu(e, [{ label: "Save picture", icon: <Download size={13} />, run: () => savePicture(el, el.dataset.name ?? "picture") }]);
+        if (!el || !showsPicture(el)) return;
+        openMenu(e, [{ label: "Save picture", icon: <Download size={13} />, run: () => savePicture(el, el.dataset.name ?? "picture") }]);
       }}
     >
       <For each={pages()}>

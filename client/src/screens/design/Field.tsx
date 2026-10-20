@@ -81,7 +81,7 @@ export function Field(p: FieldProps) {
       class="field"
       classList={{ bound: !p.plain && !isConstant(p.value) && !(p.percent && isPercent(p.value)), inside: p.inside }}
       onContextMenu={(e) => {
-        // in the text the browser's own menu stays, for its cut, copy and paste
+        // in the text, the text's own menu opens instead
         if ((e.target as HTMLElement).closest("input, textarea")) return;
         openMenu(e, [
           { label: "Reset to default", icon: <RotateCcw size={13} />, disabled: p.value.trim() === "", run: () => write("") },

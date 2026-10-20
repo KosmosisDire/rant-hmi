@@ -284,6 +284,16 @@ export function Artboard(p: {
     setHeld({ ...held(), ...Object.fromEntries(d.ids.map((id) => [id, { box: d.boxes[id], n: d.n }])) });
   };
 
+  // a menu opening mid gesture, as a long press opens one, puts it back where it began
+  const cancel = () => {
+    const d = drag;
+    drag = null;
+    if (!d || d.kind === "pan") return;
+    if (d.kind === "box") setBox(null);
+    else if (d.kind === "shape") d.props && showProps(p.page.id, d.id, Object.fromEntries(Object.keys(d.props).map((k) => [k, d.base.props[k] ?? null])));
+    else d.ids.forEach((id) => release(id, d.n));
+  };
+
   const up = () => {
     const d = drag;
     drag = null;
@@ -432,6 +442,7 @@ export function Artboard(p: {
       onPointerUp={up}
       onPointerCancel={up}
       onContextMenu={(e) => {
+        cancel();
         const hit = (e.target as HTMLElement).closest(".el[data-id]")?.getAttribute("data-id");
         const [r, v] = [host.getBoundingClientRect(), view()];
         const at = { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };

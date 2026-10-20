@@ -21,13 +21,52 @@ export type MenuEntry = MenuItem | "-";
 
 const [shown, setShown] = createSignal<{ x: number; y: number; entries: MenuEntry[] } | null>(null);
 
-/** Opens a menu at the pointer for a right click, unless it has nothing to offer there. */
-export function openMenu(e: MouseEvent, entries: MenuEntry[]) {
+/** Opens a menu at the pointer for a right click, or at a spot for a button, unless it has
+ *  nothing to offer there. */
+export function openMenu(at: MouseEvent | { x: number; y: number }, entries: MenuEntry[]) {
   if (!entries.some((m) => m !== "-")) return;
-  e.preventDefault();
-  e.stopPropagation();
-  setShown({ x: e.clientX, y: e.clientY, entries });
+  if (at instanceof MouseEvent) {
+    at.preventDefault();
+    at.stopPropagation();
+    setShown({ x: at.clientX, y: at.clientY, entries });
+  } else {
+    setShown({ ...at, entries });
+  }
 }
+
+/** A text field's own menu, in place of the browser's: its cut, copy and paste. Paste needs a
+ *  page the browser lets read the clipboard, else Ctrl V does it. */
+function textMenu(field: HTMLInputElement | HTMLTextAreaElement): MenuEntry[] {
+  const picked = field.selectionStart !== field.selectionEnd;
+  const fixed = field.readOnly || field.disabled;
+  const act = (command: string) => () => {
+    field.focus();
+    document.execCommand(command);
+  };
+  return [
+    { label: "Cut", keys: "Ctrl X", disabled: !picked || fixed, run: act("cut") },
+    { label: "Copy", keys: "Ctrl C", disabled: !picked, run: act("copy") },
+    {
+      label: "Paste",
+      keys: "Ctrl V",
+      disabled: fixed || !window.isSecureContext,
+      run: () =>
+        void navigator.clipboard.readText().then((text) => {
+          field.focus();
+          document.execCommand("insertText", false, text);
+        }),
+    },
+    "-",
+    { label: "Select all", keys: "Ctrl A", run: () => (field.focus(), field.select()) },
+  ];
+}
+
+// a text field no other menu claims gets its own, last, after every element had its turn
+window.addEventListener("contextmenu", (e) => {
+  const field = (e.target as HTMLElement).closest?.("input, textarea");
+  if (shown() || !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) return;
+  openMenu(e, textMenu(field));
+});
 
 export const closeMenu = () => setShown(null);
 

@@ -2,6 +2,7 @@ import { createEffect, Show } from "solid-js";
 import { RunView } from "../page/RunView";
 import { stack, startStack } from "../state/stack";
 import { startPage, state } from "../state/store";
+import { MenuHost } from "../ui/Menu";
 import { Notices } from "../ui/Notices";
 
 /** The operator's screen at /run: the pages full screen, nothing of the editor. It opens on
@@ -21,6 +22,7 @@ export function Operator() {
         <div class="link-lost">The HMI is out of reach. Reconnecting.</div>
       </Show>
       <Notices />
+      <MenuHost />
     </div>
   );
 }
