@@ -13,6 +13,7 @@ import { KindIcon } from "../../ui/marks";
 import type { Picking } from "./DataScreen";
 import { ImportForm } from "./ImportForm";
 import { TokenView } from "./Theme";
+import { UsedBy } from "./UsedBy";
 import { ComputedView } from "./Computed";
 import { RecordView } from "./Records";
 import { VariableView } from "./Variables";
@@ -61,15 +62,15 @@ export function Inspector(p: Picking) {
 
   return (
     <Switch fallback={<div class="placeholder">Pick an entity in the mesh, or a mesh import.</div>}>
-      <Match when={imported()}>{(i) => <ImportView imp={i()} />}</Match>
+      <Match when={imported()}>{(i) => <ImportView imp={i()} onOpen={p.onOpen} />}</Match>
       {/* keyed, so another entity starts its import form over */}
       <Match when={onMesh()} keyed>
         {(e) => <EntityView entity={e} />}
       </Match>
       <Match when={token()}>{(t) => <TokenView token={t()} onRenamed={(name) => p.onSelect({ kind: "token", name })} />}</Match>
-      <Match when={variable()}>{(v) => <VariableView variable={v()} onRenamed={(name) => p.onSelect({ kind: "variable", name })} />}</Match>
-      <Match when={record()}>{(r) => <RecordView record={r()} onRenamed={(name) => p.onSelect({ kind: "record", name })} />}</Match>
-      <Match when={computed()}>{(c) => <ComputedView computed={c()} onRenamed={(name) => p.onSelect({ kind: "computed", name })} />}</Match>
+      <Match when={variable()}>{(v) => <VariableView variable={v()} onRenamed={(name) => p.onSelect({ kind: "variable", name })} onOpen={p.onOpen} />}</Match>
+      <Match when={record()}>{(r) => <RecordView record={r()} onRenamed={(name) => p.onSelect({ kind: "record", name })} onOpen={p.onOpen} />}</Match>
+      <Match when={computed()}>{(c) => <ComputedView computed={c()} onRenamed={(name) => p.onSelect({ kind: "computed", name })} onOpen={p.onOpen} />}</Match>
     </Switch>
   );
 }
@@ -118,7 +119,7 @@ export const canWrite = (imp: Import) => imp.kind !== "variable" || (entity(imp.
 
 export const unimport = (alias: string) => send({ type: "unimport", alias });
 
-function ImportView(p: { imp: Import }) {
+function ImportView(p: { imp: Import; onOpen: (page: string) => void }) {
   const e = () => entity(p.imp.entity);
   const v = () => live(p.imp.alias);
   const writable = () => p.imp.intent === "write" && p.imp.kind === "variable";
@@ -187,6 +188,7 @@ function ImportView(p: { imp: Import }) {
         <Show when={state.refused && state.refused.alias === p.imp.alias}>
           <div class="error-line">{state.refused?.text}</div>
         </Show>
+        <UsedBy name={p.imp.alias} onOpen={p.onOpen} />
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => unimport(p.imp.alias)}>

@@ -12,6 +12,7 @@ import { LocalIcon } from "../../ui/marks";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
+import { UsedBy } from "./UsedBy";
 
 const PER: [Per, string][] = [
   ["hmi", "Shared"],
@@ -110,7 +111,7 @@ export function VariablesTable(p: Picking) {
   );
 }
 
-export function VariableView(p: { variable: Variable; onRenamed: (name: string) => void }) {
+export function VariableView(p: { variable: Variable; onRenamed: (name: string) => void; onOpen: (page: string) => void }) {
   const now = () => live(p.variable.name);
   // a rename moves the selection in the same step, so this view never loses its variable
   const change = (to: Partial<Variable>) => {
@@ -161,6 +162,7 @@ export function VariableView(p: { variable: Variable; onRenamed: (name: string) 
             onCommit={(t) => send({ type: "set", alias: p.variable.name, path: "", value: literal(t)! })}
           />
         </div>
+        <UsedBy name={p.variable.name} onOpen={p.onOpen} />
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => setVariable(p.variable.name, null)}>

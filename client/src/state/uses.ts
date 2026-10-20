@@ -20,7 +20,7 @@ export interface Uses {
 }
 
 /** The code with strings and comments blanked, so names inside them are never taken. */
-function bare(code: string): string {
+export function bare(code: string): string {
   return paint(code)
     .map(([text, p]) => (p === "str" || p === "com" ? text.replace(/[^\n]/g, " ") : text))
     .join("");
@@ -34,6 +34,8 @@ function reading(name: string, names?: Suggestion[]): string | undefined {
   if (imp) return `${imp.kind}, ${imp.intent}`;
   const v = state.variables.find((x) => x.name === name);
   if (v) return v.per === "screen" ? "variable, per screen" : "variable, shared";
+  const c = state.computed.find((x) => x.name === name);
+  if (c) return c.unit ? `computed, ${c.unit}` : "computed";
   return state.records.some((r) => r.name === name) ? "record" : undefined;
 }
 

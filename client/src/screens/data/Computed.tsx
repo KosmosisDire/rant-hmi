@@ -11,6 +11,7 @@ import { Copy, Plus, Sigma, Trash } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
+import { UsedBy } from "./UsedBy";
 
 function setComputed(name: string, computed: Computed | null) {
   if (send({ type: "set_computed", name, computed })) putLocal("computed", name, computed);
@@ -97,7 +98,7 @@ export function ComputedTable(p: Picking) {
   );
 }
 
-export function ComputedView(p: { computed: Computed; onRenamed: (name: string) => void }) {
+export function ComputedView(p: { computed: Computed; onRenamed: (name: string) => void; onOpen: (page: string) => void }) {
   // a rename moves the selection in the same step, so this view never loses its value
   const change = (to: Partial<Computed>) => {
     const [name, next] = [p.computed.name, { ...p.computed, ...to }];
@@ -179,6 +180,7 @@ export function ComputedView(p: { computed: Computed; onRenamed: (name: string) 
             </Show>
           </span>
         </div>
+        <UsedBy name={p.computed.name} onOpen={p.onOpen} />
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => setComputed(p.computed.name, null)}>

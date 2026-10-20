@@ -12,6 +12,7 @@ import { ChartSpline, Copy, Plus, Trash } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
+import { UsedBy } from "./UsedBy";
 
 function setRecord(name: string, record: Record | null) {
   if (send({ type: "set_record", name, record })) putLocal("records", name, record);
@@ -99,7 +100,7 @@ export function RecordsTable(p: Picking) {
 
 const whole = (t: string) => /^\d+$/.test(t.trim());
 
-export function RecordView(p: { record: Record; onRenamed: (name: string) => void }) {
+export function RecordView(p: { record: Record; onRenamed: (name: string) => void; onOpen: (page: string) => void }) {
   // a rename moves the selection in the same step, so this view never loses its record
   const change = (to: Partial<Record>) => {
     const [name, next] = [p.record.name, { ...p.record, ...to }];
@@ -147,6 +148,7 @@ export function RecordView(p: { record: Record; onRenamed: (name: string) => voi
           <label>Latest</label>
           <Preview value={recent(p.record.name)} known={live(p.record.name).known} />
         </div>
+        <UsedBy name={p.record.name} onOpen={p.onOpen} />
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => setRecord(p.record.name, null)}>

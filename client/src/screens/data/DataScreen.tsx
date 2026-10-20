@@ -22,15 +22,18 @@ export type Selection =
 export interface Picking {
   selection: Selection;
   onSelect: (s: Selection) => void;
+  /** Opens a page in the Design tab. */
+  onOpen: (page: string) => void;
 }
 
-export function DataScreen() {
+export function DataScreen(p: { onOpen: (page: string) => void }) {
   const [selection, setSelection] = createSignal<Selection>(null);
   const picking: Picking = {
     get selection() {
       return selection();
     },
     onSelect: setSelection,
+    onOpen: (page) => p.onOpen(page),
   };
   return (
     <>
