@@ -10,6 +10,7 @@ import { DraftInput } from "../../ui/DraftInput";
 import { Copy, Plus, Sigma, Trash } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
+import { Field } from "../design/Field";
 import type { Picking } from "./DataScreen";
 import { UsedBy } from "./UsedBy";
 
@@ -125,10 +126,8 @@ export function ComputedView(p: { computed: Computed; onRenamed: (name: string) 
           <label>Name</label>
           <DraftInput value={p.computed.name} accept={(t) => /^[a-z][A-Za-z0-9_]*$/.test(t.trim())} onCommit={(name) => change({ name: name.trim() })} />
         </div>
-        <div class="field">
-          <label>Is</label>
-          <DraftInput value={p.computed.get} placeholder="Duty / 40 * 100" accept={(t) => t.trim() !== ""} onCommit={(get) => change({ get: get.trim() })} complete={(t, c) => complete(t, c, "expression")} />
-        </div>
+        {/* the field says why the getter gives nothing, as a property's does; one left empty keeps what it had */}
+        <Field label="Is" value={p.computed.get} placeholder="Duty / 40 * 100" onWrite={(get) => get !== null && change({ get: get.trim() })} />
         <div class="field">
           <label>Unit</label>
           <DraftInput value={p.computed.unit ?? ""} placeholder="%" onCommit={(t) => change({ unit: words(t) })} />

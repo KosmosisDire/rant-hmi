@@ -1,6 +1,7 @@
 // A designer makes a computed value from the Data screen: speed in percent, with a setter that
-// writes the speed back. It reads as Speed does, a write to it sets Speed, a getter that reads
-// itself is refused, and a setter that does not undo the getter gets a warning.
+// writes the speed back. It reads as Speed does, a write to it sets Speed, a getter that cannot
+// work says why, one that reads itself is refused, and a setter that does not undo the getter
+// gets a warning.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Data");
@@ -17,7 +18,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await side.locator(".tag", { hasText: /^computed$/ }).waitFor();
   await write("Name", "speedPercent");
   await eventually(percent, "the computed value named");
+  // a getter that cannot work says why under its field
+  await write("Is", "sqrt(Speed)");
+  await field("Is").locator(".field-note", { hasText: "sqrt names no mesh import" }).waitFor();
   await write("Is", "Speed * 100");
+  await eventually(async () => (await field("Is").locator(".field-note").count()) === 0, "the note to go once the getter works");
   await write("Unit", "%");
   await field("Writes").locator("select").selectOption("Speed");
   await eventually(() => percent()?.set?.target === "Speed", "its setter");
