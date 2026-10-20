@@ -17,12 +17,12 @@ const exe = process.platform === "win32" ? ".exe" : "";
 const BUILD = resolve(process.env.HMI_BUILD ?? join(ROOT, "target", "debug"));
 const CLIENT = resolve(process.env.HMI_CLIENT ?? join(ROOT, "client", "dist"));
 
-/** rant-transcoder, which makes the H264 a video plays, from the RANT folder this sits in.
- *  HMI_TRANSCODER names another. Without one the video scenarios fail and say so. */
+/** rant-transcoder, which makes the H264 a video plays, as its crate builds it in the RANT folder
+ *  this sits in. HMI_TRANSCODER names another. Without one the video scenarios fail and say so. */
 function transcoder() {
   if (process.env.HMI_TRANSCODER) return resolve(process.env.HMI_TRANSCODER);
   for (let d = ROOT; d !== dirname(d); d = dirname(d)) {
-    const path = join(d, "transcoder-rant", "bin", `rant-transcoder${exe}`);
+    const path = join(d, "transcoder-rant", "target", "release", `rant-transcoder${exe}`);
     if (existsSync(path)) return path;
   }
   return null;
