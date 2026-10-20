@@ -280,7 +280,7 @@ mod tests {
             .made
             .unwrap();
         let text = pages
-            .apply(Edit::AddElement { page: "overview".into(), parent: Some(frame.clone()), tag: Tag::Span, props: props(&[("text", "{Speed}")]) })
+            .apply(Edit::AddElement { page: "overview".into(), parent: Some(frame.clone()), tag: Tag::Span, props: props(&[("text", "Speed")]) })
             .unwrap()
             .made
             .unwrap();
@@ -293,7 +293,7 @@ mod tests {
         let again = Pages::open(&dir).unwrap();
         let e1 = &again.list[0].children[0];
         assert_eq!(e1.props, props(&[("x", "88")]));
-        assert_eq!(e1.children[0].props["text"], "{Speed}");
+        assert_eq!(e1.children[0].props["text"], "Speed");
         fs::remove_dir_all(&dir).unwrap();
     }
 

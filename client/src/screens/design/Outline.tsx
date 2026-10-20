@@ -11,7 +11,7 @@ import { find } from "./tree";
 /** What a new frame or text starts as: visible, on the grid, and plainly named. */
 const STARTS: Record<Tag, Record<string, string>> = {
   div: { name: "Frame", x: "44", y: "44", w: "176", h: "88", background: "#2a2f35", "border-radius": "8" },
-  span: { name: "Text", x: "44", y: "44", w: "176", h: "44", text: "Text", color: "#e4e6e8", "font-size": "18" },
+  span: { name: "Text", x: "44", y: "44", w: "176", h: "44", text: '"Text"', color: "#e4e6e8", "font-size": "18" },
 };
 
 /** The left sidebar: the pages, and the open page's elements as layers. */

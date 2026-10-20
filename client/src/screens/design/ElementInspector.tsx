@@ -3,15 +3,16 @@ import { send } from "../../net/connection";
 import { OWN } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
-import { isExpression, resolve } from "../../state/bind";
+import { isConstant, resolve } from "../../state/bind";
 import { DraftInput } from "../../ui/DraftInput";
 import { Square, Trash, Type } from "../../ui/icons";
 import { find, setProps } from "./tree";
 
-/** The CSS a field offers by name. Anything else lives in the free CSS box. */
+/** The CSS a field offers by name, with an example of what it takes. Anything else lives
+ *  in the free CSS box. */
 const LOOK: [string, string, string][] = [
-  ["Fill", "background", "none"],
-  ["Border", "border", "1px solid #3a4046"],
+  ["Fill", "background", "#2a2f35"],
+  ["Border", "border", '"1px solid #3a4046"'],
   ["Radius", "border-radius", "0"],
   ["Opacity", "opacity", "1"],
 ];
@@ -19,7 +20,7 @@ const TEXT_LOOK: [string, string, string][] = [
   ["Colour", "color", "#e4e6e8"],
   ["Size", "font-size", "16"],
   ["Weight", "font-weight", "400"],
-  ["Align", "text-align", "left"],
+  ["Align", "text-align", '"left"'],
 ];
 const NAMED = new Set([...LOOK, ...TEXT_LOOK].map(([, key]) => key));
 
@@ -56,7 +57,10 @@ function PageInspector(p: { page: Page }) {
             {p.page.width} x {p.page.height}
           </span>
         </div>
-        <div class="placeholder">Select an element to change it. Any value may be an expression in braces, such as {"{Speed.toFixed(1)}"}.</div>
+        <div class="placeholder">
+          Select an element to change it. Every value is an expression: text goes in quotes, like <code>"Running"</code>, and <code>Speed.toFixed(1)</code> shows a live
+          value.
+        </div>
       </div>
     </>
   );
@@ -95,7 +99,7 @@ function Properties(p: { page: string; element: Element }) {
       </div>
       <div class="pane-body pad">
         <div class="section">Element</div>
-        <Field {...p} key="name" label="Name" />
+        <Field {...p} key="name" label="Name" plain />
         <div class="section">Placement</div>
         <div class="placement">
           <For each={["x", "y", "w", "h"]}>{(k) => <Field {...p} key={k} label={k} />}</For>
@@ -108,7 +112,7 @@ function Properties(p: { page: string; element: Element }) {
         <div class="section">Look</div>
         <For each={LOOK}>{([label, key, hint]) => <Field {...p} key={key} label={label} placeholder={hint} />}</For>
         <div class="section">More CSS</div>
-        <DraftInput multiline class="editor css" value={other()} placeholder="box-shadow: 0 2px 8px #0008" onCommit={setOther} />
+        <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => send({ type: "edit", edit: { kind: "remove_element", page: p.page, id: p.element.id } })}>
@@ -120,21 +124,35 @@ function Properties(p: { page: string; element: Element }) {
   );
 }
 
-/** One property: a literal or a {expression}. Under an expression, what stops it showing. */
-function Field(p: { page: string; element: Element; key: string; label: string; placeholder?: string }) {
+/** One property, an expression unless `plain`. Under it, what stops it showing, and for
+ *  words that fail for want of quotes, a way to make them text. */
+function Field(p: { page: string; element: Element; key: string; label: string; placeholder?: string; plain?: boolean }) {
   const value = () => p.element.props[p.key] ?? "";
+  const write = (t: string) => setProps(p.page, p.element.id, { [p.key]: t.trim() === "" ? null : t });
   const status = createMemo(() => {
-    if (!isExpression(value())) return "";
+    if (p.plain) return undefined;
     const r = resolve(value());
-    if (r.ok) return "";
-    return r.unknown ? `${r.unknown} is unknown right now` : r.error;
+    if (r.ok) return undefined;
+    if (r.unknown) return { text: `${r.unknown} is unknown right now` };
+    return { text: r.error, words: !/["'`]/.test(value()) };
   });
   return (
-    <div class="field" classList={{ bound: isExpression(value()) }}>
+    <div class="field" classList={{ bound: !p.plain && !isConstant(value()) }}>
       <label>{p.label}</label>
-      <DraftInput value={value()} placeholder={p.placeholder} onCommit={(t) => setProps(p.page, p.element.id, { [p.key]: t.trim() === "" ? null : t })} />
+      <DraftInput value={value()} placeholder={p.placeholder} onCommit={write} />
       <Show when={status()}>
-        <span class="field-note">{status()}</span>
+        {(s) => (
+          <span class="field-note">
+            {s().text}
+            <Show when={s().words}>
+              <br />
+              Text goes in quotes.{" "}
+              <button class="field-fix" onClick={() => write(JSON.stringify(value().trim()))}>
+                Make it text
+              </button>
+            </Show>
+          </span>
+        )}
       </Show>
     </div>
   );

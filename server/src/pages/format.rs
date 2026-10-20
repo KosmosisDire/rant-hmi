@@ -1,12 +1,12 @@
 //! A page as an HTML like file. Elements are written as the HTML they render as, a frame a
 //! `div` and a text a `span`. `name`, `x`, `y`, `w` and `h` are attributes, a span's text is
-//! its body, every other property goes in `style`. A value in `{ }` is an expression, read
-//! raw, so `{a < b && c}` needs no escaping.
+//! its body, every other property goes in `style`. Every value but the name is an expression,
+//! kept raw, so `a < b && c` needs no escaping and text is in quotes.
 //!
 //! ```html
 //! <page name="Overview" size="1408x792">
 //!   <div id="e1" name="Speed card" x="44" y="44" w="264" h="132" style="background: #1e2125">
-//!     <span id="e2" x="22" y="22" w="220" h="44" style="font-size: 32px">{Speed.toFixed(2)}</span>
+//!     <span id="e2" x="22" y="22" w="220" h="44" style="font-size: 32">Speed.toFixed(2)</span>
 //!   </div>
 //! </page>
 //! ```
@@ -18,11 +18,6 @@ use super::{Element, Page, Tag};
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 5] = ["name", "x", "y", "w", "h"];
 const TEXT: &str = "text";
-
-pub fn is_expression(value: &str) -> bool {
-    let v = value.trim();
-    v.starts_with('{') && v.ends_with('}')
-}
 
 // ------------------------------------------------------------------------------ writing
 
@@ -54,10 +49,7 @@ fn element(out: &mut String, e: &Element, depth: usize) {
         out.push_str(&format!(" style={}", quote(&style.join("; "))));
     }
     match (e.tag, e.props.get(TEXT)) {
-        (Tag::Span, Some(text)) => {
-            let body = if is_expression(text) { text.clone() } else { escape(text) };
-            out.push_str(&format!(">{body}</span>\n"));
-        }
+        (Tag::Span, Some(text)) => out.push_str(&format!(">{text}</span>\n")),
         _ if e.children.is_empty() => out.push_str("/>\n"),
         _ => {
             out.push_str(">\n");
@@ -71,23 +63,16 @@ fn element(out: &mut String, e: &Element, depth: usize) {
 }
 
 /// Double quotes, or single ones when the value holds a double quote, so an expression
-/// with strings stays readable. Only a value holding both escapes.
+/// with strings stays readable. A value holding both, or text an escape would misread,
+/// is escaped.
 fn quote(v: &str) -> String {
-    if !v.contains('"') {
-        format!("\"{v}\"")
-    } else if !v.contains('\'') {
+    if v.contains("&quot;") || v.contains("&amp;") || (v.contains('"') && v.contains('\'')) {
+        format!("\"{}\"", v.replace('&', "&amp;").replace('"', "&quot;"))
+    } else if v.contains('"') {
         format!("'{v}'")
     } else {
-        format!("\"{}\"", v.replace('"', "&quot;"))
+        format!("\"{v}\"")
     }
-}
-
-fn escape(text: &str) -> String {
-    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-}
-
-fn unescape(text: &str) -> String {
-    text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 }
 
 // ------------------------------------------------------------------------------ reading
@@ -191,7 +176,7 @@ impl Reader<'_> {
         let q = self.rest().chars().next().filter(|c| *c == '"' || *c == '\'').ok_or_else(|| self.error("expected a quoted value"))?;
         self.at += 1;
         let end = self.rest().find(q).ok_or_else(|| self.error("a value never closes its quote"))?;
-        let v = self.rest()[..end].replace("&quot;", "\"");
+        let v = self.rest()[..end].replace("&quot;", "\"").replace("&amp;", "&");
         self.at += end + 1;
         Ok(v)
     }
@@ -245,30 +230,33 @@ impl Reader<'_> {
             match tag {
                 Tag::Div => children = self.children("div")?,
                 Tag::Span => {
-                    let text = self.body()?;
+                    let n = outside(self.rest(), "</span>").ok_or_else(|| self.error("<span> never closes"))?;
+                    let text = self.rest()[..n].trim().to_owned();
                     if !text.is_empty() {
                         props.insert(TEXT.to_owned(), text);
                     }
+                    self.at += n;
                     self.expect("</span>")?;
                 }
             }
         }
         Ok(Element { id, tag, props, children })
     }
+}
 
-    /// A span's text: one `{expression}` filling the whole body, read raw, else literal text
-    /// up to the closing tag, such as `{a} b`.
-    fn body(&mut self) -> Result<String, String> {
-        if let Some(n) = braced(self.rest()).filter(|n| self.rest()[*n..].starts_with("</span>")) {
-            let expr = self.rest()[..n].to_owned();
-            self.at += n;
-            return Ok(expr);
+/// Where `what` first starts in `s` outside JS strings and template literals.
+fn outside(s: &str, what: &str) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            q @ (b'"' | b'\'' | b'`') => i = string_end(b, i, q)?,
+            _ if s[i..].starts_with(what) => return Some(i),
+            _ => {}
         }
-        let n = self.rest().find('<').ok_or_else(|| self.error("<span> never closes"))?;
-        let text = unescape(&self.rest()[..n]);
-        self.at += n;
-        Ok(text)
+        i += 1;
     }
+    None
 }
 
 /// The length of the `{...}` at the start of `s`, counting nested braces and skipping JS
@@ -325,7 +313,7 @@ fn split_outside(s: &str, sep: char) -> Vec<String> {
                     i += n - 1;
                 }
             }
-            q @ (b'"' | b'\'') => i = string_end(b, i, q).unwrap_or(b.len()),
+            q @ (b'"' | b'\'' | b'`') => i = string_end(b, i, q).unwrap_or(b.len()),
             c if c as char == sep => {
                 parts.push(s[from..i].to_owned());
                 from = i + 1;
@@ -343,9 +331,9 @@ mod tests {
     use super::*;
 
     const PAGE: &str = r#"<page name="Overview" size="1408x792">
-  <div id="e1" name="Speed card" x="44" y="44" w="264" h="132" style="background: #1e2125; border-radius: 12px">
-    <span id="e2" name="Speed" x="22" y="22" w="220" h="44" style="color: {Speed > 1 && Running ? 'red' : '#e4e6e8'}; font-size: 32px">{Speed < 1 ? "slow" : `fast ${Speed}`}</span>
-    <span id="e3" x="22" y="88" w="220" h="22">Belt &lt;1&gt; &amp; rollers</span>
+  <div id="e1" name="Speed card" x="44" y="44" w="264" h="132" style="background: #1e2125; border-radius: 12">
+    <span id="e2" name="Speed" x="22" y="22" w="220" h="44" style="color: Speed > 1 && Running ? 'red' : #e4e6e8; font-size: 32">Speed < 1 ? "slow; </span>" : `fast ${Speed}`</span>
+    <span id="e3" x="22" y="88" w="220" h="22">"Belt <1> & rollers"</span>
   </div>
   <div id="e4" x="0" y="0" w="44" h="44"/>
 </page>
@@ -356,28 +344,22 @@ mod tests {
         let page = parse(PAGE, "overview").unwrap();
         assert_eq!(page.name, "Overview");
         let speed = &page.children[0].children[0];
-        assert_eq!(speed.props["text"], "{Speed < 1 ? \"slow\" : `fast ${Speed}`}");
-        assert_eq!(speed.props["color"], "{Speed > 1 && Running ? 'red' : '#e4e6e8'}");
-        assert_eq!(page.children[0].children[1].props["text"], "Belt <1> & rollers");
+        assert_eq!(speed.props["text"], "Speed < 1 ? \"slow; </span>\" : `fast ${Speed}`");
+        assert_eq!(speed.props["color"], "Speed > 1 && Running ? 'red' : #e4e6e8");
+        assert_eq!(page.children[0].children[1].props["text"], "\"Belt <1> & rollers\"");
         assert_eq!(write(&page), PAGE);
     }
 
     #[test]
-    fn a_value_with_double_quotes_is_written_in_single_ones() {
+    fn values_holding_quotes_or_entities_come_back_whole() {
         let mut page = parse(PAGE, "overview").unwrap();
-        page.children[1].props.insert("name".into(), "{Mode == \"Auto\" ? \"A\" : \"M\"}".into());
-        let text = write(&page);
-        assert!(text.contains("name='{Mode == \"Auto\" ? \"A\" : \"M\"}'"));
-        assert_eq!(parse(&text, "overview").unwrap(), page);
-    }
-
-    #[test]
-    fn text_that_only_starts_with_a_brace_stays_text() {
-        let mut page = parse(PAGE, "overview").unwrap();
-        page.children[0].children[1].props.insert("text".into(), "{a} < b".into());
-        let text = write(&page);
-        assert!(text.contains(">{a} &lt; b</span>"));
-        assert_eq!(parse(&text, "overview").unwrap(), page);
+        for v in ["Mode == \"Auto\" ? \"A\" : \"M\"", "a ? \"it's\" : 'b'", "\"&quot; &amp; &\""] {
+            page.children[1].props.insert("x".into(), v.into());
+            let text = write(&page);
+            assert_eq!(parse(&text, "overview").unwrap(), page, "{v} as {text}");
+        }
+        page.children[1].props.insert("x".into(), "Mode == \"Auto\"".into());
+        assert!(write(&page).contains("x='Mode == \"Auto\"'"));
     }
 
     #[test]
@@ -388,7 +370,7 @@ mod tests {
             "line 3: the id a is used twice"
         );
         assert_eq!(parse("<page>\n<div id=\"a\" colour=\"red\"/></page>", "a").unwrap_err(), "line 2: <div> takes no attribute colour");
-        assert!(parse("<page><span id=\"a\">text</page>", "a").is_err());
+        assert!(parse("<page><span id=\"a\">\"text\"</page>", "a").is_err());
     }
 
     #[test]

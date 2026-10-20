@@ -4,7 +4,7 @@ import { send } from "../../net/connection";
 import type { Box, Overrides } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
-import { isExpression, number } from "../../state/bind";
+import { isNumber, number } from "../../state/bind";
 
 /** The element and every frame around it, outermost first. */
 export function chain(elements: Element[], id: string): Element[] | undefined {
@@ -36,9 +36,9 @@ export function absolute(page: Page, id: string, overrides?: Overrides): Box | u
   return { x: own.x + offset.x, y: own.y + offset.y, w: own.w, h: own.h };
 }
 
-/** True when none of `keys` holds an expression, so a drag may write them. */
+/** True when each of `keys` is a plain number or unset, so a drag may write them. */
 export function literal(e: Element, keys: (keyof Box)[]): boolean {
-  return keys.every((k) => !isExpression(e.props[k]));
+  return keys.every((k) => e.props[k] === undefined || isNumber(e.props[k]));
 }
 
 export function setProps(page: string, id: string, props: Record<string, string | null>) {

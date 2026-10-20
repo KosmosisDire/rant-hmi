@@ -139,6 +139,19 @@
   word-break: break-word;
 }
 
+.field-fix {
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.field-fix:hover {
+  text-decoration: underline;
+}
+
 .placement {
   display: grid;
   grid-template-columns: 1fr 1fr;
