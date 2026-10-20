@@ -36,6 +36,8 @@ pub enum Inbound {
     /// `out` takes the screen's encoded messages.
     Open { session: u32, out: UnboundedSender<Bytes> },
     Message { session: u32, msg: ClientMsg },
+    /// The screen answered the socket's ping.
+    Heard { session: u32 },
     Close { session: u32 },
 }
 
@@ -209,6 +211,11 @@ impl App {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
                 s.heard = Instant::now();
                 self.handle(session, msg);
+            }
+            Inbound::Heard { session } => {
+                if let Some(s) = self.sessions.get_mut(&session) {
+                    s.heard = Instant::now();
+                }
             }
             Inbound::Close { session } => {
                 if self.sessions.contains_key(&session) {

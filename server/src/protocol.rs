@@ -76,7 +76,7 @@ pub enum Level {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum ClientMsg {
-    /// The heartbeat. A screen silent too long is lost.
+    /// Asks for a pong, to time the round trip.
     Ping { t: f64 },
     Import { import: Import },
     Unimport { alias: String },

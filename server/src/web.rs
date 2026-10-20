@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
@@ -13,6 +14,7 @@ use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::time::{MissedTickBehavior, interval};
 use axum::http::{HeaderValue, header};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeader;
@@ -20,6 +22,10 @@ use tracing::{error, warn};
 
 use crate::app::Inbound;
 use crate::protocol::ClientMsg;
+
+/// How often the socket pings its screen. The browser answers by itself, even in a hidden tab
+/// whose timers run slow, so a screen is lost only when its link is.
+const PING_EVERY: Duration = Duration::from_millis(100);
 
 #[derive(Clone)]
 struct Shared {
@@ -54,8 +60,17 @@ async fn screen(socket: WebSocket, shared: Shared) {
     }
     let (mut sink, mut stream) = socket.split();
     let writer = tokio::spawn(async move {
-        while let Some(frame) = outgoing.recv().await {
-            if sink.send(Message::Binary(frame)).await.is_err() {
+        let mut ping = interval(PING_EVERY);
+        ping.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            let frame = tokio::select! {
+                frame = outgoing.recv() => match frame {
+                    Some(frame) => Message::Binary(frame),
+                    None => break,
+                },
+                _ = ping.tick() => Message::Ping(Bytes::new()),
+            };
+            if sink.send(frame).await.is_err() {
                 break;
             }
         }
@@ -69,6 +84,9 @@ async fn screen(socket: WebSocket, shared: Shared) {
                 }
                 Err(e) => warn!("screen {session} sent what this backend cannot read: {e}"),
             },
+            Message::Pong(_) => {
+                let _ = shared.inbound.send(Inbound::Heard { session });
+            }
             Message::Close(_) => break,
             _ => {}
         }
