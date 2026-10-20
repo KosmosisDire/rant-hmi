@@ -6,7 +6,7 @@ import { props } from "../designer.mjs";
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Expressions");
   await d.openPage("Expressions");
-  await page.locator('button[title="Add a text"]').click();
+  await d.addRow("Text");
   const id = await eventually(() => hmi.page(pageId)?.children[0]?.id, "the text");
   const at = () => props(hmi, pageId, id);
   const shown = () => d.el(id).textContent();

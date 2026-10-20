@@ -193,12 +193,6 @@
   padding: 4px 16px 8px;
 }
 
-/* The components a press of the component button can place, however many. */
-.popover.add-menu {
-  max-height: 60vh;
-  overflow-y: auto;
-}
-
 .layer-icon {
   flex: 0 0 auto;
   display: inline-flex;

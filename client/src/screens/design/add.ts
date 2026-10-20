@@ -40,9 +40,6 @@ export const KINDS: [keyof typeof STARTS, string][] = [
   ["svg", "Drawing"],
 ];
 
-/** What a button or a row that adds one of these says. */
-export const adding = (word: string) => `Add ${/^[aeiou]/i.test(word) ? "an" : "a"} ${word.toLowerCase()}`;
-
 /** Adds an element to `parent`, the page for null: at `at` in it, on the grid, else at the
  *  first step from its corner where nothing sits, so it never hides behind an old one. */
 export function addElement(page: Page, parent: string | null, tag: Tag, props: Record<string, string>, component: string | null = null, at?: { x: number; y: number }) {

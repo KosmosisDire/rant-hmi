@@ -14,18 +14,17 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => hmi.state.pages.some((p) => p.name === "Lamp" && p.interface), "the component named Lamp");
   const lamp = hmi.state.pages.find((p) => p.name === "Lamp");
 
-  await side("left").locator('button[title="Add a frame"]').click();
+  await d.addRow("Frame");
   await eventually(() => hmi.page(lamp.id).children.length === 1, "a frame in the component");
   await side("right").locator(".tag", { hasText: "frame" }).waitFor();
   await page.keyboard.press("Escape");
-  await side("left").locator('button[title="Add a text"]').click();
+  await d.addRow("Text");
   await eventually(() => hmi.page(lamp.id).children.length === 2, "a text in the component");
 
   const lamps = await hmi.addPage("Lamps");
   await d.openPage("Lamps");
   const place = async () => {
-    await side("left").locator('button[title="Place a component"]').click();
-    await page.locator(".popover.add-menu .menu-item", { hasText: "Lamp" }).click();
+    await d.addRow("Place a component", "Lamp");
   };
   await place();
   await eventually(() => hmi.page(lamps).children.length === 1, "the first instance");

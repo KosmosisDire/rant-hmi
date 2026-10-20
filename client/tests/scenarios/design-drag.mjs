@@ -5,7 +5,7 @@ import { props } from "../designer.mjs";
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Drag");
   await d.openPage("Drag");
-  await page.locator('button[title="Add a frame"]').click();
+  await d.addRow("Frame");
   const id = await eventually(() => hmi.page(pageId)?.children[0]?.id, "the frame");
   const at = () => props(hmi, pageId, id);
 

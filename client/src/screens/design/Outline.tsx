@@ -7,17 +7,15 @@ import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { Component, CopyPlus, File, Plus, Star, Trash } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
-import { Popover } from "../../ui/Popover";
-import { adding, addElement, KINDS, STARTS } from "./add";
+import { addElement } from "./add";
 import type { Pick } from "./DesignScreen";
-import { elementMenu } from "./menus";
+import { addMenu, elementMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
 import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
 
 /** The left sidebar: the pages, and the open page's elements as layers. */
 export function Outline(p: { page: Page | undefined; selected: string[]; onPick: Pick; onEdit: (id: string, key: string) => void }) {
-  const [picking, setPicking] = createSignal(false);
-  let placer!: HTMLButtonElement;
+  let adder!: HTMLButtonElement;
   // into the frame picked last, at its top left, else onto the page
   const place = (tag: Tag, props: Record<string, string>, component: string | null = null) => {
     const page = p.page;
@@ -26,10 +24,10 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     const holder = last ? find(page.children, last) : undefined;
     addElement(page, holder && holds(holder.tag, tag) ? holder.id : null, tag, props, component);
   };
-  const add = (tag: keyof typeof STARTS) => place(tag, STARTS[tag]);
-  const addInstance = (c: Page) => {
-    setPicking(false);
-    place("use", { name: c.name, w: String(c.width), h: String(c.height) }, c.name);
+  const openAdd = () => {
+    const page = p.page;
+    const at = adder.getBoundingClientRect();
+    if (page) openMenu({ x: at.left, y: at.bottom + 4 }, addMenu(page, place));
   };
   const pages = () => state.pages.filter((pg) => pg.interface === null);
   const components = () => state.pages.filter((pg) => pg.interface !== null);
@@ -109,31 +107,10 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
       </div>
       <div class="pane-head layers-head">
         <span class="head-title">Layers</span>
-        <For each={KINDS}>
-          {([tag, word]) => (
-            <button class="icon-btn" title={adding(word)} onClick={() => add(tag)}>
-              <TagIcon tag={tag} size={14} />
-            </button>
-          )}
-        </For>
-        <button ref={placer} class="icon-btn" classList={{ on: picking() }} title="Place a component" onClick={() => setPicking(!picking())}>
-          <Component size={14} />
+        <button ref={adder} class="icon-btn" title="Add an element" onClick={openAdd}>
+          <Plus size={14} />
         </button>
       </div>
-      <Show when={picking()}>
-        <Popover anchor={placer} onClose={() => setPicking(false)} class="choice-list add-menu">
-          <For each={components().filter((c) => c.id !== p.page?.id)} fallback={<div class="field-hint">Add a component first, under Components.</div>}>
-            {(c) => (
-              <button class="menu-item" onClick={() => addInstance(c)}>
-                <span class="kind kind-local">
-                  <Component size={13} />
-                </span>
-                <span>{c.name}</span>
-              </button>
-            )}
-          </For>
-        </Popover>
-      </Show>
       <Show when={p.page && p.page.children.length > 0} fallback={<div class="pane-body placeholder">Add a frame or a text.</div>}>
         <LayerList page={p.page!} selected={p.selected} onPick={p.onPick} onEdit={p.onEdit} />
       </Show>
@@ -217,7 +194,13 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
         spot={spot()}
         onPick={p.onPick}
         onEdit={p.onEdit}
-        onMenu={(e, id) => elementMenu(e, p.page, p.selected, p.onPick, id)}
+        onMenu={(e, id) => {
+          // a long press opens the menu, so it moves no row
+          press = null;
+          setDragging(null);
+          setSpot(null);
+          elementMenu(e, p.page, p.selected, p.onPick, id);
+        }}
       />
     </div>
   );

@@ -5,7 +5,7 @@ import { SHAPES } from "../../page/PageView";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { state } from "../../state/store";
-import { type MenuEntry, openMenu } from "../../ui/Menu";
+import { type MenuEntry, type MenuItem, openMenu } from "../../ui/Menu";
 import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Download, Plus, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash } from "../../ui/icons";
 import { savePicture, showsPicture } from "../../ui/Picture";
 import { addElement, KINDS, STARTS } from "./add";
@@ -19,19 +19,28 @@ import { absolute, find, parentOf, remove, restack, tops } from "./tree";
 /** A spot on the page, as the canvas was clicked. */
 type Spot = { x: number; y: number };
 
-/** Rows that add an element or place a component, each handed to `put`. */
-function adds(page: Page, put: (tag: Tag, props: Record<string, string>, component?: string) => void, inside = ""): MenuEntry[] {
+/** Where an added element goes, as each menu says. */
+type Put = (tag: Tag, props: Record<string, string>, component?: string) => void;
+
+/** A row for each kind a person adds. */
+const kindRows = (put: Put): MenuItem[] => KINDS.map(([tag, word]) => ({ label: word, icon: <TagIcon tag={tag} size={13} />, run: () => put(tag, STARTS[tag]) }));
+
+/** A row whose submenu places each component but the one open. */
+function placeRow(page: Page, put: Put, label: string): MenuItem {
   const components = state.pages.filter((pg) => pg.interface !== null && pg.id !== page.id);
-  return [
-    { label: `Add${inside}`, icon: <Plus size={13} />, items: KINDS.map(([tag, word]) => ({ label: word, icon: <TagIcon tag={tag} size={13} />, run: () => put(tag, STARTS[tag]) })) },
-    {
-      label: `Place a component${inside}`,
-      icon: <Component size={13} />,
-      disabled: components.length === 0,
-      items: components.length === 0 ? undefined : components.map((c) => ({ label: c.name, icon: <Component size={13} />, run: () => put("use", { name: c.name, w: String(c.width), h: String(c.height) }, c.name) })),
-    },
-  ];
+  return {
+    label,
+    icon: <Component size={13} />,
+    disabled: components.length === 0,
+    items: components.length === 0 ? undefined : components.map((c) => ({ label: c.name, icon: <Component size={13} />, run: () => put("use", { name: c.name, w: String(c.width), h: String(c.height) }, c.name) })),
+  };
 }
+
+/** What the layers pane's + offers: each kind, then a component to place. */
+export const addMenu = (page: Page, put: Put): MenuEntry[] => [...kindRows(put), "-", placeRow(page, put, "Place a component")];
+
+/** The same as submenus of a right click's menu. */
+const adds = (page: Page, put: Put, inside = ""): MenuEntry[] => [{ label: `Add${inside}`, icon: <Plus size={13} />, items: kindRows(put) }, placeRow(page, put, `Place a component${inside}`)];
 
 /** The browser copies only in a copy event, which a menu row can ask for in its click. */
 const copySelection = () => document.execCommand("copy");

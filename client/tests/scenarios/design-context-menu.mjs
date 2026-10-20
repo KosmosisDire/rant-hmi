@@ -55,7 +55,20 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(inner, "a frame inside the box");
   check(Number(inner().props.x) === 121 && Number(inner().props.y) === 55, `the frame sits at ${inner().props.x}, ${inner().props.y} in the box, not where the menu opened`);
 
+  // the layers tree adds into the frame its row is
+  const row = page.locator(`.screen:not([hidden]) .sidebar.left .list-row[data-id="${box}"]`);
+  await row.click({ button: "right" });
+  await sub("Add inside", "Text");
+  const child = () => hmi.page(pageId).children.find((e) => e.id === box).children.find((c) => c.tag === "span" && c.props.name === "Text");
+  await eventually(child, "a text inside the box");
+  // gone again, so it covers none of the box the steps below right click
+  const childId = child().id;
+  await d.menu(page.locator(`.screen:not([hidden]) .sidebar.left .list-row[data-id="${childId}"]`), "Delete");
+  await eventually(async () => (await d.el(childId).count()) === 0, "the text inside to go");
+
   await hmi.addComponent("Beacon");
+  // the menu offers what this screen knows of, so it must have heard of it
+  await d.pageRow("Beacon").waitFor();
   await page.mouse.click(text.x, text.y, { button: "right" });
   await sub("Place a component", "Beacon");
   await eventually(() => top().some((e) => e.tag === "use" && e.component === "Beacon"), "a Beacon on the page");

@@ -6,7 +6,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   hmi.send({ type: "set_variable", name: "axis", variable: { name: "axis", start: -1, per: "hmi" } });
   const pageId = await hmi.addPage("Axes");
   await d.openPage("Axes");
-  await page.locator('.screen:not([hidden]) button[title="Add a frame"]').click();
+  await d.addRow("Frame");
   await eventually(() => hmi.page(pageId).children.length === 1, "a frame");
   const id = hmi.page(pageId).children[0].id;
   const props = () => hmi.page(pageId).children[0].props;

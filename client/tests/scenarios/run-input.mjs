@@ -4,7 +4,7 @@
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Entry");
   await d.openPage("Entry");
-  await page.locator('.screen:not([hidden]) .sidebar.left button[title="Add an input"]').click();
+  await d.addRow("Input");
   await eventually(() => hmi.page(pageId).children.length === 1, "an input");
   const id = hmi.page(pageId).children[0].id;
   await d.setField("Value", "Speed");

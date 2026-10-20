@@ -5,7 +5,7 @@
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Dial");
   await d.openPage("Dial");
-  await page.locator('.screen:not([hidden]) button[title="Add a drawing"]').click();
+  await d.addRow("Drawing");
   await eventually(() => hmi.page(pageId).children.length === 1, "a drawing");
   const drawing = () => hmi.page(pageId).children[0];
   check(drawing().tag === "svg", `a drawing was added as ${drawing().tag}`);

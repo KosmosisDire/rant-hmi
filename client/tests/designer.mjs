@@ -149,12 +149,21 @@ export function designer(page) {
     /** Adds a frame, text, input, image, video or drawing from the layers bar, into the frame selected. Its
      *  fields are set from `fields`. Gives the new element's id. */
     async add(kind, fields = {}) {
-      const titles = { frame: "Add a frame", text: "Add a text", input: "Add an input", image: "Add an image", video: "Add a video", drawing: "Add a drawing" };
       const before = await selected();
-      await left().locator(`button[title="${titles[kind]}"]`).click();
+      await d.addRow(kind[0].toUpperCase() + kind.slice(1));
       const id = await made(before, `a new ${kind}`);
       await d.set(fields);
       return id;
+    },
+
+    /** Picks a row of the layers pane's + menu, and one of its submenu when `then` names it. */
+    async addRow(row, then) {
+      await left().locator('button[title="Add an element"]').click();
+      const item = (menu, words) => menu.locator(".menu-item", { has: page.locator(".menu-label", { hasText: new RegExp(`^${words}$`) }) });
+      const menus = page.locator(".popover.menu");
+      if (!then) return item(menus.first(), row).click();
+      await item(menus.first(), row).hover();
+      await item(menus.nth(1), then).click();
     },
 
     /** Adds a shape from the inspector of a drawing, a group or a shape. */
@@ -170,8 +179,7 @@ export function designer(page) {
     /** Places an instance of a component, from the layers bar. */
     async place(component, fields = {}) {
       const before = await selected();
-      await left().locator('button[title="Place a component"]').click();
-      await page.locator(".popover.add-menu .menu-item", { has: page.getByText(component, { exact: true }) }).click();
+      await d.addRow("Place a component", component);
       const id = await made(before, `an instance of ${component}`);
       await d.set(fields);
       return id;
