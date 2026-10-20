@@ -50,12 +50,8 @@ const API: Record<Place, Suggestion[]> = {
     { label: "sleep", insert: "await sleep(", icon: "api", type: "wait ms" },
     { label: "open", insert: "open(", icon: "api", type: "open a page" },
     { label: "close", insert: "close()", icon: "api", type: "close the top page" },
-    { label: "p", insert: "p", icon: "api", type: "what the event brought" },
   ],
-  component: [
-    { label: "emit", insert: "emit(", icon: "api", type: "send an event out" },
-    { label: "p", insert: "p", icon: "api", type: "what the event brought" },
-  ],
+  component: [{ label: "emit", insert: "emit(", icon: "api", type: "send an event out" }],
 };
 
 /** What each of the math library's names does, in a few words. */
@@ -140,9 +136,7 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   if (/^\d/.test(word)) return null;
   const items =
     before[from - 1] === "."
-      ? names
-        ? given(names, chain(before.slice(0, from - 1)))
-        : members(chain(before.slice(0, from - 1)), place)
+      ? given(chain(before.slice(0, from - 1)), place, names, also)
       : [...(names ?? top(place)), ...(also ?? []), ...(place === "handler" ? [] : tokens()), ...API[place], ...MATH];
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
@@ -172,9 +166,12 @@ export function componentNames(c: Page): Suggestion[] {
   ];
 }
 
-/** After a dot on one of the given names, what that name offers. */
-function given(names: Suggestion[], path: string[]): Suggestion[] {
-  return path.length === 1 ? (names.find((n) => n.label === path[0])?.members ?? []) : [];
+/** After a dot, what the name before it offers: one given its members, else an import's or
+ *  variable's fields where code reads those. */
+function given(path: string[], place: Place, names?: Suggestion[], also?: Suggestion[]): Suggestion[] {
+  const own = [...(names ?? []), ...(also ?? [])].find((n) => n.label === path[0]);
+  if (own || names) return path.length === 1 ? (own?.members ?? []) : [];
+  return members(path, place);
 }
 
 function top(place: Place): Suggestion[] {

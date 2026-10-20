@@ -15,6 +15,8 @@ const open: Open[] = [];
 
 function pressed(e: PointerEvent) {
   const target = e.target as Node;
+  // a field's completion list floats outside, but belongs to the field
+  if ((target as HTMLElement).closest?.(".suggest")) return;
   // a press on what opened one leaves it to that control, which toggles it
   let at = open.length - 1;
   while (at >= 0 && !open[at].el.contains(target) && !open[at].anchor?.contains(target)) at--;
@@ -23,8 +25,8 @@ function pressed(e: PointerEvent) {
 
 function key(e: KeyboardEvent) {
   if (e.key !== "Escape" || open.length === 0) return;
-  // a field's own completion list closes first
-  if ((e.target as HTMLElement).closest?.(".draft")?.querySelector(".suggest")) return;
+  // a field's own completion list closes first, and is open only while its field is focused
+  if (document.querySelector(".suggest")) return;
   e.preventDefault();
   e.stopPropagation();
   open.at(-1)!.close();

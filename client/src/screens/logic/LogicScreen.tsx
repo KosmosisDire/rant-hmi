@@ -9,6 +9,7 @@ import type { Page } from "../../protocol/Page";
 import type { Rule } from "../../protocol/Rule";
 import type { When } from "../../protocol/When";
 import { complete, componentNames, REPEAT } from "../../state/complete";
+import { brings, flat, offered, ruleBrings } from "../../state/events";
 import { putLocal, state } from "../../state/store";
 import { uses } from "../../state/uses";
 import { currentPage } from "../../state/view";
@@ -18,7 +19,7 @@ import { painted } from "../../ui/highlight";
 import { Activity, CopyPlus, Monitor, MonitorOff, PenTool, Plus, Power, Search, Timer, Trash, X, Zap } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
 import { setHandler } from "../design/tree";
-import { EventCard } from "./EventCard";
+import { EventCard, EventIcon } from "./EventCard";
 
 /** Each kind of trigger, as the picker names it, and what it starts from. */
 const KINDS: [When["kind"], string, When][] = [
@@ -75,10 +76,6 @@ const ms = (t: string) => /^\d+$/.test(t.trim());
 /** Sets a rule, here at once too unless it is new. */
 function setRule(id: string, rule: Rule | null) {
   if (send({ type: "edit", edit: { kind: "set_rule", id, rule } }) && id) putLocal("rules", id, rule && { ...rule, id });
-}
-
-function flat(elements: Element[]): Element[] {
-  return elements.flatMap((e) => [e, ...flat(e.children)]);
 }
 
 /** True when the element `id`, or one holding it, repeats. */
@@ -212,7 +209,7 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
                       onClick={() => setChosen(onKey(d().pg, e, event))}
                       onContextMenu={(ev) => handlerMenu(ev, d().pg, e, event)}
                     >
-                      <Zap size={14} />
+                      <EventIcon from={offered(e).find((o) => o.event === event)?.from} size={14} />
                       <span class="list-label">{e.props.name ?? e.id}</span>
                       <span class="list-trail">{event}</span>
                     </button>
@@ -242,6 +239,8 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
                 <div class="detail-body handler-wrap">
                   <EventCard
                     name={h().h.event}
+                    icon={<EventIcon from={offered(h().e).find((o) => o.event === h().h.event)?.from} />}
+                    brings={brings(h().e, h().h.event)}
                     code={h().h.code}
                     onCode={(code) => setHandler(h().pg.id, h().e.id, h().h.event, code)}
                     onRemove={() => setHandler(h().pg.id, h().e.id, h().h.event, null)}
@@ -312,6 +311,7 @@ function RuleDetail(p: { rule: Rule }) {
           onRemove={() => setRule(p.rule.id, null)}
           removeTitle={`Remove ${p.rule.name}`}
           place="handler"
+          brings={ruleBrings(p.rule.when)}
           placeholder='notify("The line runs too fast");'
         >
           <div class="event-when">

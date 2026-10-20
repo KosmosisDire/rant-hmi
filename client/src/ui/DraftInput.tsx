@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { Completion, Suggestion } from "../state/complete";
 import { painted } from "./highlight";
-import { Suggestions } from "./Suggestions";
+import { type Spot, Suggestions } from "./Suggestions";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
 
@@ -75,7 +75,6 @@ export function DraftInput(p: {
       e.preventDefault();
       const n = o.items.length;
       setChosen((c) => (e.key === "ArrowDown" ? (c + 1) % n : c <= 0 ? n - 1 : c - 1));
-      queueMicrotask(() => field.parentElement?.querySelector(".suggest-row.chosen")?.scrollIntoView({ block: "nearest" }));
       return;
     }
     if (o && chosen() >= 0 && (e.key === "Enter" || e.key === "Tab")) {
@@ -142,6 +141,25 @@ export function DraftInput(p: {
     watch.observe(field);
     onCleanup(() => watch.disconnect());
   });
+  // A code box's list opens under the line typed in, from the word's start. The field's letters
+  // are its font's, so the line's text before the word says how far in that is.
+  let ruler: CanvasRenderingContext2D | null = null;
+  const spot = (from: number): Spot => {
+    const r = field.getBoundingClientRect();
+    if (!p.multiline) return { left: r.left, top: r.top, bottom: r.bottom, width: r.width };
+    const css = getComputedStyle(field);
+    const lines = field.value.slice(0, from).split("\n");
+    ruler ??= document.createElement("canvas").getContext("2d");
+    if (ruler) ruler.font = `${css.fontStyle} ${css.fontWeight} ${css.fontSize} ${css.fontFamily}`;
+    const tab = " ".repeat(Number(css.tabSize) || 8);
+    const x = ruler?.measureText(lines.at(-1)!.replaceAll("\t", tab)).width ?? 0;
+    const line = parseFloat(css.lineHeight) || parseFloat(css.fontSize) * 1.2;
+    const top = r.top + parseFloat(css.borderTopWidth) + parseFloat(css.paddingTop) + (lines.length - 1) * line - field.scrollTop;
+    const left = r.left + parseFloat(css.borderLeftWidth) + parseFloat(css.paddingLeft) + x - field.scrollLeft;
+    // the list's rows start their names past an icon, so it opens that far to the left
+    return { left: left - 29, top, bottom: top + line, width: r.width };
+  };
+
   // a last empty line still takes its height, as it does in the field
   const shown = () => {
     const text = draft() ?? p.value;
@@ -183,7 +201,7 @@ export function DraftInput(p: {
           </pre>
         </Show>
         <pre class="hl" classList={{ wrap: p.multiline && !p.code }} ref={colours} aria-hidden="true" innerHTML={shown()} />
-        <Show when={offer()}>{(o) => <Suggestions items={o().items} chosen={chosen()} onTake={take} />}</Show>
+        <Show when={offer()}>{(o) => <Suggestions items={o().items} chosen={chosen()} onTake={take} at={() => spot(o().from)} />}</Show>
       </span>
     </Show>
   );

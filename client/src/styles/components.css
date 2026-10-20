@@ -442,12 +442,10 @@
   color: var(--blue);
 }
 
+/* Above any popover, since a field inside one opens it too. */
 .suggest {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% + 3px);
-  z-index: 40;
+  position: fixed;
+  z-index: 70;
   max-height: 300px;
   overflow-y: auto;
   padding: 4px;
@@ -467,7 +465,7 @@
   cursor: pointer;
 }
 
-.suggest-row:hover {
+:root:not([data-pointer="touch"]) .suggest-row:hover {
   background: var(--panel3);
 }
 
@@ -833,7 +831,8 @@ table.grid td.name > span {
   cursor: pointer;
 }
 
-.menu-item:hover {
+/* under a mouse only, since a finger leaves the last spot it touched hovered */
+:root:not([data-pointer="touch"]) .menu-item:hover {
   background: var(--panel3);
 }
 
@@ -844,6 +843,25 @@ table.grid td.name > span {
 
 .popover.choice-list {
   min-width: 140px;
+}
+
+/* A group's name among the choices, as the add event list sets a component's own apart. */
+.menu-head {
+  padding: 7px 8px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* A few words on a choice, at its right. */
+.menu-trail {
+  margin-left: auto;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
 }
 
 /* The right click menu: each row an icon, its words and the keys that do it too. */

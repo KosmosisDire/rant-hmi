@@ -25,5 +25,5 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => handlers().length === 2 && handlers()[1].code.includes("Speed"), "undo to bring it back");
   await eventually(async () => (await page.locator(".screen:not([hidden]) .sidebar.right .event").count()) === 2, "the inspector to show both handlers");
   await page.locator(".screen:not([hidden]) .sidebar.right .ghost").click();
-  check((await page.locator(".popover .menu-item").allTextContents()).join() === "release,hold,drag,outside", "the menu offers events already handled");
+  check((await page.locator(".popover .menu-item .mono").allTextContents()).join() === "release,hold,drag,outside", "the menu offers events already handled");
 }

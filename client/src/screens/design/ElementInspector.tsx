@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, Show, useContext } from "solid-js";
 import { produce } from "solid-js/store";
 import { send } from "../../net/connection";
-import { OWN, POINTER, SHAPES } from "../../page/PageView";
+import { OWN, SHAPES } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Interface } from "../../protocol/Interface";
@@ -10,11 +10,12 @@ import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import { docScope, pageScope } from "../../state/bind";
 import { complete, componentNames, REPEAT } from "../../state/complete";
+import { brings, offered } from "../../state/events";
 import { component, page as pageOf, setState, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
 import { Popover } from "../../ui/Popover";
-import { EventCard } from "../logic/EventCard";
+import { EventCard, EventIcon } from "../logic/EventCard";
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -27,7 +28,6 @@ import {
   Plus,
   Trash,
   X,
-  Zap,
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, kindOf, RADII, RadiusField, type Where, WhereContext } from "./Field";
@@ -388,13 +388,16 @@ function Events(p: { page: string; element: Element }) {
   const [adding, setAdding] = createSignal(false);
   let ghost!: HTMLButtonElement;
   const write = (event: string, code: string | null, after?: string) => setHandler(p.page, p.element.id, event, code, after);
-  // what this element hears: an input what is entered, others the pointer's events, and an
-  // instance its component's own
-  const offered = () =>
-    p.element.tag === "input" ? ["change"] : [...POINTER, ...(p.element.tag === "use" ? (component(p.element.component ?? "")?.interface?.events ?? []) : [])];
+  const heard = () => offered(p.element);
   // a handler for an event no longer offered still shows, so none hides
-  const events = () => [...new Set([...offered(), ...p.element.handlers.map((h) => h.event)])];
-  const unused = () => offered().filter((e) => !p.element.handlers.some((h) => h.event === e));
+  const events = () => [...new Set([...heard().map((o) => o.event), ...p.element.handlers.map((h) => h.event)])];
+  const unused = () => heard().filter((o) => !p.element.handlers.some((h) => h.event === o.event));
+  // the component's own events stand apart from the pointer's, under its name
+  const groups = () => {
+    const own = unused().filter((o) => o.from === "component");
+    const rest = unused().filter((o) => o.from !== "component");
+    return own.length && rest.length ? [{ head: p.element.component, list: own }, { head: "Pointer", list: rest }] : [{ head: undefined, list: unused() }];
+  };
   return (
     <>
       <div class="section">Events</div>
@@ -405,6 +408,7 @@ function Events(p: { page: string; element: Element }) {
             {(h) => (
               <EventCard
                 name={event}
+                icon={<EventIcon from={heard().find((o) => o.event === event)?.from} />}
                 code={h().code}
                 onCode={(code) => write(event, code)}
                 onRemove={() => write(event, null)}
@@ -414,6 +418,7 @@ function Events(p: { page: string; element: Element }) {
                 place={where().place}
                 names={where().names}
                 also={where().also}
+                brings={brings(p.element, event)}
                 placeholder={where().place === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
               />
             )}
@@ -424,23 +429,33 @@ function Events(p: { page: string; element: Element }) {
         <button ref={ghost} class="ghost" classList={{ on: adding() }} onClick={() => setAdding(!adding())}>
           <Plus size={13} />
           Add event
-          <span class="ghost-trail">{unused().join(", ")}</span>
+          <span class="ghost-trail">{unused().map((o) => o.event).join(", ")}</span>
         </button>
       </Show>
       <Show when={adding() && unused().length > 0}>
-        <Popover anchor={ghost} onClose={() => setAdding(false)} class="choice-list">
-          <For each={unused()}>
-            {(e) => (
-              <button
-                class="menu-item"
-                onClick={() => {
-                  setAdding(false);
-                  write(e, "");
-                }}
-              >
-                <Zap size={13} />
-                <span class="mono">{e}</span>
-              </button>
+        <Popover anchor={ghost} onClose={() => setAdding(false)} class="choice-list events-list">
+          <For each={groups()}>
+            {(g) => (
+              <>
+                <Show when={g.head}>
+                  <div class="menu-head">{g.head}</div>
+                </Show>
+                <For each={g.list}>
+                  {(o) => (
+                    <button
+                      class="menu-item"
+                      onClick={() => {
+                        setAdding(false);
+                        write(o.event, "");
+                      }}
+                    >
+                      <EventIcon from={o.from} />
+                      <span class="mono">{o.event}</span>
+                      <span class="menu-trail">{o.words}</span>
+                    </button>
+                  )}
+                </For>
+              </>
             )}
           </For>
         </Popover>

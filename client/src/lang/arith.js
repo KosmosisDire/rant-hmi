@@ -14,7 +14,7 @@ const METHODS = new Set(METHOD_NAMES);
 export function arith(src, before) {
   let ast;
   try {
-    ast = parse(src, { ecmaVersion: "latest", allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true });
+    ast = tree(src);
   } catch (e) {
     if (!(e instanceof SyntaxError) || !e.loc) throw e;
     const lines = src.split("\n").length - 1 - (before ?? 0);
@@ -22,6 +22,11 @@ export function arith(src, before) {
     throw new SyntaxError(`${e.message.replace(/ \(\d+:\d+\)$/, "")}${where}`);
   }
   return emit(src, ast) + src.slice(ast.end);
+}
+
+/** acorn's tree of `src`, code that may return and await at its top. */
+export function tree(src) {
+  return parse(src, { ecmaVersion: "latest", allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true });
 }
 
 /** As many line breaks as lie between `from` and `to`, else a space. */
@@ -90,7 +95,8 @@ function splice(src, node) {
   return out + src.slice(at, node.end);
 }
 
-function children(node) {
+/** A node's own nodes, in the order the code has them. */
+export function children(node) {
   const out = [];
   for (const key of Object.keys(node)) {
     if (key === "start" || key === "end" || key === "loc") continue;

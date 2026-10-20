@@ -528,6 +528,25 @@
   text-overflow: ellipsis;
 }
 
+/* What the event hands its code, as a line of code under the band. */
+.event-brings {
+  padding: 4px 10px;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border);
+}
+
+.event-p {
+  color: var(--blue);
+}
+
+.event-field {
+  color: var(--dim);
+}
+
 /* Numbered lines that never wrap, the numbers in its left padding, as tall as its lines. */
 .editor.code {
   display: block;

@@ -83,7 +83,7 @@ export function designer(page) {
     /** Adds a handler from the inspector's Add event row. */
     async addEvent(event) {
       await right().locator(".ghost", { hasText: "Add event" }).click();
-      await page.locator(".popover .menu-item", { hasText: new RegExp(`^${event}$`) }).click();
+      await page.locator(".popover .menu-item", { has: page.locator(".mono", { hasText: new RegExp(`^${event}$`) }) }).click();
     },
 
     /** The code box of the inspector's handler for an event, or of its first one. */
