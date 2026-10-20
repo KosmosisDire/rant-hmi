@@ -1,11 +1,13 @@
 //! The project folder: the HMI as plain text files that diff well and that VS Code or an AI
-//! can edit. `hmi.toml` names it and `data/imports.toml` lists its imports.
+//! can edit. `hmi.toml` names it, `data/imports.toml` lists its imports and
+//! `data/variables.toml` its variables.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use ts_rs::TS;
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug)]
@@ -54,10 +56,37 @@ struct ImportsFile {
     imports: Vec<Import>,
 }
 
+/// Whose value a variable holds: one every screen shares, or one per screen.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Per {
+    #[default]
+    Hmi,
+    Screen,
+}
+
+/// HMI state, named in camelCase, with the value it starts from.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Variable {
+    pub name: String,
+    pub start: Value,
+    #[serde(default)]
+    pub per: Per,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct VariablesFile {
+    #[serde(default, rename = "variable")]
+    variables: Vec<Variable>,
+}
+
 pub struct Project {
     root: PathBuf,
     pub info: ProjectInfo,
     pub imports: Vec<Import>,
+    pub variables: Vec<Variable>,
 }
 
 impl Project {
@@ -78,7 +107,46 @@ impl Project {
             true => toml::from_str::<ImportsFile>(&read(&file)?).with_context(|| format!("reading {}", file.display()))?.imports,
             false => Vec::new(),
         };
-        Ok(Project { root: root.to_path_buf(), info, imports })
+        let file = variables_file(root);
+        let variables = match file.exists() {
+            true => toml::from_str::<VariablesFile>(&read(&file)?).with_context(|| format!("reading {}", file.display()))?.variables,
+            false => Vec::new(),
+        };
+        Ok(Project { root: root.to_path_buf(), info, imports, variables })
+    }
+
+    pub fn variable(&self, name: &str) -> Option<&Variable> {
+        self.variables.iter().find(|v| v.name == name)
+    }
+
+    /// Adds, changes or with None removes the variable called `name`, and saves. A change
+    /// may rename it. The error is for the user.
+    pub fn set_variable(&mut self, name: &str, to: Option<Variable>) -> Result<(), String> {
+        let at = self.variables.iter().position(|v| v.name == name);
+        match (to, at) {
+            (None, Some(at)) => {
+                self.variables.remove(at);
+            }
+            (None, None) => return Err(format!("{name} is not a variable")),
+            (Some(v), at) => {
+                check_local(&v.name)?;
+                if v.start.is_null() {
+                    return Err(format!("{} needs a start value", v.name));
+                }
+                if v.name != name && self.variable(&v.name).is_some() {
+                    return Err(format!("{} is already a variable", v.name));
+                }
+                match at {
+                    Some(at) => self.variables[at] = v,
+                    None => self.variables.push(v),
+                }
+            }
+        }
+        let file = variables_file(&self.root);
+        let text = toml::to_string(&VariablesFile { variables: self.variables.clone() }).map_err(|e| e.to_string())?;
+        fs::create_dir_all(file.parent().unwrap_or(&self.root))
+            .and_then(|_| fs::write(&file, text))
+            .map_err(|e| format!("could not save {}: {e}", file.display()))
     }
 
     pub fn find(&self, alias: &str) -> Option<&Import> {
@@ -140,6 +208,30 @@ fn imports_file(root: &Path) -> PathBuf {
     root.join("data").join("imports.toml")
 }
 
+fn variables_file(root: &Path) -> PathBuf {
+    root.join("data").join("variables.toml")
+}
+
+/// Names code already has or keeps, which a variable would hide.
+const TAKEN_LOCAL: [&str; 47] = [
+    "await", "break", "case", "catch", "class", "close", "const", "continue", "default", "delete", "do", "else", "export", "extends", "false",
+    "finally", "for", "force", "function", "hold", "if", "import", "in", "instanceof", "let", "log", "new", "notify", "null", "of", "open",
+    "page", "return", "screen", "sleep", "status", "super", "switch", "this", "throw", "true", "try", "typeof", "undefined", "unforce",
+    "until", "while",
+];
+
+/// Local names are camelCase, which is what tells them from imports.
+fn check_local(name: &str) -> Result<(), String> {
+    if TAKEN_LOCAL.contains(&name) {
+        return Err(format!("{name} is a name code already uses, so pick another"));
+    }
+    let mut chars = name.chars();
+    if chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Ok(());
+    }
+    Err(format!("\"{name}\" cannot name a variable: start with a small letter, then use letters, digits or _"))
+}
+
 fn read(path: &Path) -> Result<String> {
     fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
 }
@@ -186,6 +278,24 @@ mod tests {
         let again = Project::open(&dir).unwrap();
         assert_eq!(again.imports, vec![speed()]);
         assert!(fs::read_to_string(dir.join("data/imports.toml")).unwrap().contains("[[import]]"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn variables_survive_a_reopen_and_keep_to_their_names() {
+        let dir = scratch("variables");
+        let mut p = Project::open(&dir).unwrap();
+        let mode = Variable { name: "jogMode".into(), start: serde_json::json!("Joint"), per: Per::Screen };
+        p.set_variable("jogMode", Some(mode.clone())).unwrap();
+        let limits = Variable { name: "limits".into(), start: serde_json::json!({ "low": 0.5, "high": [1, 2] }), per: Per::Hmi };
+        p.set_variable("limits", Some(limits.clone())).unwrap();
+        assert_eq!(Project::open(&dir).unwrap().variables, [mode.clone(), limits]);
+        assert!(p.set_variable("Speed", Some(Variable { name: "Speed".into(), ..mode.clone() })).unwrap_err().contains("small letter"));
+        assert!(p.set_variable("open", Some(Variable { name: "open".into(), ..mode.clone() })).unwrap_err().contains("already uses"));
+        assert!(p.set_variable("x", Some(Variable { name: "x".into(), start: Value::Null, per: Per::Hmi })).unwrap_err().contains("start value"));
+        p.set_variable("jogMode", Some(Variable { name: "mode".into(), ..mode })).unwrap();
+        p.set_variable("limits", None).unwrap();
+        assert_eq!(Project::open(&dir).unwrap().variables.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["mode"]);
         fs::remove_dir_all(&dir).unwrap();
     }
 

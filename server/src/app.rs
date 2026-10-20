@@ -12,7 +12,8 @@ use tracing::{info, warn};
 use crate::authorize::{Who, authorize};
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::{Edit, Event, Pages};
-use crate::project::{Import, Intent, Kind, Project};
+use crate::mesh::codec;
+use crate::project::{Import, Intent, Kind, Per, Project, Variable};
 use crate::protocol::{ClientMsg, Level, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, FromScript, Script, ToScript};
 
@@ -38,6 +39,8 @@ struct Session {
     /// The edits that undo this screen's own edits, newest last, and those that redo them.
     undo: Vec<Edit>,
     redo: Vec<Edit>,
+    /// The values of the variables each screen has.
+    vars: HashMap<String, Value>,
 }
 
 /// Why an edit is applied, which says which stack its undo goes on.
@@ -74,6 +77,8 @@ pub struct App {
     sessions: HashMap<u32, Session>,
     values: HashMap<String, Slot>,
     changed: BTreeSet<String>,
+    /// The values of the variables every screen shares.
+    shared: HashMap<String, Value>,
     epoch: Option<u32>,
     health_at: Instant,
 }
@@ -82,6 +87,9 @@ impl App {
     pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, node: String) -> App {
         script.send(ToScript::Imports(project.imports.clone()));
         script.send(ToScript::Pages(pages.keys()));
+        script.send(ToScript::Variables(project.variables.clone()));
+        let shared: HashMap<String, Value> = project.variables.iter().filter(|v| v.per == Per::Hmi).map(|v| (v.name.clone(), v.start.clone())).collect();
+        script.send(ToScript::Values(shared.iter().map(|(k, v)| (k.clone(), Some(v.clone()))).collect()));
         App {
             project,
             pages,
@@ -93,6 +101,7 @@ impl App {
             sessions: HashMap::new(),
             values: HashMap::new(),
             changed: BTreeSet::new(),
+            shared,
             epoch: None,
             health_at: Instant::now(),
         }
@@ -127,7 +136,9 @@ impl App {
     fn inbound(&mut self, i: Inbound) {
         match i {
             Inbound::Open { session, out } => {
-                self.sessions.insert(session, Session { out, heard: Instant::now(), undo: Vec::new(), redo: Vec::new() });
+                let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
+                self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
+                self.sessions.insert(session, Session { out, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
             }
@@ -156,7 +167,10 @@ impl App {
         self.send(session, &ServerMsg::Imports { imports: self.project.imports.clone() });
         self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
         self.send(session, &ServerMsg::Mesh { entities: self.mesh.entities() });
-        let values = self.project.imports.iter().map(|i| self.update(&i.alias)).collect();
+        self.send(session, &ServerMsg::Variables { variables: self.project.variables.clone() });
+        let mut values: Vec<ValueUpdate> = self.project.imports.iter().map(|i| self.update(&i.alias)).collect();
+        let own = self.sessions.get(&session).map(|s| s.vars.clone()).unwrap_or_default();
+        values.extend(self.shared.iter().chain(own.iter()).map(|(k, v)| known(k, v)));
         self.send(session, &ServerMsg::Values { values });
         self.send(session, &ServerMsg::Health { peers: self.mesh.peers() });
     }
@@ -189,8 +203,9 @@ impl App {
                 Err(text) => self.refuse(session, text, Some(alias)),
             },
             ClientMsg::ChangeImport { alias, import } => self.change_import(session, alias, import),
+            ClientMsg::SetVariable { name, variable } => self.set_variable(session, name, variable),
             ClientMsg::Set { alias, path, value } => {
-                if let Err(text) = self.set(&alias, &path, value) {
+                if let Err(text) = self.set(Some(session), &alias, &path, value) {
                     self.refuse(session, text, Some(alias));
                 }
             }
@@ -213,6 +228,51 @@ impl App {
                 match self.project.set_start(page) {
                     Ok(()) => self.broadcast(&ServerMsg::Project { project: self.project.info.clone() }),
                     Err(text) => self.refuse(session, text, None),
+                }
+            }
+        }
+    }
+
+    /// Adds, changes or removes a variable. A rename carries its values and every use of its
+    /// name along, a new start or scope starts its values over.
+    fn set_variable(&mut self, session: u32, name: String, to: Option<Variable>) {
+        let old = self.project.variable(&name).cloned();
+        if let Err(text) = self.project.set_variable(&name, to.clone()) {
+            return self.refuse(session, text, None);
+        }
+        let mut kept_shared = self.shared.remove(&name);
+        let mut kept_own: HashMap<u32, Value> = self.sessions.iter_mut().filter_map(|(id, s)| s.vars.remove(&name).map(|v| (*id, v))).collect();
+        if old.as_ref().zip(to.as_ref()).is_none_or(|(o, n)| o.start != n.start || o.per != n.per) {
+            kept_shared = None;
+            kept_own.clear();
+        }
+        self.script.send(ToScript::Variables(self.project.variables.clone()));
+        self.broadcast(&ServerMsg::Variables { variables: self.project.variables.clone() });
+        let Some(v) = to else { return };
+        if v.name != name {
+            info!("renamed the variable {name} to {}", v.name);
+            match self.pages.rename(&name, &v.name) {
+                Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
+                Ok(_) => {}
+                Err(text) => self.refuse(session, text, None),
+            }
+        }
+        match v.per {
+            Per::Hmi => {
+                let value = kept_shared.unwrap_or_else(|| v.start.clone());
+                self.shared.insert(v.name.clone(), value.clone());
+                self.script.send(ToScript::Values(vec![(v.name.clone(), Some(value.clone()))]));
+                self.broadcast(&ServerMsg::Values { values: vec![known(&v.name, &value)] });
+            }
+            Per::Screen => {
+                let ids: Vec<u32> = self.sessions.keys().copied().collect();
+                for id in ids {
+                    let value = kept_own.remove(&id).unwrap_or_else(|| v.start.clone());
+                    if let Some(s) = self.sessions.get_mut(&id) {
+                        s.vars.insert(v.name.clone(), value.clone());
+                    }
+                    self.script.send(ToScript::Screen { session: id, values: vec![(v.name.clone(), value.clone())] });
+                    self.send(id, &ServerMsg::Values { values: vec![known(&v.name, &value)] });
                 }
             }
         }
@@ -255,7 +315,7 @@ impl App {
         let code = h.code.clone();
         self.next_run += 1;
         self.runs.insert(self.next_run, Running { session, page, id, event, label });
-        self.script.send(ToScript::Run { run: self.next_run, code });
+        self.script.send(ToScript::Run { run: self.next_run, session: Some(session), code });
     }
 
     /// What a run did: every write and call is logged with the screen that started it.
@@ -263,7 +323,8 @@ impl App {
         match msg {
             FromScript::Write { run, alias, value } => {
                 info!("{} sets {alias} to {value}", self.label(run));
-                if let Err(text) = self.set(&alias, "", value) {
+                let session = self.runs.get(&run).map(|r| r.session);
+                if let Err(text) = self.set(session, &alias, "", value) {
                     self.tell(run, Level::Fault, text);
                 }
             }
@@ -351,7 +412,32 @@ impl App {
         self.script.send(ToScript::Pages(self.pages.keys()));
     }
 
-    fn set(&mut self, alias: &str, path: &str, value: Value) -> Result<(), String> {
+    /// Writes a variable, the screen's own for one each screen has, or sets a variable import
+    /// on the mesh.
+    fn set(&mut self, session: Option<u32>, alias: &str, path: &str, value: Value) -> Result<(), String> {
+        if let Some(per) = self.project.variable(alias).map(|v| v.per) {
+            let held = match per {
+                Per::Hmi => self.shared.get_mut(alias),
+                Per::Screen => session.and_then(|s| self.sessions.get_mut(&s)).and_then(|s| s.vars.get_mut(alias)),
+            };
+            let held = held.ok_or_else(|| format!("{alias} is each screen's own, and this has no screen"))?;
+            match path.is_empty() {
+                true => *held = value,
+                false => codec::put(held, path, value)?,
+            }
+            let now = held.clone();
+            match (per, session) {
+                (Per::Screen, Some(s)) => {
+                    self.script.send(ToScript::Screen { session: s, values: vec![(alias.to_owned(), now.clone())] });
+                    self.send(s, &ServerMsg::Values { values: vec![known(alias, &now)] });
+                }
+                _ => {
+                    self.script.send(ToScript::Values(vec![(alias.to_owned(), Some(now.clone()))]));
+                    self.broadcast(&ServerMsg::Values { values: vec![known(alias, &now)] });
+                }
+            }
+            return Ok(());
+        }
         let import = self.project.find(alias).ok_or_else(|| format!("{alias} is not an import"))?;
         if import.intent != Intent::Write {
             return Err(format!("{alias} is imported to read. Import it to write to change it."));
@@ -417,6 +503,7 @@ impl App {
     fn end(&mut self, session: u32, why: &str) {
         if self.sessions.remove(&session).is_some() {
             info!("screen {session} {why}");
+            self.script.send(ToScript::Gone(session));
         }
     }
 
@@ -440,6 +527,11 @@ impl App {
             let _ = s.out.send(text.clone());
         }
     }
+}
+
+/// A variable's value as a screen gets it: always known.
+fn known(name: &str, value: &Value) -> ValueUpdate {
+    ValueUpdate { alias: name.to_owned(), value: Some(value.clone()), known: true }
 }
 
 fn encode(msg: &ServerMsg) -> Bytes {

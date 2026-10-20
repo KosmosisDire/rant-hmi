@@ -10,6 +10,7 @@ import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
 import type { ServerMsg } from "../protocol/ServerMsg";
+import type { Variable } from "../protocol/Variable";
 import { back, push } from "./stack";
 
 export interface Live {
@@ -39,6 +40,7 @@ export interface State {
   node: string;
   version: string;
   imports: Import[];
+  variables: Variable[];
   entities: EntityInfo[];
   values: Record<string, Live>;
   peers: PeerInfo[];
@@ -58,6 +60,7 @@ export const [state, setState] = createStore<State>({
   node: "",
   version: "",
   imports: [],
+  variables: [],
   entities: [],
   values: {},
   peers: [],
@@ -89,6 +92,9 @@ export function receive(msg: ServerMsg) {
       break;
     case "imports":
       setState("imports", reconcile(msg.imports, { key: "alias" }));
+      break;
+    case "variables":
+      setState("variables", reconcile(msg.variables, { key: "name" }));
       break;
     case "mesh":
       setState("entities", reconcile(msg.entities, { key: "name" }));

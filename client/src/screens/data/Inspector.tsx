@@ -12,6 +12,7 @@ import { DraftInput } from "../../ui/DraftInput";
 import { KindIcon } from "../../ui/marks";
 import type { Picking } from "./DataScreen";
 import { ImportForm } from "./ImportForm";
+import { VariableView } from "./Variables";
 import { ValueTree } from "./ValueTree";
 
 /** The right sidebar: an entity to import, or an import to watch and set. */
@@ -23,6 +24,10 @@ export function Inspector(p: Picking) {
   const onMesh = createMemo(() => {
     const s = p.selection;
     return s?.kind === "entity" ? entity(s.name) : undefined;
+  });
+  const variable = createMemo(() => {
+    const s = p.selection;
+    return s?.kind === "variable" ? state.variables.find((v) => v.name === s.name) : undefined;
   });
 
   // An entity just imported shows as its import, and a removed import as its entity again.
@@ -43,6 +48,7 @@ export function Inspector(p: Picking) {
     <Switch fallback={<div class="placeholder">Pick an entity in the mesh, or a datapoint.</div>}>
       <Match when={imported()}>{(i) => <ImportView imp={i()} />}</Match>
       <Match when={onMesh()}>{(e) => <EntityView entity={e()} />}</Match>
+      <Match when={variable()}>{(v) => <VariableView variable={v()} onRenamed={(name) => p.onSelect({ kind: "variable", name })} />}</Match>
     </Switch>
   );
 }

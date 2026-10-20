@@ -1,6 +1,6 @@
 // Small marks shared by every screen: the logo and the Rant kind glyphs.
 
-import { ListClock, Rss, SquareFunction, Variable } from "./icons";
+import { CircleDot, ListClock, Rss, SquareFunction, Variable } from "./icons";
 import { Dynamic } from "solid-js/web";
 import type { Kind } from "../protocol/Kind";
 
@@ -11,6 +11,15 @@ export function KindIcon(p: { kind: Kind; size?: number }) {
   return (
     <span class={`kind kind-${p.kind}`} title={p.kind}>
       <Dynamic component={KIND_ICONS[p.kind]} size={p.size ?? 14} />
+    </span>
+  );
+}
+
+/** The HMI's own things are blue, apart from the mesh's colours. */
+export function LocalIcon(p: { size?: number }) {
+  return (
+    <span class="kind kind-local" title="variable">
+      <CircleDot size={p.size ?? 14} />
     </span>
   );
 }

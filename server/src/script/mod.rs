@@ -16,7 +16,7 @@ use rquickjs::{Context, Ctx, Exception, Function, Persistent, Promise, Runtime};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::project::{Import, Intent, Kind};
+use crate::project::{Import, Intent, Kind, Per, Variable};
 
 /// How long code may run without waiting before it is stopped.
 const BUDGET: Duration = Duration::from_millis(250);
@@ -26,11 +26,18 @@ const PRELUDE: &str = include_str!("prelude.js");
 pub enum ToScript {
     /// Every import, whole, after any change.
     Imports(Vec<Import>),
-    /// Datapoints whose value changed, None while unknown.
+    /// Every variable, whole, after any change.
+    Variables(Vec<Variable>),
+    /// Datapoints and shared variables whose value changed, None while unknown.
     Values(Vec<(String, Option<Value>)>),
+    /// A screen's own variables that changed.
+    Screen { session: u32, values: Vec<(String, Value)> },
+    /// A screen went, and its own variables with it.
+    Gone(u32),
     /// Every page as code names it, and its id, whole, after any change.
     Pages(Vec<(String, String)>),
-    Run { run: u64, code: String },
+    /// Runs code for a screen, or for none.
+    Run { run: u64, session: Option<u32>, code: String },
     /// How a call ended: its answer, or why it failed.
     Answer { call: u64, outcome: Result<Value, CallFailure> },
 }
@@ -88,7 +95,12 @@ struct Waiter {
 struct Shared {
     out: UnboundedSender<FromScript>,
     imports: HashMap<String, Import>,
+    variables: HashMap<String, Variable>,
     values: HashMap<String, Value>,
+    /// Each screen's own variables.
+    screens: HashMap<u32, HashMap<String, Value>>,
+    /// The screen each live run belongs to.
+    sessions: HashMap<u64, Option<u32>>,
     pages: Vec<(String, String)>,
     /// Runs not ended yet.
     live: HashSet<u64>,
@@ -105,10 +117,18 @@ impl Shared {
         let _ = self.out.send(msg);
     }
 
-    /// What the run sees: its own write not sent yet, else the latest value.
+    /// What the run sees: its own write not sent yet, else the latest value, its screen's
+    /// for a variable each screen has.
     fn read(&self, run: u64, alias: &str) -> Option<&Value> {
         let own = self.pending.get(&run).and_then(|p| p.iter().find(|(a, _)| a == alias));
-        own.map(|(_, v)| v).or_else(|| self.values.get(alias))
+        if let Some((_, v)) = own {
+            return Some(v);
+        }
+        if self.variables.get(alias).is_some_and(|v| v.per == Per::Screen) {
+            let session = self.sessions.get(&run).copied().flatten()?;
+            return self.screens.get(&session).and_then(|m| m.get(alias));
+        }
+        self.values.get(alias)
     }
 
     fn stage(&mut self, run: u64, alias: String, value: Value) {
@@ -161,7 +181,10 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
     let shared = Rc::new(RefCell::new(Shared {
         out,
         imports: HashMap::new(),
+        variables: HashMap::new(),
         values: HashMap::new(),
+        screens: HashMap::new(),
+        sessions: HashMap::new(),
         pages: Vec::new(),
         live: HashSet::new(),
         pending: HashMap::new(),
@@ -214,6 +237,11 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
     match msg {
         ToScript::Imports(list) => shared.borrow_mut().imports = list.into_iter().map(|i| (i.alias.clone(), i)).collect(),
         ToScript::Pages(list) => shared.borrow_mut().pages = list,
+        ToScript::Variables(list) => shared.borrow_mut().variables = list.into_iter().map(|v| (v.name.clone(), v)).collect(),
+        ToScript::Screen { session, values } => shared.borrow_mut().screens.entry(session).or_default().extend(values),
+        ToScript::Gone(session) => {
+            shared.borrow_mut().screens.remove(&session);
+        }
         ToScript::Values(list) => {
             let mut s = shared.borrow_mut();
             for (alias, value) in list {
@@ -223,8 +251,11 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
                 };
             }
         }
-        ToScript::Run { run, code } => {
-            shared.borrow_mut().live.insert(run);
+        ToScript::Run { run, session, code } => {
+            let mut s = shared.borrow_mut();
+            s.live.insert(run);
+            s.sessions.insert(run, session);
+            drop(s);
             let ctx = match Context::full(rt) {
                 Ok(ctx) => ctx,
                 Err(e) => return finish(shared, run, End::Fault(format!("could not start: {e}"))),
@@ -271,6 +302,7 @@ fn finish(shared: &Rc<RefCell<Shared>>, run: u64, end: End) {
     }
     s.pending.remove(&run);
     s.live.remove(&run);
+    s.sessions.remove(&run);
     s.send(FromScript::Done { run, end });
 }
 
@@ -299,12 +331,18 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>) -> rquic
     let s = shared.clone();
     let write = move |ctx: Ctx<'js>, alias: String, json: String| -> rquickjs::Result<()> {
         let mut st = s.borrow_mut();
-        let import = st.imports.get(&alias).ok_or_else(|| Exception::throw_reference(&ctx, &format!("{alias} names no datapoint")))?;
-        if import.kind != Kind::Variable {
-            return Err(Exception::throw_type(&ctx, &format!("{alias} is not a variable, so it cannot be set")));
-        }
-        if import.intent != Intent::Write {
-            return Err(Exception::throw_type(&ctx, &format!("{alias} is imported to read. Import it to write to change it.")));
+        if let Some(v) = st.variables.get(&alias) {
+            if v.per == Per::Screen && st.sessions.get(&run).copied().flatten().is_none() {
+                return Err(Exception::throw_type(&ctx, &format!("{alias} is each screen's own, and this handler runs for no screen")));
+            }
+        } else {
+            let import = st.imports.get(&alias).ok_or_else(|| Exception::throw_reference(&ctx, &format!("{alias} names no datapoint")))?;
+            if import.kind != Kind::Variable {
+                return Err(Exception::throw_type(&ctx, &format!("{alias} is not a variable, so it cannot be set")));
+            }
+            if import.intent != Intent::Write {
+                return Err(Exception::throw_type(&ctx, &format!("{alias} is imported to read. Import it to write to change it.")));
+            }
         }
         let value = serde_json::from_str(&json).map_err(|e| Exception::throw_type(&ctx, &e.to_string()))?;
         st.stage(run, alias, value);
@@ -362,12 +400,11 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>) -> rquic
     };
     g.set("__end", Function::new(ctx.clone(), end)?)?;
 
-    let imports: Vec<Value> = shared
-        .borrow()
-        .imports
-        .values()
-        .map(|i| serde_json::json!({ "alias": i.alias, "kind": format!("{:?}", i.kind).to_lowercase() }))
-        .collect();
+    // a variable reads and takes assignment as a variable import does
+    let st = shared.borrow();
+    let mut imports: Vec<Value> = st.imports.values().map(|i| serde_json::json!({ "alias": i.alias, "kind": format!("{:?}", i.kind).to_lowercase() })).collect();
+    imports.extend(st.variables.keys().map(|name| serde_json::json!({ "alias": name, "kind": "variable" })));
+    drop(st);
     let pages: Vec<Value> = shared.borrow().pages.iter().map(|(key, id)| serde_json::json!({ "key": key, "id": id })).collect();
     let prelude: Function = ctx.eval(PRELUDE)?;
     prelude.call::<_, ()>((ctx.json_parse(Value::Array(imports).to_string())?, ctx.json_parse(Value::Array(pages).to_string())?))

@@ -29,12 +29,12 @@ export type Resolved =
   | { ok: false; unknown: string; error?: undefined }
   | { ok: false; error: string; unknown?: undefined };
 
-// Every name an expression uses that is an import reads that import's live value. Other
+// Every name an expression uses that is an import or a variable reads its live value. Other
 // names (Math, Number) fall through to the browser's own.
 const scope = new Proxy(
   {},
   {
-    has: (_, key) => typeof key === "string" && state.imports.some((i) => i.alias === key),
+    has: (_, key) => typeof key === "string" && (state.imports.some((i) => i.alias === key) || state.variables.some((v) => v.name === key)),
     get: (_, key) => {
       if (typeof key !== "string") return undefined;
       const v = live(key);

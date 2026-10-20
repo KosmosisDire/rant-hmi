@@ -17,7 +17,7 @@ export class Hmi {
   constructor(ws) {
     this.ws = ws;
     this.ws.binaryType = "arraybuffer";
-    this.state = { imports: [], pages: [], entities: [], values: {}, peers: [] };
+    this.state = { imports: [], variables: [], pages: [], entities: [], values: {}, peers: [] };
     this.waiters = [];
     this.ws.onmessage = (e) => this.receive(decoder.decode(new Uint8Array(e.data)));
     this.ws.onopen = () => {
@@ -30,6 +30,7 @@ export class Hmi {
   receive(msg) {
     const s = this.state;
     if (msg.type === "imports") s.imports = msg.imports;
+    if (msg.type === "variables") s.variables = msg.variables;
     if (msg.type === "pages") s.pages = msg.pages;
     if (msg.type === "mesh") s.entities = msg.entities;
     if (msg.type === "health") s.peers = msg.peers;

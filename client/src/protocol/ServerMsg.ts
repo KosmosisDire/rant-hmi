@@ -6,8 +6,9 @@ import type { Page } from "./Page";
 import type { PeerInfo } from "./PeerInfo";
 import type { ProjectInfo } from "./ProjectInfo";
 import type { ValueUpdate } from "./ValueUpdate";
+import type { Variable } from "./Variable";
 
 /**
  * From the backend to a screen.
  */
-export type ServerMsg = { "type": "hello", session: number, project: ProjectInfo, version: string, node: string, } | { "type": "project", project: ProjectInfo, } | { "type": "imports", imports: Array<Import>, } | { "type": "mesh", entities: Array<EntityInfo>, } | { "type": "values", values: Array<ValueUpdate>, } | { "type": "health", peers: Array<PeerInfo>, } | { "type": "pages", pages: Array<Page>, } | { "type": "page", page: Page, } | { "type": "made", page: string, id: string, } | { "type": "pong", t: number, } | { "type": "refused", text: string, alias: string | null, } | { "type": "notice", text: string, level: Level, } | { "type": "open", page: string, replace: boolean, } | { "type": "close" };
+export type ServerMsg = { "type": "hello", session: number, project: ProjectInfo, version: string, node: string, } | { "type": "project", project: ProjectInfo, } | { "type": "imports", imports: Array<Import>, } | { "type": "variables", variables: Array<Variable>, } | { "type": "mesh", entities: Array<EntityInfo>, } | { "type": "values", values: Array<ValueUpdate>, } | { "type": "health", peers: Array<PeerInfo>, } | { "type": "pages", pages: Array<Page>, } | { "type": "page", page: Page, } | { "type": "made", page: string, id: string, } | { "type": "pong", t: number, } | { "type": "refused", text: string, alias: string | null, } | { "type": "notice", text: string, level: Level, } | { "type": "open", page: string, replace: boolean, } | { "type": "close" };

@@ -243,6 +243,16 @@
   padding: 0 18px 18px;
 }
 
+/* The Data screen's tables scroll together. */
+.data-detail {
+  overflow-y: auto;
+}
+
+.data-detail .detail-body {
+  flex: none;
+  overflow: visible;
+}
+
 /* A screen that is not built yet says what comes there. */
 .later {
   display: flex;

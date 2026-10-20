@@ -6,7 +6,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::pages::{Edit, Event, Page};
-use crate::project::{Import, Kind, ProjectInfo};
+use crate::project::{Import, Kind, ProjectInfo, Variable};
 
 /// From the backend to a screen.
 #[derive(Serialize, TS, Clone, Debug)]
@@ -19,6 +19,8 @@ pub enum ServerMsg {
     Project { project: ProjectInfo },
     /// Every import, whole, after any change.
     Imports { imports: Vec<Import> },
+    /// Every variable, whole, after any change. Their values come as values.
+    Variables { variables: Vec<Variable> },
     /// Every entity on the mesh, whole, after the mesh changed.
     Mesh { entities: Vec<EntityInfo> },
     /// The values that changed since the last batch.
@@ -64,7 +66,10 @@ pub enum ClientMsg {
     Unimport { alias: String },
     /// Renames an import or changes its intent. Every use of the old alias follows.
     ChangeImport { alias: String, import: Import },
-    /// Writes a datapoint, or one of its fields when `path` names one.
+    /// Adds, changes or with null removes the variable called `name`. A rename is followed
+    /// everywhere it is used.
+    SetVariable { name: String, variable: Option<Variable> },
+    /// Writes a datapoint or a variable, or one of its fields when `path` names one.
     Set { alias: String, path: String, value: Value },
     /// Changes the pages.
     Edit { edit: Edit },
