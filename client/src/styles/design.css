@@ -22,7 +22,7 @@
 
 /* The page's ground and grid are drawn on the canvas beneath, and what lies off the page
    still shows, to be grabbed back. */
-.grid {
+.artboard-grid {
   position: absolute;
   inset: 0;
   width: 100%;

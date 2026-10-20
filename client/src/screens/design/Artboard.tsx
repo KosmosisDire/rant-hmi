@@ -213,7 +213,7 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
 
   return (
     <div class="artboard" ref={host} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-      <canvas class="grid" ref={grid} />
+      <canvas class="artboard-grid" ref={grid} />
       <div class="page-layer" style={{ transform: `translate(${view().x}px, ${view().y}px) scale(${view().k})` }}>
         <PageView page={p.page} overrides={overrides} design />
       </div>
