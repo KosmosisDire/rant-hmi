@@ -73,6 +73,14 @@ export function closeWith(value: JsonValue) {
   back();
 }
 
+/** Closes the pages that no longer exist, their waits hearing nothing. */
+export function prune(exists: (id: string) => boolean) {
+  const s = stack();
+  if (s.every((o) => exists(o.id))) return;
+  drop(s.filter((o) => !exists(o.id)));
+  setStack(s.filter((o) => exists(o.id)));
+}
+
 /** Answers nothing to the waits of pages that close. */
 function drop(closed: Open[]) {
   for (const o of closed) if (o.ask !== null) answer(o.ask, null);

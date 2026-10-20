@@ -2,9 +2,9 @@
 // scaled to fit, and pages over it float centred at its scale above a dimmed backdrop. Pages
 // beneath stay as they were, so closing lands exactly where the screen was.
 
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { Page } from "../protocol/Page";
-import { back, stack } from "../state/stack";
+import { back, prune, stack } from "../state/stack";
 import { page } from "../state/store";
 import { pageAct } from "./act";
 import { PageView } from "./PageView";
@@ -13,6 +13,8 @@ export function RunView(p: { active: boolean }) {
   let host!: HTMLDivElement;
   const [size, setSize] = createSignal({ w: 0, h: 0 });
   const pages = () => stack().flatMap((o) => page(o.id) ?? []);
+  // a page removed while open closes
+  createEffect(() => prune((id) => page(id) !== undefined));
   /** Where the pages in sight start: the top full page. */
   const base = () => {
     const all = pages();
