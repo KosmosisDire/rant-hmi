@@ -20,6 +20,9 @@ node tests/run.mjs          # every scenario
 node tests/run.mjs drag     # those whose file name holds "drag"
 ```
 
+- `HMI_BUILD` and `HMI_CLIENT` name another build and client to run, as ones made with
+  `CARGO_TARGET_DIR=target/work` and `vite build --outDir ../target/work/client`, so the
+  scenarios run while a backend from `target/debug` stays open on `client/dist`.
 - A console error fails a scenario, as does a check.
 - A failure names the scenario line that threw and prints the backend's last words.
 - Screenshots and the backend's whole log land in `client/tests/out`.

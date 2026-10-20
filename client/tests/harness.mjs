@@ -12,6 +12,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(here, "..", "..");
 const exe = process.platform === "win32" ? ".exe" : "";
 
+/** The build the scenarios run, and the client it serves. HMI_BUILD and HMI_CLIENT name others,
+ *  so they can run while a backend from target/debug is open, serving client/dist. */
+const BUILD = resolve(process.env.HMI_BUILD ?? join(ROOT, "target", "debug"));
+const CLIENT = resolve(process.env.HMI_CLIENT ?? join(ROOT, "client", "dist"));
+
 /** Kept apart from the cargo tests' domain and from a running backend's port. */
 export const DOMAIN = 153;
 export const PORT = 6761;
@@ -27,14 +32,14 @@ function run(path, args) {
 export async function startSystem() {
   const project = mkdtempSync(join(tmpdir(), "rant-hmi-test-"));
   cpSync(join(ROOT, "examples", "demo"), project, { recursive: true, filter: (p) => !p.includes("pages") });
-  const line = run(join(ROOT, "target", "debug", "examples", `demo${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
+  const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
   await new Promise((r) => setTimeout(r, 300));
-  const backend = run(join(ROOT, "target", "debug", `rant-hmi${exe}`), [
+  const backend = run(join(BUILD, `rant-hmi${exe}`), [
     project,
     "--port", String(PORT),
     "--domain", String(DOMAIN),
     "--loopback",
-    "--client", join(ROOT, "client", "dist"),
+    "--client", CLIENT,
   ]);
   const url = `http://127.0.0.1:${PORT}`;
   const start = Date.now();
