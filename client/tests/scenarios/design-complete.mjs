@@ -43,7 +43,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await page.locator('button[title="Add an event"]').click();
   await page.locator(".event-menu button", { hasText: "Tap" }).click();
-  const code = page.locator(".handler .editor.code");
+  const code = page.locator(".screen:not([hidden]) .sidebar.right .handler .editor.code");
   await code.click();
   await page.keyboard.type("Sp");
   await page.locator(".suggest-row", { hasText: "Speed" }).click();
