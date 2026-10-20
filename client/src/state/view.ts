@@ -17,7 +17,7 @@ function saved(): string {
 const [chosen, setChosen] = createSignal(saved());
 
 export function currentPage() {
-  return page(chosen()) ?? state.pages[0];
+  return page(chosen()) ?? state.pages.find((p) => p.interface === null);
 }
 
 export function openPage(id: string) {

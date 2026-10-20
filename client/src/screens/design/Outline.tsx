@@ -1,31 +1,49 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, For, Match, Show, Switch } from "solid-js";
 import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
-import { state } from "../../state/store";
+import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
-import { File, Plus, Square, Type } from "../../ui/icons";
+import { Component, File, Plus, Square, Type } from "../../ui/icons";
 import { chain, childrenOf, find, moveTo, parentOf } from "./tree";
+import { number } from "../../state/bind";
 
 /** What a new frame or text starts as: visible, on the grid, and plainly named. */
-const STARTS: Record<Tag, Record<string, string>> = {
+const STARTS: Record<Exclude<Tag, "use">, Record<string, string>> = {
   div: { name: "Frame", x: "44", y: "44", w: "176", h: "88", background: "#2a2f35", "border-radius": "8" },
   span: { name: "Text", x: "44", y: "44", w: "176", h: "44", text: '"Text"', color: "#e4e6e8", "font-size": "18" },
 };
 
 /** The left sidebar: the pages, and the open page's elements as layers. */
 export function Outline(p: { page: Page | undefined; selected: string | null; onSelect: (id: string | null) => void }) {
-  const add = (tag: Tag) => {
+  const [picking, setPicking] = createSignal(false);
+  // into the selected frame, at its top left, else onto the page
+  const place = (tag: Tag, props: Record<string, string>, component: string | null = null) => {
     const page = p.page;
     if (!page) return;
-    // into the selected frame, at its top left, else onto the page
     const holder = p.selected ? find(page.children, p.selected) : undefined;
     const inside = holder?.tag === "div";
-    const props = { ...STARTS[tag], ...(inside ? { x: "11", y: "11" } : {}) };
-    send({ type: "edit", edit: { kind: "add_element", page: page.id, parent: inside ? holder.id : null, index: null, element: { id: "", tag, props, handlers: [], children: [] } } });
+    // step past what already sits there, so a new element never hides behind an old one
+    const siblings = inside ? holder.children : page.children;
+    let n = inside ? 11 : 44;
+    while (siblings.some((e) => number(e.props.x) === n && number(e.props.y) === n)) n += 22;
+    const at = { x: String(n), y: String(n) };
+    send({ type: "edit", edit: { kind: "add_element", page: page.id, parent: inside ? holder.id : null, index: null, element: { id: "", tag, component, props: { ...props, ...at }, handlers: [], children: [] } } });
   };
-  const addPage = () => send({ type: "edit", edit: { kind: "add_page", name: `Page ${state.pages.length + 1}` } });
+  const add = (tag: Exclude<Tag, "use">) => place(tag, STARTS[tag]);
+  const addInstance = (c: Page) => {
+    setPicking(false);
+    place("use", { name: c.name, w: String(c.width), h: String(c.height) }, c.name);
+  };
+  const pages = () => state.pages.filter((pg) => pg.interface === null);
+  const components = () => state.pages.filter((pg) => pg.interface !== null);
+  const addPage = () => send({ type: "edit", edit: { kind: "add_page", name: `Page ${pages().length + 1}` } });
+  const addComponent = () => {
+    let name = "Component";
+    for (let n = 2; components().some((c) => c.name === name); n++) name = `Component${n}`;
+    send({ type: "edit", edit: { kind: "add_component", name } });
+  };
 
   return (
     <>
@@ -36,16 +54,37 @@ export function Outline(p: { page: Page | undefined; selected: string | null; on
         </button>
       </div>
       <div class="pages">
-        <For each={state.pages}>
+        <For each={pages()}>
           {(pg) => (
             <button class="list-row" classList={{ selected: pg.id === p.page?.id }} onClick={() => openPage(pg.id)}>
               <File size={14} />
               <span class="list-label">{pg.name}</span>
-              <Show when={(state.project?.start ?? state.pages[0]?.id) === pg.id}>
+              <Show when={startPage() === pg.id}>
                 <span class="tag" title="Operators' screens open on this page">start</span>
               </Show>
               <span class="list-trail mono">
                 {pg.width}x{pg.height}
+              </span>
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="pane-head layers-head">
+        <span class="head-title">Components</span>
+        <button class="icon-btn" title="Add a component" onClick={addComponent}>
+          <Plus size={14} />
+        </button>
+      </div>
+      <div class="pages">
+        <For each={components()} fallback={<div class="field-hint list-hint">Make a part once, place it on many pages.</div>}>
+          {(c) => (
+            <button class="list-row" classList={{ selected: c.id === p.page?.id }} onClick={() => openPage(c.id)}>
+              <span class="kind kind-local">
+                <Component size={14} />
+              </span>
+              <span class="list-label">{c.name}</span>
+              <span class="list-trail mono">
+                {c.width}x{c.height}
               </span>
             </button>
           )}
@@ -59,7 +98,24 @@ export function Outline(p: { page: Page | undefined; selected: string | null; on
         <button class="icon-btn" title="Add a text" onClick={() => add("span")}>
           <Type size={14} />
         </button>
+        <button class="icon-btn" classList={{ on: picking() }} title="Place a component" onClick={() => setPicking(!picking())}>
+          <Component size={14} />
+        </button>
       </div>
+      <Show when={picking()}>
+        <div class="add-menu">
+          <For each={components().filter((c) => c.id !== p.page?.id)} fallback={<div class="field-hint">Add a component first, under Components.</div>}>
+            {(c) => (
+              <button class="list-row" onClick={() => addInstance(c)}>
+                <span class="kind kind-local">
+                  <Component size={14} />
+                </span>
+                <span class="list-label">{c.name}</span>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
       <Show when={p.page && p.page.children.length > 0} fallback={<div class="pane-body placeholder">Add a frame or a text.</div>}>
         <LayerList page={p.page!} selected={p.selected} onSelect={p.onSelect} />
       </Show>
@@ -150,9 +206,14 @@ function Layers(p: { elements: Element[]; depth: number; selected: string | null
           >
             <span style={{ width: `${p.depth * 14}px` }} />
             <span class="layer-icon">
-              <Show when={e.tag === "div"} fallback={<Type size={13} />}>
-                <Square size={13} />
-              </Show>
+              <Switch fallback={<Type size={13} />}>
+                <Match when={e.tag === "div"}>
+                  <Square size={13} />
+                </Match>
+                <Match when={e.tag === "use"}>
+                  <Component size={13} />
+                </Match>
+              </Switch>
             </span>
             <span class="list-label">{e.props.name ?? e.id}</span>
             <span class="list-trail mono faint">{e.id}</span>

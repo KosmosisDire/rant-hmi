@@ -155,3 +155,14 @@ export function importOf(entityName: string): Import | undefined {
 export function page(id: string): Page | undefined {
   return state.pages.find((p) => p.id === id);
 }
+
+/** A component by the name its instances give. */
+export function component(name: string): Page | undefined {
+  return state.pages.find((p) => p.interface !== null && p.name === name);
+}
+
+/** The page operators' screens open on: the project's start, else the first page. */
+export function startPage(): string | undefined {
+  const start = state.project?.start;
+  return start && page(start)?.interface === null ? start : state.pages.find((p) => p.interface === null)?.id;
+}

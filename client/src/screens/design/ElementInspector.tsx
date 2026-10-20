@@ -1,6 +1,7 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { send } from "../../net/connection";
-import { state } from "../../state/store";
+import { component, startPage, state } from "../../state/store";
+import { openPage } from "../../state/view";
 import { OWN } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Event } from "../../protocol/Event";
@@ -9,7 +10,7 @@ import type { Shows } from "../../protocol/Shows";
 import { isConstant, resolve } from "../../state/bind";
 import { complete } from "../../state/complete";
 import { DraftInput } from "../../ui/DraftInput";
-import { Plus, Square, Trash, Type, X } from "../../ui/icons";
+import { Component, Plus, Square, Trash, Type, X } from "../../ui/icons";
 import { find, setProps } from "./tree";
 
 /** The CSS a field offers by name, with an example of what it takes. Anything else lives
@@ -52,17 +53,23 @@ const side = (t: string) => /^\d+$/.test(t.trim()) && Number(t) >= 1 && Number(t
 
 function PageInspector(p: { page: Page }) {
   const resize = (width: number, height: number) => send({ type: "edit", edit: { kind: "resize_page", page: p.page.id, width, height } });
+  const isComponent = () => p.page.interface !== null;
+  const lastPage = () => !isComponent() && state.pages.filter((pg) => pg.interface === null).length < 2;
   return (
     <>
       <div class="pane-head">
         <span class="head-title">{p.page.name}</span>
-        <span class="tag">page</span>
+        <span class="tag">{isComponent() ? "component" : "page"}</span>
       </div>
       <div class="pane-body pad">
-        <div class="section">Page</div>
+        <div class="section">{isComponent() ? "Component" : "Page"}</div>
         <div class="field">
           <label>Name</label>
-          <DraftInput value={p.page.name} accept={(t) => t.trim() !== ""} onCommit={(name) => send({ type: "edit", edit: { kind: "rename_page", page: p.page.id, name } })} />
+          <DraftInput
+            value={p.page.name}
+            accept={(t) => (isComponent() ? /^[A-Z][A-Za-z0-9]*$/.test(t.trim()) : t.trim() !== "")}
+            onCommit={(name) => send({ type: "edit", edit: { kind: "rename_page", page: p.page.id, name } })}
+          />
         </div>
         <div class="section">Size</div>
         <div class="placement">
@@ -75,44 +82,49 @@ function PageInspector(p: { page: Page }) {
             <DraftInput value={String(p.page.height)} accept={side} onCommit={(t) => resize(p.page.width, Number(t))} />
           </div>
         </div>
-        <div class="field">
-          <label>Shows</label>
-          <div class="choice">
-            <For each={SHOWS}>
-              {([shows, label]) => (
-                <button classList={{ on: p.page.shows === shows }} onClick={() => p.page.shows !== shows && send({ type: "edit", edit: { kind: "set_shows", page: p.page.id, shows } })}>
-                  {label}
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-        <div class="field-hint">{p.page.shows === "over" ? "Opened over another page, as a dialog: the page beneath stays in sight." : "Covers the screen when opened."}</div>
-        <div class="section">Operators</div>
         <Show
-          when={(state.project?.start ?? state.pages[0]?.id) === p.page.id}
-          fallback={
-            <button class="button" onClick={() => send({ type: "set_start", page: p.page.id })}>
-              Start operators here
-            </button>
-          }
+          when={!isComponent()}
+          fallback={<div class="placeholder">Place it on a page with the component button over the layers. Every instance shows what is drawn here.</div>}
         >
-          <div class="field-hint">Operators' screens open on this page.</div>
+          <div class="field">
+            <label>Shows</label>
+            <div class="choice">
+              <For each={SHOWS}>
+                {([shows, label]) => (
+                  <button classList={{ on: p.page.shows === shows }} onClick={() => p.page.shows !== shows && send({ type: "edit", edit: { kind: "set_shows", page: p.page.id, shows } })}>
+                    {label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+          <div class="field-hint">{p.page.shows === "over" ? "Opened over another page, as a dialog: the page beneath stays in sight." : "Covers the screen when opened."}</div>
+          <div class="section">Operators</div>
+          <Show
+            when={startPage() === p.page.id}
+            fallback={
+              <button class="button" onClick={() => send({ type: "set_start", page: p.page.id })}>
+                Start operators here
+              </button>
+            }
+          >
+            <div class="field-hint">Operators' screens open on this page.</div>
+          </Show>
+          <div class="placeholder">
+            Select an element to change it. Every value is an expression: text goes in quotes, like <code>"Running"</code>, and <code>Speed.toFixed(1)</code> shows a live
+            value.
+          </div>
         </Show>
-        <div class="placeholder">
-          Select an element to change it. Every value is an expression: text goes in quotes, like <code>"Running"</code>, and <code>Speed.toFixed(1)</code> shows a live
-          value.
-        </div>
       </div>
       <div class="pane-foot">
         <button
           class="button"
-          disabled={state.pages.length < 2}
-          title={state.pages.length < 2 ? "A project keeps at least one page" : undefined}
+          disabled={lastPage()}
+          title={lastPage() ? "A project keeps at least one page" : undefined}
           onClick={() => send({ type: "edit", edit: { kind: "remove_page", page: p.page.id } })}
         >
           <Trash size={12} />
-          Delete page
+          {isComponent() ? "Delete component" : "Delete page"}
         </button>
       </div>
     </>
@@ -121,6 +133,7 @@ function PageInspector(p: { page: Page }) {
 
 function Properties(p: { page: string; element: Element }) {
   const text = () => p.element.tag === "span";
+  const instance = () => p.element.tag === "use";
   const other = () =>
     Object.entries(p.element.props)
       .filter(([k]) => !OWN.has(k) && !NAMED.has(k))
@@ -143,12 +156,17 @@ function Properties(p: { page: string; element: Element }) {
     <>
       <div class="pane-head">
         <span class="head-title">
-          <Show when={text()} fallback={<Square size={14} />}>
-            <Type size={14} />
-          </Show>
+          <Switch fallback={<Square size={14} />}>
+            <Match when={text()}>
+              <Type size={14} />
+            </Match>
+            <Match when={instance()}>
+              <Component size={14} />
+            </Match>
+          </Switch>
           <span>{p.element.props.name ?? p.element.id}</span>
         </span>
-        <span class="tag">{text() ? "text" : "frame"}</span>
+        <span class="tag">{instance() ? "instance" : text() ? "text" : "frame"}</span>
       </div>
       <div class="pane-body pad">
         <div class="section">Element</div>
@@ -157,15 +175,33 @@ function Properties(p: { page: string; element: Element }) {
         <div class="placement">
           <For each={["x", "y", "w", "h"]}>{(k) => <Field {...p} key={k} label={k} />}</For>
         </div>
+        <Show when={instance()}>
+          <div class="section">Component</div>
+          <div class="field">
+            <label>Shows</label>
+            <span class="instance-of">
+              <span class="mono">{p.element.component}</span>
+              <Show when={component(p.element.component ?? "")} fallback={<span class="field-note">is missing</span>}>
+                {(c) => (
+                  <button class="button" onClick={() => openPage(c().id)}>
+                    Open it
+                  </button>
+                )}
+              </Show>
+            </span>
+          </div>
+        </Show>
         <Show when={text()}>
           <div class="section">Text</div>
           <Field {...p} key="text" label="Text" />
           <For each={TEXT_LOOK}>{([label, key, hint]) => <Field {...p} key={key} label={label} placeholder={hint} />}</For>
         </Show>
-        <div class="section">Look</div>
-        <For each={LOOK}>{([label, key, hint]) => <Field {...p} key={key} label={label} placeholder={hint} />}</For>
-        <div class="section">More CSS</div>
-        <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
+        <Show when={!instance()}>
+          <div class="section">Look</div>
+          <For each={LOOK}>{([label, key, hint]) => <Field {...p} key={key} label={label} placeholder={hint} />}</For>
+          <div class="section">More CSS</div>
+          <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
+        </Show>
         <Events page={p.page} element={p.element} />
       </div>
       <div class="pane-foot">

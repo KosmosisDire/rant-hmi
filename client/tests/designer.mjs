@@ -6,9 +6,10 @@ export function designer(page) {
       await page.locator(".tab", { hasText: name }).click();
     },
 
+    /** Opens a page or a component by its exact name. */
     async openPage(name) {
       await d.tab("Design");
-      await page.locator(".pages .list-row", { hasText: name }).click();
+      await page.locator(".pages .list-row", { has: page.getByText(name, { exact: true }) }).click();
     },
 
     el(id) {

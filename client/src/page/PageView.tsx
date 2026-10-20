@@ -1,12 +1,13 @@
 // A page drawn as HTML: each element an absolutely placed div, its properties resolved
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import type { Element } from "../protocol/Element";
 import type { Event } from "../protocol/Event";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import { resolve } from "../state/bind";
+import { component } from "../state/store";
 import { short } from "../state/format";
 
 export interface Box {
@@ -28,6 +29,7 @@ export const OWN = new Set(["name", "x", "y", "w", "h", "text"]);
 /** CSS lengths that read a bare number as pixels. */
 const LENGTHS = new Set(["font-size", "border-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
 
+/** A page, or a component drawn on its own. */
 export function PageView(p: { page: Page; overrides?: Overrides; design?: boolean; fire?: Fire }) {
   return (
     <div class="page" classList={{ design: p.design }} style={{ width: `${p.page.width}px`, height: `${p.page.height}px` }}>
@@ -46,7 +48,9 @@ function words(v: unknown): string {
   return typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : short(v as JsonValue);
 }
 
-function ElementView(p: { element: Element; overrides?: Overrides; design?: boolean; fire?: Fire }) {
+/** One element. `inside` marks one drawn as part of an instance: it is the component's, not
+ *  the page's, so it carries no id to pick it by. */
+function ElementView(p: { element: Element; overrides?: Overrides; design?: boolean; fire?: Fire; inside?: boolean }) {
   const look = createMemo(() => {
     const style: Record<string, string> = {};
     const faults: string[] = [];
@@ -58,7 +62,8 @@ function ElementView(p: { element: Element; overrides?: Overrides; design?: bool
       else faults.push(`${key}: ${r.error}`);
       return undefined;
     };
-    for (const key of Object.keys(p.element.props)) {
+    // an instance's other properties are its inputs, never CSS
+    for (const key of p.element.tag === "use" ? [] : Object.keys(p.element.props)) {
       if (OWN.has(key)) continue;
       const v = take(key);
       if (v !== undefined && v !== null && v !== "") style[key] = css(key, v);
@@ -74,7 +79,7 @@ function ElementView(p: { element: Element; overrides?: Overrides; design?: bool
     style.width = `${at("w")}px`;
     style.height = `${at("h")}px`;
     const text = p.element.tag === "span" ? words(take("text")) : "";
-    return { style, unknown, faults, text };
+    return { style, unknown, faults, text, w: at("w"), h: at("h") };
   });
   // Pressed shows at once. Its release is heard on the window, so letting go anywhere ends
   // a press, and a tap needs the release over the element.
@@ -100,16 +105,38 @@ function ElementView(p: { element: Element; overrides?: Overrides; design?: bool
   };
   return (
     <div
-      data-id={p.element.id}
+      data-id={p.inside ? undefined : p.element.id}
       class="el"
       classList={{ text: p.element.tag === "span", unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: live(), pressed: pressed() }}
       style={look().style}
       title={p.design && look().faults.length > 0 ? look().faults.join("\n") : undefined}
       onPointerDown={down}
     >
-      <Show when={p.element.tag === "div"} fallback={look().text}>
-        <For each={p.element.children}>{(c) => <ElementView element={c} overrides={p.overrides} design={p.design} fire={p.fire} />}</For>
-      </Show>
+      <Switch fallback={look().text}>
+        <Match when={p.element.tag === "div"}>
+          <For each={p.element.children}>{(c) => <ElementView element={c} overrides={p.overrides} design={p.design} fire={p.fire} inside={p.inside} />}</For>
+        </Match>
+        <Match when={p.element.tag === "use"}>
+          <Instance name={p.element.component ?? ""} w={look().w} h={look().h} design={p.design} />
+        </Match>
+      </Switch>
     </div>
+  );
+}
+
+/** A component drawn in an instance's box: its own size scaled to fit, centred. */
+function Instance(p: { name: string; w: number; h: number; design?: boolean }) {
+  return (
+    <Show when={component(p.name)} fallback={<div class="instance-missing">{p.name} is missing</div>}>
+      {(c) => {
+        const k = () => Math.min(p.w / c().width, p.h / c().height);
+        const place = () => `translate(${(p.w - c().width * k()) / 2}px, ${(p.h - c().height * k()) / 2}px) scale(${k()})`;
+        return (
+          <div class="instance" style={{ width: `${c().width}px`, height: `${c().height}px`, transform: place() }}>
+            <For each={c().children}>{(e) => <ElementView element={e} design={p.design} inside />}</For>
+          </div>
+        );
+      }}
+    </Show>
   );
 }

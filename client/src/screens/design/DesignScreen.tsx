@@ -29,7 +29,10 @@ export function DesignScreen(p: { shown: boolean }) {
     ),
   );
 
-  // a selection whose element went away, or that belongs to another page, drops
+  // another page opened starts with nothing selected, since ids repeat across pages
+  createEffect(on(() => currentPage()?.id, () => setSelected(null), { defer: true }));
+
+  // a selection whose element went away drops
   createEffect(() => {
     const id = selected();
     const page = currentPage();

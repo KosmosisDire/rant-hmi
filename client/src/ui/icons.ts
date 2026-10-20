@@ -4,6 +4,7 @@
 export { default as ChevronDown } from "lucide-solid/icons/chevron-down";
 export { default as ChevronRight } from "lucide-solid/icons/chevron-right";
 export { default as Code } from "lucide-solid/icons/code";
+export { default as Component } from "lucide-solid/icons/component";
 export { default as Database } from "lucide-solid/icons/database";
 export { default as Dot } from "lucide-solid/icons/dot";
 export { default as CircleDot } from "lucide-solid/icons/circle-dot";

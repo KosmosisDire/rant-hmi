@@ -6,7 +6,15 @@ import type { Tag } from "./Tag";
  * One element. `props` holds its name, its placement (`x`, `y`, `w`, `h`), a span's `text`
  * and any CSS property. Every one but the name is an expression.
  */
-export type Element = { id: string, tag: Tag, props: { [key in string]?: string }, 
+export type Element = { id: string, tag: Tag, 
+/**
+ * The component an instance shows, by name. Set exactly on a `use` element.
+ */
+component: string | null, 
+/**
+ * An instance's are its placement and the inputs it fills in.
+ */
+props: { [key in string]?: string }, 
 /**
  * At most one per event, in the order events are listed.
  */

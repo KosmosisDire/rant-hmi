@@ -1,9 +1,10 @@
 /* The frame and the slots a screen fills. The only file that sizes anything. */
 
-/* Notices stack in the lower right, above the status bar, newest at the bottom. */
+/* Notices stack low in the middle, clear of both sidebars, newest at the bottom. */
 .notices {
   position: fixed;
-  right: 16px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: calc(var(--bar) + 12px);
   z-index: 50;
   display: flex;
@@ -275,10 +276,11 @@
     overflow: auto;
   }
 
-  /* Notices stack in the lower right, above the status bar, newest at the bottom. */
+  /* Notices stack low in the middle, clear of both sidebars, newest at the bottom. */
 .notices {
   position: fixed;
-  right: 16px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: calc(var(--bar) + 12px);
   z-index: 50;
   display: flex;

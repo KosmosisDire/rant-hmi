@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Event, Handler, Page, Shows, Tag};
+use super::{Element, Event, Handler, Interface, Page, Shows, Tag};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 5] = ["name", "x", "y", "w", "h"];
@@ -27,17 +27,18 @@ const TEXT: &str = "text";
 // ------------------------------------------------------------------------------ writing
 
 pub fn write(page: &Page) -> String {
+    let root = if page.interface.is_some() { "component" } else { "page" };
     let shows = if page.shows == Shows::Over { " shows=\"over\"" } else { "" };
-    let mut out = format!("<page name={} size=\"{}x{}\"{shows}>\n", quote(&page.name), page.width, page.height);
+    let mut out = format!("<{root} name={} size=\"{}x{}\"{shows}>\n", quote(&page.name), page.width, page.height);
     for e in &page.children {
         element(&mut out, e, 1);
     }
-    out.push_str("</page>\n");
+    out.push_str(&format!("</{root}>\n"));
     out
 }
 
 fn element(out: &mut String, e: &Element, depth: usize) {
-    let tag = e.tag.word();
+    let tag = e.word();
     out.push_str(&"  ".repeat(depth));
     out.push_str(&format!("<{tag} id={}", quote(&e.id)));
     for key in ATTRS {
@@ -45,14 +46,17 @@ fn element(out: &mut String, e: &Element, depth: usize) {
             out.push_str(&format!(" {key}={}", quote(v)));
         }
     }
-    let style: Vec<String> = e
-        .props
-        .iter()
-        .filter(|(k, _)| !ATTRS.contains(&k.as_str()) && k.as_str() != TEXT)
-        .map(|(k, v)| format!("{k}: {v}"))
-        .collect();
-    if !style.is_empty() {
-        out.push_str(&format!(" style={}", quote(&style.join("; "))));
+    let rest = e.props.iter().filter(|(k, _)| !ATTRS.contains(&k.as_str()) && k.as_str() != TEXT);
+    if e.tag == Tag::Use {
+        // an instance's inputs are attributes of their own
+        for (k, v) in rest {
+            out.push_str(&format!(" {k}={}", quote(v)));
+        }
+    } else {
+        let style: Vec<String> = rest.map(|(k, v)| format!("{k}: {v}")).collect();
+        if !style.is_empty() {
+            out.push_str(&format!(" style={}", quote(&style.join("; "))));
+        }
     }
     let text = e.props.get(TEXT).filter(|_| e.tag == Tag::Span);
     match text {
@@ -112,10 +116,11 @@ fn quote(v: &str) -> String {
 pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     let mut r = Reader { s: text, at: 0, ids: HashSet::new() };
     r.gap();
-    r.expect("<page")?;
+    let root = if r.eat("<component") { "component" } else { r.expect("<page").map(|_| "page")? };
     let attrs = r.attrs()?;
     r.expect(">")?;
-    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 1408, height: 792, shows: Shows::Full, children: Vec::new() };
+    let interface = (root == "component").then(Interface::default);
+    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 1408, height: 792, shows: Shows::Full, interface, children: Vec::new() };
     for (k, v) in attrs {
         match k.as_str() {
             "name" => page.name = v,
@@ -131,10 +136,10 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
                     _ => return Err(r.error("shows is full or over")),
                 }
             }
-            other => return Err(r.error(&format!("<page> takes no attribute {other}"))),
+            other => return Err(r.error(&format!("<{root}> takes no attribute {other}"))),
         }
     }
-    page.children = r.children("page")?;
+    page.children = r.children(root)?;
     r.gap();
     if r.at < r.s.len() {
         return Err(r.error("nothing may follow </page>"));
@@ -269,12 +274,20 @@ impl Reader<'_> {
     fn element(&mut self) -> Result<Element, String> {
         self.expect("<")?;
         let word = self.word()?;
-        let tag = Tag::from_word(&word).ok_or_else(|| self.error(&format!("<{word}> is not an element a page holds yet")))?;
+        // a capital names a component, of which this is an instance
+        let component = word.starts_with(|c: char| c.is_ascii_uppercase()).then(|| word.clone());
+        let tag = match component {
+            Some(_) => Tag::Use,
+            None => Tag::from_word(&word).ok_or_else(|| self.error(&format!("<{word}> is not an element a page holds yet")))?,
+        };
         let mut id = None;
         let mut props = BTreeMap::new();
         for (k, v) in self.attrs()? {
             match k.as_str() {
                 "id" => id = Some(v),
+                k if tag == Tag::Use && k != "style" => {
+                    props.insert(k.to_owned(), v);
+                }
                 "style" => {
                     for decl in split_outside(&v, ';') {
                         let (key, value) = decl.split_once(':').ok_or_else(|| self.error(&format!("\"{decl}\" in style needs a colon")))?;
@@ -298,6 +311,7 @@ impl Reader<'_> {
             handlers = self.handlers()?;
             match tag {
                 Tag::Div => children = self.children("div")?,
+                Tag::Use => self.expect(&format!("</{word}>"))?,
                 Tag::Span => {
                     let n = outside(self.rest(), "</span>").ok_or_else(|| self.error("<span> never closes"))?;
                     let text = self.rest()[..n].trim().to_owned();
@@ -309,7 +323,7 @@ impl Reader<'_> {
                 }
             }
         }
-        Ok(Element { id, tag, props, handlers, children })
+        Ok(Element { id, tag, component, props, handlers, children })
     }
 }
 

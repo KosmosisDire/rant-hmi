@@ -37,6 +37,26 @@
   filter: brightness(0.85);
 }
 
+/* An instance draws its component scaled into its box, as one piece. */
+.instance {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.instance-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 13px;
+  color: #d2574b;
+  outline: 1px dashed #d2574b;
+  outline-offset: -1px;
+}
+
 /* A value it shows is unknown: hatched, never a stale or invented value passed as true. */
 .el.unknown::after {
   content: "";

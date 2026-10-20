@@ -1,6 +1,7 @@
-//! The project's pages, one HTML like file each in `pages/`, and the edits that change them.
-//! Every edit goes through the backend, which saves the file and sends the page to every
-//! screen, so all of them show the same page.
+//! The project's pages and components, one HTML like file each in `pages/` and `components/`,
+//! and the edits that change them. A component is kept as a page with an interface, so every
+//! edit works on both. Every edit goes through the backend, which saves the file and sends the
+//! page to every screen, so all of them show the same page.
 
 pub mod format;
 pub mod js;
@@ -13,19 +14,28 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// A page: an artboard of `width` by `height` pixels holding elements.
+/// A page: an artboard of `width` by `height` pixels holding elements. With an interface it
+/// is a component, placed on pages as instances.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct Page {
     /// The file's name without `.html`, stable while the page lives.
     pub id: String,
+    /// A component's is PascalCase, as instances name it.
     pub name: String,
     pub width: u32,
     pub height: u32,
     #[serde(default)]
     pub shows: Shows,
+    #[serde(default)]
+    pub interface: Option<Interface>,
     pub children: Vec<Element>,
 }
+
+/// What an instance of a component fills in.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Default)]
+#[ts(export)]
+pub struct Interface {}
 
 /// How an open page shows: covering what is beneath, or floating over it while the page
 /// beneath stays in sight and keeps running, as a dialog does.
@@ -45,6 +55,10 @@ pub enum Shows {
 pub struct Element {
     pub id: String,
     pub tag: Tag,
+    /// The component an instance shows, by name. Set exactly on a `use` element.
+    #[serde(default)]
+    pub component: Option<String>,
+    /// An instance's are its placement and the inputs it fills in.
     pub props: BTreeMap<String, String>,
     /// At most one per event, in the order events are listed.
     pub handlers: Vec<Handler>,
@@ -81,28 +95,34 @@ impl Event {
     }
 }
 
-/// What an element renders as. A frame is a div, a text a span.
+/// What an element renders as. A frame is a div, a text a span, and an instance of a
+/// component is written with the component's name.
 #[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[ts(export)]
 pub enum Tag {
     Div,
     Span,
+    Use,
 }
 
 impl Tag {
-    pub fn word(self) -> &'static str {
-        match self {
-            Tag::Div => "div",
-            Tag::Span => "span",
-        }
-    }
-
     pub fn from_word(word: &str) -> Option<Tag> {
         match word {
             "div" => Some(Tag::Div),
             "span" => Some(Tag::Span),
             _ => None,
+        }
+    }
+}
+
+impl Element {
+    /// The tag the file writes: an instance takes its component's name.
+    pub fn word(&self) -> &str {
+        match self.tag {
+            Tag::Div => "div",
+            Tag::Span => "span",
+            Tag::Use => self.component.as_deref().unwrap_or("Missing"),
         }
     }
 }
@@ -114,6 +134,7 @@ impl Tag {
 #[ts(export)]
 pub enum Edit {
     AddPage { name: String },
+    AddComponent { name: String },
     RenamePage { page: String, name: String },
     ResizePage { page: String, width: u32, height: u32 },
     SetShows { page: String, shows: Shows },
@@ -145,36 +166,87 @@ pub struct Applied {
 }
 
 pub struct Pages {
-    dir: PathBuf,
-    /// In id order, as the files list.
+    root: PathBuf,
+    /// Pages and components in id order, as the files list.
     pub list: Vec<Page>,
 }
 
 const WIDTH: u32 = 1408;
 const HEIGHT: u32 = 792;
+const COMPONENT_WIDTH: u32 = 264;
+const COMPONENT_HEIGHT: u32 = 176;
 /// The largest side a page may have, in pixels.
 const LARGEST: u32 = 16384;
 
 impl Pages {
-    /// Reads every page in `pages/`, starting one called Overview when there is none.
+    /// Reads every page in `pages/` and component in `components/`, starting a page called
+    /// Overview when there is none.
     pub fn open(root: &Path) -> Result<Pages> {
-        let dir = root.join("pages");
-        let mut files: Vec<PathBuf> = match fs::read_dir(&dir) {
-            Ok(entries) => entries.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "html")).collect(),
-            Err(_) => Vec::new(),
-        };
-        files.sort();
         let mut list = Vec::new();
-        for file in files {
-            let id = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-            let text = fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
-            list.push(format::parse(&text, &id).map_err(|e| anyhow::anyhow!("{}, {e}", file.display()))?);
+        for folder in ["pages", "components"] {
+            let files: Vec<PathBuf> = match fs::read_dir(root.join(folder)) {
+                Ok(entries) => entries.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "html")).collect(),
+                Err(_) => Vec::new(),
+            };
+            for file in files {
+                let id = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                let text = fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
+                let page = format::parse(&text, &id).map_err(|e| anyhow::anyhow!("{}, {e}", file.display()))?;
+                if (folder == "components") != page.interface.is_some() {
+                    anyhow::bail!("{} belongs in {}", file.display(), if folder == "pages" { "components" } else { "pages" });
+                }
+                list.push(page);
+            }
         }
-        let mut pages = Pages { dir, list };
-        if pages.list.is_empty() {
+        list.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut pages = Pages { root: root.to_path_buf(), list };
+        if !pages.list.iter().any(|p| p.interface.is_none()) {
             pages.apply(Edit::AddPage { name: "Overview".into() }).map_err(anyhow::Error::msg)?;
         }
         Ok(pages)
+    }
+
+    pub fn component(&self, name: &str) -> Option<&Page> {
+        self.list.iter().find(|p| p.interface.is_some() && p.name == name)
+    }
+
+    /// True when `component`, or a component it holds at any depth, has an instance of the
+    /// component called `name`.
+    fn holds(&self, component: &str, name: &str) -> bool {
+        fn uses(elements: &[Element], out: &mut Vec<String>) {
+            for e in elements {
+                out.extend(e.component.clone());
+                uses(&e.children, out);
+            }
+        }
+        let mut seen = HashSet::new();
+        let mut todo = vec![component.to_owned()];
+        while let Some(c) = todo.pop() {
+            if c == name {
+                return true;
+            }
+            if seen.insert(c.clone()) {
+                let mut found = Vec::new();
+                uses(self.component(&c).map_or(&[][..], |p| &p.children), &mut found);
+                todo.extend(found);
+            }
+        }
+        false
+    }
+
+    /// An element tree may go into `page` when each instance in it names a component that
+    /// exists and does not hold `page`, which would make it hold itself.
+    fn check_uses(&self, page: &str, e: &Element) -> Result<(), String> {
+        if let Some(c) = &e.component {
+            if self.component(c).is_none() {
+                return Err(format!("there is no component {c}"));
+            }
+            let host = self.get(page).filter(|p| p.interface.is_some()).map(|p| p.name.clone());
+            if let Some(host) = host.filter(|h| self.holds(c, h)) {
+                return Err(format!("{host} cannot hold {c}, since {c} holds {host}"));
+            }
+        }
+        e.children.iter().try_for_each(|c| self.check_uses(page, c))
     }
 
     pub fn get(&self, id: &str) -> Option<&Page> {
@@ -218,7 +290,7 @@ impl Pages {
     /// its id. A name spelled like an earlier one gets a number.
     pub fn keys(&self) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = Vec::new();
-        for p in &self.list {
+        for p in self.list.iter().filter(|p| p.interface.is_none()) {
             let words: String = p.name.split(|c: char| !c.is_ascii_alphanumeric()).map(capital).collect();
             let base = if words.starts_with(|c: char| c.is_ascii_alphabetic()) { words } else { format!("Page{words}") };
             let mut key = base.clone();
@@ -266,13 +338,33 @@ impl Pages {
             Edit::AddPage { name } => {
                 let name = named(&name)?;
                 let id = self.free_id(&slug(&name));
-                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, children: Vec::new() });
+                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, interface: None, children: Vec::new() });
+                *made = Some((id.clone(), id.clone()));
+                touched.push(id.clone());
+                return Ok(Edit::RemovePage { page: id });
+            }
+            Edit::AddComponent { name } => {
+                let name = self.component_name(&name, None)?;
+                let id = self.free_id(&slug(&name));
+                let interface = Some(Interface::default());
+                self.insert_page(Page { id: id.clone(), name, width: COMPONENT_WIDTH, height: COMPONENT_HEIGHT, shows: Shows::Full, interface, children: Vec::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
             }
             Edit::RenamePage { page, name } => {
-                let old = std::mem::replace(&mut self.page_mut(&page)?.name, named(&name)?);
+                let old = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?.name.clone();
+                let component = self.get(&page).is_some_and(|p| p.interface.is_some());
+                let name = if component { self.component_name(&name, Some(&page))? } else { named(&name)? };
+                self.page_mut(&page)?.name = name.clone();
+                // every instance of a renamed component follows it
+                if component {
+                    for p in &mut self.list {
+                        if rename_uses(&mut p.children, &old, &name) {
+                            touched.push(p.id.clone());
+                        }
+                    }
+                }
                 Edit::RenamePage { page: page.clone(), name: old }
             }
             Edit::ResizePage { page, width, height } => {
@@ -288,10 +380,17 @@ impl Pages {
                 Edit::SetShows { page: page.clone(), shows: old }
             }
             Edit::RemovePage { page } => {
-                if self.list.len() == 1 {
+                let at = self.list.iter().position(|p| p.id == page).ok_or_else(|| format!("there is no page {page}"))?;
+                let gone = &self.list[at];
+                if gone.interface.is_none() && self.list.iter().filter(|p| p.interface.is_none()).count() == 1 {
                     return Err("a project keeps at least one page".into());
                 }
-                let at = self.list.iter().position(|p| p.id == page).ok_or_else(|| format!("there is no page {page}"))?;
+                if gone.interface.is_some() {
+                    let user = self.list.iter().find(|p| p.id != page && uses(&p.children, &gone.name));
+                    if let Some(user) = user {
+                        return Err(format!("{} is placed on {}, so it stays", gone.name, user.name));
+                    }
+                }
                 touched.push(page);
                 return Ok(Edit::PutPage { page: self.list.remove(at) });
             }
@@ -303,6 +402,9 @@ impl Pages {
                 for e in &page.children {
                     check_tree(e, &mut ids)?;
                 }
+                if page.interface.is_some() {
+                    self.component_name(&page.name, None)?;
+                }
                 let id = page.id.clone();
                 self.insert_page(page);
                 *made = Some((id.clone(), id.clone()));
@@ -310,6 +412,7 @@ impl Pages {
                 return Ok(Edit::RemovePage { page: id });
             }
             Edit::AddElement { page, parent, index, mut element } => {
+                self.check_uses(&page, &element)?;
                 let p = self.page_mut(&page)?;
                 let mut next = highest(&p.children) + 1;
                 renumber(&mut element, &mut next);
@@ -327,6 +430,7 @@ impl Pages {
                 Edit::PutElement { page: page.clone(), parent, index, element }
             }
             Edit::PutElement { page, parent, index, element } => {
+                self.check_uses(&page, &element)?;
                 let p = self.page_mut(&page)?;
                 let mut ids = HashSet::new();
                 p.children.iter().for_each(|e| all_ids(e, &mut ids));
@@ -390,6 +494,20 @@ impl Pages {
         Ok(undo)
     }
 
+    /// A component's name: PascalCase, as code and files name it, and its own. `own` is the
+    /// component's id when it is renamed.
+    fn component_name(&self, name: &str, own: Option<&str>) -> Result<String, String> {
+        let name = name.trim();
+        let mut chars = name.chars();
+        if !(chars.next().is_some_and(|c| c.is_ascii_uppercase()) && chars.all(|c| c.is_ascii_alphanumeric())) {
+            return Err(format!("\"{name}\" cannot name a component: start with a capital letter, then use letters and digits"));
+        }
+        if self.component(name).is_some_and(|p| Some(p.id.as_str()) != own) {
+            return Err(format!("{name} is already a component"));
+        }
+        Ok(name.to_owned())
+    }
+
     fn insert_page(&mut self, page: Page) {
         let at = self.list.partition_point(|p| p.id < page.id);
         self.list.insert(at, page);
@@ -413,15 +531,20 @@ impl Pages {
     /// Writes beside the file and renames over it, so a crash never leaves half a page. A
     /// page that is gone loses its file.
     fn save(&self, id: &str) -> Result<(), String> {
-        let file = self.dir.join(format!("{id}.html"));
         let Some(page) = self.get(id) else {
-            return match fs::remove_file(&file) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("could not remove {}: {e}", file.display())),
-                _ => Ok(()),
-            };
+            for folder in ["pages", "components"] {
+                let file = self.root.join(folder).join(format!("{id}.html"));
+                match fs::remove_file(&file) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("could not remove {}: {e}", file.display())),
+                    _ => {}
+                }
+            }
+            return Ok(());
         };
-        let partial = self.dir.join(format!("{id}.html.partial"));
-        fs::create_dir_all(&self.dir)
+        let dir = self.root.join(if page.interface.is_some() { "components" } else { "pages" });
+        let file = dir.join(format!("{id}.html"));
+        let partial = dir.join(format!("{id}.html.partial"));
+        fs::create_dir_all(&dir)
             .and_then(|_| fs::write(&partial, format::write(page)))
             .and_then(|_| fs::rename(&partial, &file))
             .map_err(|e| format!("could not save {}: {e}", file.display()))
@@ -450,10 +573,29 @@ fn slug(name: &str) -> String {
     s.trim_end_matches('-').to_owned()
 }
 
-/// A property is a CSS name or one of ours: lower case, digits and hyphens.
+/// True when an element here is an instance of the component called `name`.
+fn uses(elements: &[Element], name: &str) -> bool {
+    elements.iter().any(|e| e.component.as_deref() == Some(name) || uses(&e.children, name))
+}
+
+/// Writes the instances of the component `from` as `to`. True when any changed.
+fn rename_uses(elements: &mut [Element], from: &str, to: &str) -> bool {
+    let mut changed = false;
+    for e in elements {
+        if e.component.as_deref() == Some(from) {
+            e.component = Some(to.to_owned());
+            changed = true;
+        }
+        changed |= rename_uses(&mut e.children, from, to);
+    }
+    changed
+}
+
+/// A property is a CSS name or an instance's input: a small letter first, then letters,
+/// digits and hyphens.
 fn check_props<'a>(keys: impl Iterator<Item = &'a String>) -> Result<(), String> {
     for key in keys {
-        let ok = key.starts_with(|c: char| c.is_ascii_lowercase()) && key.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        let ok = key.starts_with(|c: char| c.is_ascii_lowercase()) && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
         if !ok {
             return Err(format!("\"{key}\" is not a property name"));
         }
@@ -480,6 +622,9 @@ fn check_tree(e: &Element, ids: &mut HashSet<String>) -> Result<(), String> {
     check_props(e.props.keys())?;
     if e.tag != Tag::Div && !e.children.is_empty() {
         return Err("only a frame holds other elements".into());
+    }
+    if (e.tag == Tag::Use) != e.component.is_some() {
+        return Err("an instance, and only an instance, names a component".into());
     }
     if !ids.insert(e.id.clone()) {
         return Err(format!("the id {} is already on the page", e.id));
@@ -541,7 +686,7 @@ mod tests {
     }
 
     fn add(page: String, parent: Option<String>, tag: Tag, props: BTreeMap<String, String>) -> Edit {
-        Edit::AddElement { page, parent, index: None, element: Element { id: String::new(), tag, props, handlers: Vec::new(), children: Vec::new() } }
+        Edit::AddElement { page, parent, index: None, element: Element { id: String::new(), tag, component: None, props, handlers: Vec::new(), children: Vec::new() } }
     }
 
     #[test]
@@ -681,16 +826,46 @@ mod tests {
         let o = || "overview".to_string();
         pages.apply(add(o(), None, Tag::Div, BTreeMap::new())).unwrap();
         pages.apply(add(o(), None, Tag::Div, BTreeMap::new())).unwrap();
-        let leaf = |id: &str, tag| Element { id: id.into(), tag, props: BTreeMap::new(), handlers: Vec::new(), children: Vec::new() };
-        let copy = Element { id: "e1".into(), tag: Tag::Div, props: props(&[("x", "11")]), handlers: Vec::new(), children: vec![leaf("e2", Tag::Span), leaf("x", Tag::Div)] };
+        let leaf = |id: &str, tag| Element { id: id.into(), tag, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: Vec::new() };
+        let copy = Element { id: "e1".into(), tag: Tag::Div, component: None, props: props(&[("x", "11")]), handlers: Vec::new(), children: vec![leaf("e2", Tag::Span), leaf("x", Tag::Div)] };
         let made = pages.apply(Edit::AddElement { page: o(), parent: None, index: Some(1), element: copy }).unwrap().made.unwrap().1;
         assert_eq!(made, "e3");
         let ids: Vec<_> = pages.list[0].children.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, ["e1", "e3", "e2"]);
         let kids: Vec<_> = pages.list[0].children[1].children.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(kids, ["e4", "e5"]);
-        let bad = Element { id: String::new(), tag: Tag::Span, props: BTreeMap::new(), handlers: Vec::new(), children: vec![leaf("", Tag::Span)] };
+        let bad = Element { id: String::new(), tag: Tag::Span, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: vec![leaf("", Tag::Span)] };
         assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame holds other elements");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn instance(component: &str) -> Element {
+        Element { id: String::new(), tag: Tag::Use, component: Some(component.into()), props: props(&[("x", "0")]), handlers: Vec::new(), children: Vec::new() }
+    }
+
+    #[test]
+    fn components_hold_instances_but_never_themselves() {
+        let dir = scratch("components");
+        let mut pages = Pages::open(&dir).unwrap();
+        let o = || "overview".to_string();
+        let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into() }).unwrap().made.unwrap().1;
+        let card = pages.apply(Edit::AddComponent { name: "Card".into() }).unwrap().made.unwrap().1;
+        assert_eq!(pages.apply(Edit::AddComponent { name: "gauge".into() }).err().unwrap(), "\"gauge\" cannot name a component: start with a capital letter, then use letters and digits");
+        assert_eq!(pages.apply(Edit::AddComponent { name: "Gauge".into() }).err().unwrap(), "Gauge is already a component");
+        pages.apply(Edit::AddElement { page: card.clone(), parent: None, index: None, element: instance("Gauge") }).unwrap();
+        pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: instance("Card") }).unwrap();
+        let add = |page: &str, c: &str| Edit::AddElement { page: page.into(), parent: None, index: None, element: instance(c) };
+        assert_eq!(pages.apply(add(&gauge, "Card")).err().unwrap(), "Gauge cannot hold Card, since Card holds Gauge");
+        assert_eq!(pages.apply(add(&gauge, "Gauge")).err().unwrap(), "Gauge cannot hold Gauge, since Gauge holds Gauge");
+        assert_eq!(pages.apply(add(&o(), "Dial")).err().unwrap(), "there is no component Dial");
+        assert_eq!(pages.apply(Edit::RemovePage { page: gauge.clone() }).err().unwrap(), "Gauge is placed on Card, so it stays");
+
+        let renamed = pages.apply(Edit::RenamePage { page: gauge.clone(), name: "Dial".into() }).unwrap();
+        assert_eq!(renamed.pages, [card.clone(), gauge.clone()]);
+        let again = Pages::open(&dir).unwrap();
+        assert_eq!(again.get(&card).unwrap().children[0].component.as_deref(), Some("Dial"));
+        assert!(fs::read_to_string(dir.join("components").join(format!("{card}.html"))).unwrap().contains("<Dial id=\"e1\" x=\"0\"/>"));
+        assert_eq!(again.keys().len(), 1);
         fs::remove_dir_all(&dir).unwrap();
     }
 
