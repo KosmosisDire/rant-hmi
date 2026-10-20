@@ -1,14 +1,16 @@
 import { createContext, createMemo, createSignal, For, Match, Show, Switch, useContext } from "solid-js";
+import { produce } from "solid-js/store";
 import { send } from "../../net/connection";
-import { component, startPage, state } from "../../state/store";
-import { openPage } from "../../state/view";
 import { OWN } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
+import type { Input } from "../../protocol/Input";
+import type { Interface } from "../../protocol/Interface";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import { docScope, isConstant, pageScope, resolve, type Scope } from "../../state/bind";
 import { complete, type Place, type Suggestion } from "../../state/complete";
-import type { Input } from "../../protocol/Input";
+import { component, setState, startPage, state } from "../../state/store";
+import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, Plus, Square, Trash, Type, X } from "../../ui/icons";
 import { find, setProps } from "./tree";
@@ -71,7 +73,10 @@ const SHOWS: [Shows, string][] = [
 const side = (t: string) => /^\d+$/.test(t.trim()) && Number(t) >= 1 && Number(t) <= 16384;
 
 function PageInspector(p: { page: Page }) {
-  const resize = (width: number, height: number) => send({ type: "edit", edit: { kind: "resize_page", page: p.page.id, width, height } });
+  // here at once too, since the other side is sent with it
+  const resize = (width: number, height: number) => {
+    if (send({ type: "edit", edit: { kind: "resize_page", page: p.page.id, width, height } })) setState("pages", (pg) => pg.id === p.page.id, { width, height });
+  };
   const isComponent = () => p.page.interface !== null;
   const lastPage = () => !isComponent() && state.pages.filter((pg) => pg.interface === null).length < 2;
   return (
@@ -362,9 +367,22 @@ function Field(p: { page: string; element: Element; key: string; label: string; 
   );
 }
 
+/** Changes a component's interface here at once too, in place, so a change right after builds
+ *  on this one. The backend sends the page back should it refuse. */
+function putInterface(page: string, change: (i: Interface) => void) {
+  setState("pages", (pg) => pg.id === page, "interface", produce((i) => i && change(i)));
+}
+
 /** A component's inputs, each a box: its name, whether it may be written back, its default. */
 function Inputs(p: { page: string; inputs: Input[] }) {
-  const write = (name: string, input: Input | null) => send({ type: "edit", edit: { kind: "set_input", page: p.page, name, input } });
+  const write = (name: string, input: Input | null) => {
+    if (!send({ type: "edit", edit: { kind: "set_input", page: p.page, name, input } })) return;
+    putInterface(p.page, (i) => {
+      const at = i.inputs.findIndex((x) => x.name === name);
+      if (at >= 0 && input) Object.assign(i.inputs[at], input);
+      else if (at >= 0) i.inputs.splice(at, 1);
+    });
+  };
   const add = () => {
     let name = "input";
     for (let n = 2; p.inputs.some((i) => i.name === name); n++) name = `input${n}`;
@@ -409,7 +427,14 @@ function Inputs(p: { page: string; inputs: Input[] }) {
 
 /** The events a component sends with `emit`, which each instance may handle. */
 function Sends(p: { page: string; events: string[] }) {
-  const write = (name: string, to: string | null) => send({ type: "edit", edit: { kind: "set_event", page: p.page, name, to } });
+  const write = (name: string, to: string | null) => {
+    if (!send({ type: "edit", edit: { kind: "set_event", page: p.page, name, to } })) return;
+    putInterface(p.page, (i) => {
+      const at = i.events.indexOf(name);
+      if (at >= 0 && to) i.events[at] = to;
+      else if (at >= 0) i.events.splice(at, 1);
+    });
+  };
   const add = () => {
     let name = "change";
     for (let n = 2; p.events.includes(name); n++) name = `change${n}`;

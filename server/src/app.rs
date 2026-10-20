@@ -237,6 +237,7 @@ impl App {
             ClientMsg::SetToken { name, token } => {
                 let renamed = token.as_ref().filter(|t| t.name != name).map(|t| t.name.clone());
                 if let Err(text) = self.project.set_token(&name, token) {
+                    self.send(session, &ServerMsg::Theme { tokens: self.project.tokens.clone() });
                     return self.refuse(session, text, None);
                 }
                 self.broadcast(&ServerMsg::Theme { tokens: self.project.tokens.clone() });
@@ -291,6 +292,7 @@ impl App {
     fn set_variable(&mut self, session: u32, name: String, to: Option<Variable>) {
         let old = self.project.variable(&name).cloned();
         if let Err(text) = self.project.set_variable(&name, to.clone()) {
+            self.send(session, &ServerMsg::Variables { variables: self.project.variables.clone() });
             return self.refuse(session, text, None);
         }
         let mut kept_shared = self.shared.remove(&name);
@@ -331,6 +333,7 @@ impl App {
     /// use of the alias in pages and handlers.
     fn change_import(&mut self, session: u32, alias: String, import: Import) {
         if let Err(text) = self.project.change(&alias, import.clone()) {
+            self.send(session, &ServerMsg::Imports { imports: self.project.imports.clone() });
             return self.refuse(session, text, Some(alias));
         }
         if import.alias != alias {
@@ -521,13 +524,19 @@ impl App {
     /// that asked keeps its undo, and hears what it made, so it can select it.
     fn edit(&mut self, session: u32, edit: Edit, step: Step) {
         let rules = matches!(edit, Edit::SetRule { .. });
+        let shown = match &edit {
+            Edit::SetInput { page, .. } | Edit::SetEvent { page, .. } | Edit::ResizePage { page, .. } => Some(page.clone()),
+            _ => None,
+        };
         let applied = match self.pages.apply(edit) {
             Ok(applied) => applied,
             Err(text) => {
-                // a screen shows a rule change at once, so a refused one is set right
+                // a screen shows these changes at once, so a refused one is set right
                 if rules {
                     self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
-        self.send(session, &ServerMsg::Theme { tokens: self.project.tokens.clone() });
+                }
+                if let Some(page) = shown.and_then(|id| self.pages.get(&id).cloned()) {
+                    self.send(session, &ServerMsg::Page { page });
                 }
                 return self.refuse(session, text, None);
             }

@@ -7,7 +7,7 @@ import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
 import type { JsonValue } from "../../protocol/serde_json/JsonValue";
 import { typeLabel } from "../../state/format";
-import { entity, importOf, live, setState, state } from "../../state/store";
+import { entity, importOf, live, putLocal, setState, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { KindIcon } from "../../ui/marks";
 import type { Picking } from "./DataScreen";
@@ -101,7 +101,8 @@ function ImportView(p: { imp: Import }) {
   };
   const change = (to: Partial<Import>) => {
     setState("refused", null);
-    send({ type: "change_import", alias: p.imp.alias, import: { ...p.imp, ...to } });
+    const next = { ...p.imp, ...to };
+    if (send({ type: "change_import", alias: p.imp.alias, import: next })) putLocal("imports", p.imp.alias, next);
   };
   // a variable whose owner takes no sets can only be read
   const canWrite = () => p.imp.kind !== "variable" || (e()?.writable ?? true);

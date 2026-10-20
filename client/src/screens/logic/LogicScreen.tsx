@@ -7,7 +7,7 @@ import type { Element } from "../../protocol/Element";
 import type { Rule } from "../../protocol/Rule";
 import type { When } from "../../protocol/When";
 import { complete } from "../../state/complete";
-import { setState, state } from "../../state/store";
+import { putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Plus, X } from "../../ui/icons";
 
@@ -33,11 +33,9 @@ const RECEIVES: Record<When["kind"], string> = {
 
 const ms = (t: string) => /^\d+$/.test(t.trim());
 
-/** Sets a rule, at once here too, so a change right after builds on this one. The backend
- *  sends the rules back should it refuse. */
+/** Sets a rule, here at once too unless it is new. */
 function setRule(id: string, rule: Rule | null) {
-  send({ type: "edit", edit: { kind: "set_rule", id, rule } });
-  if (id) setState("rules", (all) => (rule ? all.map((r) => (r.id === id ? { ...rule, id } : r)) : all.filter((r) => r.id !== id)));
+  if (send({ type: "edit", edit: { kind: "set_rule", id, rule } }) && id) putLocal("rules", id, rule && { ...rule, id });
 }
 
 export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void }) {

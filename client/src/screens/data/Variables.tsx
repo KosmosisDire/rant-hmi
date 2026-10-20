@@ -1,11 +1,11 @@
 // The HMI's own state on the Data screen: the variables table and a variable's inspector.
 
-import { For, Show } from "solid-js";
+import { batch, For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Per } from "../../protocol/Per";
 import type { Variable } from "../../protocol/Variable";
 import type { JsonValue } from "../../protocol/serde_json/JsonValue";
-import { live, state } from "../../state/store";
+import { live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Plus, Trash } from "../../ui/icons";
 import { LocalIcon } from "../../ui/marks";
@@ -28,7 +28,7 @@ function literal(text: string): JsonValue | undefined {
 }
 
 function setVariable(name: string, variable: Variable | null) {
-  send({ type: "set_variable", name, variable });
+  if (send({ type: "set_variable", name, variable })) putLocal("variables", name, variable);
 }
 
 export function VariablesTable(p: Picking) {
@@ -94,10 +94,13 @@ export function VariablesTable(p: Picking) {
 
 export function VariableView(p: { variable: Variable; onRenamed: (name: string) => void }) {
   const now = () => live(p.variable.name);
+  // a rename moves the selection in the same step, so this view never loses its variable
   const change = (to: Partial<Variable>) => {
-    const next = { ...p.variable, ...to };
-    setVariable(p.variable.name, next);
-    if (next.name !== p.variable.name) p.onRenamed(next.name);
+    const [name, next] = [p.variable.name, { ...p.variable, ...to }];
+    batch(() => {
+      setVariable(name, next);
+      if (next.name !== name) p.onRenamed(next.name);
+    });
   };
   return (
     <>

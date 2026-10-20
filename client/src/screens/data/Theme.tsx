@@ -1,10 +1,10 @@
 // The theme on the Data screen: its tokens, each with a value for dark and one for light, and
 // a token's inspector.
 
-import { For, Show } from "solid-js";
+import { batch, For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Token } from "../../protocol/Token";
-import { state } from "../../state/store";
+import { putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Plus, Trash } from "../../ui/icons";
 import type { Picking } from "./DataScreen";
@@ -21,11 +21,15 @@ function Swatch(p: { value: string }) {
   );
 }
 
+function setToken(name: string, token: Token | null) {
+  if (send({ type: "set_token", name, token })) putLocal("tokens", name, token);
+}
+
 export function ThemeTable(p: Picking) {
   const add = () => {
     let name = "color";
     for (let n = 2; state.tokens.some((t) => t.name === name); n++) name = `color${n}`;
-    send({ type: "set_token", name, token: { name, dark: "#4a8fd6", light: "#2f6fb4" } });
+    setToken(name, { name, dark: "#4a8fd6", light: "#2f6fb4" });
     p.onSelect({ kind: "token", name });
   };
   return (
@@ -72,10 +76,13 @@ export function ThemeTable(p: Picking) {
 }
 
 export function TokenView(p: { token: Token; onRenamed: (name: string) => void }) {
+  // a rename moves the selection in the same step, so this view never loses its token
   const change = (to: Partial<Token>) => {
-    const next = { ...p.token, ...to };
-    send({ type: "set_token", name: p.token.name, token: next });
-    if (next.name !== p.token.name) p.onRenamed(next.name);
+    const [name, next] = [p.token.name, { ...p.token, ...to }];
+    batch(() => {
+      setToken(name, next);
+      if (next.name !== name) p.onRenamed(next.name);
+    });
   };
   return (
     <>
@@ -103,7 +110,7 @@ export function TokenView(p: { token: Token; onRenamed: (name: string) => void }
         <div class="field-hint">Any CSS value: a colour such as #4a8fd6, or a size such as 12px. Code reads it as text.</div>
       </div>
       <div class="pane-foot">
-        <button class="button" onClick={() => send({ type: "set_token", name: p.token.name, token: null })}>
+        <button class="button" onClick={() => setToken(p.token.name, null)}>
           <Trash size={12} />
           Remove
         </button>

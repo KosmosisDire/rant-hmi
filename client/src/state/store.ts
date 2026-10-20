@@ -1,7 +1,7 @@
 // What the backend told this screen, in one store. Every server message lands through
 // receive(), and reconcile keeps object identity so only what changed redraws.
 
-import { createStore, reconcile } from "solid-js/store";
+import { createStore, produce, reconcile } from "solid-js/store";
 import type { EntityInfo } from "../protocol/EntityInfo";
 import type { Import } from "../protocol/Import";
 import type { Page } from "../protocol/Page";
@@ -76,6 +76,24 @@ export const [state, setState] = createStore<State>({
   refused: null,
   notices: [],
 });
+
+/** The lists a screen changes a record of at a time, by the field that names a record. */
+const KEYS = { imports: "alias", variables: "name", tokens: "name", rules: "id" } as const;
+type Keyed = { [L in keyof typeof KEYS]: State[L][number] };
+
+/** Writes a record here at once, in place, or removes it, so a change right after builds on
+ *  this one. The backend sends the list back should it refuse. */
+export function putLocal<L extends keyof Keyed>(list: L, key: string, record: Keyed[L] | null) {
+  setState(
+    produce((s: State) => {
+      const all = s[list] as Keyed[L][];
+      const at = all.findIndex((r) => (r as Record<string, unknown>)[KEYS[list]] === key);
+      if (at < 0) return;
+      if (record) Object.assign(all[at], record);
+      else all.splice(at, 1);
+    }),
+  );
+}
 
 /** Loads the client the backend serves when this screen runs another, as after an update.
  *  Only once per build, so a screen that still differs never reloads for ever. */
