@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { Edge } from "../../ui/Sidebars";
+import { ComputedTable } from "./Computed";
 import { MeshImports } from "./MeshImports";
 import { Inspector } from "./Inspector";
 import { MeshTree } from "./MeshTree";
@@ -14,6 +15,7 @@ export type Selection =
   | { kind: "import"; alias: string }
   | { kind: "variable"; name: string }
   | { kind: "record"; name: string }
+  | { kind: "computed"; name: string }
   | { kind: "token"; name: string }
   | null;
 
@@ -39,6 +41,7 @@ export function DataScreen() {
       <section class="detail data-detail">
         <MeshImports {...picking} />
         <VariablesTable {...picking} />
+        <ComputedTable {...picking} />
         <RecordsTable {...picking} />
         <ThemeTable {...picking} />
       </section>

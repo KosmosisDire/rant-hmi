@@ -5,7 +5,7 @@ import { send } from "../../net/connection";
 import type { Per } from "../../protocol/Per";
 import type { Variable } from "../../protocol/Variable";
 import type { Value } from "../../protocol/Value";
-import { live, putLocal, state } from "../../state/store";
+import { freeLocal, live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Copy, Plus, RotateCcw, Trash } from "../../ui/icons";
 import { LocalIcon } from "../../ui/marks";
@@ -44,8 +44,7 @@ function variableMenu(e: MouseEvent, v: Variable) {
 
 export function VariablesTable(p: Picking) {
   const add = () => {
-    let name = "newVariable";
-    for (let n = 2; state.variables.some((v) => v.name === name); n++) name = `newVariable${n}`;
+    const name = freeLocal("newVariable");
     setVariable(name, { name, start: 0, per: "hmi" });
     p.onSelect({ kind: "variable", name });
   };

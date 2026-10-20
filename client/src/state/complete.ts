@@ -131,7 +131,11 @@ function top(place: Place): Suggestion[] {
     const last = Array.isArray(list) ? (list.at(-1) as { v?: Value } | undefined)?.v : undefined;
     return { label: r.name, insert: r.name, icon: "local", type: `record of ${r.source}`, value: last ?? null, known: last !== undefined };
   });
-  return [...imports, ...variables, ...records];
+  const computed = state.computed.map((c): Suggestion => {
+    const v = live(c.name);
+    return { label: c.name, insert: c.name, icon: "local", type: c.unit ? `computed, ${c.unit}` : "computed", value: v.value, known: v.known };
+  });
+  return [...imports, ...variables, ...computed, ...records];
 }
 
 function bareType(fields: FieldInfo[] | undefined): string | undefined {

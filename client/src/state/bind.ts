@@ -86,10 +86,11 @@ function themed(s: Scope): Scope {
   };
 }
 
-/** A page reads its mesh imports, variables and records, live, and writes those it may on the
- *  backend. */
+/** A page reads its mesh imports, variables, records and computed values, live, and writes
+ *  those it may on the backend. */
 export const pageScope: Scope = themed({
-  has: (name) => state.imports.some((i) => i.alias === name) || state.variables.some((v) => v.name === name) || state.records.some((r) => r.name === name),
+  has: (name) =>
+    state.imports.some((i) => i.alias === name) || state.variables.some((v) => v.name === name) || state.records.some((r) => r.name === name) || state.computed.some((c) => c.name === name),
   get: (name) => {
     const v = live(name);
     if (!v.known) throw new Unknown(name);
@@ -99,12 +100,15 @@ export const pageScope: Scope = themed({
     const imp = state.imports.find((i) => i.alias === name);
     if (imp && (imp.kind !== "variable" || imp.intent !== "write")) throw new TypeError(`${name} cannot be set from here`);
     if (state.records.some((r) => r.name === name)) throw new TypeError(`${name} is a record, which only its source fills`);
-    if (!imp && !state.variables.some((v) => v.name === name)) throw new ReferenceError(pageScope.missing(name));
+    const worked = state.computed.find((c) => c.name === name);
+    if (worked && !worked.set) throw new TypeError(`${name} is worked out from other values, and has no setter to write it`);
+    if (worked && path !== "") throw new TypeError(`${name} is worked out whole, so it is set whole`);
+    if (!imp && !worked && !state.variables.some((v) => v.name === name)) throw new ReferenceError(pageScope.missing(name));
     send({ type: "set", alias: name, path, value: value as Value });
   },
   writes: (name) => {
     const imp = state.imports.find((i) => i.alias === name);
-    return imp ? imp.kind === "variable" && imp.intent === "write" : state.variables.some((v) => v.name === name);
+    return imp ? imp.kind === "variable" && imp.intent === "write" : state.variables.some((v) => v.name === name) || state.computed.some((c) => c.name === name && !!c.set);
   },
   missing: (name) => `${name} names no mesh import, variable or record`,
 });

@@ -6,7 +6,7 @@ import type { Record } from "../../protocol/Record";
 import type { Sample } from "../../protocol/Sample";
 import type { Value } from "../../protocol/Value";
 import { complete } from "../../state/complete";
-import { live, putLocal, state } from "../../state/store";
+import { freeLocal, live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { ChartSpline, Copy, Plus, Trash } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
@@ -30,8 +30,7 @@ const span = (s: number) => (s >= 120 && s % 60 === 0 ? `${s / 60} min` : `${s} 
 
 export function RecordsTable(p: Picking) {
   const add = () => {
-    let name = "newRecord";
-    for (let n = 2; state.records.some((r) => r.name === name) || state.variables.some((v) => v.name === name); n++) name = `newRecord${n}`;
+    const name = freeLocal("newRecord");
     setRecord(name, { name, source: state.imports[0]?.alias ?? "0", every_ms: 100, keep_s: 60 });
     p.onSelect({ kind: "record", name });
   };

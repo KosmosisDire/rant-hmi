@@ -13,6 +13,7 @@ import { KindIcon } from "../../ui/marks";
 import type { Picking } from "./DataScreen";
 import { ImportForm } from "./ImportForm";
 import { TokenView } from "./Theme";
+import { ComputedView } from "./Computed";
 import { RecordView } from "./Records";
 import { VariableView } from "./Variables";
 import { ValueTree } from "./ValueTree";
@@ -39,6 +40,10 @@ export function Inspector(p: Picking) {
     const s = p.selection;
     return s?.kind === "record" ? state.records.find((r) => r.name === s.name) : undefined;
   });
+  const computed = createMemo(() => {
+    const s = p.selection;
+    return s?.kind === "computed" ? state.computed.find((c) => c.name === s.name) : undefined;
+  });
 
   // An entity just imported shows as its import, and a removed import as its entity again.
   let lastEntity: string | null = null;
@@ -64,6 +69,7 @@ export function Inspector(p: Picking) {
       <Match when={token()}>{(t) => <TokenView token={t()} onRenamed={(name) => p.onSelect({ kind: "token", name })} />}</Match>
       <Match when={variable()}>{(v) => <VariableView variable={v()} onRenamed={(name) => p.onSelect({ kind: "variable", name })} />}</Match>
       <Match when={record()}>{(r) => <RecordView record={r()} onRenamed={(name) => p.onSelect({ kind: "record", name })} />}</Match>
+      <Match when={computed()}>{(c) => <ComputedView computed={c()} onRenamed={(name) => p.onSelect({ kind: "computed", name })} />}</Match>
     </Switch>
   );
 }

@@ -9,6 +9,7 @@ hmi.toml
 data/imports.toml
 data/variables.toml
 data/records.toml
+data/computed.toml
 data/theme.toml
 pages/<id>.html
 components/<id>.html
@@ -47,6 +48,14 @@ source = "Speed"
 every_ms = 100
 keep_s = 600
 
+# computed.toml: values worked out from others, as a property is, and written back through
+# a setter when they have one
+[[computed]]
+name = "speedPercent"
+get = "Speed * 100"
+unit = "%"
+set = { target = "Speed", value = "v / 100" }
+
 # theme.toml: design values code reads as $name
 [[token]]
 name = "accent"
@@ -58,6 +67,11 @@ light = "#0088ff"
 - `per` is `hmi` for one value every screen shares, `screen` for one per screen.
 - A record samples `source`, an expression, every `every_ms` (50 or more) and keeps each
   sample `keep_s` seconds, in memory, whether or not a screen watches.
+- A computed value's `get` reads imports, variables and other computed values, and never
+  writes, calls or waits. It is worked out on the system as they change. A write of `v` to
+  one with a `set` gives its `target`, a variable imported to write, an HMI variable or
+  another computed value with a setter, the `value` expression. One that reads itself is
+  refused.
 
 ## Pages and components
 

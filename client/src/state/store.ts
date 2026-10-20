@@ -2,6 +2,7 @@
 // receive(), and reconcile keeps object identity so only what changed redraws.
 
 import { createStore, produce, reconcile } from "solid-js/store";
+import type { Computed } from "../protocol/Computed";
 import type { EntityInfo } from "../protocol/EntityInfo";
 import type { Import } from "../protocol/Import";
 import type { Page } from "../protocol/Page";
@@ -47,6 +48,8 @@ export interface State {
   variables: Variable[];
   /** Histories the backend samples, whose samples come as their values. */
   records: History[];
+  /** Values the backend works out from others. */
+  computed: Computed[];
   /** The HMI's own handlers. */
   rules: Rule[];
   tokens: Token[];
@@ -73,6 +76,7 @@ export const [state, setState] = createStore<State>({
   imports: [],
   variables: [],
   records: [],
+  computed: [],
   rules: [],
   tokens: [],
   entities: [],
@@ -86,7 +90,7 @@ export const [state, setState] = createStore<State>({
 });
 
 /** The lists a screen changes a record of at a time, by the field that names a record. */
-const KEYS = { imports: "alias", variables: "name", records: "name", tokens: "name", rules: "id" } as const;
+const KEYS = { imports: "alias", variables: "name", records: "name", computed: "name", tokens: "name", rules: "id" } as const;
 type Keyed = { [L in keyof typeof KEYS]: State[L][number] };
 
 /** Writes a record here at once, in place, or removes it, so a change right after builds on
@@ -101,6 +105,15 @@ export function putLocal<L extends keyof Keyed>(list: L, key: string, record: Ke
       else all.splice(at, 1);
     }),
   );
+}
+
+/** `base`, or it with a number after it, a name none of the HMI's own has: no variable, record
+ *  or computed value. */
+export function freeLocal(base: string): string {
+  const taken = (n: string) => state.variables.some((v) => v.name === n) || state.records.some((r) => r.name === n) || state.computed.some((c) => c.name === n);
+  let name = base;
+  for (let n = 2; taken(name); n++) name = `${base}${n}`;
+  return name;
 }
 
 /** Loads the client the backend serves when this screen runs another, as after an update.
@@ -149,6 +162,9 @@ export function receive(msg: ServerMsg) {
       break;
     case "variables":
       setState("variables", reconcile(msg.variables, { key: "name" }));
+      break;
+    case "computed":
+      setState("computed", reconcile(msg.computed, { key: "name" }));
       break;
     case "records":
       setState("records", reconcile(msg.records, { key: "name" }));

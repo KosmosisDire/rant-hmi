@@ -57,6 +57,7 @@ export { default as Scissors } from "lucide-solid/icons/scissors";
 export { default as Search } from "lucide-solid/icons/search";
 export { default as SendToBack } from "lucide-solid/icons/send-to-back";
 export { default as Shapes } from "lucide-solid/icons/shapes";
+export { default as Sigma } from "lucide-solid/icons/sigma";
 export { default as Spline } from "lucide-solid/icons/spline";
 export { default as Square } from "lucide-solid/icons/square";
 export { default as SquareDashedMousePointer } from "lucide-solid/icons/square-dashed-mouse-pointer";
