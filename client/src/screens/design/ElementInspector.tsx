@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { createContext, createMemo, createSignal, For, Match, Show, Switch, useContext } from "solid-js";
 import { send } from "../../net/connection";
 import { component, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
@@ -7,8 +7,9 @@ import type { Element } from "../../protocol/Element";
 import type { Event } from "../../protocol/Event";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
-import { isConstant, resolve } from "../../state/bind";
-import { complete } from "../../state/complete";
+import { docScope, isConstant, pageScope, resolve, type Scope } from "../../state/bind";
+import { complete, type Suggestion } from "../../state/complete";
+import type { Input } from "../../protocol/Input";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, Plus, Square, Trash, Type, X } from "../../ui/icons";
 import { find, setProps } from "./tree";
@@ -29,15 +30,31 @@ const TEXT_LOOK: [string, string, string][] = [
 ];
 const NAMED = new Set([...LOOK, ...TEXT_LOOK].map(([, key]) => key));
 
+/** Where the fields stand: the names their code reads, and what completion offers instead
+ *  of the datapoints, as a component offers its inputs. */
+interface Where {
+  scope: Scope;
+  names?: Suggestion[];
+}
+
+const WhereContext = createContext<() => Where>(() => ({ scope: pageScope }));
+
 /** The right sidebar: the selected element's properties, or the page's when none is. */
 export function ElementInspector(p: { page: Page | undefined; selected: string | null }) {
   const element = createMemo(() => (p.page && p.selected ? find(p.page.children, p.selected) : undefined));
+  const where = createMemo((): Where => {
+    const doc = p.page;
+    if (!doc?.interface) return { scope: pageScope };
+    return { scope: docScope(doc), names: doc.interface.inputs.map((i) => ({ label: i.name, insert: i.name, icon: "local", type: "input" })) };
+  });
   return (
     <Show when={p.page}>
       {(page) => (
-        <Show when={element()} fallback={<PageInspector page={page()} />}>
-          {(e) => <Properties page={page().id} element={e()} />}
-        </Show>
+        <WhereContext.Provider value={where}>
+          <Show when={element()} fallback={<PageInspector page={page()} />}>
+            {(e) => <Properties page={page().id} element={e()} />}
+          </Show>
+        </WhereContext.Provider>
       )}
     </Show>
   );
@@ -82,6 +99,7 @@ function PageInspector(p: { page: Page }) {
             <DraftInput value={String(p.page.height)} accept={side} onCommit={(t) => resize(p.page.width, Number(t))} />
           </div>
         </div>
+        <Show when={p.page.interface}>{(i) => <Inputs page={p.page.id} inputs={i().inputs} />}</Show>
         <Show
           when={!isComponent()}
           fallback={<div class="placeholder">Place it on a page with the component button over the layers. Every instance shows what is drawn here.</div>}
@@ -191,6 +209,16 @@ function Properties(p: { page: string; element: Element }) {
             </span>
           </div>
         </Show>
+        <Show when={instance() && component(p.element.component ?? "")}>
+          {(c) => (
+            <>
+              <div class="section">Inputs</div>
+              <For each={c().interface?.inputs} fallback={<div class="field-hint">{c().name} takes no inputs yet. Add them on the component.</div>}>
+                {(i) => <Field {...p} key={i.name} label={i.name} placeholder={i.default} />}
+              </For>
+            </>
+          )}
+        </Show>
         <Show when={text()}>
           <div class="section">Text</div>
           <Field {...p} key="text" label="Text" />
@@ -223,6 +251,7 @@ const EVENTS: [Event, string][] = [
 /** The element's handlers, each a box: the event on top, the code the backend runs below.
  *  Every change names one event, so two quick changes never undo each other. */
 function Events(p: { page: string; element: Element }) {
+  const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
   const write = (event: Event, code: string | null) => send({ type: "edit", edit: { kind: "set_handler", page: p.page, id: p.element.id, event, code } });
   const unused = () => EVENTS.filter(([e]) => !p.element.handlers.some((h) => h.event === e));
@@ -274,7 +303,7 @@ function Events(p: { page: string; element: Element }) {
                   value={h().code}
                   placeholder="Speed = Speed + 0.1;"
                   onCommit={(code) => write(event, code)}
-                  complete={(t, c) => complete(t, c, "handler")}
+                  complete={(t, c) => complete(t, c, "handler", where().names)}
                 />
               </div>
             )}
@@ -288,11 +317,12 @@ function Events(p: { page: string; element: Element }) {
 /** One property, an expression unless `plain`. Under it, what stops it showing, and for
  *  words that fail for want of quotes, a way to make them text. */
 function Field(p: { page: string; element: Element; key: string; label: string; placeholder?: string; plain?: boolean }) {
+  const where = useContext(WhereContext);
   const value = () => p.element.props[p.key] ?? "";
   const write = (t: string) => setProps(p.page, p.element.id, { [p.key]: t.trim() === "" ? null : t });
   const status = createMemo(() => {
     if (p.plain) return undefined;
-    const r = resolve(value());
+    const r = resolve(value(), where().scope);
     if (r.ok) return undefined;
     if (r.unknown) return { text: `${r.unknown} is unknown right now` };
     return { text: r.error, words: !/["'`]/.test(value()) };
@@ -300,7 +330,7 @@ function Field(p: { page: string; element: Element; key: string; label: string; 
   return (
     <div class="field" classList={{ bound: !p.plain && !isConstant(value()) }}>
       <label>{p.label}</label>
-      <DraftInput value={value()} placeholder={p.placeholder} onCommit={write} complete={p.plain ? undefined : (t, c) => complete(t, c, "expression")} />
+      <DraftInput value={value()} placeholder={p.placeholder} onCommit={write} complete={p.plain ? undefined : (t, c) => complete(t, c, "expression", where().names)} />
       <Show when={status()}>
         {(s) => (
           <span class="field-note">
@@ -316,5 +346,50 @@ function Field(p: { page: string; element: Element; key: string; label: string; 
         )}
       </Show>
     </div>
+  );
+}
+
+/** A component's inputs, each a box: its name, whether it may be written back, its default. */
+function Inputs(p: { page: string; inputs: Input[] }) {
+  const write = (name: string, input: Input | null) => send({ type: "edit", edit: { kind: "set_input", page: p.page, name, input } });
+  const add = () => {
+    let name = "input";
+    for (let n = 2; p.inputs.some((i) => i.name === name); n++) name = `input${n}`;
+    write(name, { name, default: "0", bindable: false });
+  };
+  return (
+    <>
+      <div class="section section-row">
+        Inputs
+        <button class="icon-btn" title="Add an input" onClick={add}>
+          <Plus size={13} />
+        </button>
+      </div>
+      <For each={p.inputs} fallback={<div class="field-hint">What each instance fills in, read here by name.</div>}>
+        {(i) => (
+          <div class="handler">
+            <div class="handler-head">
+              <DraftInput
+                class="editor input-name"
+                value={i.name}
+                accept={(t) => /^[a-z][A-Za-z0-9]*$/.test(t.trim())}
+                onCommit={(name) => write(i.name, { ...i, name: name.trim() })}
+              />
+              <label class="check" title="The component may write it back to what the instance binds it to">
+                <input type="checkbox" checked={i.bindable} onChange={(e) => write(i.name, { ...i, bindable: e.currentTarget.checked })} />
+                two way
+              </label>
+              <button class="icon-btn" title={`Remove the input ${i.name}`} onClick={() => write(i.name, null)}>
+                <X size={13} />
+              </button>
+            </div>
+            <div class="field input-default">
+              <label>Default</label>
+              <DraftInput value={i.default} onCommit={(d) => write(i.name, { ...i, default: d })} />
+            </div>
+          </div>
+        )}
+      </For>
+    </>
   );
 }

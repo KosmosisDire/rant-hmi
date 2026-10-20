@@ -35,7 +35,21 @@ pub struct Page {
 /// What an instance of a component fills in.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Default)]
 #[ts(export)]
-pub struct Interface {}
+pub struct Interface {
+    pub inputs: Vec<Input>,
+}
+
+/// A value a component reads and each instance gives, camelCase like any local name.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Input {
+    pub name: String,
+    /// The expression it reads while an instance gives none.
+    pub default: String,
+    /// The component may write it back through the instance's binding.
+    #[serde(default)]
+    pub bindable: bool,
+}
 
 /// How an open page shows: covering what is beneath, or floating over it while the page
 /// beneath stays in sight and keeps running, as a dialog does.
@@ -153,12 +167,16 @@ pub enum Edit {
     SetProps { page: String, id: String, props: BTreeMap<String, Option<String>> },
     /// Sets the code the element runs on `event`, or removes its handler where it is null.
     SetHandler { page: String, id: String, event: Event, code: Option<String> },
+    /// Adds, changes or with null removes a component's input called `name`. A rename is
+    /// followed in the component and by its instances, a removal takes it off them.
+    SetInput { page: String, name: String, input: Option<Input> },
     /// Several edits as one: all apply or none do, and one undo takes them all back.
     Batch { edits: Vec<Edit> },
 }
 
 /// What an edit changed: the pages to send out, what it made, if anything, as a page and an
 /// id (a page's own for a page), and the edit that undoes it.
+#[derive(Debug)]
 pub struct Applied {
     pub pages: Vec<String>,
     pub made: Option<(String, String)>,
@@ -258,25 +276,12 @@ impl Pages {
     }
 
     /// Writes every use of the name `from` in values and handlers as `to`, as an import's
-    /// rename needs, and saves each page that changed. Returns those pages.
+    /// rename needs, and saves each page that changed. Returns those pages. Components never
+    /// read the mesh's names, so they are left as they are.
     pub fn rename(&mut self, from: &str, to: &str) -> Result<Vec<String>, String> {
-        fn element(e: &mut Element, from: &str, to: &str) -> bool {
-            let mut changed = false;
-            for value in e.props.iter_mut().filter(|(k, _)| k.as_str() != "name").map(|(_, v)| v) {
-                let renamed = js::rename(value, from, to);
-                changed |= renamed != *value;
-                *value = renamed;
-            }
-            for h in &mut e.handlers {
-                let renamed = js::rename(&h.code, from, to);
-                changed |= renamed != h.code;
-                h.code = renamed;
-            }
-            e.children.iter_mut().fold(changed, |c, child| element(child, from, to) | c)
-        }
         let mut touched = Vec::new();
-        for p in &mut self.list {
-            if p.children.iter_mut().fold(false, |c, e| element(e, from, to) | c) {
+        for p in self.list.iter_mut().filter(|p| p.interface.is_none()) {
+            if p.children.iter_mut().fold(false, |c, e| rename_in(e, from, to) | c) {
                 touched.push(p.id.clone());
             }
         }
@@ -483,11 +488,52 @@ impl Pages {
                 }
                 Edit::SetHandler { page: page.clone(), id, event, code: old }
             }
+            Edit::SetInput { page, name, input } => {
+                let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
+                let (component, inputs) = match &p.interface {
+                    Some(i) => (p.name.clone(), &i.inputs),
+                    None => return Err(format!("{} is a page, and only a component has inputs", p.name)),
+                };
+                let at = inputs.iter().position(|i| i.name == name);
+                let old = at.map(|at| inputs[at].clone());
+                if let Some(new) = &input {
+                    check_input_name(&new.name)?;
+                    if new.name != name && inputs.iter().any(|i| i.name == new.name) {
+                        return Err(format!("{component} already has an input {}", new.name));
+                    }
+                } else if old.is_none() {
+                    return Err(format!("{component} has no input {name}"));
+                }
+                let to = input.as_ref().map(|i| i.name.clone());
+                let list = &mut self.page_mut(&page)?.interface.as_mut().expect("a component, checked above").inputs;
+                match (at, input) {
+                    (Some(at), Some(new)) => list[at] = new,
+                    (Some(at), None) => drop(list.remove(at)),
+                    (None, Some(new)) => list.push(new),
+                    (None, None) => unreachable!("refused above"),
+                }
+                // the component's code and its instances follow a rename, instances drop a removal
+                if to.as_deref() != Some(name.as_str()) && old.is_some() {
+                    let p = self.page_mut(&page)?;
+                    if let Some(to) = &to {
+                        for e in &mut p.children {
+                            rename_in(e, &name, to);
+                        }
+                    }
+                    for p in &mut self.list {
+                        if instance_props(&mut p.children, &component, &name, to.as_deref()) {
+                            touched.push(p.id.clone());
+                        }
+                    }
+                }
+                Edit::SetInput { page: page.clone(), name: to.unwrap_or(name), input: old }
+            }
             Edit::Batch { .. } => unreachable!("taken above"),
         };
         let page = match &undo {
             Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::SetShows { page, .. } | Edit::RemoveElement { page, .. } => page,
             Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } | Edit::SetHandler { page, .. } => page,
+            Edit::SetInput { page, .. } => page,
             _ => unreachable!("page edits return early"),
         };
         touched.push(page.clone());
@@ -571,6 +617,51 @@ fn slug(name: &str) -> String {
         }
     }
     s.trim_end_matches('-').to_owned()
+}
+
+/// Writes every use of the name `from` in an element's values and handlers as `to`. True
+/// when any changed.
+fn rename_in(e: &mut Element, from: &str, to: &str) -> bool {
+    let mut changed = false;
+    for value in e.props.iter_mut().filter(|(k, _)| k.as_str() != "name").map(|(_, v)| v) {
+        let renamed = js::rename(value, from, to);
+        changed |= renamed != *value;
+        *value = renamed;
+    }
+    for h in &mut e.handlers {
+        let renamed = js::rename(&h.code, from, to);
+        changed |= renamed != h.code;
+        h.code = renamed;
+    }
+    e.children.iter_mut().fold(changed, |c, child| rename_in(child, from, to) | c)
+}
+
+/// Moves each instance of `component`'s value for the input `from` to `to`, or drops it
+/// where `to` is none. True when any changed.
+fn instance_props(elements: &mut [Element], component: &str, from: &str, to: Option<&str>) -> bool {
+    let mut changed = false;
+    for e in elements {
+        if e.component.as_deref() == Some(component) {
+            if let Some(v) = e.props.remove(from) {
+                if let Some(to) = to {
+                    e.props.insert(to.to_owned(), v);
+                }
+                changed = true;
+            }
+        }
+        changed |= instance_props(&mut e.children, component, from, to);
+    }
+    changed
+}
+
+/// An input is named in camelCase, apart from an element's own properties.
+fn check_input_name(name: &str) -> Result<(), String> {
+    let mut chars = name.chars();
+    let shaped = chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric());
+    if !shaped || ["name", "x", "y", "w", "h", "text"].contains(&name) {
+        return Err(format!("\"{name}\" cannot name an input: start with a small letter, use letters and digits, and keep clear of name, x, y, w, h and text"));
+    }
+    Ok(())
 }
 
 /// True when an element here is an instance of the component called `name`.
@@ -866,6 +957,33 @@ mod tests {
         assert_eq!(again.get(&card).unwrap().children[0].component.as_deref(), Some("Dial"));
         assert!(fs::read_to_string(dir.join("components").join(format!("{card}.html"))).unwrap().contains("<Dial id=\"e1\" x=\"0\"/>"));
         assert_eq!(again.keys().len(), 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn inputs_rename_and_go_with_their_instances() {
+        let dir = scratch("inputs");
+        let mut pages = Pages::open(&dir).unwrap();
+        let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into() }).unwrap().made.unwrap().1;
+        let input = |name: &str| Some(Input { name: name.into(), default: "0".into(), bindable: false });
+        pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: input("value") }).unwrap();
+        pages.apply(add(gauge.clone(), None, Tag::Span, props(&[("text", "value.toFixed(1)")]))).unwrap();
+        let mut gauge_on_page = instance("Gauge");
+        gauge_on_page.props.insert("value".into(), "Speed".into());
+        pages.apply(Edit::AddElement { page: "overview".into(), parent: None, index: None, element: gauge_on_page }).unwrap();
+
+        let undo = pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: input("level") }).unwrap().undo;
+        assert_eq!(pages.get(&gauge).unwrap().children[0].props["text"], "level.toFixed(1)");
+        assert_eq!(pages.get("overview").unwrap().children[0].props["level"], "Speed");
+        let again = Pages::open(&dir).unwrap();
+        assert_eq!(again.get(&gauge).unwrap().interface.as_ref().unwrap().inputs, [input("level").unwrap()]);
+        pages.apply(undo).unwrap();
+        assert_eq!(pages.get("overview").unwrap().children[0].props["value"], "Speed");
+
+        assert!(pages.apply(Edit::SetInput { page: gauge.clone(), name: "x".into(), input: input("x") }).unwrap_err().contains("keep clear"));
+        assert!(pages.apply(Edit::SetInput { page: "overview".into(), name: "a".into(), input: input("a") }).unwrap_err().contains("only a component"));
+        pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: None }).unwrap();
+        assert!(!pages.get("overview").unwrap().children[0].props.contains_key("value"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

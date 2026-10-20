@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Event, Handler, Interface, Page, Shows, Tag};
+use super::{Element, Event, Handler, Input, Interface, Page, Shows, Tag};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 5] = ["name", "x", "y", "w", "h"];
@@ -30,6 +30,10 @@ pub fn write(page: &Page) -> String {
     let root = if page.interface.is_some() { "component" } else { "page" };
     let shows = if page.shows == Shows::Over { " shows=\"over\"" } else { "" };
     let mut out = format!("<{root} name={} size=\"{}x{}\"{shows}>\n", quote(&page.name), page.width, page.height);
+    for i in page.interface.iter().flat_map(|i| &i.inputs) {
+        let bindable = if i.bindable { " bindable=\"true\"" } else { "" };
+        out.push_str(&format!("  <prop name={} default={}{bindable}/>\n", quote(&i.name), quote(&i.default)));
+    }
     for e in &page.children {
         element(&mut out, e, 1);
     }
@@ -139,6 +143,9 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
             other => return Err(r.error(&format!("<{root}> takes no attribute {other}"))),
         }
     }
+    if let Some(interface) = &mut page.interface {
+        interface.inputs = r.props()?;
+    }
     page.children = r.children(root)?;
     r.gap();
     if r.at < r.s.len() {
@@ -222,6 +229,31 @@ impl Reader<'_> {
         let v = self.rest()[..end].replace("&quot;", "\"").replace("&amp;", "&");
         self.at += end + 1;
         Ok(v)
+    }
+
+    /// A component's `<prop>` lines, its inputs.
+    fn props(&mut self) -> Result<Vec<Input>, String> {
+        let mut out = Vec::new();
+        loop {
+            self.gap();
+            if !self.eat("<prop") {
+                return Ok(out);
+            }
+            let mut input = Input { name: String::new(), default: String::new(), bindable: false };
+            for (k, v) in self.attrs()? {
+                match k.as_str() {
+                    "name" => input.name = v,
+                    "default" => input.default = v,
+                    "bindable" => input.bindable = v == "true",
+                    other => return Err(self.error(&format!("<prop> takes no attribute {other}"))),
+                }
+            }
+            self.expect("/>")?;
+            if input.name.is_empty() {
+                return Err(self.error("<prop> needs a name"));
+            }
+            out.push(input);
+        }
     }
 
     /// The `<on>` blocks at the reading point.

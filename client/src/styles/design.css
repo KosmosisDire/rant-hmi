@@ -226,6 +226,25 @@
   padding: 4px;
 }
 
+.input-name {
+  flex: 1;
+  font-family: var(--mono);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.input-default {
+  padding: 0 6px 6px;
+}
+
 .handler-event {
   flex: 1;
   padding-left: 4px;

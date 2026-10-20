@@ -38,15 +38,16 @@ const API: Suggestion[] = [
   { label: "close", insert: "close()", icon: "api", type: "close the top page" },
 ];
 
-/** The completion at `caret`, or null where none fits, such as inside a string. */
-export function complete(text: string, caret: number, place: Place): Completion | null {
+/** The completion at `caret`, or null where none fits, such as inside a string. `names` stand
+ *  for the page's datapoints where code reads something else, as a component reads its inputs. */
+export function complete(text: string, caret: number, place: Place, names?: Suggestion[]): Completion | null {
   const before = text.slice(0, caret);
   if (inString(before)) return null;
   let from = caret;
   while (from > 0 && WORD.test(before[from - 1])) from--;
   const word = before.slice(from);
   if (/^\d/.test(word)) return null;
-  const items = before[from - 1] === "." ? members(chain(before.slice(0, from - 1))) : top(place);
+  const items = before[from - 1] === "." ? (names ? [] : members(chain(before.slice(0, from - 1)))) : [...(names ?? top()), ...(place === "handler" ? API : [])];
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
   const inside = items.filter((s) => !s.label.toLowerCase().startsWith(q) && s.label.toLowerCase().includes(q));
@@ -56,7 +57,7 @@ export function complete(text: string, caret: number, place: Place): Completion 
   return { from, items: found };
 }
 
-function top(place: Place): Suggestion[] {
+function top(): Suggestion[] {
   const imports = state.imports.map((i): Suggestion => {
     const v = live(i.alias);
     const t = entity(i.entity)?.schema;
@@ -66,7 +67,7 @@ function top(place: Place): Suggestion[] {
     const v = live(x.name);
     return { label: x.name, insert: x.name, icon: "local", type: "variable", value: v.value, known: v.known };
   });
-  return [...imports, ...variables, ...(place === "handler" ? API : [])];
+  return [...imports, ...variables];
 }
 
 function bareType(fields: FieldInfo[] | undefined): string | undefined {

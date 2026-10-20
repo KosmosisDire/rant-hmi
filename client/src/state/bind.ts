@@ -1,8 +1,9 @@
-// A property's value is a JS expression over the imported datapoints: 44, "Running",
+// A property's value is a JS expression over the names its scope gives: 44, "Running",
 // Speed.toFixed(1). A bare #hex colour reads as its text. It runs in the browser, compiled once
-// per text. Reading a datapoint that is unknown stops it, and the caller shows the unknown
-// look instead of a wrong value.
+// per text. Reading a value that is unknown stops it, and the caller shows the unknown look
+// instead of a wrong value.
 
+import type { Page } from "../protocol/Page";
 import { live, state } from "./store";
 
 /** A plain number, which a drag may write over. */
@@ -29,20 +30,57 @@ export type Resolved =
   | { ok: false; unknown: string; error?: undefined }
   | { ok: false; error: string; unknown?: undefined };
 
-// Every name an expression uses that is an import or a variable reads its live value. Other
-// names (Math, Number) fall through to the browser's own.
-const scope = new Proxy(
-  {},
-  {
-    has: (_, key) => typeof key === "string" && (state.imports.some((i) => i.alias === key) || state.variables.some((v) => v.name === key)),
-    get: (_, key) => {
-      if (typeof key !== "string") return undefined;
-      const v = live(key);
-      if (!v.known) throw new Unknown(key);
-      return v.value;
-    },
+/** The names an expression may read. Others (Math, Number) fall through to the browser's. */
+export interface Scope {
+  has(name: string): boolean;
+  /** The value now. It throws for one that is unknown. */
+  get(name: string): unknown;
+}
+
+/** A page reads its imports and variables, live. */
+export const pageScope: Scope = {
+  has: (name) => state.imports.some((i) => i.alias === name) || state.variables.some((v) => v.name === name),
+  get: (name) => {
+    const v = live(name);
+    if (!v.known) throw new Unknown(name);
+    return v.value;
   },
-);
+};
+
+const nothing: Scope = { has: () => false, get: () => undefined };
+
+/** A component reads its inputs and nothing of the mesh. Each is what the instance gives,
+ *  read where the instance sits, else the input's default. */
+export function componentScope(c: Page, instance?: { props: Record<string, string | undefined>; outer: Scope }): Scope {
+  const input = (name: string) => c.interface?.inputs.find((i) => i.name === name);
+  return {
+    has: (name) => input(name) !== undefined,
+    get: (name) => {
+      const given = instance?.props[name];
+      const r = given !== undefined ? resolve(given, instance!.outer) : resolve(input(name)!.default, nothing);
+      if (r.ok) return r.value;
+      if (r.unknown) throw new Unknown(r.unknown);
+      throw new Error(`${name}: ${r.error}`);
+    },
+  };
+}
+
+/** The scope a page or component is drawn and edited in. */
+export function docScope(doc: Page): Scope {
+  return doc.interface ? componentScope(doc) : pageScope;
+}
+
+const proxies = new WeakMap<Scope, object>();
+
+/** The scope as `with` reads it. */
+function proxy(s: Scope): object {
+  let p = proxies.get(s);
+  if (!p) {
+    p = new Proxy({}, { has: (_, key) => typeof key === "string" && s.has(key), get: (_, key) => (typeof key === "string" ? s.get(key) : undefined) });
+    proxies.set(s, p);
+  }
+  return p;
+}
 
 const HEX = /^#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w$])/i;
 
@@ -107,12 +145,12 @@ function compile(src: string): ((scope: object) => unknown) | string {
 }
 
 /** A property's value now. Run inside a memo, it updates when what it reads changes. */
-export function resolve(value: string | undefined): Resolved {
+export function resolve(value: string | undefined, scope: Scope = pageScope): Resolved {
   if (value === undefined || value.trim() === "") return { ok: true, value: undefined };
   const fn = compile(value.trim());
   if (typeof fn === "string") return { ok: false, error: fn };
   try {
-    return { ok: true, value: fn(scope) };
+    return { ok: true, value: fn(proxy(scope)) };
   } catch (e) {
     if (e instanceof Unknown) return { ok: false, unknown: e.alias };
     if (e instanceof ReferenceError) return { ok: false, error: e.message.replace(/ is not defined$/, " names no datapoint") };
@@ -121,8 +159,8 @@ export function resolve(value: string | undefined): Resolved {
 }
 
 /** A placement or size as a number, 0 when it cannot be read. */
-export function number(value: string | undefined): number {
-  const r = resolve(value);
+export function number(value: string | undefined, scope: Scope = pageScope): number {
+  const r = resolve(value, scope);
   const n = r.ok ? Number(r.value) : NaN;
   return Number.isFinite(n) ? n : 0;
 }

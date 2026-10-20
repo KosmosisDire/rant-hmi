@@ -6,7 +6,7 @@ import type { Element } from "../protocol/Element";
 import type { Event } from "../protocol/Event";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
-import { resolve } from "../state/bind";
+import { componentScope, docScope, resolve, type Scope } from "../state/bind";
 import { component } from "../state/store";
 import { short } from "../state/format";
 
@@ -29,11 +29,12 @@ export const OWN = new Set(["name", "x", "y", "w", "h", "text"]);
 /** CSS lengths that read a bare number as pixels. */
 const LENGTHS = new Set(["font-size", "border-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
 
-/** A page, or a component drawn on its own. */
+/** A page, or a component drawn on its own with its inputs' defaults. */
 export function PageView(p: { page: Page; overrides?: Overrides; design?: boolean; fire?: Fire }) {
+  const scope = createMemo(() => docScope(p.page));
   return (
     <div class="page" classList={{ design: p.design }} style={{ width: `${p.page.width}px`, height: `${p.page.height}px` }}>
-      <For each={p.page.children}>{(e) => <ElementView element={e} overrides={p.overrides} design={p.design} fire={p.fire} />}</For>
+      <For each={p.page.children}>{(e) => <ElementView element={e} scope={scope()} overrides={p.overrides} design={p.design} fire={p.fire} />}</For>
     </div>
   );
 }
@@ -50,13 +51,13 @@ function words(v: unknown): string {
 
 /** One element. `inside` marks one drawn as part of an instance: it is the component's, not
  *  the page's, so it carries no id to pick it by. */
-function ElementView(p: { element: Element; overrides?: Overrides; design?: boolean; fire?: Fire; inside?: boolean }) {
+function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides; design?: boolean; fire?: Fire; inside?: boolean }) {
   const look = createMemo(() => {
     const style: Record<string, string> = {};
     const faults: string[] = [];
     let unknown = false;
     const take = (key: string): unknown => {
-      const r = resolve(p.element.props[key]);
+      const r = resolve(p.element.props[key], p.scope);
       if (r.ok) return r.value;
       if (r.unknown) unknown = true;
       else faults.push(`${key}: ${r.error}`);
@@ -114,26 +115,29 @@ function ElementView(p: { element: Element; overrides?: Overrides; design?: bool
     >
       <Switch fallback={look().text}>
         <Match when={p.element.tag === "div"}>
-          <For each={p.element.children}>{(c) => <ElementView element={c} overrides={p.overrides} design={p.design} fire={p.fire} inside={p.inside} />}</For>
+          <For each={p.element.children}>{(c) => <ElementView element={c} scope={p.scope} overrides={p.overrides} design={p.design} fire={p.fire} inside={p.inside} />}</For>
         </Match>
         <Match when={p.element.tag === "use"}>
-          <Instance name={p.element.component ?? ""} w={look().w} h={look().h} design={p.design} />
+          <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} />
         </Match>
       </Switch>
     </div>
   );
 }
 
-/** A component drawn in an instance's box: its own size scaled to fit, centred. */
-function Instance(p: { name: string; w: number; h: number; design?: boolean }) {
+/** A component drawn in an instance's box: its own size scaled to fit, centred, reading the
+ *  inputs the instance gives. */
+function Instance(p: { element: Element; scope: Scope; w: number; h: number; design?: boolean }) {
+  const name = () => p.element.component ?? "";
   return (
-    <Show when={component(p.name)} fallback={<div class="instance-missing">{p.name} is missing</div>}>
+    <Show when={component(name())} fallback={<div class="instance-missing">{name()} is missing</div>}>
       {(c) => {
+        const scope = componentScope(c(), { props: p.element.props, outer: p.scope });
         const k = () => Math.min(p.w / c().width, p.h / c().height);
         const place = () => `translate(${(p.w - c().width * k()) / 2}px, ${(p.h - c().height * k()) / 2}px) scale(${k()})`;
         return (
           <div class="instance" style={{ width: `${c().width}px`, height: `${c().height}px`, transform: place() }}>
-            <For each={c().children}>{(e) => <ElementView element={e} design={p.design} inside />}</For>
+            <For each={c().children}>{(e) => <ElementView element={e} scope={scope} design={p.design} inside />}</For>
           </div>
         );
       }}
