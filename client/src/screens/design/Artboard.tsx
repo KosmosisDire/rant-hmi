@@ -345,7 +345,7 @@ export function Artboard(p: {
       </div>
       <div class="veil" style={sheet()} />
       <Show when={box()}>{(b) => <div class="marquee" style={{ left: `${b().left}px`, top: `${b().top}px`, width: `${b().width}px`, height: `${b().height}px` }} />}</Show>
-      <For each={parents()}>{(id) => <Show when={ring(id)}>{(r) => <div class="ring parent" style={r()} />}</Show>}</For>
+      <For each={parents()}>{(id) => <Show when={ring(id)}>{(r) => <div class="holder" style={r()} />}</Show>}</For>
       {/* a ring for each selected element, its grips only when it is the one */}
       <For each={p.selected}>
         {(id) => (

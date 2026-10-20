@@ -100,9 +100,11 @@
   pointer-events: none;
 }
 
-/* What holds the picked element, so its bounds show while placing inside it. */
-.ring.parent {
+/* What holds the picked element, faintly, so its bounds show while placing inside it. */
+.holder {
+  position: absolute;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  pointer-events: none;
 }
 
 .handle {

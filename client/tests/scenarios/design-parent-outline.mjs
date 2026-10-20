@@ -5,7 +5,7 @@ export default async function ({ page, d, check }) {
   await d.addPage("Holders");
   const card = await d.add("frame", { Name: "card", x: "44", y: "44", w: "352", h: "220" });
   await d.add("frame", { Name: "badge", x: "22", y: "22", w: "88", h: "44" });
-  const outline = page.locator(".screen:not([hidden]) .ring.parent");
+  const outline = page.locator(".screen:not([hidden]) .holder");
   const near = async (id) => {
     const [a, b] = [await outline.boundingBox(), await page.locator(`.screen:not([hidden]) .page-layer [data-id="${id}"]`).boundingBox()];
     return Math.abs(a.x - b.x) <= 1.5 && Math.abs(a.y - b.y) <= 1.5 && Math.abs(a.width - b.width) <= 1.5 && Math.abs(a.height - b.height) <= 1.5;
