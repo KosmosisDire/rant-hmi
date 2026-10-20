@@ -142,8 +142,9 @@ export function sendEdits(edits: Edit[]) {
   if (edits.length > 0) send({ type: "edit", edit: edits.length === 1 ? edits[0] : { kind: "batch", edits } });
 }
 
+/** Sets props, here at once too, so a gesture right after reads what was just typed. */
 export function setProps(page: string, id: string, props: Record<string, string | null>) {
-  send({ type: "edit", edit: { kind: "set_props", page, id, props } });
+  if (send({ type: "edit", edit: { kind: "set_props", page, id, props } })) showProps(page, id, props);
 }
 
 /** Shows props here only, as a gesture does before it lets go and keeps them with setProps.

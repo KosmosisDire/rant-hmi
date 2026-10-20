@@ -542,7 +542,11 @@ impl App {
     fn edit(&mut self, session: u32, edit: Edit, step: Step) {
         let rules = matches!(edit, Edit::SetRule { .. });
         let shown = match &edit {
-            Edit::SetInput { page, .. } | Edit::SetEvent { page, .. } | Edit::ResizePage { page, .. } => Some(page.clone()),
+            Edit::SetInput { page, .. }
+            | Edit::SetEvent { page, .. }
+            | Edit::ResizePage { page, .. }
+            | Edit::SetFill { page, .. }
+            | Edit::SetProps { page, .. } => Some(page.clone()),
             _ => None,
         };
         let applied = match self.pages.apply(edit) {
