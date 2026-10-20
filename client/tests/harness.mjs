@@ -1,10 +1,10 @@
 // Starts what a test needs: the demo line, the transcoder and a backend on their own loopback
 // domain and port, with a fresh copy of the demo project, and a headless Chrome to drive.
 
-import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
@@ -40,9 +40,21 @@ function run(path, args) {
   return child;
 }
 
+/** The demo project as committed, never the working copy someone may be trying things in.
+ *  Its pages stay out, as each scenario makes its own. */
+function demoProject(into) {
+  const git = (...args) => execFileSync("git", args, { cwd: ROOT });
+  const files = git("ls-tree", "-r", "--name-only", "HEAD", "examples/demo").toString().split("\n");
+  for (const file of files.filter((f) => f && !f.includes("/pages/"))) {
+    const to = join(into, relative("examples/demo", file));
+    mkdirSync(dirname(to), { recursive: true });
+    writeFileSync(to, git("show", `HEAD:${file}`));
+  }
+}
+
 export async function startSystem() {
   const project = mkdtempSync(join(tmpdir(), "rant-hmi-test-"));
-  cpSync(join(ROOT, "examples", "demo"), project, { recursive: true, filter: (p) => !p.includes("pages") });
+  demoProject(project);
   const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
   const transcoding = transcoder();
   const video = transcoding && run(transcoding, ["--domain", String(DOMAIN), "--interface", "127.0.0.1"]);
