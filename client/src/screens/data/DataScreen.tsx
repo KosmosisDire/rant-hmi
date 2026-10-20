@@ -1,11 +1,17 @@
 import { createSignal } from "solid-js";
 import { Datapoints } from "./Datapoints";
+import { ThemeTable } from "./Theme";
 import { VariablesTable } from "./Variables";
 import { Inspector } from "./Inspector";
 import { MeshTree } from "./MeshTree";
 
 /** What the Data screen has picked: an entity on the mesh, an import or a variable. */
-export type Selection = { kind: "entity"; name: string } | { kind: "import"; alias: string } | { kind: "variable"; name: string } | null;
+export type Selection =
+  | { kind: "entity"; name: string }
+  | { kind: "import"; alias: string }
+  | { kind: "variable"; name: string }
+  | { kind: "token"; name: string }
+  | null;
 
 export interface Picking {
   selection: Selection;
@@ -28,6 +34,7 @@ export function DataScreen() {
       <section class="detail data-detail">
         <Datapoints {...picking} />
         <VariablesTable {...picking} />
+        <ThemeTable {...picking} />
       </section>
       <aside class="sidebar right">
         <Inspector {...picking} />

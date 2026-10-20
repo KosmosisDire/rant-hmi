@@ -295,12 +295,12 @@ impl Pages {
         self.get(page).and_then(|p| find(&p.children, id))
     }
 
-    /// Writes every use of the name `from` in values and handlers as `to`, as an import's
-    /// rename needs, and saves each page that changed. Returns those pages. Components never
-    /// read the mesh's names, so they are left as they are.
-    pub fn rename(&mut self, from: &str, to: &str) -> Result<Vec<String>, String> {
+    /// Writes every use of the name `from` in values and handlers as `to`, as a rename needs,
+    /// and saves each page that changed. Returns those pages. Components read only theirs and
+    /// the theme's, so they follow only where `components` says so.
+    pub fn rename(&mut self, from: &str, to: &str, components: bool) -> Result<Vec<String>, String> {
         let mut touched = Vec::new();
-        for p in self.list.iter_mut().filter(|p| p.interface.is_none()) {
+        for p in self.list.iter_mut().filter(|p| components || p.interface.is_none()) {
             if p.children.iter_mut().fold(false, |c, e| rename_in(e, from, to) | c) {
                 touched.push(p.id.clone());
             }
@@ -960,7 +960,7 @@ mod tests {
         pages.apply(add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"Speed \" + Speed")]))).unwrap();
         pages.apply(Edit::SetHandler { page: o(), id: "e2".into(), event: "tap".into(), code: Some("Speed = 1;".into()) }).unwrap();
         pages.apply(Edit::AddPage { name: "Other".into() }).unwrap();
-        assert_eq!(pages.rename("Speed", "LineSpeed").unwrap(), ["overview"]);
+        assert_eq!(pages.rename("Speed", "LineSpeed", false).unwrap(), ["overview"]);
         let again = Pages::open(&dir).unwrap();
         let e1 = &again.get("overview").unwrap().children[0];
         assert_eq!((e1.props["name"].as_str(), e1.props["x"].as_str()), ("Speed", "LineSpeed * 2"));

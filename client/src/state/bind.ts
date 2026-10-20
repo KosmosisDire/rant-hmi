@@ -6,6 +6,7 @@
 import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
+import { mode } from "./mode";
 import { live, notify, state } from "./store";
 
 /** A plain number, which a drag may write over. */
@@ -41,8 +42,28 @@ export interface Scope {
   set(name: string, path: string, value: unknown): void;
 }
 
+/** A theme token by the name code gives it, `$accent`. */
+function token(name: string) {
+  return name.startsWith("$") ? state.tokens.find((t) => `$${t.name}` === name) : undefined;
+}
+
+/** A scope that also reads the theme's tokens, in the screen's mode. */
+function themed(s: Scope): Scope {
+  return {
+    has: (name) => token(name) !== undefined || s.has(name),
+    get: (name) => {
+      const t = token(name);
+      return t ? (mode() === "light" ? t.light : t.dark) : s.get(name);
+    },
+    set: (name, path, value) => {
+      if (token(name)) throw new TypeError(`${name} is the theme's, so it cannot be set`);
+      s.set(name, path, value);
+    },
+  };
+}
+
 /** A page reads its imports and variables, live, and writes those it may on the backend. */
-export const pageScope: Scope = {
+export const pageScope: Scope = themed({
   has: (name) => state.imports.some((i) => i.alias === name) || state.variables.some((v) => v.name === name),
   get: (name) => {
     const v = live(name);
@@ -55,7 +76,7 @@ export const pageScope: Scope = {
     if (!imp && !state.variables.some((v) => v.name === name)) throw new ReferenceError(`${name} names no datapoint`);
     send({ type: "set", alias: name, path, value: value as JsonValue });
   },
-};
+});
 
 /** A bare name and the fields after it, as a two way binding is written: `Settings.target`. */
 const BARE = /^\s*([A-Za-z_$][\w$]*)((?:\.[A-Za-z_$][\w$]*)*)\s*$/;
@@ -73,7 +94,7 @@ export interface Own {
  *  read where the instance sits, else the input's default, unless the instance shows its own. */
 export function componentScope(c: Page, instance?: { props: Record<string, string | undefined>; outer: Scope; own?: Own }): Scope {
   const input = (name: string) => c.interface?.inputs.find((i) => i.name === name);
-  return {
+  return themed({
     has: (name) => input(name) !== undefined,
     get: (name) => {
       if (instance?.own?.has(name)) return instance.own.get(name);
@@ -93,7 +114,7 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
       const fields = [ref[2].slice(1), path].filter(Boolean).join(".");
       instance.outer.set(ref[1], fields, value);
     },
-  };
+  });
 }
 
 /** The scope a page or component is drawn and edited in. */

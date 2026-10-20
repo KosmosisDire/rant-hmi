@@ -7,7 +7,7 @@ use ts_rs::TS;
 
 use crate::pages::logic::Rule;
 use crate::pages::{Edit, Page};
-use crate::project::{Import, Kind, ProjectInfo, Variable};
+use crate::project::{Import, Kind, ProjectInfo, Token, Variable};
 
 /// From the backend to a screen.
 #[derive(Serialize, TS, Clone, Debug)]
@@ -24,6 +24,8 @@ pub enum ServerMsg {
     Variables { variables: Vec<Variable> },
     /// The HMI's own handlers, whole, after any change.
     Rules { rules: Vec<Rule> },
+    /// The theme's tokens, whole, after any change.
+    Theme { tokens: Vec<Token> },
     /// Every entity on the mesh, whole, after the mesh changed.
     Mesh { entities: Vec<EntityInfo> },
     /// The values that changed since the last batch.
@@ -78,6 +80,9 @@ pub enum ClientMsg {
     /// Adds, changes or with null removes the variable called `name`. A rename is followed
     /// everywhere it is used.
     SetVariable { name: String, variable: Option<Variable> },
+    /// Adds, changes or with null removes the theme token called `name`. A rename is followed
+    /// everywhere it is used, components too.
+    SetToken { name: String, token: Option<Token> },
     /// Writes a datapoint or a variable, or one of its fields when `path` names one.
     Set { alias: String, path: String, value: Value },
     /// Changes the pages.

@@ -360,6 +360,22 @@
   background: var(--blue);
 }
 
+/* A colour shown as a small square beside its text. */
+.swatch {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  border: 1px solid var(--border2);
+}
+
+.swatch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
 /* A field with completion, and the list that opens under it. */
 .draft {
   position: relative;

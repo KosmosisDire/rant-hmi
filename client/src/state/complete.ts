@@ -6,13 +6,14 @@ import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Kind } from "../protocol/Kind";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import { typeLabel } from "./format";
+import { mode } from "./mode";
 import { entity, live, state } from "./store";
 
 export interface Suggestion {
   label: string;
   /** What replaces the word being typed. */
   insert: string;
-  icon: Kind | "local" | "api" | "member";
+  icon: Kind | "local" | "api" | "member" | "token";
   type?: string;
   value?: JsonValue | null;
   known?: boolean;
@@ -30,6 +31,11 @@ export type Place = "expression" | "handler" | "component";
 
 const MOST = 12;
 const WORD = /[A-Za-z0-9_$]/;
+
+/** The theme's tokens, which every place but a backend handler reads, in the editor's mode. */
+function tokens(): Suggestion[] {
+  return state.tokens.map((t) => ({ label: `$${t.name}`, insert: `$${t.name}`, icon: "token", type: "token", value: mode() === "light" ? t.light : t.dark, known: true }));
+}
 
 const API: Record<Place, Suggestion[]> = {
   expression: [],
@@ -56,7 +62,7 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   while (from > 0 && WORD.test(before[from - 1])) from--;
   const word = before.slice(from);
   if (/^\d/.test(word)) return null;
-  const items = before[from - 1] === "." ? (names ? [] : members(chain(before.slice(0, from - 1)))) : [...(names ?? top()), ...API[place]];
+  const items = before[from - 1] === "." ? (names ? [] : members(chain(before.slice(0, from - 1)))) : [...(names ?? top()), ...(place === "handler" ? [] : tokens()), ...API[place]];
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
   const inside = items.filter((s) => !s.label.toLowerCase().startsWith(q) && s.label.toLowerCase().includes(q));

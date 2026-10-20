@@ -30,6 +30,9 @@ export function Suggestions(p: { items: Suggestion[]; chosen: number; onTake: (s
                   <Parentheses size={13} />
                 </span>
               </Match>
+              <Match when={s.icon === "token"}>
+                <span class="swatch" style={{ background: String(s.value) }} />
+              </Match>
               <Match when={s.icon === "member"}>
                 <span class="kind">
                   <Dot size={13} />

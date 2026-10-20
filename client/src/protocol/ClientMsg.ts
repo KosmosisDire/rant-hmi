@@ -2,9 +2,10 @@
 import type { Edit } from "./Edit";
 import type { Import } from "./Import";
 import type { JsonValue } from "./serde_json/JsonValue";
+import type { Token } from "./Token";
 import type { Variable } from "./Variable";
 
 /**
  * From a screen to the backend.
  */
-export type ClientMsg = { "type": "ping", t: number, } | { "type": "import", import: Import, } | { "type": "unimport", alias: string, } | { "type": "change_import", alias: string, import: Import, } | { "type": "set_variable", name: string, variable: Variable | null, } | { "type": "set", alias: string, path: string, value: JsonValue, } | { "type": "edit", edit: Edit, } | { "type": "undo" } | { "type": "redo" } | { "type": "set_start", page: string, } | { "type": "answer", ask: number, value: JsonValue, } | { "type": "fire", page: string, id: string, event: string, payload: JsonValue, };
+export type ClientMsg = { "type": "ping", t: number, } | { "type": "import", import: Import, } | { "type": "unimport", alias: string, } | { "type": "change_import", alias: string, import: Import, } | { "type": "set_variable", name: string, variable: Variable | null, } | { "type": "set_token", name: string, token: Token | null, } | { "type": "set", alias: string, path: string, value: JsonValue, } | { "type": "edit", edit: Edit, } | { "type": "undo" } | { "type": "redo" } | { "type": "set_start", page: string, } | { "type": "answer", ask: number, value: JsonValue, } | { "type": "fire", page: string, id: string, event: string, payload: JsonValue, };

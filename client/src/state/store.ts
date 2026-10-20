@@ -11,6 +11,7 @@ import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import type { Rule } from "../protocol/Rule";
+import type { Token } from "../protocol/Token";
 import type { Variable } from "../protocol/Variable";
 import { closeWith, push } from "./stack";
 
@@ -44,6 +45,7 @@ export interface State {
   variables: Variable[];
   /** The HMI's own handlers. */
   rules: Rule[];
+  tokens: Token[];
   entities: EntityInfo[];
   values: Record<string, Live>;
   peers: PeerInfo[];
@@ -65,6 +67,7 @@ export const [state, setState] = createStore<State>({
   imports: [],
   variables: [],
   rules: [],
+  tokens: [],
   entities: [],
   values: {},
   peers: [],
@@ -96,6 +99,9 @@ export function receive(msg: ServerMsg) {
       break;
     case "imports":
       setState("imports", reconcile(msg.imports, { key: "alias" }));
+      break;
+    case "theme":
+      setState("tokens", reconcile(msg.tokens, { key: "name" }));
       break;
     case "rules":
       setState("rules", reconcile(msg.rules, { key: "id" }));

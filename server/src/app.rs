@@ -197,6 +197,7 @@ impl App {
         self.send(session, &ServerMsg::Mesh { entities: self.mesh.entities() });
         self.send(session, &ServerMsg::Variables { variables: self.project.variables.clone() });
         self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
+        self.send(session, &ServerMsg::Theme { tokens: self.project.tokens.clone() });
         let mut values: Vec<ValueUpdate> = self.project.imports.iter().map(|i| self.update(&i.alias)).collect();
         let own = self.sessions.get(&session).map(|s| s.vars.clone()).unwrap_or_default();
         values.extend(self.shared.iter().chain(own.iter()).map(|(k, v)| known(k, v)));
@@ -233,6 +234,20 @@ impl App {
             },
             ClientMsg::ChangeImport { alias, import } => self.change_import(session, alias, import),
             ClientMsg::SetVariable { name, variable } => self.set_variable(session, name, variable),
+            ClientMsg::SetToken { name, token } => {
+                let renamed = token.as_ref().filter(|t| t.name != name).map(|t| t.name.clone());
+                if let Err(text) = self.project.set_token(&name, token) {
+                    return self.refuse(session, text, None);
+                }
+                self.broadcast(&ServerMsg::Theme { tokens: self.project.tokens.clone() });
+                if let Some(to) = renamed {
+                    match self.pages.rename(&format!("${name}"), &format!("${to}"), true) {
+                        Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
+                        Ok(_) => {}
+                        Err(text) => self.refuse(session, text, None),
+                    }
+                }
+            }
             ClientMsg::Set { alias, path, value } => {
                 if let Err(text) = self.set(Some(session), &alias, &path, value) {
                     self.refuse(session, text, Some(alias));
@@ -293,7 +308,7 @@ impl App {
         let Some(v) = to else { return };
         if v.name != name {
             info!("renamed the variable {name} to {}", v.name);
-            match self.pages.rename(&name, &v.name) {
+            match self.pages.rename(&name, &v.name, false) {
                 Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
                 Ok(_) => {}
                 Err(text) => self.refuse(session, text, None),
@@ -335,7 +350,7 @@ impl App {
             }
             self.changed.remove(&alias);
             self.changed.insert(import.alias.clone());
-            match self.pages.rename(&alias, &import.alias) {
+            match self.pages.rename(&alias, &import.alias, false) {
                 Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
                 Ok(_) => {}
                 Err(text) => self.refuse(session, text, None),
@@ -509,6 +524,7 @@ impl App {
                 // a screen shows a rule change at once, so a refused one is set right
                 if rules {
                     self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
+        self.send(session, &ServerMsg::Theme { tokens: self.project.tokens.clone() });
                 }
                 return self.refuse(session, text, None);
             }

@@ -1,6 +1,6 @@
 //! The project folder: the HMI as plain text files that diff well and that VS Code or an AI
-//! can edit. `hmi.toml` names it, `data/imports.toml` lists its imports and
-//! `data/variables.toml` its variables.
+//! can edit. `hmi.toml` names it, `data/imports.toml` lists its imports,
+//! `data/variables.toml` its variables and `data/theme.toml` its theme tokens.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -82,11 +82,28 @@ struct VariablesFile {
     variables: Vec<Variable>,
 }
 
+/// A design value with one value per mode, read as `$name` anywhere, components too.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Token {
+    /// camelCase, written without the `$` code puts before it.
+    pub name: String,
+    pub dark: String,
+    pub light: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ThemeFile {
+    #[serde(default, rename = "token")]
+    tokens: Vec<Token>,
+}
+
 pub struct Project {
     root: PathBuf,
     pub info: ProjectInfo,
     pub imports: Vec<Import>,
     pub variables: Vec<Variable>,
+    pub tokens: Vec<Token>,
 }
 
 impl Project {
@@ -112,7 +129,40 @@ impl Project {
             true => toml::from_str::<VariablesFile>(&read(&file)?).with_context(|| format!("reading {}", file.display()))?.variables,
             false => Vec::new(),
         };
-        Ok(Project { root: root.to_path_buf(), info, imports, variables })
+        let file = theme_file(root);
+        let tokens = match file.exists() {
+            true => toml::from_str::<ThemeFile>(&read(&file)?).with_context(|| format!("reading {}", file.display()))?.tokens,
+            false => Vec::new(),
+        };
+        Ok(Project { root: root.to_path_buf(), info, imports, variables, tokens })
+    }
+
+    /// Adds, changes or with None removes the token called `name`, and saves. A change may
+    /// rename it. The error is for the user.
+    pub fn set_token(&mut self, name: &str, to: Option<Token>) -> Result<(), String> {
+        let at = self.tokens.iter().position(|t| t.name == name);
+        match (to, at) {
+            (None, Some(at)) => drop(self.tokens.remove(at)),
+            (None, None) => return Err(format!("${name} is not a token")),
+            (Some(t), at) => {
+                let mut chars = t.name.chars();
+                if !(chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric())) {
+                    return Err(format!("\"{}\" cannot name a token: start with a small letter, then use letters and digits", t.name));
+                }
+                if t.name != name && self.tokens.iter().any(|x| x.name == t.name) {
+                    return Err(format!("${} is already a token", t.name));
+                }
+                match at {
+                    Some(at) => self.tokens[at] = t,
+                    None => self.tokens.push(t),
+                }
+            }
+        }
+        let file = theme_file(&self.root);
+        let text = toml::to_string(&ThemeFile { tokens: self.tokens.clone() }).map_err(|e| e.to_string())?;
+        fs::create_dir_all(file.parent().unwrap_or(&self.root))
+            .and_then(|_| fs::write(&file, text))
+            .map_err(|e| format!("could not save {}: {e}", file.display()))
     }
 
     pub fn variable(&self, name: &str) -> Option<&Variable> {
@@ -212,6 +262,10 @@ fn variables_file(root: &Path) -> PathBuf {
     root.join("data").join("variables.toml")
 }
 
+fn theme_file(root: &Path) -> PathBuf {
+    root.join("data").join("theme.toml")
+}
+
 /// Names code already has or keeps, which a variable would hide.
 const TAKEN_LOCAL: [&str; 47] = [
     "await", "break", "case", "catch", "class", "close", "const", "continue", "default", "delete", "do", "else", "export", "extends", "false",
@@ -296,6 +350,17 @@ mod tests {
         p.set_variable("jogMode", Some(Variable { name: "mode".into(), ..mode })).unwrap();
         p.set_variable("limits", None).unwrap();
         assert_eq!(Project::open(&dir).unwrap().variables.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["mode"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn tokens_survive_a_reopen() {
+        let dir = scratch("tokens");
+        let mut p = Project::open(&dir).unwrap();
+        let accent = Token { name: "accent".into(), dark: "#e04a3f".into(), light: "#c0392b".into() };
+        p.set_token("accent", Some(accent.clone())).unwrap();
+        assert_eq!(Project::open(&dir).unwrap().tokens, [accent.clone()]);
+        assert!(p.set_token("Accent", Some(Token { name: "Accent".into(), ..accent })).unwrap_err().contains("small letter"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
