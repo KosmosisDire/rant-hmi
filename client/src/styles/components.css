@@ -669,10 +669,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  color: var(--faint);
-  border-radius: 3px;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  color: var(--dim);
+  border-radius: 4px;
 }
 
 .row-add:hover {

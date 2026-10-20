@@ -87,8 +87,13 @@ export function MeshTree(p: Picking) {
         {(e) => (
           <div class="list-row" role="button" tabIndex={0} classList={{ selected: picked(e) }} onClick={() => pick(e)} onKeyDown={(k) => k.key === "Enter" && pick(e)} title={e.name}>
             <span style={{ width: `${l.depth * INDENT}px` }} />
-            <span class="caret">
-              <Show when={!importOf(e.name)}>
+            <span class="caret" />
+            <KindIcon kind={e.kind} />
+            <span class="list-label mono">{e.name.split("/").pop()}</span>
+            {/* the alias it is imported as, else in the same place a + that imports it */}
+            <Show
+              when={importOf(e.name)}
+              fallback={
                 <button
                   class="row-add"
                   title={`Import ${e.name}`}
@@ -97,13 +102,12 @@ export function MeshTree(p: Picking) {
                     quick(e);
                   }}
                 >
-                  <Plus size={12} />
+                  <Plus size={15} />
                 </button>
-              </Show>
-            </span>
-            <KindIcon kind={e.kind} />
-            <span class="list-label mono">{e.name.split("/").pop()}</span>
-            <Show when={importOf(e.name)}>{(i) => <span class="list-trail mono">{i().alias}</span>}</Show>
+              }
+            >
+              {(i) => <span class="list-trail mono">{i().alias}</span>}
+            </Show>
           </div>
         )}
       </For>
