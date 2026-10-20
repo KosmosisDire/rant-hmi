@@ -7,7 +7,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   check(sys.transcoder, "rant-transcoder is not built: build transcoder-rant or set HMI_TRANSCODER");
   await d.tab("Data");
   for (const name of ["Camera", "Detections"]) {
-    const row = page.locator(".screen:not([hidden]) .sidebar.left .list-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
+    const row = await d.meshRow(`Cell/${name}`);
     if ((await row.locator(".row-add").count()) > 0) await row.locator(".row-add").click();
     await eventually(() => hmi.state.imports.some((i) => i.alias === name), `${name} imported`);
   }

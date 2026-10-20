@@ -9,7 +9,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const pick = (target, item) => d.menu(target, item);
 
   // the mesh tree: an entity not imported offers to import it, an imported one to remove it
-  const pose = screen.locator(".sidebar.left .list-row", { has: page.locator(".list-label", { hasText: /^Pose$/ }) });
+  const pose = await d.meshRow("Robot/Pose");
   if (hmi.state.imports.some((i) => i.entity === "Robot/Pose")) await hmi.unimport(hmi.state.imports.find((i) => i.entity === "Robot/Pose").alias);
   await pick(pose, "Import to read");
   await eventually(() => hmi.state.imports.some((i) => i.entity === "Robot/Pose"), "Robot/Pose imported");

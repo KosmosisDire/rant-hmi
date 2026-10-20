@@ -206,6 +206,13 @@ export function designer(page) {
       await page.locator(".popover.menu .menu-item", { has: page.locator(".menu-label", { hasText: new RegExp(`^${item}$`) }) }).click();
     },
 
+    /** An entity's row in the Data screen's mesh tree, found as a person finds one in a tree
+     *  that starts closed: by its name in the filter. */
+    async meshRow(entity) {
+      await left().locator(".filter input").fill(entity);
+      return left().locator(`.list-row[title="${entity}"]`);
+    },
+
     /** A row of the pages or components list by its name. */
     pageRow(name) {
       return left().locator(".pages .list-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });

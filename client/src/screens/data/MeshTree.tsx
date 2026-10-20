@@ -41,12 +41,14 @@ const INDENT = 14;
 /** Everything on the mesh a user can import, as a tree. */
 export function MeshTree(p: Picking) {
   const [filter, setFilter] = createSignal("");
-  const [closed, setClosed] = createSignal(new Set<string>());
+  // folders start closed, and a filter opens every one it leaves, so each match shows
+  const [opened, setOpened] = createSignal(new Set<string>());
+  const open = (path: string) => filter() !== "" || opened().has(path);
   const tree = createMemo(() => grow(state.entities, filter()));
   const toggle = (path: string) => {
-    const next = new Set(closed());
+    const next = new Set(opened());
     if (!next.delete(path)) next.add(path);
-    setClosed(next);
+    setOpened(next);
   };
 
   const pick = (e: EntityInfo) => {
@@ -81,13 +83,13 @@ export function MeshTree(p: Picking) {
             <button class="list-row branch" onClick={() => toggle(f.path)}>
               <span style={{ width: `${l.depth * INDENT}px` }} />
               <span class="caret">
-                <Show when={closed().has(f.path)} fallback={<ChevronDown size={12} />}>
-                  <ChevronRight size={12} />
+                <Show when={open(f.path)} fallback={<ChevronRight size={12} />}>
+                  <ChevronDown size={12} />
                 </Show>
               </span>
               <span class="list-label mono">{f.name}/</span>
             </button>
-            <Show when={!closed().has(f.path)}>
+            <Show when={open(f.path)}>
               <Level folder={f} depth={l.depth + 1} />
             </Show>
           </>

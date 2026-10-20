@@ -3,7 +3,10 @@
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Data");
-  const row = page.locator('.screen:not([hidden]) .sidebar.left .list-row[title="Robot/Pose"]');
+  // the mesh starts as its folders alone
+  await page.locator(".screen:not([hidden]) .sidebar.left .list-row.branch").first().waitFor();
+  check((await page.locator(".screen:not([hidden]) .sidebar.left .list-row[title]").count()) === 0, "the mesh tree started open");
+  const row = await d.meshRow("Robot/Pose");
   await row.locator(".row-add").click();
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Pose" && i.intent === "read"), "the one click import");
   await eventually(async () => (await page.locator(".screen:not([hidden]) .sidebar.right .head-title").textContent()).includes("Pose"), "the inspector to show the import");
@@ -30,7 +33,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await alias.press("Enter");
   await page.locator(".screen:not([hidden]) .sidebar.right .error-line", { hasText: "Math is a name code already uses" }).waitFor();
 
-  const pick = (name) => page.locator(`.screen:not([hidden]) .sidebar.left .list-row[title="${name}"]`).click();
+  const pick = async (name) => (await d.meshRow(name)).click();
   const form = page.locator("#alias");
   await pick("Line1/Conveyor");
   await eventually(async () => (await form.inputValue()) === "Conveyor", "the form to suggest Conveyor");
