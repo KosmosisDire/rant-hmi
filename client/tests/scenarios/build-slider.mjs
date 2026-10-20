@@ -27,7 +27,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const inst = page.locator(`.run-layer:not([hidden]) .el[data-id="${speed}"]`);
   const b = await inst.boundingBox();
   await page.mouse.click(b.x + b.width * 0.5, b.y + b.height / 2);
-  await eventually(() => Math.abs((hmi.state.values.Speed?.value ?? 0) - 1) < 0.01, "a press half way to set Speed to 1");
+  await eventually(() => Math.abs((hmi.state.values.Speed?.value ?? 0) - 1) < 0.01, () => `a press half way to set Speed to 1, not ${hmi.state.values.Speed?.value}`);
   await page.mouse.move(b.x + 2, b.y + b.height / 2);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width * 0.75, b.y + b.height / 2, { steps: 8 });

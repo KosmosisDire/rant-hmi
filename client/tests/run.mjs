@@ -50,7 +50,8 @@ for (const file of files) {
     console.log(`ok    ${name} (${Date.now() - started} ms)`);
   } catch (e) {
     failed++;
-    const at = /scenarios[\\/]([\w-]+\.mjs:\d+)/.exec(e.stack ?? "")?.[1];
+    // the scenario's line, else the helper's, since an awaited helper can lose its caller
+    const at = /scenarios[\\/]([\w-]+\.mjs:\d+)/.exec(e.stack ?? "")?.[1] ?? /tests[\\/](designer\.mjs:\d+)/.exec(e.stack ?? "")?.[1];
     console.log(`FAIL  ${name}: ${e.message}${at ? ` (${at})` : ""}`);
     // the backend's last words often say why
     const tail = sys.backend.log.trim().split(/\r?\n/).slice(-12);
