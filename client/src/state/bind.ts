@@ -1,6 +1,8 @@
 // A property's value is a JS expression over its scope's names, compiled once per text, a bare
 // #hex reading as text. Reading an unknown value stops it, so the unknown look shows instead.
 
+import { arith } from "../lang/arith.js";
+import { LIBRARY } from "../lang/math.js";
 import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
@@ -236,28 +238,43 @@ export function docScope(doc: Page): Scope {
 
 const proxies = new WeakMap<Scope, object>();
 
-/** The scope as `with` reads it. */
+/** The scope as `with` reads it. A math helper's `__` name is never the scope's, which spares
+ *  every operator a look through it. */
 function proxy(s: Scope): object {
   let p = proxies.get(s);
   if (!p) {
-    p = new Proxy({}, { has: (_, key) => typeof key === "string" && s.has(key), get: (_, key) => (typeof key === "string" ? s.get(key) : undefined) });
+    p = new Proxy({}, { has: (_, key) => typeof key === "string" && !key.startsWith("__") && s.has(key), get: (_, key) => (typeof key === "string" ? s.get(key) : undefined) });
     proxies.set(s, p);
   }
   return p;
 }
 
-const handlers = new Map<string, ((scope: object) => Promise<void>) | string>();
+// The math library's names come in as the compiled function's parameters, under the scope's own
+const MATH_NAMES = Object.keys(LIBRARY);
+const MATH = Object.values(LIBRARY);
+
+/** `body` as a function of the scope with math's arithmetic and names, or why it does not
+ *  compile. `lines` is how many lines the body adds before the code, which a place leaves out. */
+function make<T>(body: string, lines: number): T | string {
+  try {
+    return new Function("scope", ...MATH_NAMES, arith(body)) as T;
+  } catch (e) {
+    const message = (e as Error).message ?? String(e);
+    const at = / \((\d+):\d+\)$/.exec(message);
+    if (!at) return message;
+    const line = Number(at[1]) - lines;
+    return line > 1 ? `${message.slice(0, at.index)} (line ${line})` : message.slice(0, at.index);
+  }
+}
+
+const handlers = new Map<string, ((scope: object, ...math: unknown[]) => Promise<void>) | string>();
 
 /** Runs a component's handler here, in its instance's scope: `p`, `emit` and the inputs, a two
  *  way one written back. Any other name is refused, so nothing leaks onto the page. */
 export function runHandler(code: string, scope: Scope, emit: (name: string, payload?: unknown) => void, p: unknown, label: string) {
   let fn = handlers.get(code);
   if (fn === undefined) {
-    try {
-      fn = new Function("scope", `return (async () => { with (scope) {\n${code}\n} })();`) as (scope: object) => Promise<void>;
-    } catch (e) {
-      fn = (e as Error).message;
-    }
+    fn = make<(scope: object, ...math: unknown[]) => Promise<void>>(`return (async () => { with (scope) {\n${code}\n} })();`, 1);
     handlers.set(code, fn);
   }
   if (typeof fn === "string") return notify(`${label}: ${fn}`, "fault");
@@ -267,8 +284,8 @@ export function runHandler(code: string, scope: Scope, emit: (name: string, payl
   const names = new Proxy(
     {},
     {
-      // every name but the browser's own stays here, so a stray one never becomes a global
-      has: (_, key) => typeof key === "string" && (key in own || scope.has(key) || !(key in globalThis)),
+      // every name but the browser's own and math's stays here, so a stray one never becomes a global
+      has: (_, key) => typeof key === "string" && (key in own || scope.has(key) || !(key in globalThis || key in LIBRARY)),
       get: (_, key) => {
         if (typeof key !== "string") return undefined;
         if (key in own) return own[key];
@@ -284,7 +301,7 @@ export function runHandler(code: string, scope: Scope, emit: (name: string, payl
       },
     },
   );
-  fn(names).catch((e: unknown) => {
+  fn(names, ...MATH).catch((e: unknown) => {
     if (e instanceof Unknown) notify(`${label}: stopped, since ${e.alias} is unknown`, "warn");
     else notify(`${label}: ${(e as Error)?.message ?? String(e)}`, "fault");
   });
@@ -336,17 +353,13 @@ function colours(src: string, at = 0, nested = false): [string, number] {
   return [out, i];
 }
 
-const compiled = new Map<string, ((scope: object) => unknown) | string>();
+const compiled = new Map<string, ((scope: object, ...math: unknown[]) => unknown) | string>();
 
-function compile(src: string): ((scope: object) => unknown) | string {
+function compile(src: string): ((scope: object, ...math: unknown[]) => unknown) | string {
   let fn = compiled.get(src);
   if (fn === undefined) {
-    try {
-      // `with` routes bare names through the scope, which needs sloppy mode, as new Function gives
-      fn = new Function("scope", `with (scope) { return (${colours(src)[0]}\n); }`) as (scope: object) => unknown;
-    } catch (e) {
-      fn = (e as Error).message;
-    }
+    // `with` routes bare names through the scope, which needs sloppy mode, as new Function gives
+    fn = make<(scope: object, ...math: unknown[]) => unknown>(`with (scope) { return (${colours(src)[0]}\n); }`, 0);
     compiled.set(src, fn);
   }
   return fn;
@@ -358,7 +371,7 @@ export function resolve(value: string | undefined, scope: Scope = pageScope): Re
   const fn = compile(value.trim());
   if (typeof fn === "string") return { ok: false, error: fn };
   try {
-    return { ok: true, value: fn(proxy(scope)) };
+    return { ok: true, value: fn(proxy(scope), ...MATH) };
   } catch (e) {
     if (e instanceof Unknown) return { ok: false, unknown: e.alias };
     if (e instanceof ReferenceError) return { ok: false, error: e.message.replace(/^(\S+) is not defined$/, (_, name: string) => scope.missing(name)) };

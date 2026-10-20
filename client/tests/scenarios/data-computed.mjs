@@ -19,8 +19,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await write("Name", "speedPercent");
   await eventually(percent, "the computed value named");
   // a getter that cannot work says why under its field
-  await write("Is", "sqrt(Speed)");
-  await field("Is").locator(".field-note", { hasText: "sqrt names no mesh import" }).waitFor();
+  await write("Is", "squareRoot(Speed)");
+  await field("Is").locator(".field-note", { hasText: "squareRoot names no mesh import" }).waitFor();
   await write("Is", "Speed * 100");
   await eventually(async () => (await field("Is").locator(".field-note").count()) === 0, "the note to go once the getter works");
   await write("Unit", "%");
