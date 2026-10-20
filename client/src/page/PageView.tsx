@@ -83,27 +83,45 @@ function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides;
   // a press, and a tap needs the release over the element.
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.length > 0;
-  const fire = (event: string) => p.act?.fire(p.element, event);
+  const fire = (event: string, payload: Pointer) => p.act?.fire(p.element, event, payload);
   const down = (e: PointerEvent & { currentTarget: HTMLDivElement }) => {
     if (!live() || e.button !== 0 || pressed()) return;
     const el = e.currentTarget;
+    const on = (e.target as HTMLElement).closest<HTMLElement>(".el[data-name]")?.dataset.name ?? null;
     setPressed(true);
-    fire("press");
+    fire("press", pointer(el, e, on));
+    fire("drag", pointer(el, e, on));
+    // a drag goes out at most once a frame, with the latest place
+    let next: PointerEvent | null = null;
+    const move = (m: PointerEvent) => {
+      if (m.pointerId !== e.pointerId) return;
+      if (!next) {
+        requestAnimationFrame(() => {
+          if (next) fire("drag", pointer(el, next, on));
+          next = null;
+        });
+      }
+      next = m;
+    };
     const up = (u: PointerEvent) => {
       if (u.pointerId !== e.pointerId) return;
+      next = null;
+      window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       setPressed(false);
-      fire("release");
-      const r = el.getBoundingClientRect();
-      if (u.type === "pointerup" && u.clientX >= r.left && u.clientX <= r.right && u.clientY >= r.top && u.clientY <= r.bottom) fire("tap");
+      const at = pointer(el, u, on);
+      fire("release", at);
+      if (u.type === "pointerup" && at.inside) fire("tap", at);
     };
+    window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
   };
   return (
     <div
       data-id={p.inside ? undefined : p.element.id}
+      data-name={p.element.props.name}
       class="el"
       classList={{ text: p.element.tag === "span", unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: live(), pressed: pressed() }}
       style={look().style}
@@ -122,19 +140,60 @@ function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides;
   );
 }
 
+/** What a pointer event brings: where across the element, 0 to 1, the angle around its
+ *  centre (0 up, clockwise), the named part the press began on, and whether it is inside. */
+interface Pointer {
+  x: number;
+  y: number;
+  angle: number;
+  on: string | null;
+  inside: boolean;
+}
+
+function pointer(el: HTMLElement, e: PointerEvent, on: string | null): Pointer {
+  const r = el.getBoundingClientRect();
+  const [dx, dy] = [e.clientX - r.left, e.clientY - r.top];
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  const angle = (Math.atan2(dx - r.width / 2, r.height / 2 - dy) * 180) / Math.PI;
+  return { x: clamp(dx / r.width), y: clamp(dy / r.height), angle, on, inside: dx >= 0 && dy >= 0 && dx <= r.width && dy <= r.height };
+}
+
 /** A component drawn in an instance's box: its own size scaled to fit, centred, reading the
- *  inputs the instance gives. */
+ *  inputs the instance gives. While a pointer is down on it, what it writes shows at once,
+ *  and after release whatever its bindings say. */
 function Instance(p: { element: Element; scope: Scope; w: number; h: number; design?: boolean; act?: Act }) {
   const name = () => p.element.component ?? "";
+  const [held, setHeld] = createSignal<Map<string, unknown> | null>(null);
+  const hold = (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    setHeld(new Map());
+    const end = (u: PointerEvent) => {
+      if (u.pointerId !== e.pointerId) return;
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      setHeld(null);
+    };
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  };
+  const own = {
+    get: (input: string) => held()?.get(input),
+    has: (input: string) => held()?.has(input) ?? false,
+    set: (input: string, value: unknown) => {
+      const h = held();
+      if (h) setHeld(new Map(h).set(input, value));
+    },
+  };
   return (
     <Show when={component(name())} fallback={<div class="instance-missing">{name()} is missing</div>}>
       {(c) => {
-        const scope = componentScope(c(), { props: p.element.props, outer: p.scope });
+        const scope = componentScope(c(), { props: p.element.props, outer: p.scope, own });
         const act = p.act && componentAct(c(), scope, p.element, p.act);
         const k = () => Math.min(p.w / c().width, p.h / c().height);
         const place = () => `translate(${(p.w - c().width * k()) / 2}px, ${(p.h - c().height * k()) / 2}px) scale(${k()})`;
         return (
-          <div class="instance" style={{ width: `${c().width}px`, height: `${c().height}px`, transform: place() }}>
+          // held from the capture, before any part's handler writes
+          <div class="instance" style={{ width: `${c().width}px`, height: `${c().height}px`, transform: place() }} ref={(el) => el.addEventListener("pointerdown", hold, true)}>
             <For each={c().children}>{(e) => <ElementView element={e} scope={scope} design={p.design} act={act} inside />}</For>
           </div>
         );

@@ -91,8 +91,9 @@ pub struct Handler {
     pub code: String,
 }
 
-/// What a pointer does to any element: goes down on it, comes up, or both without straying.
-pub const POINTER: [&str; 3] = ["tap", "press", "release"];
+/// What a pointer does to any element: goes down on it and comes up without straying, goes
+/// down, comes up, or moves while down, from the press on.
+pub const POINTER: [&str; 4] = ["tap", "press", "release", "drag"];
 
 /// Where a handler goes in an element's list: the pointer's events first, then by name.
 fn rank(event: &str) -> (usize, &str) {

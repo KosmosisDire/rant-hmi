@@ -30,5 +30,5 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => handlers().length === 2 && handlers()[1].code.includes("Speed"), "undo to bring it back");
   await eventually(async () => (await page.locator(".handler").count()) === 2, "the inspector to show both handlers");
   await page.locator('button[title="Add an event"]').click();
-  check((await page.locator(".event-menu button").allTextContents()).join() === "Release", "the menu offers events already handled");
+  check((await page.locator(".event-menu button").allTextContents()).join() === "Release,Drag", "the menu offers events already handled");
 }

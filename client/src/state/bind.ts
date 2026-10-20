@@ -62,13 +62,21 @@ const BARE = /^\s*([A-Za-z_$][\w$]*)((?:\.[A-Za-z_$][\w$]*)*)\s*$/;
 
 const nothing: Scope = { has: () => false, get: () => undefined, set: () => {} };
 
+/** What an instance shows of its own while held, over what its bindings say. */
+export interface Own {
+  has(input: string): boolean;
+  get(input: string): unknown;
+  set(input: string, value: unknown): void;
+}
+
 /** A component reads its inputs and nothing of the mesh. Each is what the instance gives,
- *  read where the instance sits, else the input's default. */
-export function componentScope(c: Page, instance?: { props: Record<string, string | undefined>; outer: Scope }): Scope {
+ *  read where the instance sits, else the input's default, unless the instance shows its own. */
+export function componentScope(c: Page, instance?: { props: Record<string, string | undefined>; outer: Scope; own?: Own }): Scope {
   const input = (name: string) => c.interface?.inputs.find((i) => i.name === name);
   return {
     has: (name) => input(name) !== undefined,
     get: (name) => {
+      if (instance?.own?.has(name)) return instance.own.get(name);
       const given = instance?.props[name];
       const r = given !== undefined ? resolve(given, instance!.outer) : resolve(input(name)!.default, nothing);
       if (r.ok) return r.value;
@@ -79,6 +87,7 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
     // otherwise, so a control bound one way reads as a display
     set: (name, path, value) => {
       if (!input(name)?.bindable) throw new TypeError(`${name} is not two way`);
+      if (!path) instance?.own?.set(name, value);
       const ref = BARE.exec(instance?.props[name] ?? "");
       if (!ref || !instance) return;
       const fields = [ref[2].slice(1), path].filter(Boolean).join(".");

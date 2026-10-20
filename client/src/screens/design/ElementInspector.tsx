@@ -252,7 +252,7 @@ function Properties(p: { page: string; element: Element }) {
 }
 
 /** What a pointer does to any element. */
-const POINTER = ["tap", "press", "release"];
+const POINTER = ["tap", "press", "release", "drag"];
 
 /** An event as a person reads it: Tap, or a component's own as it is spelled. */
 const label = (event: string) => (POINTER.includes(event) ? event[0].toUpperCase() + event.slice(1) : event);
@@ -296,7 +296,7 @@ function Events(p: { page: string; element: Element }) {
         </div>
       </Show>
       <Show when={p.element.handlers.length === 0 && !adding()}>
-        <div class="field-hint">Add one to run code when this is tapped, pressed or let go.</div>
+        <div class="field-hint">Add one to run code when this is tapped, pressed, let go or dragged. The code reads where as p.x and p.y.</div>
       </Show>
       {/* one box per event, so a box never turns into another event's under the pointer */}
       <For each={events()}>
