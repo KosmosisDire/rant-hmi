@@ -3,11 +3,11 @@ import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
+import { number } from "../../state/bind";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { Component, File, Plus, Square, Type } from "../../ui/icons";
 import { chain, childrenOf, find, moveTo, parentOf } from "./tree";
-import { number } from "../../state/bind";
 
 /** What a new frame or text starts as: visible, on the grid, and plainly named. */
 const STARTS: Record<Exclude<Tag, "use">, Record<string, string>> = {
@@ -38,7 +38,11 @@ export function Outline(p: { page: Page | undefined; selected: string | null; on
   };
   const pages = () => state.pages.filter((pg) => pg.interface === null);
   const components = () => state.pages.filter((pg) => pg.interface !== null);
-  const addPage = () => send({ type: "edit", edit: { kind: "add_page", name: `Page ${pages().length + 1}` } });
+  const addPage = () => {
+    let n = pages().length + 1;
+    while (pages().some((pg) => pg.name === `Page ${n}`)) n++;
+    send({ type: "edit", edit: { kind: "add_page", name: `Page ${n}` } });
+  };
   const addComponent = () => {
     let name = "Component";
     for (let n = 2; components().some((c) => c.name === name); n++) name = `Component${n}`;
