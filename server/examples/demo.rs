@@ -1,8 +1,10 @@
-//! A small line to try the HMI on: a conveyor whose speed and running you can set, a reset,
-//! and a robot's pose and joints moving on their own.
+//! A small line to try the HMI on: a conveyor whose speed and running you can set, a reset
+//! that answers how many parts it cleared, and a robot's pose and joints moving on their own.
 //!
 //! `cargo run --example demo -- --loopback` keeps it on this host, `--domain N` moves it.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use rant::types::{Double3, Empty, JointState, Pose, Quaternion};
@@ -47,19 +49,23 @@ fn main() -> Result<(), rant::Error> {
     let conveyor = node.publisher::<Conveyor>("Line1/Conveyor", Qos::new())?;
     let pose = node.publisher::<Pose>("Robot/Pose", Qos::new())?;
     let joints = node.publisher::<JointState>("Robot/Joints", Qos::new())?;
-    let _reset = node.function_definition("Line1/Reset", FunctionOptions::new(), |_: Request<Empty, Empty>| Ok::<_, &str>(Empty {}))?;
+    let parts = Arc::new(AtomicU32::new(0));
+    let cleared = parts.clone();
+    let _reset = node.function_definition("Line1/Reset", FunctionOptions::new(), move |_: Request<Empty, u32>| Ok::<_, &str>(cleared.swap(0, Ordering::Relaxed)))?;
 
     println!("demo_line is up on domain {domain}{}", if loopback { ", on this host only" } else { "" });
     let start = Instant::now();
-    let mut parts = 0u32;
+    let mut tick = 0u32;
     loop {
         let t = start.elapsed().as_secs_f64();
         let on = running.get()?.unwrap_or(false);
         let v = if on { speed.get()?.unwrap_or(0.0) } else { 0.0 };
-        if on && settings.get()?.is_some_and(|s| s.mode == Mode::Auto) && t as u32 > parts {
-            parts += 1;
+        // a part a second while running in Auto
+        if on && settings.get()?.is_some_and(|s| s.mode == Mode::Auto) && t as u32 > tick {
+            tick = t as u32;
+            parts.fetch_add(1, Ordering::Relaxed);
         }
-        conveyor.send(&Conveyor { speed: v, running: on, part: format!("P{parts}").parse()? })?;
+        conveyor.send(&Conveyor { speed: v, running: on, part: format!("P{}", parts.load(Ordering::Relaxed)).parse()? })?;
         pose.send(&Pose {
             position: Double3 { x: 0.4 * t.cos(), y: 0.4 * t.sin(), z: 0.3 },
             orientation: Quaternion::IDENTITY,
