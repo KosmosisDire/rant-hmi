@@ -107,7 +107,7 @@ pub fn dedent(code: &str) -> String {
 /// Double quotes, or single ones when the value holds a double quote, so an expression
 /// with strings stays readable. A value holding both, or text an escape would misread,
 /// is escaped.
-fn quote(v: &str) -> String {
+pub(super) fn quote(v: &str) -> String {
     if v.contains("&quot;") || v.contains("&amp;") || (v.contains('"') && v.contains('\'')) {
         format!("\"{}\"", v.replace('&', "&amp;").replace('"', "&quot;"))
     } else if v.contains('"') {
@@ -121,7 +121,7 @@ fn quote(v: &str) -> String {
 
 /// A page from its file text. The error names the line.
 pub fn parse(text: &str, id: &str) -> Result<Page, String> {
-    let mut r = Reader { s: text, at: 0, ids: HashSet::new() };
+    let mut r = Reader::new(text);
     r.gap();
     let root = if r.eat("<component") { "component" } else { r.expect("<page").map(|_| "page")? };
     let attrs = r.attrs()?;
@@ -158,24 +158,31 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     Ok(page)
 }
 
-struct Reader<'a> {
+/// Reads an HTML like file from the start, saying the line of any mistake.
+pub(super) struct Reader<'a> {
     s: &'a str,
     at: usize,
     ids: HashSet<String>,
 }
 
+impl<'a> Reader<'a> {
+    pub(super) fn new(s: &'a str) -> Reader<'a> {
+        Reader { s, at: 0, ids: HashSet::new() }
+    }
+}
+
 impl Reader<'_> {
-    fn rest(&self) -> &str {
+    pub(super) fn rest(&self) -> &str {
         &self.s[self.at..]
     }
 
-    fn error(&self, what: &str) -> String {
+    pub(super) fn error(&self, what: &str) -> String {
         let line = self.s[..self.at].matches('\n').count() + 1;
         format!("line {line}: {what}")
     }
 
     /// Skips white space and comments.
-    fn gap(&mut self) {
+    pub(super) fn gap(&mut self) {
         let s = self.s;
         loop {
             let trimmed = s[self.at..].trim_start();
@@ -190,7 +197,11 @@ impl Reader<'_> {
         }
     }
 
-    fn eat(&mut self, lit: &str) -> bool {
+    pub(super) fn skip(&mut self, n: usize) {
+        self.at += n;
+    }
+
+    pub(super) fn eat(&mut self, lit: &str) -> bool {
         let found = self.rest().starts_with(lit);
         if found {
             self.at += lit.len();
@@ -198,7 +209,7 @@ impl Reader<'_> {
         found
     }
 
-    fn expect(&mut self, lit: &str) -> Result<(), String> {
+    pub(super) fn expect(&mut self, lit: &str) -> Result<(), String> {
         if self.eat(lit) { Ok(()) } else { Err(self.error(&format!("expected {lit}"))) }
     }
 
@@ -213,7 +224,7 @@ impl Reader<'_> {
     }
 
     /// Attributes up to the closing `>` or `/>`, which stays unread.
-    fn attrs(&mut self) -> Result<Vec<(String, String)>, String> {
+    pub(super) fn attrs(&mut self) -> Result<Vec<(String, String)>, String> {
         let mut out = Vec::new();
         loop {
             self.gap();

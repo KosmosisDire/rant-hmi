@@ -34,6 +34,10 @@ pub enum ToScript {
     Screen { session: u32, values: Vec<(String, Value)> },
     /// A screen went, and its own variables with it.
     Gone(u32),
+    /// Every rule condition, by rule id, whole, after any change.
+    Conditions(Vec<(String, String)>),
+    /// Judges each condition now, answered with `Judged`.
+    Judge,
     /// Every page as code names it, and its id, whole, after any change.
     Pages(Vec<(String, String)>),
     /// Runs code for a screen, or for none. `p` is what its event brought.
@@ -60,6 +64,8 @@ pub enum FromScript {
     /// Closes the top page on the screen that started the run, with an answer.
     Close { run: u64, answer: Value },
     Done { run: u64, end: End },
+    /// Each condition's truth now. One that reads an unknown value, or fails, is false.
+    Judged(Vec<(String, bool)>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -193,6 +199,10 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         timers: BinaryHeap::new(),
         next: 0,
     }));
+    // conditions are judged in a context of their own that reads but never writes, made anew
+    // when what they read or say changes
+    let mut conditions: Vec<(String, String)> = Vec::new();
+    let mut judge: Option<(Context, Vec<(String, Persistent<Function<'static>>)>)> = None;
     loop {
         let next_timer = shared.borrow().timers.peek().map(|Reverse((t, _))| t.saturating_duration_since(Instant::now()));
         let msg = match next_timer {
@@ -200,6 +210,34 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
             None => from.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
         match msg {
+            Ok(ToScript::Conditions(list)) => {
+                conditions = list;
+                judge = None;
+            }
+            Ok(ToScript::Judge) => {
+                if judge.is_none() {
+                    judge = Some(make_judge(&rt, &shared, &conditions));
+                }
+                let (ctx, fns) = judge.as_ref().expect("made above");
+                let truths = ctx.with(|ctx| {
+                    fns.iter()
+                        .map(|(id, f)| {
+                            deadline.set(Some(Instant::now() + BUDGET));
+                            let truth = f.clone().restore(&ctx).and_then(|f| f.call::<_, bool>(())).unwrap_or_else(|_| {
+                                ctx.catch();
+                                false
+                            });
+                            (id.clone(), truth)
+                        })
+                        .collect()
+                });
+                deadline.set(None);
+                shared.borrow().send(FromScript::Judged(truths));
+            }
+            Ok(msg @ (ToScript::Imports(_) | ToScript::Variables(_))) => {
+                judge = None;
+                handle(&rt, &home, &shared, &deadline, msg);
+            }
             Ok(msg) => handle(&rt, &home, &shared, &deadline, msg),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
@@ -231,12 +269,42 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         shared.borrow_mut().flush_all();
     }
     // every persistent goes before the runtime does
+    drop(judge);
     shared.borrow_mut().waiters.clear();
+}
+
+/// The context conditions are judged in: the imports and variables to read, writes refused,
+/// and each condition compiled once. One that does not compile is never true.
+fn make_judge(rt: &Runtime, shared: &Rc<RefCell<Shared>>, conditions: &[(String, String)]) -> (Context, Vec<(String, Persistent<Function<'static>>)>) {
+    let ctx = Context::full(rt).expect("QuickJS makes a context");
+    let fns = ctx.with(|ctx| {
+        if install(&ctx, 0, shared, &Value::Null).is_err() {
+            ctx.catch();
+            return Vec::new();
+        }
+        let refuse = Function::new(ctx.clone(), |ctx: Ctx<'_>| -> rquickjs::Result<()> { Err(Exception::throw_type(&ctx, "a condition only reads")) });
+        if let Ok(f) = refuse {
+            let _ = ctx.globals().set("__write", f);
+        }
+        conditions
+            .iter()
+            .filter_map(|(id, condition)| match ctx.eval::<Function, _>(format!("() => !!({condition}\n)")) {
+                Ok(f) => Some((id.clone(), Persistent::save(&ctx, f))),
+                Err(_) => {
+                    ctx.catch();
+                    None
+                }
+            })
+            .collect()
+    });
+    (ctx, fns)
 }
 
 fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, msg: ToScript) {
     match msg {
         ToScript::Imports(list) => shared.borrow_mut().imports = list.into_iter().map(|i| (i.alias.clone(), i)).collect(),
+        // the loop takes these itself, since they need the judge it keeps
+        ToScript::Conditions(_) | ToScript::Judge => {}
         ToScript::Pages(list) => shared.borrow_mut().pages = list,
         ToScript::Variables(list) => shared.borrow_mut().variables = list.into_iter().map(|v| (v.name.clone(), v)).collect(),
         ToScript::Screen { session, values } => shared.borrow_mut().screens.entry(session).or_default().extend(values),

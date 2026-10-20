@@ -241,6 +241,43 @@
   cursor: pointer;
 }
 
+/* The Logic tab's handler boxes and its overview of element handlers. */
+.rules .handler {
+  max-width: 880px;
+}
+
+.rule-kind {
+  flex: 0 0 200px;
+}
+
+.rule-field {
+  padding: 0 6px;
+}
+
+.rule-receives {
+  padding: 2px 8px 6px;
+}
+
+.overview {
+  margin-bottom: 14px;
+}
+
+.overview-page {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.overview-page:hover {
+  text-decoration: underline;
+}
+
+.overview-row {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0 3px 10px;
+  font-size: 12px;
+}
+
 .sends-row {
   padding: 0 0 6px;
 }

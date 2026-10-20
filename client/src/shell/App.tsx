@@ -1,9 +1,9 @@
 import { DataScreen } from "../screens/data/DataScreen";
 import { DesignScreen } from "../screens/design/DesignScreen";
-import { Later } from "../screens/Later";
+import { LogicScreen } from "../screens/logic/LogicScreen";
 import { RunScreen } from "../screens/run/RunScreen";
 import { remembered } from "../state/remember";
-import { Code } from "../ui/icons";
+import { openPage } from "../state/view";
 import { Notices } from "../ui/Notices";
 import { StatusBar } from "./StatusBar";
 import { TABS, TopBar, type Tab } from "./TopBar";
@@ -19,7 +19,13 @@ export function App() {
           <DataScreen />
         </div>
         <DesignScreen shown={tab() === "design"} />
-        <Later shown={tab() === "logic"} icon={Code} title="Logic" text="Handlers and shared functions come next." />
+        <LogicScreen
+          shown={tab() === "logic"}
+          onOpen={(page) => {
+            openPage(page);
+            setTab("design");
+          }}
+        />
         <RunScreen shown={tab() === "run"} />
       </main>
       <StatusBar />

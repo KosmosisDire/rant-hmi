@@ -195,6 +195,20 @@ fn a_handler_reads_what_its_event_brought_as_p() {
 }
 
 #[test]
+fn conditions_are_judged_and_an_unknown_one_is_false() {
+    let (script, mut rx) = engine();
+    let c = |id: &str, cond: &str| (id.to_string(), cond.to_string());
+    script.send(ToScript::Conditions(vec![c("fast", "Speed > 0.5"), c("slow", "Speed <= 0.5"), c("running", "Running"), c("broken", "Speed >"), c("writes", "(Speed = 3) > 0")]));
+    script.send(ToScript::Judge);
+    let FromScript::Judged(truths) = rx.blocking_recv().unwrap() else { panic!("no judgement") };
+    assert_eq!(truths, [("fast".to_string(), true), ("slow".to_string(), false), ("running".to_string(), false), ("writes".to_string(), false)]);
+    script.send(ToScript::Values(vec![("Speed".into(), Some(json!(0.2)))]));
+    script.send(ToScript::Judge);
+    let FromScript::Judged(truths) = rx.blocking_recv().unwrap() else { panic!("no judgement") };
+    assert_eq!(truths[0..2], [("fast".to_string(), false), ("slow".to_string(), true)]);
+}
+
+#[test]
 fn runs_do_not_share_names() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "globalThis.mine = 1;".into(), p: Value::Null });

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::pages::logic::Rule;
 use crate::pages::{Edit, Page};
 use crate::project::{Import, Kind, ProjectInfo, Variable};
 
@@ -21,6 +22,8 @@ pub enum ServerMsg {
     Imports { imports: Vec<Import> },
     /// Every variable, whole, after any change. Their values come as values.
     Variables { variables: Vec<Variable> },
+    /// The HMI's own handlers, whole, after any change.
+    Rules { rules: Vec<Rule> },
     /// Every entity on the mesh, whole, after the mesh changed.
     Mesh { entities: Vec<EntityInfo> },
     /// The values that changed since the last batch.

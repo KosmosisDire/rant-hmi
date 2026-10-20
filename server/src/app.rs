@@ -11,6 +11,7 @@ use tracing::{info, warn};
 
 use crate::authorize::{Who, authorize};
 use crate::mesh::{Delivery, Mesh};
+use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
 use crate::mesh::codec;
 use crate::project::{Import, Intent, Kind, Per, Project, Variable};
@@ -52,12 +53,21 @@ enum Step {
 }
 
 /// A handler run going on: who started it, and what it is called in the log.
+/// A run going on: the screen that started it, none for a rule's, what it belongs to, and
+/// what the log calls it.
 struct Running {
-    session: u32,
+    session: Option<u32>,
     page: String,
     id: String,
     event: String,
     label: String,
+}
+
+/// A rule's condition: true since when, and whether it has fired since it turned true.
+#[derive(Default)]
+struct Turned {
+    since: Option<Instant>,
+    fired: bool,
 }
 
 #[derive(Default)]
@@ -77,6 +87,11 @@ pub struct App {
     asks: HashMap<u64, u32>,
     /// Elements a screen holds pressed, as screen, page and element.
     pressed: HashSet<(u32, String, String)>,
+    /// When each timer rule is next due.
+    timers: HashMap<String, Instant>,
+    turned: HashMap<String, Turned>,
+    /// Values that changed since the last tick, with what they were before.
+    moved: Vec<(String, Option<Value>, Value)>,
     node: String,
     sessions: HashMap<u32, Session>,
     values: HashMap<String, Slot>,
@@ -103,6 +118,9 @@ impl App {
             next_run: 0,
             asks: HashMap::new(),
             pressed: HashSet::new(),
+            timers: HashMap::new(),
+            turned: HashMap::new(),
+            moved: Vec::new(),
             node,
             sessions: HashMap::new(),
             values: HashMap::new(),
@@ -116,6 +134,8 @@ impl App {
     /// Runs until Ctrl C.
     pub async fn run(mut self, mut deliveries: UnboundedReceiver<Delivery>, mut inbound: UnboundedReceiver<Inbound>, mut heard: UnboundedReceiver<FromScript>) {
         let mut tick = tokio::time::interval(TICK);
+        self.rules_changed();
+        self.run_rules(|r| matches!(r.when, When::Starts), Value::Null);
         let shutdown = tokio::signal::ctrl_c();
         tokio::pin!(shutdown);
         loop {
@@ -134,7 +154,8 @@ impl App {
 
     fn deliver(&mut self, d: Delivery) {
         let slot = self.values.entry(d.alias.clone()).or_default();
-        slot.value = Some(d.value);
+        let previous = slot.value.replace(d.value.clone());
+        self.moved.push((d.alias.clone(), previous, d.value));
         slot.known = true;
         self.changed.insert(d.alias);
     }
@@ -147,6 +168,7 @@ impl App {
                 self.sessions.insert(session, Session { out, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
+                self.run_rules(|r| matches!(r.when, When::Connects), serde_json::json!({ "screen": session }));
             }
             Inbound::Message { session, msg } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
@@ -174,6 +196,7 @@ impl App {
         self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
         self.send(session, &ServerMsg::Mesh { entities: self.mesh.entities() });
         self.send(session, &ServerMsg::Variables { variables: self.project.variables.clone() });
+        self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
         let mut values: Vec<ValueUpdate> = self.project.imports.iter().map(|i| self.update(&i.alias)).collect();
         let own = self.sessions.get(&session).map(|s| s.vars.clone()).unwrap_or_default();
         values.extend(self.shared.iter().chain(own.iter()).map(|(k, v)| known(k, v)));
@@ -333,8 +356,69 @@ impl App {
         let label = format!("{} {event}", e.props.get("name").unwrap_or(&id));
         let code = h.code.clone();
         self.next_run += 1;
-        self.runs.insert(self.next_run, Running { session, page, id, event, label });
+        self.runs.insert(self.next_run, Running { session: Some(session), page, id, event, label });
         self.script.send(ToScript::Run { run: self.next_run, session: Some(session), code, p: payload });
+    }
+
+    /// Runs each rule that `fits`, unless it still runs from before.
+    fn run_rules(&mut self, fits: impl Fn(&Rule) -> bool, p: Value) {
+        let due: Vec<Rule> = self.pages.rules.iter().filter(|r| fits(r)).cloned().collect();
+        for rule in due {
+            if self.runs.values().any(|r| r.session.is_none() && r.id == rule.id) {
+                continue;
+            }
+            self.next_run += 1;
+            self.runs.insert(self.next_run, Running { session: None, page: String::new(), id: rule.id, event: "rule".into(), label: rule.name });
+            self.script.send(ToScript::Run { run: self.next_run, session: None, code: rule.code, p: p.clone() });
+        }
+    }
+
+    /// Hands the conditions to the engine and keeps each timer's next time.
+    fn rules_changed(&mut self) {
+        let conditions = self.pages.rules.iter().filter_map(|r| match &r.when {
+            When::Turns { condition, .. } => Some((r.id.clone(), condition.clone())),
+            _ => None,
+        });
+        self.script.send(ToScript::Conditions(conditions.collect()));
+        let now = Instant::now();
+        let every: HashMap<String, u32> = self.pages.rules.iter().filter_map(|r| if let When::Every { ms } = r.when { Some((r.id.clone(), ms)) } else { None }).collect();
+        self.timers.retain(|id, _| every.contains_key(id));
+        for (id, ms) in every {
+            self.timers.entry(id).or_insert(now + Duration::from_millis(ms.into()));
+        }
+        let rules = &self.pages.rules;
+        self.turned.retain(|id, _| rules.iter().any(|r| &r.id == id));
+        self.script.send(ToScript::Judge);
+    }
+
+    /// Notes when each condition turned true or false.
+    fn judged(&mut self, truths: Vec<(String, bool)>) {
+        let now = Instant::now();
+        for (id, truth) in truths {
+            let t = self.turned.entry(id).or_default();
+            match (truth, t.since) {
+                (true, None) => t.since = Some(now),
+                (false, _) => *t = Turned::default(),
+                _ => {}
+            }
+        }
+        self.fire_turned();
+    }
+
+    /// Fires each rule whose condition has held true long enough, once until it turns false.
+    fn fire_turned(&mut self) {
+        let now = Instant::now();
+        let held = |r: &Rule, t: Option<&Turned>| match (&r.when, t) {
+            (When::Turns { ms, .. }, Some(t)) => !t.fired && t.since.is_some_and(|s| now.duration_since(s) >= Duration::from_millis((*ms).into())),
+            _ => false,
+        };
+        let ready: Vec<String> = self.pages.rules.iter().filter(|r| held(r, self.turned.get(&r.id))).map(|r| r.id.clone()).collect();
+        for id in ready {
+            if let Some(t) = self.turned.get_mut(&id) {
+                t.fired = true;
+            }
+            self.run_rules(|r| r.id == id, Value::Null);
+        }
     }
 
     /// What a run did: every write and call is logged with the screen that started it.
@@ -342,7 +426,7 @@ impl App {
         match msg {
             FromScript::Write { run, alias, value } => {
                 info!("{} sets {alias} to {value}", self.label(run));
-                let session = self.runs.get(&run).map(|r| r.session);
+                let session = self.runs.get(&run).and_then(|r| r.session);
                 if let Err(text) = self.set(session, &alias, "", value) {
                     self.tell(run, Level::Fault, text);
                 }
@@ -359,21 +443,22 @@ impl App {
             }
             FromScript::Notify { run, text } => self.tell(run, Level::Info, text),
             FromScript::Log { run, text } => info!("{}: {text}", self.label(run)),
-            FromScript::Open { run, page, replace, call } => match (self.pages.get(&page), self.runs.get(&run)) {
-                (Some(_), Some(r)) => {
-                    self.asks.insert(call, r.session);
-                    self.send(r.session, &ServerMsg::Open { page, replace, ask: call });
+            FromScript::Open { run, page, replace, call } => match (self.pages.get(&page), self.runs.get(&run).and_then(|r| r.session)) {
+                (Some(_), Some(session)) => {
+                    self.asks.insert(call, session);
+                    self.send(session, &ServerMsg::Open { page, replace, ask: call });
                 }
                 (found, _) => {
-                    let message = if found.is_none() { format!("there is no page {page}") } else { "this run has no screen to open it on".into() };
+                    let message = if found.is_none() { format!("there is no page {page}") } else { "open works in an element's handler, which has a screen".into() };
                     self.script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "no_page".into(), message }) });
                 }
             },
             FromScript::Close { run, answer } => {
-                if let Some(r) = self.runs.get(&run) {
-                    self.send(r.session, &ServerMsg::Close { answer });
+                if let Some(session) = self.runs.get(&run).and_then(|r| r.session) {
+                    self.send(session, &ServerMsg::Close { answer });
                 }
             }
+            FromScript::Judged(truths) => self.judged(truths),
             FromScript::Done { run, end } => {
                 let text = match &end {
                     End::Ok => None,
@@ -390,23 +475,37 @@ impl App {
     }
 
     fn label(&self, run: u64) -> String {
-        self.runs.get(&run).map_or_else(|| format!("run {run}"), |r| format!("screen {} {}", r.session, r.label))
+        match self.runs.get(&run) {
+            Some(Running { session: Some(s), label, .. }) => format!("screen {s} {label}"),
+            Some(Running { label, .. }) => format!("handler {label}"),
+            None => format!("run {run}"),
+        }
     }
 
-    /// Tells the screen that started a run, naming what said it.
+    /// Tells the screen that started a run, naming what said it. A rule's run has no screen,
+    /// so every screen hears it.
     fn tell(&self, run: u64, level: Level, text: String) {
-        if let Some(r) = self.runs.get(&run) {
-            let text = if matches!(level, Level::Info) { text } else { format!("{}: {text}", r.label) };
-            self.send(r.session, &ServerMsg::Notice { text, level });
+        let Some(r) = self.runs.get(&run) else { return };
+        let text = if matches!(level, Level::Info) { text } else { format!("{}: {text}", r.label) };
+        match r.session {
+            Some(session) => self.send(session, &ServerMsg::Notice { text, level }),
+            None => self.broadcast(&ServerMsg::Notice { text, level }),
         }
     }
 
     /// Applies an edit, saves what it touched and sends that to every screen. The screen
     /// that asked keeps its undo, and hears what it made, so it can select it.
     fn edit(&mut self, session: u32, edit: Edit, step: Step) {
+        let rules = matches!(edit, Edit::SetRule { .. });
         let applied = match self.pages.apply(edit) {
             Ok(applied) => applied,
-            Err(text) => return self.refuse(session, text, None),
+            Err(text) => {
+                // a screen shows a rule change at once, so a refused one is set right
+                if rules {
+                    self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
+                }
+                return self.refuse(session, text, None);
+            }
         };
         if let Some(s) = self.sessions.get_mut(&session) {
             match step {
@@ -433,6 +532,10 @@ impl App {
         if let Some((page, id)) = applied.made {
             self.send(session, &ServerMsg::Made { page, id });
         }
+        if applied.rules {
+            self.broadcast(&ServerMsg::Rules { rules: self.pages.rules.clone() });
+            self.rules_changed();
+        }
         self.script.send(ToScript::Pages(self.pages.keys()));
     }
 
@@ -445,11 +548,13 @@ impl App {
                 Per::Screen => session.and_then(|s| self.sessions.get_mut(&s)).and_then(|s| s.vars.get_mut(alias)),
             };
             let held = held.ok_or_else(|| format!("{alias} is each screen's own, and this has no screen"))?;
+            let before = held.clone();
             match path.is_empty() {
                 true => *held = value,
                 false => codec::put(held, path, value)?,
             }
             let now = held.clone();
+            self.moved.push((alias.to_owned(), Some(before), now.clone()));
             match (per, session) {
                 (Per::Screen, Some(s)) => {
                     self.script.send(ToScript::Screen { session: s, values: vec![(alias.to_owned(), now.clone())] });
@@ -483,6 +588,24 @@ impl App {
             self.refresh_known();
             self.broadcast(&ServerMsg::Mesh { entities: self.mesh.entities() });
         }
+        let now = Instant::now();
+        let due: Vec<String> = self.timers.iter().filter(|(_, at)| **at <= now).map(|(id, _)| id.clone()).collect();
+        for id in due {
+            if let Some(When::Every { ms }) = self.pages.rules.iter().find(|r| r.id == id).map(|r| r.when.clone()) {
+                self.timers.insert(id.clone(), now + Duration::from_millis(ms.into()));
+            }
+            self.run_rules(|r| r.id == id, Value::Null);
+        }
+        // a change runs the rules that wait on it, and asks the conditions anew
+        let moved = std::mem::take(&mut self.moved);
+        for (name, previous, value) in &moved {
+            let p = serde_json::json!({ "value": value, "previous": previous });
+            self.run_rules(|r| matches!(&r.when, When::Changes { name: n } if n == name), p);
+        }
+        if !moved.is_empty() || !self.changed.is_empty() {
+            self.script.send(ToScript::Judge);
+        }
+        self.fire_turned();
         if !self.changed.is_empty() {
             let values: Vec<ValueUpdate> = std::mem::take(&mut self.changed).iter().map(|a| self.update(a)).collect();
             self.script.send(ToScript::Values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known))).collect()));
@@ -541,6 +664,7 @@ impl App {
                 warn!("screen {session} was lost holding {id} on {page}, so its release runs");
                 self.fire(session, page, id, "release".into(), serde_json::json!({ "lost": true }));
             }
+            self.run_rules(|r| matches!(r.when, When::Leaves), serde_json::json!({ "screen": session }));
         }
     }
 

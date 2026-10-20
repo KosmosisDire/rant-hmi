@@ -10,6 +10,7 @@ import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
 import type { ServerMsg } from "../protocol/ServerMsg";
+import type { Rule } from "../protocol/Rule";
 import type { Variable } from "../protocol/Variable";
 import { closeWith, push } from "./stack";
 
@@ -41,6 +42,8 @@ export interface State {
   version: string;
   imports: Import[];
   variables: Variable[];
+  /** The HMI's own handlers. */
+  rules: Rule[];
   entities: EntityInfo[];
   values: Record<string, Live>;
   peers: PeerInfo[];
@@ -61,6 +64,7 @@ export const [state, setState] = createStore<State>({
   version: "",
   imports: [],
   variables: [],
+  rules: [],
   entities: [],
   values: {},
   peers: [],
@@ -92,6 +96,9 @@ export function receive(msg: ServerMsg) {
       break;
     case "imports":
       setState("imports", reconcile(msg.imports, { key: "alias" }));
+      break;
+    case "rules":
+      setState("rules", reconcile(msg.rules, { key: "id" }));
       break;
     case "variables":
       setState("variables", reconcile(msg.variables, { key: "name" }));
