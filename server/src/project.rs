@@ -103,6 +103,23 @@ impl Project {
         fs::write(&file, text).map_err(|e| format!("could not save {}: {e}", file.display()))
     }
 
+    /// Changes an import's alias or intent and saves. Its entity and kind stay.
+    pub fn change(&mut self, alias: &str, to: Import) -> Result<(), String> {
+        let at = self.imports.iter().position(|i| i.alias == alias).ok_or_else(|| format!("{alias} is not an import"))?;
+        let old = &self.imports[at];
+        if to.entity != old.entity || to.kind != old.kind {
+            return Err(format!("{alias} stays an import of {}", old.entity));
+        }
+        if to.alias != alias {
+            check_alias(&to.alias)?;
+            if self.find(&to.alias).is_some() {
+                return Err(format!("{} is already an import", to.alias));
+            }
+        }
+        self.imports[at] = to;
+        self.save()
+    }
+
     /// Removes an import and saves. The error is for the user.
     pub fn unimport(&mut self, alias: &str) -> Result<(), String> {
         let at = self.imports.iter().position(|i| i.alias == alias).ok_or_else(|| format!("{alias} is not an import"))?;
@@ -127,8 +144,17 @@ fn read(path: &Path) -> Result<String> {
     fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
 }
 
+/// Names code already has, which an import would hide.
+const TAKEN: [&str; 22] = [
+    "Array", "BigInt", "Boolean", "Date", "Error", "Infinity", "Intl", "JSON", "Map", "Math", "NaN", "Number", "Object", "Pages", "Promise",
+    "Proxy", "Reflect", "RegExp", "Set", "String", "Symbol", "TypeError",
+];
+
 /// An import is named in PascalCase, which is what tells mesh names from local ones.
 fn check_alias(alias: &str) -> Result<(), String> {
+    if TAKEN.contains(&alias) {
+        return Err(format!("{alias} is a name code already uses, so pick another"));
+    }
     let mut chars = alias.chars();
     let first_ok = chars.next().is_some_and(|c| c.is_ascii_uppercase());
     if first_ok && chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {

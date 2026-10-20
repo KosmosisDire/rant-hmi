@@ -138,6 +138,10 @@
   min-height: 30px;
 }
 
+.field > .choice {
+  justify-self: start;
+}
+
 .field > label {
   font-size: 11px;
   color: var(--dim);

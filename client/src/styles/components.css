@@ -522,8 +522,24 @@
 .caret {
   flex: 0 0 auto;
   display: inline-flex;
-  width: 12px;
+  width: 16px;
   color: var(--dim);
+}
+
+/* Imports an entity in one click. */
+.row-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--faint);
+  border-radius: 3px;
+}
+
+.row-add:hover {
+  color: var(--text);
+  background: var(--panel3);
 }
 
 /* ------------------------------------------------------------------ key value panel */

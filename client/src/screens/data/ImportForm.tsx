@@ -6,7 +6,7 @@ import { setState, state } from "../../state/store";
 
 /** The alias an entity gets unless the user types another: its last segment in
  *  PascalCase, with the one before it when that is taken. */
-function suggest(name: string): string {
+export function suggest(name: string): string {
   const parts = name.split("/").filter(Boolean);
   const pascal = (s: string) => {
     const clean = s.replace(/[^A-Za-z0-9_]/g, "");

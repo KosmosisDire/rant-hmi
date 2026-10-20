@@ -62,6 +62,8 @@ pub enum ClientMsg {
     Ping { t: f64 },
     Import { import: Import },
     Unimport { alias: String },
+    /// Renames an import or changes its intent. Every use of the old alias follows.
+    ChangeImport { alias: String, import: Import },
     /// Writes a datapoint, or one of its fields when `path` names one.
     Set { alias: String, path: String, value: Value },
     /// Changes the pages.

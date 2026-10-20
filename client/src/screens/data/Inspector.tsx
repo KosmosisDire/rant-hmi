@@ -4,9 +4,11 @@ import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Import } from "../../protocol/Import";
+import type { Intent } from "../../protocol/Intent";
 import type { JsonValue } from "../../protocol/serde_json/JsonValue";
 import { typeLabel } from "../../state/format";
 import { entity, importOf, live, setState, state } from "../../state/store";
+import { DraftInput } from "../../ui/DraftInput";
 import { KindIcon } from "../../ui/marks";
 import type { Picking } from "./DataScreen";
 import { ImportForm } from "./ImportForm";
@@ -85,6 +87,12 @@ function ImportView(p: { imp: Import }) {
     setState("refused", null);
     send({ type: "set", alias: p.imp.alias, path, value });
   };
+  const change = (to: Partial<Import>) => {
+    setState("refused", null);
+    send({ type: "change_import", alias: p.imp.alias, import: { ...p.imp, ...to } });
+  };
+  // a variable whose owner takes no sets can only be read
+  const canWrite = () => p.imp.kind !== "variable" || (e()?.writable ?? true);
   return (
     <>
       <div class="pane-head">
@@ -97,6 +105,28 @@ function ImportView(p: { imp: Import }) {
         </span>
       </div>
       <div class="pane-body pad">
+        <div class="section">Import</div>
+        <div class="field">
+          <label>Alias</label>
+          <DraftInput value={p.imp.alias} accept={(t) => /^[A-Z][A-Za-z0-9_]*$/.test(t.trim())} onCommit={(alias) => change({ alias: alias.trim() })} />
+        </div>
+        <div class="field">
+          <label>Intent</label>
+          <div class="choice">
+            <For each={["read", "write"] as Intent[]}>
+              {(intent) => (
+                <button
+                  classList={{ on: p.imp.intent === intent }}
+                  disabled={intent === "write" && !canWrite()}
+                  title={intent === "write" && !canWrite() ? "Its owner takes no sets" : undefined}
+                  onClick={() => p.imp.intent !== intent && change({ intent })}
+                >
+                  {intent === "read" ? "Read" : "Write"}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
         <About
           rows={[
             ["Entity", p.imp.entity],
@@ -106,7 +136,7 @@ function ImportView(p: { imp: Import }) {
         />
         <Switch>
           <Match when={p.imp.kind === "function" || p.imp.kind === "task"}>
-            <div class="placeholder">Calling it comes with handlers.</div>
+            <div class="field-hint">Handlers call it: {`await ${p.imp.alias}()`}</div>
           </Match>
           <Match when={e()?.schema}>
             {(t) => (

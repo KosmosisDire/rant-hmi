@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use crate::authorize::{Who, authorize};
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::{Edit, Event, Pages};
-use crate::project::{Intent, Kind, Project};
+use crate::project::{Import, Intent, Kind, Project};
 use crate::protocol::{ClientMsg, Level, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, FromScript, Script, ToScript};
 
@@ -188,6 +188,7 @@ impl App {
                 }
                 Err(text) => self.refuse(session, text, Some(alias)),
             },
+            ClientMsg::ChangeImport { alias, import } => self.change_import(session, alias, import),
             ClientMsg::Set { alias, path, value } => {
                 if let Err(text) = self.set(&alias, &path, value) {
                     self.refuse(session, text, Some(alias));
@@ -215,6 +216,32 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Renames an import or changes its intent. A rename moves its handle, its value and every
+    /// use of the alias in pages and handlers.
+    fn change_import(&mut self, session: u32, alias: String, import: Import) {
+        if let Err(text) = self.project.change(&alias, import.clone()) {
+            return self.refuse(session, text, Some(alias));
+        }
+        if import.alias != alias {
+            info!("renamed the import {alias} to {}", import.alias);
+            self.mesh.detach(&alias);
+            self.mesh.attach(&import);
+            if let Some(slot) = self.values.remove(&alias) {
+                self.values.insert(import.alias.clone(), slot);
+            }
+            self.changed.remove(&alias);
+            self.changed.insert(import.alias.clone());
+            match self.pages.rename(&alias, &import.alias) {
+                Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
+                Ok(_) => {}
+                Err(text) => self.refuse(session, text, None),
+            }
+        }
+        self.refresh_known();
+        self.script.send(ToScript::Imports(self.project.imports.clone()));
+        self.broadcast(&ServerMsg::Imports { imports: self.project.imports.clone() });
     }
 
     /// Starts the element's handler for `event`, unless it is still running from before.

@@ -3,6 +3,7 @@
 //! screen, so all of them show the same page.
 
 pub mod format;
+pub mod js;
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -168,6 +169,35 @@ impl Pages {
 
     pub fn element(&self, page: &str, id: &str) -> Option<&Element> {
         self.get(page).and_then(|p| find(&p.children, id))
+    }
+
+    /// Writes every use of the name `from` in values and handlers as `to`, as an import's
+    /// rename needs, and saves each page that changed. Returns those pages.
+    pub fn rename(&mut self, from: &str, to: &str) -> Result<Vec<String>, String> {
+        fn element(e: &mut Element, from: &str, to: &str) -> bool {
+            let mut changed = false;
+            for value in e.props.iter_mut().filter(|(k, _)| k.as_str() != "name").map(|(_, v)| v) {
+                let renamed = js::rename(value, from, to);
+                changed |= renamed != *value;
+                *value = renamed;
+            }
+            for h in &mut e.handlers {
+                let renamed = js::rename(&h.code, from, to);
+                changed |= renamed != h.code;
+                h.code = renamed;
+            }
+            e.children.iter_mut().fold(changed, |c, child| element(child, from, to) | c)
+        }
+        let mut touched = Vec::new();
+        for p in &mut self.list {
+            if p.children.iter_mut().fold(false, |c, e| element(e, from, to) | c) {
+                touched.push(p.id.clone());
+            }
+        }
+        for id in &touched {
+            self.save(id)?;
+        }
+        Ok(touched)
     }
 
     /// Each page's name as handler code spells it, `Pages.RobotCell` for "Robot cell", and
@@ -546,6 +576,24 @@ mod tests {
         assert_eq!(pages.apply(Edit::AddPage { name: "Overview".into() }).unwrap().made.unwrap().1, "overview2");
         assert_eq!(pages.apply(Edit::RemovePage { page: "overview2".into() }).unwrap().pages, ["overview2"]);
         assert_eq!(pages.apply(Edit::RemovePage { page: o() }).err().unwrap(), "a project keeps at least one page");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_rename_follows_every_use_but_names() {
+        let dir = scratch("rename");
+        let mut pages = Pages::open(&dir).unwrap();
+        let o = || "overview".to_string();
+        pages.apply(add(o(), None, Tag::Div, props(&[("name", "Speed"), ("x", "Speed * 2")]))).unwrap();
+        pages.apply(add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"Speed \" + Speed")]))).unwrap();
+        pages.apply(Edit::SetHandler { page: o(), id: "e2".into(), event: Event::Tap, code: Some("Speed = 1;".into()) }).unwrap();
+        pages.apply(Edit::AddPage { name: "Other".into() }).unwrap();
+        assert_eq!(pages.rename("Speed", "LineSpeed").unwrap(), ["overview"]);
+        let again = Pages::open(&dir).unwrap();
+        let e1 = &again.get("overview").unwrap().children[0];
+        assert_eq!((e1.props["name"].as_str(), e1.props["x"].as_str()), ("Speed", "LineSpeed * 2"));
+        assert_eq!(e1.children[0].props["text"], "\"Speed \" + LineSpeed");
+        assert_eq!(e1.children[0].handlers[0].code, "LineSpeed = 1;");
         fs::remove_dir_all(&dir).unwrap();
     }
 

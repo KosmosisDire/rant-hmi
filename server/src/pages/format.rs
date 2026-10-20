@@ -17,6 +17,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use super::js::{outside, split_outside};
 use super::{Element, Event, Handler, Page, Tag};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
@@ -302,90 +303,6 @@ impl Reader<'_> {
         }
         Ok(Element { id, tag, props, handlers, children })
     }
-}
-
-/// Where `what` first starts in `s` outside JS strings, template literals and comments.
-fn outside(s: &str, what: &str) -> Option<usize> {
-    let b = s.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            q @ (b'"' | b'\'' | b'`') => i = string_end(b, i, q)?,
-            b'/' if b.get(i + 1) == Some(&b'/') => i = s[i..].find('\n').map_or(b.len(), |n| i + n),
-            b'/' if b.get(i + 1) == Some(&b'*') => i = s[i + 2..].find("*/").map_or(b.len(), |n| i + n + 3),
-            _ if s[i..].starts_with(what) => return Some(i),
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-
-/// The length of the `{...}` at the start of `s`, counting nested braces and skipping JS
-/// strings and template literals, or None when it never closes.
-fn braced(s: &str) -> Option<usize> {
-    let b = s.as_bytes();
-    let mut depth = 0usize;
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i + 1);
-                }
-            }
-            q @ (b'"' | b'\'' | b'`') => i = string_end(b, i, q)?,
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-
-/// The index of the quote closing the string opened at `start`. A template literal's `${ }`
-/// is skipped as an expression of its own.
-fn string_end(b: &[u8], start: usize, q: u8) -> Option<usize> {
-    let mut i = start + 1;
-    while i < b.len() {
-        match b[i] {
-            b'\\' => i += 1,
-            b'$' if q == b'`' && b.get(i + 1) == Some(&b'{') => {
-                i += braced(std::str::from_utf8(&b[i + 1..]).ok()?)?;
-            }
-            c if c == q => return Some(i),
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Splits on `sep` where it is not inside braces or quotes, dropping empty parts.
-fn split_outside(s: &str, sep: char) -> Vec<String> {
-    let b = s.as_bytes();
-    let mut parts = Vec::new();
-    let mut from = 0;
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'{' => {
-                if let Some(n) = braced(&s[i..]) {
-                    i += n - 1;
-                }
-            }
-            q @ (b'"' | b'\'' | b'`') => i = string_end(b, i, q).unwrap_or(b.len()),
-            c if c as char == sep => {
-                parts.push(s[from..i].to_owned());
-                from = i + 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    parts.push(s[from.min(s.len())..].to_owned());
-    parts.into_iter().map(|p| p.trim().to_owned()).filter(|p| !p.is_empty()).collect()
 }
 
 #[cfg(test)]

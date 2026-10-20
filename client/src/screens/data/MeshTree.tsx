@@ -1,9 +1,11 @@
-import { ChevronDown, ChevronRight, Search, X } from "../../ui/icons";
+import { ChevronDown, ChevronRight, Plus, Search, X } from "../../ui/icons";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { EntityInfo } from "../../protocol/EntityInfo";
-import { importOf, state } from "../../state/store";
+import { send } from "../../net/connection";
+import { importOf, setState, state } from "../../state/store";
 import { KindIcon } from "../../ui/marks";
 import type { Picking } from "./DataScreen";
+import { suggest } from "./ImportForm";
 
 interface Folder {
   name: string;
@@ -49,6 +51,12 @@ export function MeshTree(p: Picking) {
     const imported = importOf(e.name);
     p.onSelect(imported ? { kind: "import", alias: imported.alias } : { kind: "entity", name: e.name });
   };
+  // one click imports to read under the suggested alias, both can be changed after
+  const quick = (e: EntityInfo) => {
+    p.onSelect({ kind: "entity", name: e.name });
+    setState("refused", null);
+    send({ type: "import", import: { alias: suggest(e.name), entity: e.name, kind: e.kind, intent: "read" } });
+  };
   const picked = (e: EntityInfo) => {
     const s = p.selection;
     if (s?.kind === "entity") return s.name === e.name;
@@ -77,13 +85,26 @@ export function MeshTree(p: Picking) {
       </For>
       <For each={l.folder.entities}>
         {(e) => (
-          <button class="list-row" classList={{ selected: picked(e) }} onClick={() => pick(e)} title={e.name}>
+          <div class="list-row" role="button" tabIndex={0} classList={{ selected: picked(e) }} onClick={() => pick(e)} onKeyDown={(k) => k.key === "Enter" && pick(e)} title={e.name}>
             <span style={{ width: `${l.depth * INDENT}px` }} />
-            <span class="caret" />
+            <span class="caret">
+              <Show when={!importOf(e.name)}>
+                <button
+                  class="row-add"
+                  title={`Import ${e.name}`}
+                  onClick={(c) => {
+                    c.stopPropagation();
+                    quick(e);
+                  }}
+                >
+                  <Plus size={12} />
+                </button>
+              </Show>
+            </span>
             <KindIcon kind={e.kind} />
             <span class="list-label mono">{e.name.split("/").pop()}</span>
             <Show when={importOf(e.name)}>{(i) => <span class="list-trail mono">{i().alias}</span>}</Show>
-          </button>
+          </div>
         )}
       </For>
     </>
