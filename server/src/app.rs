@@ -22,8 +22,11 @@ use crate::script::{CallFailure, End, FromScript, Script, ToScript};
 const TICK: Duration = Duration::from_millis(33);
 /// How long the project's files stay still after a change before the HMI reads them.
 const QUIET: Duration = Duration::from_millis(150);
-/// A screen silent this long is lost.
+/// A screen silent this long lets go of what it holds, so a jog never outlives its link.
 const SILENCE: Duration = Duration::from_millis(500);
+/// A screen silent this long is lost. A busy page stops reading its socket a while, which
+/// is no reason to start it over.
+const LOST: Duration = Duration::from_secs(5);
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
@@ -860,9 +863,12 @@ impl App {
             self.health_at = Instant::now();
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
         }
-        let lost: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.heard.elapsed() > SILENCE).map(|(id, _)| *id).collect();
-        for session in lost {
-            self.end(session, "lost");
+        let silent: Vec<(u32, Duration)> = self.sessions.iter().map(|(id, s)| (*id, s.heard.elapsed())).filter(|(_, t)| *t > SILENCE).collect();
+        for (session, silence) in silent {
+            match silence > LOST {
+                true => self.end(session, "lost"),
+                false => self.let_go(session, "went silent"),
+            }
         }
     }
 
@@ -902,15 +908,19 @@ impl App {
                 self.asks.remove(&ask);
                 self.script.send(ToScript::Answer { call: ask, outcome: Ok(Value::Null) });
             }
-            // what the screen held pressed is let go, so a jog never outlives its screen
-            let held: Vec<Pressed> = self.pressed.iter().filter(|(s, ..)| *s == session).cloned().collect();
-            for key in held {
-                self.pressed.remove(&key);
-                let (_, page, id, index) = key;
-                warn!("screen {session} was lost holding {id} on {page}, so its release runs");
-                self.fire(session, page, id, "release".into(), Value::map([("lost", true.into())]), index.map(|i| (i, Value::Null)));
-            }
+            self.let_go(session, why);
             self.run_rules(|r| matches!(r.when, When::Leaves), Value::map([("screen", session.into())]));
+        }
+    }
+
+    /// Runs the release of what a screen holds pressed, so a jog never outlives its link.
+    fn let_go(&mut self, session: u32, why: &str) {
+        let held: Vec<Pressed> = self.pressed.iter().filter(|(s, ..)| *s == session).cloned().collect();
+        for key in held {
+            self.pressed.remove(&key);
+            let (_, page, id, index) = key;
+            warn!("screen {session} {why} holding {id} on {page}, so its release runs");
+            self.fire(session, page, id, "release".into(), Value::map([("lost", true.into())]), index.map(|i| (i, Value::Null)));
         }
     }
 
