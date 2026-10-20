@@ -9,7 +9,7 @@ import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import { docScope, isConstant, pageScope, resolve, type Scope } from "../../state/bind";
 import { complete, type Place, type Suggestion } from "../../state/complete";
-import { component, setState, startPage, state } from "../../state/store";
+import { component, page as pageOf, setState, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
 import {
@@ -30,6 +30,7 @@ import {
   Type,
   X,
 } from "../../ui/icons";
+import { makeComponent } from "./component";
 import type { Typing } from "./DesignScreen";
 import { type Align, align, find, sendEdits, setProps, spread, tops } from "./tree";
 
@@ -126,6 +127,10 @@ function Several(p: { page: Page; ids: string[] }) {
         <div class="placeholder">Drag one to move them all, or nudge them with the arrows. Shift click adds an element or takes it away.</div>
       </div>
       <div class="pane-foot">
+        <button class="button" onClick={() => makeComponent(p.page, p.ids)}>
+          <Component size={12} />
+          Make a component
+        </button>
         <button class="button" onClick={remove}>
           <Trash size={12} />
           Delete all
@@ -360,6 +365,12 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Events page={p.page} element={p.element} />
       </div>
       <div class="pane-foot">
+        <Show when={p.element.tag === "div"}>
+          <button class="button" onClick={() => makeComponent(pageOf(p.page)!, [p.element.id])}>
+            <Component size={12} />
+            Make a component
+          </button>
+        </Show>
         <button class="button" onClick={() => send({ type: "edit", edit: { kind: "remove_element", page: p.page, id: p.element.id } })}>
           <Trash size={12} />
           Delete
