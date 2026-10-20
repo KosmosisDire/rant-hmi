@@ -158,6 +158,8 @@ impl Element {
 pub enum Edit {
     AddPage { name: String },
     AddComponent { name: String },
+    /// A page or component made as a copy of another, under a name of its own.
+    CopyPage { page: String, name: String },
     RenamePage { page: String, name: String },
     ResizePage { page: String, width: u32, height: u32 },
     SetShows { page: String, shows: Shows },
@@ -390,6 +392,15 @@ impl Pages {
                 let id = self.free_id(&slug(&name));
                 let interface = Some(Interface::default());
                 self.insert_page(Page { id: id.clone(), name, width: COMPONENT_WIDTH, height: COMPONENT_HEIGHT, shows: Shows::Full, fill: String::new(), interface, children: Vec::new() });
+                *made = Some((id.clone(), id.clone()));
+                touched.push(id.clone());
+                return Ok(Edit::RemovePage { page: id });
+            }
+            Edit::CopyPage { page, name } => {
+                let from = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?.clone();
+                let name = if from.interface.is_some() { self.component_name(&name, None)? } else { named(&name)? };
+                let id = self.free_id(&slug(&name));
+                self.insert_page(Page { id: id.clone(), name, ..from });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
@@ -1016,6 +1027,7 @@ mod tests {
             Edit::ResizePage { page: "line-two".into(), width: 390, height: 844 },
             Edit::SetShows { page: "line-two".into(), shows: Shows::Over },
             Edit::SetFill { page: "line-two".into(), fill: "$ground".into() },
+            Edit::CopyPage { page: "line-two".into(), name: "Line 3".into() },
             add(o(), None, Tag::Div, props(&[("x", "44"), ("background", "#222")])),
             add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"a\"")])),
             add(o(), None, Tag::Span, props(&[("text", "Speed")])),

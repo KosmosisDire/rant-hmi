@@ -22,6 +22,7 @@ import {
   AlignStartVertical,
   AlignVerticalDistributeCenter,
   Component,
+  Copy,
   Plus,
   Square,
   TextCursorInput,
@@ -148,6 +149,13 @@ function PageInspector(p: { page: Page }) {
   };
   const isComponent = () => p.page.interface !== null;
   const lastPage = () => !isComponent() && state.pages.filter((pg) => pg.interface === null).length < 2;
+  // a copy's name, free among the pages, spelled as a component's when it is one
+  const duplicate = () => {
+    const spell = (n: number) => (isComponent() ? `${p.page.name}Copy${n > 1 ? n : ""}` : `${p.page.name} copy${n > 1 ? ` ${n}` : ""}`);
+    let n = 1;
+    while (state.pages.some((pg) => pg.name === spell(n))) n++;
+    send({ type: "edit", edit: { kind: "copy_page", page: p.page.id, name: spell(n) } });
+  };
   return (
     <>
       <div class="pane-head">
@@ -225,6 +233,10 @@ function PageInspector(p: { page: Page }) {
         </Show>
       </div>
       <div class="pane-foot">
+        <button class="button" onClick={duplicate}>
+          <Copy size={12} />
+          Duplicate
+        </button>
         <button
           class="button"
           disabled={lastPage()}
