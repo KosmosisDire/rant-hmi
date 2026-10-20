@@ -123,6 +123,8 @@ pub enum Tag {
     Div,
     Span,
     Use,
+    /// A field an operator types a value into.
+    Input,
 }
 
 impl Tag {
@@ -130,6 +132,7 @@ impl Tag {
         match word {
             "div" => Some(Tag::Div),
             "span" => Some(Tag::Span),
+            "input" => Some(Tag::Input),
             _ => None,
         }
     }
@@ -141,6 +144,7 @@ impl Element {
         match self.tag {
             Tag::Div => "div",
             Tag::Span => "span",
+            Tag::Input => "input",
             Tag::Use => self.component.as_deref().unwrap_or("Missing"),
         }
     }

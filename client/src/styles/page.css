@@ -23,6 +23,36 @@
   line-height: 1.25;
 }
 
+/* An input fills its element, which carries its look. One refused shows red until fixed. */
+.el-input {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+}
+
+.el-input:read-only {
+  cursor: default;
+}
+
+.el:focus-within {
+  box-shadow: 0 0 0 2px #4a8fd6;
+}
+
+.el-input.bad {
+  color: #e5484d;
+}
+
+.page.design .el-input {
+  pointer-events: none;
+}
+
 /* What a press does something on: it says so under the pointer and darkens while pressed. */
 .el.live {
   cursor: pointer;

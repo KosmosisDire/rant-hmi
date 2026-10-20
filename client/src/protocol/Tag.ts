@@ -4,4 +4,4 @@
  * What an element renders as. A frame is a div, a text a span, and an instance of a
  * component is written with the component's name.
  */
-export type Tag = "div" | "span" | "use";
+export type Tag = "div" | "span" | "use" | "input";

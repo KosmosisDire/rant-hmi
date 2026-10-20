@@ -38,6 +38,8 @@ export interface Scope {
   get(name: string): unknown;
   /** Writes a name, or a field of it along `path`, or throws why it cannot. */
   set(name: string, path: string, value: unknown): void;
+  /** True when `set` may write the name. */
+  writes(name: string): boolean;
 }
 
 /** A theme token by the name code gives it, `$accent`. */
@@ -57,6 +59,7 @@ function themed(s: Scope): Scope {
       if (token(name)) throw new TypeError(`${name} is the theme's, so it cannot be set`);
       s.set(name, path, value);
     },
+    writes: (name) => !token(name) && s.writes(name),
   };
 }
 
@@ -74,12 +77,22 @@ export const pageScope: Scope = themed({
     if (!imp && !state.variables.some((v) => v.name === name)) throw new ReferenceError(`${name} names no datapoint`);
     send({ type: "set", alias: name, path, value: value as JsonValue });
   },
+  writes: (name) => {
+    const imp = state.imports.find((i) => i.alias === name);
+    return imp ? imp.kind === "variable" && imp.intent === "write" : state.variables.some((v) => v.name === name);
+  },
 });
 
 /** A bare name and the fields after it, as a two way binding is written: `Settings.target`. */
 const BARE = /^\s*([A-Za-z_$][\w$]*)((?:\.[A-Za-z_$][\w$]*)*)\s*$/;
 
-const nothing: Scope = { has: () => false, get: () => undefined, set: () => {} };
+/** The name and fields of a value written as a bare name, else null. */
+export function bareRef(value: string | undefined): { name: string; fields: string } | null {
+  const ref = BARE.exec(value ?? "");
+  return ref ? { name: ref[1], fields: ref[2].slice(1) } : null;
+}
+
+const nothing: Scope = { has: () => false, get: () => undefined, set: () => {}, writes: () => false };
 
 /** What an instance shows of its own while held, over what its bindings say. */
 export interface Own {
@@ -107,10 +120,13 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
     set: (name, path, value) => {
       if (!input(name)?.bindable) throw new TypeError(`${name} is not two way`);
       if (!path) instance?.own?.set(name, value);
-      const ref = BARE.exec(instance?.props[name] ?? "");
+      const ref = bareRef(instance?.props[name]);
       if (!ref || !instance) return;
-      const fields = [ref[2].slice(1), path].filter(Boolean).join(".");
-      instance.outer.set(ref[1], fields, value);
+      instance.outer.set(ref.name, [ref.fields, path].filter(Boolean).join("."), value);
+    },
+    writes: (name) => {
+      const ref = bareRef(instance?.props[name]);
+      return !!input(name)?.bindable && !!ref && !!instance?.outer.writes(ref.name);
     },
   });
 }

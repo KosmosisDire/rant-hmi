@@ -70,6 +70,8 @@ component placed on a page is a tag named after it.
 - Every value but the name is an expression, kept raw: text goes in quotes, and `a < b`
   needs no escaping.
 - `<on>` holds a handler's code, first inside its element.
+- `<input value="Speed"/>` is a field an operator types into. A bare name as its value takes
+  the entry, and its `change` handler reads it as `p.value`.
 - `shows="over"` on a page opens it over the page beneath, as a dialog.
 - `fill` is a page's ground, an expression too, so `fill="$ground"` follows light and dark.
 

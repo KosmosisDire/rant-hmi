@@ -5,9 +5,9 @@ import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
-import { componentScope, docScope, pageScope, resolve, type Scope } from "../state/bind";
+import { bareRef, componentScope, docScope, pageScope, resolve, type Scope } from "../state/bind";
 import { short } from "../state/format";
-import { component } from "../state/store";
+import { component, notify } from "../state/store";
 import { componentAct, type Act } from "./act";
 
 export interface Box {
@@ -21,7 +21,10 @@ export interface Box {
 export type Overrides = (id: string) => Box | undefined;
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "x", "y", "w", "h", "text"]);
+export const OWN = new Set(["name", "x", "y", "w", "h", "text", "value"]);
+
+/** What a pointer does to any element but an input. */
+export const POINTER = ["tap", "press", "release", "drag"];
 
 /** CSS lengths that read a bare number as pixels. */
 const LENGTHS = new Set(["font-size", "border-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
@@ -84,12 +87,13 @@ function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides;
     style.width = `${at("w")}px`;
     style.height = `${at("h")}px`;
     const text = p.element.tag === "span" ? words(take("text")) : "";
-    return { style, unknown, faults, text, w: at("w"), h: at("h") };
+    const value = p.element.tag === "input" ? take("value") : undefined;
+    return { style, unknown, faults, text, value, w: at("w"), h: at("h") };
   });
   // Pressed shows at once. Its release is heard on the window, so letting go anywhere ends
   // a press, and a tap needs the release over the element.
   const [pressed, setPressed] = createSignal(false);
-  const live = () => !!p.act && p.element.handlers.length > 0;
+  const live = () => !!p.act && p.element.handlers.some((h) => POINTER.includes(h.event));
   const fire = (event: string, payload: Pointer) => p.act?.fire(p.element, event, payload);
   const down = (e: PointerEvent & { currentTarget: HTMLDivElement }) => {
     if (!live() || e.button !== 0 || pressed()) return;
@@ -142,8 +146,67 @@ function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides;
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} act={p.act} />
         </Match>
+        <Match when={p.element.tag === "input"}>
+          <InputBox element={p.element} scope={p.scope} value={look().value} act={p.act} />
+        </Match>
       </Switch>
     </div>
+  );
+}
+
+/** An input showing its value. What an operator enters goes back through the value when it
+ *  is a bare name such as `Speed`, read as the kind the value is now, then out as change. */
+function InputBox(p: { element: Element; scope: Scope; value: unknown; act?: Act }) {
+  const [draft, setDraft] = createSignal<string | null>(null);
+  const [bad, setBad] = createSignal(false);
+  const ref = () => bareRef(p.element.props.value);
+  const open = () => !!p.act && !!ref() && p.scope.writes(ref()!.name);
+  const read = (t: string): unknown => {
+    if (typeof p.value === "number") return t.trim() !== "" && Number.isFinite(Number(t)) ? Number(t) : undefined;
+    if (typeof p.value === "boolean") return t.trim() === "true" ? true : t.trim() === "false" ? false : undefined;
+    return t;
+  };
+  const commit = () => {
+    const t = draft();
+    if (t === null) return true;
+    const value = read(t);
+    if (value === undefined) {
+      setBad(true);
+      return false;
+    }
+    setBad(false);
+    setDraft(null);
+    try {
+      p.scope.set(ref()!.name, ref()!.fields, value);
+    } catch (e) {
+      notify(`${p.element.props.name ?? p.element.id}: ${(e as Error).message}`, "fault");
+    }
+    p.act?.fire(p.element, "change", { value });
+    return true;
+  };
+  const drop = () => {
+    setDraft(null);
+    setBad(false);
+  };
+  return (
+    <input
+      class="el-input"
+      classList={{ bad: bad() }}
+      value={draft() ?? words(p.value)}
+      readOnly={!open()}
+      tabIndex={open() ? 0 : -1}
+      title={bad() ? (typeof p.value === "number" ? "Enter a number" : "Enter true or false") : undefined}
+      spellcheck={false}
+      onInput={(e) => setDraft(e.currentTarget.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && commit()) e.currentTarget.blur();
+        if (e.key === "Escape") {
+          drop();
+          e.currentTarget.blur();
+        }
+      }}
+      onBlur={() => commit() || drop()}
+    />
   );
 }
 

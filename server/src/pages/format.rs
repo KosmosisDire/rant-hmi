@@ -9,6 +9,8 @@ use super::{Element, Handler, Input, Interface, Page, Shows, Tag, rank};
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 5] = ["name", "x", "y", "w", "h"];
 const TEXT: &str = "text";
+/// An input's value, an attribute as HTML writes it.
+const VALUE: &str = "value";
 
 // ------------------------------------------------------------------------------ writing
 
@@ -40,7 +42,11 @@ fn element(out: &mut String, e: &Element, depth: usize) {
             out.push_str(&format!(" {key}={}", quote(v)));
         }
     }
-    let rest = e.props.iter().filter(|(k, _)| !ATTRS.contains(&k.as_str()) && k.as_str() != TEXT);
+    let value = e.props.get(VALUE).filter(|_| e.tag == Tag::Input);
+    if let Some(v) = value {
+        out.push_str(&format!(" {VALUE}={}", quote(v)));
+    }
+    let rest = e.props.iter().filter(|(k, _)| !ATTRS.contains(&k.as_str()) && k.as_str() != TEXT && !(value.is_some() && k.as_str() == VALUE));
     if e.tag == Tag::Use {
         // an instance's inputs are attributes of their own
         for (k, v) in rest {
@@ -339,6 +345,9 @@ impl Reader<'_> {
                 k if tag == Tag::Use && k != "style" => {
                     props.insert(k.to_owned(), v);
                 }
+                VALUE if tag == Tag::Input => {
+                    props.insert(VALUE.to_owned(), v);
+                }
                 "style" => {
                     for decl in split_outside(&v, ';') {
                         let (key, value) = decl.split_once(':').ok_or_else(|| self.error(&format!("\"{decl}\" in style needs a colon")))?;
@@ -362,7 +371,7 @@ impl Reader<'_> {
             handlers = self.handlers()?;
             match tag {
                 Tag::Div => children = self.children("div")?,
-                Tag::Use => self.expect(&format!("</{word}>"))?,
+                Tag::Use | Tag::Input => self.expect(&format!("</{word}>"))?,
                 Tag::Span => {
                     let n = outside(self.rest(), "</span>").ok_or_else(|| self.error("<span> never closes"))?;
                     let text = self.rest()[..n].trim().to_owned();
@@ -400,6 +409,23 @@ mod tests {
         assert_eq!(speed.props["color"], "Speed > 1 && Running ? 'red' : #e4e6e8");
         assert_eq!(page.children[0].children[1].props["text"], "\"Belt <1> & rollers\"");
         assert_eq!(write(&page), PAGE);
+    }
+
+    #[test]
+    fn an_input_keeps_its_value_and_handlers() {
+        let text = r#"<page name="A" size="1408x792">
+  <input id="e1" x="44" value="Settings.target" style="font-size: 18"/>
+  <input id="e2" value="Speed">
+    <on event="change">
+      notify(p.value);
+    </on>
+  </input>
+</page>
+"#;
+        let page = parse(text, "a").unwrap();
+        assert_eq!(page.children[0].props["value"], "Settings.target");
+        assert_eq!(page.children[1].handlers[0].event, "change");
+        assert_eq!(write(&page), text);
     }
 
     #[test]

@@ -6,13 +6,14 @@ import type { Tag } from "../../protocol/Tag";
 import { number } from "../../state/bind";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
-import { Component, File, Plus, Square, Type } from "../../ui/icons";
+import { Component, File, Plus, Square, TextCursorInput, Type } from "../../ui/icons";
 import { chain, childrenOf, find, moveTo, parentOf } from "./tree";
 
 /** What a new frame or text starts as: visible, on the grid, and plainly named. */
 const STARTS: Record<Exclude<Tag, "use">, Record<string, string>> = {
   div: { name: "Frame", x: "44", y: "44", w: "176", h: "88", background: "#2a2f35", "border-radius": "8" },
   span: { name: "Text", x: "44", y: "44", w: "176", h: "44", text: '"Text"', color: "#e4e6e8", "font-size": "18" },
+  input: { name: "Input", x: "44", y: "44", w: "176", h: "44", background: "#1e2125", border: '"1px solid #3a4046"', "border-radius": "6", padding: '"0 11px"', color: "#e4e6e8", "font-size": "18" },
 };
 
 /** The left sidebar: the pages, and the open page's elements as layers. */
@@ -101,6 +102,9 @@ export function Outline(p: { page: Page | undefined; selected: string | null; on
         </button>
         <button class="icon-btn" title="Add a text" onClick={() => add("span")}>
           <Type size={14} />
+        </button>
+        <button class="icon-btn" title="Add an input" onClick={() => add("input")}>
+          <TextCursorInput size={14} />
         </button>
         <button class="icon-btn" classList={{ on: picking() }} title="Place a component" onClick={() => setPicking(!picking())}>
           <Component size={14} />
@@ -216,6 +220,9 @@ function Layers(p: { elements: Element[]; depth: number; selected: string | null
                 </Match>
                 <Match when={e.tag === "use"}>
                   <Component size={13} />
+                </Match>
+                <Match when={e.tag === "input"}>
+                  <TextCursorInput size={13} />
                 </Match>
               </Switch>
             </span>

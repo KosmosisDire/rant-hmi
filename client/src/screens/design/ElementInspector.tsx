@@ -1,7 +1,7 @@
 import { createContext, createMemo, createSignal, For, Match, Show, Switch, useContext } from "solid-js";
 import { produce } from "solid-js/store";
 import { send } from "../../net/connection";
-import { OWN } from "../../page/PageView";
+import { OWN, POINTER } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Interface } from "../../protocol/Interface";
@@ -12,7 +12,7 @@ import { complete, type Place, type Suggestion } from "../../state/complete";
 import { component, setState, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
-import { Component, Plus, Square, Trash, Type, X } from "../../ui/icons";
+import { Component, Plus, Square, TextCursorInput, Trash, Type, X } from "../../ui/icons";
 import { find, setProps } from "./tree";
 
 /** The CSS a field offers by name, with an example of what it takes. Anything else lives
@@ -180,6 +180,7 @@ function Properties(p: { page: string; element: Element }) {
   });
   const text = () => p.element.tag === "span";
   const instance = () => p.element.tag === "use";
+  const input = () => p.element.tag === "input";
   const other = () =>
     Object.entries(p.element.props)
       .filter(([k]) => !OWN.has(k) && !NAMED.has(k))
@@ -209,10 +210,13 @@ function Properties(p: { page: string; element: Element }) {
             <Match when={instance()}>
               <Component size={14} />
             </Match>
+            <Match when={input()}>
+              <TextCursorInput size={14} />
+            </Match>
           </Switch>
           <span>{p.element.props.name ?? p.element.id}</span>
         </span>
-        <span class="tag">{instance() ? "instance" : text() ? "text" : "frame"}</span>
+        <span class="tag">{instance() ? "instance" : text() ? "text" : input() ? "input" : "frame"}</span>
       </div>
       <div class="pane-body pad">
         <div class="section">Element</div>
@@ -250,6 +254,13 @@ function Properties(p: { page: string; element: Element }) {
         <Show when={text()}>
           <div class="section">Text</div>
           <Field {...prop("text")} label="Text" />
+        </Show>
+        <Show when={input()}>
+          <div class="section">Input</div>
+          <Field {...prop("value")} label="Value" placeholder="Speed" />
+          <div class="field-hint">A name such as Speed takes what an operator enters. Anything else only shows.</div>
+        </Show>
+        <Show when={text() || input()}>
           <For each={TEXT_LOOK}>{([label, key, hint]) => <Field {...prop(key)} label={label} placeholder={hint} />}</For>
         </Show>
         <Show when={!instance()}>
@@ -270,11 +281,8 @@ function Properties(p: { page: string; element: Element }) {
   );
 }
 
-/** What a pointer does to any element. */
-const POINTER = ["tap", "press", "release", "drag"];
-
 /** An event as a person reads it: Tap, or a component's own as it is spelled. */
-const label = (event: string) => (POINTER.includes(event) ? event[0].toUpperCase() + event.slice(1) : event);
+const label = (event: string) => ([...POINTER, "change"].includes(event) ? event[0].toUpperCase() + event.slice(1) : event);
 
 /** The element's handlers, each a box: the event on top, the code below. Every change names
  *  one event, so two quick changes never undo each other. */
@@ -282,8 +290,10 @@ function Events(p: { page: string; element: Element }) {
   const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
   const write = (event: string, code: string | null) => send({ type: "edit", edit: { kind: "set_handler", page: p.page, id: p.element.id, event, code } });
-  // what this element hears: the pointer's events, and an instance its component's own
-  const offered = () => [...POINTER, ...(p.element.tag === "use" ? (component(p.element.component ?? "")?.interface?.events ?? []) : [])];
+  // what this element hears: an input what is entered, others the pointer's events, and an
+  // instance its component's own
+  const offered = () =>
+    p.element.tag === "input" ? ["change"] : [...POINTER, ...(p.element.tag === "use" ? (component(p.element.component ?? "")?.interface?.events ?? []) : [])];
   // a handler for an event no longer offered still shows, so none hides
   const events = () => [...new Set([...offered(), ...p.element.handlers.map((h) => h.event)])];
   const unused = () => offered().filter((e) => !p.element.handlers.some((h) => h.event === e));
@@ -315,7 +325,11 @@ function Events(p: { page: string; element: Element }) {
         </div>
       </Show>
       <Show when={p.element.handlers.length === 0 && !adding()}>
-        <div class="field-hint">Add one to run code when this is tapped, pressed, let go or dragged. The code reads where as p.x and p.y.</div>
+        <div class="field-hint">
+          {p.element.tag === "input"
+            ? "Add one to run code when an operator enters a value. The code reads it as p.value."
+            : "Add one to run code when this is tapped, pressed, let go or dragged. The code reads where as p.x and p.y."}
+        </div>
       </Show>
       {/* one box per event, so a box never turns into another event's under the pointer */}
       <For each={events()}>

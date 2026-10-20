@@ -23,6 +23,7 @@ export { default as Search } from "lucide-solid/icons/search";
 export { default as Square } from "lucide-solid/icons/square";
 export { default as SquareFunction } from "lucide-solid/icons/square-function";
 export { default as Sun } from "lucide-solid/icons/sun";
+export { default as TextCursorInput } from "lucide-solid/icons/text-cursor-input";
 export { default as Trash } from "lucide-solid/icons/trash";
 export { default as TriangleAlert } from "lucide-solid/icons/triangle-alert";
 export { default as Type } from "lucide-solid/icons/type";
