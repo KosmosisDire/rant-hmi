@@ -445,19 +445,25 @@
   text-overflow: ellipsis;
 }
 
-.event .editor.code {
+/* Numbered lines that never wrap, the numbers in its left padding, as tall as its lines. */
+.editor.code {
   display: block;
   width: 100%;
+  height: auto;
   min-height: 66px;
   padding: 8px 10px 8px 40px;
   font: 12px/1.6 var(--mono);
   white-space: pre;
-  background: var(--panel);
-  border: 0;
-  border-radius: 0;
   resize: none;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* In a handler's card the box is the card's body. */
+.event .editor.code {
+  background: var(--panel);
+  border: 0;
+  border-radius: 0;
 }
 
 .event .editor.code:focus {

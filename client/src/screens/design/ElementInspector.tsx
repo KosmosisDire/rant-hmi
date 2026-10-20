@@ -322,7 +322,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             code
             class="editor code"
             value={p.element.props.markup ?? ""}
-            placeholder={'`<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="${Speed * 40}"/></svg>`'}
+            placeholder={['`<svg viewBox="0 0 100 100">', '  <circle cx="50" cy="50" r="${Speed * 40}"/>', '</svg>`'].join("\n")}
             onCommit={(t) => setProps(p.page, p.element.id, { markup: t.trim() === "" ? null : t })}
             complete={(t, c) => complete(t, c, "expression", where().names, where().also)}
           />
