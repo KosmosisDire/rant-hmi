@@ -11,8 +11,10 @@ const ATTRS: [&str; 6] = ["name", "repeat", "x", "y", "w", "h"];
 const TEXT: &str = "text";
 /// An input's value, an attribute as HTML writes it.
 const VALUE: &str = "value";
-/// A drawing's view box and how it fits its box, attributes as SVG writes them.
+/// A drawing's view box, a picture's source, and how either fits its box, attributes as SVG
+/// and HTML write them.
 const VIEWBOX: &str = "viewbox";
+const SRC: &str = "src";
 const FIT: &str = "fit";
 
 /// What a tag keeps as attributes of its own, besides `ATTRS`.
@@ -20,6 +22,7 @@ fn own_attrs(tag: Tag) -> &'static [&'static str] {
     match tag {
         Tag::Input => &[VALUE],
         Tag::Svg => &[VIEWBOX, FIT],
+        Tag::Img => &[SRC, FIT],
         _ => &[],
     }
 }
@@ -504,6 +507,15 @@ mod tests {
         assert_eq!((svg.children[0].tag, svg.children[0].props["r"].as_str()), (Tag::Circle, "40"));
         assert_eq!(svg.children[1].children[0].handlers[0].code, "log(1);");
         assert_eq!((svg.children[2].tag, svg.children[2].props["text"].as_str()), (Tag::SvgText, "Speed.toFixed(1)"));
+        assert_eq!(write(&page), text);
+    }
+
+    #[test]
+    fn a_picture_keeps_its_source_and_fit() {
+        let text = "<page name=\"A\" size=\"1408x792\">\n  <img id=\"e1\" name=\"Camera\" x=\"44\" src=\"Camera\" fit='\"meet\"' style=\"border-radius: 8\"/>\n</page>\n";
+        let page = parse(text, "a").unwrap();
+        let e = &page.children[0];
+        assert_eq!((e.tag, e.props["src"].as_str(), e.props["fit"].as_str()), (Tag::Img, "Camera", "\"meet\""));
         assert_eq!(write(&page), text);
     }
 

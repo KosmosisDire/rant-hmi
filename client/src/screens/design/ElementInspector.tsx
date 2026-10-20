@@ -322,6 +322,12 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside min={k === "w" || k === "h" ? 0 : undefined} />}</For>
           </div>
         </Show>
+        <Show when={p.element.tag === "img"}>
+          <div class="section">Image</div>
+          <Field {...prop("src")} label="Source" placeholder="Camera" />
+          <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
+          <div class="field-hint">A mesh import of a Rant Image, or a URL in quotes. A drawing over it with the same fit and the picture's size as its view box lines its shapes up with the pixels.</div>
+        </Show>
         <Show when={drawing()}>
           <div class="section">Drawing</div>
           <Field {...prop("viewbox")} label="View box" placeholder="its size" />

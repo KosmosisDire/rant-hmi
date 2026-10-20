@@ -138,10 +138,10 @@ export function designer(page) {
       await right().locator(".pane-head .tag", { hasText: /^(page|component)$/ }).waitFor();
     },
 
-    /** Adds a frame, text, input or drawing from the layers bar, into the frame selected. Its
+    /** Adds a frame, text, input, image or drawing from the layers bar, into the frame selected. Its
      *  fields are set from `fields`. Gives the new element's id. */
     async add(kind, fields = {}) {
-      const titles = { frame: "Add a frame", text: "Add a text", input: "Add an input", drawing: "Add a drawing" };
+      const titles = { frame: "Add a frame", text: "Add a text", input: "Add an input", image: "Add an image", drawing: "Add a drawing" };
       const before = await selected();
       await left().locator(`button[title="${titles[kind]}"]`).click();
       const id = await made(before, `a new ${kind}`);

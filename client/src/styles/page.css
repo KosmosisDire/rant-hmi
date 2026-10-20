@@ -90,6 +90,26 @@
   outline-offset: -1px;
 }
 
+/* A picture fills its element, which carries its look and takes the pointer. */
+.el-picture {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* An image with nothing to show yet, in the editor only. */
+.el-picture-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: #9aa0a6;
+  outline: 1px dashed #5f656b;
+  outline-offset: -1px;
+}
+
 /* A drawing's shapes fill its box, and may draw past it as a frame's children do. */
 .drawing {
   position: absolute;

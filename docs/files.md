@@ -90,6 +90,10 @@ component placed on a page is a tag named after it.
   `viewbox` units, by default its size in pixels. `fit` is `"meet"`, `"slice"` or
   `"stretch"`. Every property of a shape is an SVG attribute holding an expression:
   `<line x1="88" y1="88" x2="88" y2="22" transform="`rotate(${Speed * 90} 88 88)`"/>`.
+- `<img src="Camera" fit='"meet"'/>` shows a picture: a mesh import of a Rant Image, or a URL
+  in quotes. `fit` is `"meet"`, `"slice"` or `"stretch"`, as a drawing's is, so a drawing over
+  it with ``viewbox="`0 0 ${Camera.width} ${Camera.height}`"`` and the same fit draws in the
+  picture's pixels.
 - `<input value="Speed"/>` is a field an operator types into. A bare name as its value takes
   the entry, and its `change` handler reads it as `p.value`.
 - `shows="over"` on a page opens it over the page beneath, as a dialog.

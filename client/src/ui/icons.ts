@@ -27,6 +27,7 @@ export { default as ExternalLink } from "lucide-solid/icons/external-link";
 export { default as File } from "lucide-solid/icons/file";
 export { default as Group } from "lucide-solid/icons/group";
 export { default as Hash } from "lucide-solid/icons/hash";
+export { default as Image } from "lucide-solid/icons/image";
 export { default as Info } from "lucide-solid/icons/info";
 export { default as Keyboard } from "lucide-solid/icons/keyboard";
 export { default as Link } from "lucide-solid/icons/link";

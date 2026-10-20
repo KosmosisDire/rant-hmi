@@ -10,6 +10,8 @@ import type { Value } from "../protocol/Value";
 import { type At, bareRef, componentScope, docScope, type Kept, number, pageScope, repeatScope, resolve, type Scope } from "../state/bind";
 import { short } from "../state/format";
 import { component, notify } from "../state/store";
+import { Image } from "../ui/icons";
+import { FIT, picture, PictureView } from "../ui/Picture";
 import { componentAct, type Act } from "./act";
 
 export interface Box {
@@ -23,7 +25,7 @@ export interface Box {
 export type Overrides = (id: string) => Box | undefined;
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "text", "value", "viewbox", "fit"]);
+export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "text", "value", "viewbox", "src", "fit"]);
 
 /** What a drawing holds: SVG shapes, whose every property but the name is an attribute. */
 export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
@@ -31,7 +33,8 @@ export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "pol
 /** Attributes SVG spells with a capital, which the file writes in small letters. */
 const CASED: Record<string, string> = { pathlength: "pathLength", textlength: "textLength", gradienttransform: "gradientTransform" };
 
-/** How a drawing's view box fits its box: whole, filling it, or stretched to it. */
+/** How a drawing's view box fits its box: whole, filling it, or stretched to it, as a
+ *  picture's fit does, so an overlay lines up with its picture. */
 const FITS: Record<string, string> = { meet: "xMidYMid meet", slice: "xMidYMid slice", stretch: "none" };
 
 /** At most this many copies of a repeat, so a mistaken one never floods the page. */
@@ -249,7 +252,8 @@ function ElementView(p: ElementProps & { at?: At }) {
     const text = p.element.tag === "span" ? words(take("text")) : "";
     const value = p.element.tag === "input" ? take("value") : undefined;
     const drawing = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
-    return { style, unknown, faults, text, value, drawing, w: at("w"), h: at("h") };
+    const image = p.element.tag === "img" ? { src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
+    return { style, unknown, faults, text, value, drawing, image, w: at("w"), h: at("h") };
   });
   const press = usePress(p);
   const inner = (c: Element) => <Placed element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
@@ -279,6 +283,7 @@ function ElementView(p: ElementProps & { at?: At }) {
             </svg>
           )}
         </Match>
+        <Match when={look().image}>{(i) => <ImageView src={i().src} fit={i().fit} design={p.design} />}</Match>
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} act={p.act} />
         </Match>
@@ -330,6 +335,19 @@ function ShapeView(p: ElementProps & { at?: At }) {
         <title>{look().faults.join("\n")}</title>
       </Show>
     </Dynamic>
+  );
+}
+
+/** A picture: a URL as an img, a mesh import's Image on a canvas. In the editor one with nothing
+ *  to show yet says so, so it can still be picked and placed. */
+function ImageView(p: { src: unknown; fit: string; design?: boolean }) {
+  const url = () => (typeof p.src === "string" && p.src.trim() !== "" ? p.src : null);
+  const pic = () => picture(p.src as Value);
+  return (
+    <Switch fallback={<Show when={p.design}>{<div class="el-picture-none">{<Image size={20} />}</div>}</Show>}>
+      <Match when={url()}>{(u) => <img class="el-picture" src={u()} alt="" draggable={false} style={{ "object-fit": FIT[p.fit] ?? "contain" }} />}</Match>
+      <Match when={pic()}>{(x) => <PictureView picture={x()} fit={p.fit} />}</Match>
+    </Switch>
   );
 }
 
