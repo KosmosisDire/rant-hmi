@@ -6,6 +6,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Logic menus");
   const pad = await hmi.addElement(pageId, "div", { name: "menuPad", x: "44", y: "44", w: "88", h: "88" });
   await hmi.setHandler(pageId, pad, "tap", "log(1);");
+  await d.openPage("Logic menus");
   await d.tab("Logic");
   const list = page.locator(".screen:not([hidden]) .handler-list");
   const before = hmi.state.rules.length;

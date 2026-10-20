@@ -1,6 +1,7 @@
 // A user writes the HMI's own handlers: a counting timer, a warning when the line runs too
-// fast, one that follows Running. A new one opens in the middle, a removed timer stops, and
-// element handlers are listed by page with what they read and write.
+// fast, one that follows Running. A new one opens in the middle, a removed timer stops and
+// comes back with Ctrl Z, and the open page's element handlers are listed with what they read
+// and write, while another page's are not.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const variable = (name, start) => hmi.send({ type: "set_variable", name, variable: { name, start, per: "hmi" } });
@@ -9,7 +10,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Logic page");
   const lamp = await hmi.addElement(pageId, "div", { name: "Lamp", x: "44", y: "44", w: "88", h: "88" });
   await hmi.setHandler(pageId, lamp, "tap", "if (Speed > 1) ticks = 0;");
+  const elsewhere = await hmi.addPage("Other logic page");
+  await hmi.setHandler(elsewhere, await hmi.addElement(elsewhere, "div", { name: "Far", x: "44", y: "44", w: "88", h: "88" }), "tap", "log(1);");
 
+  await d.openPage("Logic page");
   await d.tab("Logic");
   const box = page.locator(".screen.logic .detail");
   const add = async () => {
@@ -62,8 +66,14 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const stopped = hmi.state.values.ticks.value;
   await page.waitForTimeout(600);
   check(hmi.state.values.ticks.value <= stopped + 1, "a removed timer still counts");
+  await page.keyboard.press("Control+z");
+  await eventually(() => hmi.state.rules.some((r) => r.name === "Count"), "Ctrl Z to bring the timer back");
+  await page.locator(".handler-list .list-row", { hasText: "Count" }).waitFor();
+  await page.keyboard.press("Control+Shift+z");
+  await eventually(() => !hmi.state.rules.some((r) => r.name === "Count"), "Ctrl Shift Z to remove it again");
 
-  check((await page.locator(".handler-list .list-group", { hasText: "Logic page" }).count()) === 1, "the list misses the page with a handler");
+  check((await page.locator(".handler-list .list-group", { hasText: /^Logic page$/ }).count()) === 1, "the list misses the open page");
+  check((await page.locator(".handler-list .list-row", { hasText: "Far" }).count()) === 0, "the list shows another page's handler");
   await page.locator(".handler-list .list-row", { hasText: "Lamp" }).click();
   const rows = () => page.locator(".screen.logic .uses-row").allTextContents();
   await eventually(async () => (await rows()).join() === "Speedvariable, write,tickssets", "the lamp's reads and writes");

@@ -1,6 +1,6 @@
-// The Logic tab: every handler in a list, the HMI's own first, then each page's and component's
-// element handlers. The one picked shows in the middle as a card with its trigger and code, and
-// on the right what it reads and writes and where it runs.
+// The Logic tab: the HMI's own handlers in a list, then those of the page or component open in
+// Design. The one picked shows in the middle as a card with its trigger and code, and on the
+// right what it reads and writes and where it runs.
 
 import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { send } from "../../net/connection";
@@ -11,6 +11,7 @@ import type { When } from "../../protocol/When";
 import { complete, componentNames, REPEAT } from "../../state/complete";
 import { putLocal, state } from "../../state/store";
 import { uses } from "../../state/uses";
+import { currentPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
 import { Edge } from "../../ui/Sidebars";
 import { painted } from "../../ui/highlight";
@@ -109,16 +110,12 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
   const q = () => filter().trim().toLowerCase();
   const fits = (...words: string[]) => !q() || words.some((w) => w.toLowerCase().includes(q()));
   const rules = () => state.rules.filter((r) => fits(r.name, phrase(r.when)));
-  // pages first, then components, each with the handlers its elements have
-  const docs = createMemo(() =>
-    [...state.pages.filter((pg) => !pg.interface), ...state.pages.filter((pg) => pg.interface)]
-      .map((pg) => ({
-        pg,
-        handlers: flat(pg.children).flatMap((e) => e.handlers.map((h) => ({ e, event: h.event }))).filter(({ e, event }) => fits(pg.name, e.props.name ?? e.id, event)),
-      }))
-      .filter((d) => d.handlers.length > 0),
-  );
-  const keys = createMemo(() => [...rules().map(ruleKey), ...docs().flatMap((d) => d.handlers.map(({ e, event }) => onKey(d.pg, e, event)))]);
+  // the open page's own, never those inside the components it places
+  const doc = createMemo(() => {
+    const pg = currentPage();
+    return pg && { pg, handlers: flat(pg.children).flatMap((e) => e.handlers.map((h) => ({ e, event: h.event }))).filter(({ e, event }) => fits(pg.name, e.props.name ?? e.id, event)) };
+  });
+  const keys = createMemo(() => [...rules().map(ruleKey), ...(doc()?.handlers.map(({ e, event }) => onKey(doc()!.pg, e, event)) ?? [])]);
   // the one picked, else the first, so the middle never stands empty while there is one
   const current = () => (keys().includes(chosen()) ? chosen() : (keys()[0] ?? ""));
   const rule = () => {
@@ -210,17 +207,20 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
               </button>
             )}
           </For>
-          <For each={docs()}>
+          <Show when={doc()}>
             {(d) => (
               <>
-                <div class="list-group">{d.pg.name}</div>
-                <For each={d.handlers}>
+                <div class="list-group">{d().pg.name}</div>
+                <For
+                  each={d().handlers}
+                  fallback={<div class="placeholder">{q() ? "No handler matches." : "None here yet. Give an element an event in Design, or add the HMI's own with +."}</div>}
+                >
                   {({ e, event }) => (
                     <button
                       class="list-row"
-                      classList={{ selected: current() === onKey(d.pg, e, event) }}
-                      onClick={() => setChosen(onKey(d.pg, e, event))}
-                      onContextMenu={(ev) => handlerMenu(ev, d.pg, e, event)}
+                      classList={{ selected: current() === onKey(d().pg, e, event) }}
+                      onClick={() => setChosen(onKey(d().pg, e, event))}
+                      onContextMenu={(ev) => handlerMenu(ev, d().pg, e, event)}
                     >
                       <Zap size={14} />
                       <span class="list-label">{e.props.name ?? e.id}</span>
@@ -230,11 +230,6 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
                 </For>
               </>
             )}
-          </For>
-          <Show when={keys().length === 0}>
-            <div class="placeholder">
-              {q() ? "No handler matches." : "No handlers yet. Add the HMI's own with +, or give an element an event in Design."}
-            </div>
           </Show>
         </div>
       </aside>
