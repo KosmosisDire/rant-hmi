@@ -618,21 +618,24 @@ impl App {
             }
             self.run_rules(|r| r.id == id, Value::Null);
         }
-        // a change runs the rules that wait on it, and asks the conditions anew
+        if !self.changed.is_empty() {
+            let values: Vec<ValueUpdate> = std::mem::take(&mut self.changed).iter().map(|a| self.update(a)).collect();
+            self.script.send(ToScript::Values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known))).collect()));
+            self.broadcast(&ServerMsg::Values { values });
+            // the engine has the new values before it judges by them
+            self.script.send(ToScript::Judge);
+        }
+        // a change runs the rules that wait on it, and a variable's asks the conditions anew,
+        // its value already with the engine
         let moved = std::mem::take(&mut self.moved);
         for (name, previous, value) in &moved {
             let p = serde_json::json!({ "value": value, "previous": previous });
             self.run_rules(|r| matches!(&r.when, When::Changes { name: n } if n == name), p);
         }
-        if !moved.is_empty() || !self.changed.is_empty() {
+        if moved.iter().any(|(name, _, _)| self.project.variable(name).is_some()) {
             self.script.send(ToScript::Judge);
         }
         self.fire_turned();
-        if !self.changed.is_empty() {
-            let values: Vec<ValueUpdate> = std::mem::take(&mut self.changed).iter().map(|a| self.update(a)).collect();
-            self.script.send(ToScript::Values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known))).collect()));
-            self.broadcast(&ServerMsg::Values { values });
-        }
         if self.health_at.elapsed() >= HEALTH_EVERY {
             self.health_at = Instant::now();
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
