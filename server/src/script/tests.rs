@@ -77,6 +77,32 @@ fn a_run_writes_what_it_sets_when_it_ends() {
 }
 
 #[test]
+fn values_reach_code_as_js_values_and_come_back_whole() {
+    let (script, mut rx) = engine();
+    let image = Value::map([("width", 2u32.into()), ("data", Value::Bytes(vec![0, 7, 255]))]);
+    script.send(ToScript::Values(vec![("Settings".into(), Some(Value::map([("image", image), ("count", Value::Int(u64::MAX.into()))])))]));
+    let code = "log(Settings.image.data instanceof Uint8Array, Settings.image.data[2], typeof Settings.count);\n\
+                Settings = { image: { width: 3, data: new Uint8Array([9, 8]) }, count: Settings.count - 1n };";
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 1);
+    assert_eq!(end(&said), &End::Ok);
+    assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "true 255 bigint")));
+    let written = Value::map([("image", Value::map([("width", 3.into()), ("data", Value::Bytes(vec![9, 8]))])), ("count", Value::Int((u64::MAX - 1).into()))]);
+    assert_eq!(writes(&said), [("Settings".to_string(), written)]);
+
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "Speed = 2n ** 70n;".into(), p: Value::Null, at: None });
+    assert!(matches!(end(&until_done(&mut rx, 2)), End::Fault(text) if text.contains("past what a whole number holds")));
+}
+
+#[test]
+fn a_function_is_never_a_value() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "Settings = { mode: () => 1 };".into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 1);
+    assert!(matches!(end(&said), End::Fault(text) if text.contains("function cannot be a value")), "{:?}", end(&said));
+}
+
+#[test]
 fn fields_set_together_go_out_as_one_value() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "Settings.target = 5;\nconst s = Settings;\ns.mode = \"Manual\";".into(), p: Value::Null, at: None });

@@ -263,10 +263,9 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                         .filter(|(name, _)| names.contains(name))
                         .map(|(name, f)| {
                             deadline.set(Some(Instant::now() + BUDGET));
-                            let got = f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).and_then(|v| ctx.json_stringify(v));
+                            let got = f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(()));
                             let value = match got {
-                                Ok(Some(text)) => text.to_string().ok().and_then(|t| from_js(&t).ok()),
-                                Ok(None) => None,
+                                Ok(v) => from_js(v).ok(),
                                 Err(_) => {
                                     ctx.catch();
                                     None
@@ -447,10 +446,16 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         g.set("item", to_js(ctx, item)?)?;
     }
     let s = shared.clone();
-    g.set("__read", Function::new(ctx.clone(), move |alias: String| s.borrow().read(run, &alias).map(text))?)?;
+    let read = move |ctx: Ctx<'js>, alias: String| -> rquickjs::Result<rquickjs::Value<'js>> {
+        match s.borrow().read(run, &alias) {
+            Some(v) => to_js(&ctx, v),
+            None => Ok(rquickjs::Value::new_undefined(ctx)),
+        }
+    };
+    g.set("__read", Function::new(ctx.clone(), read)?)?;
 
     let s = shared.clone();
-    let write = move |ctx: Ctx<'js>, alias: String, json: String| -> rquickjs::Result<()> {
+    let write = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
         let mut st = s.borrow_mut();
         if let Some(v) = st.variables.get(&alias) {
             if v.per == Per::Screen && st.sessions.get(&run).copied().flatten().is_none() {
@@ -465,21 +470,21 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
                 return Err(Exception::throw_type(&ctx, &format!("{alias} is imported to read. Import it to write to change it.")));
             }
         }
-        let value = serde_json::from_str(&json).map_err(|e| Exception::throw_type(&ctx, &e.to_string()))?;
+        let value = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
         st.stage(run, alias, value);
         Ok(())
     };
     g.set("__write", Function::new(ctx.clone(), write)?)?;
 
     let s = shared.clone();
-    let call = move |ctx: Ctx<'js>, alias: String, json: String| -> rquickjs::Result<Promise<'js>> {
+    let call = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<Promise<'js>> {
         let mut st = s.borrow_mut();
         let import = st.imports.get(&alias).filter(|i| i.kind == Kind::Function);
         let import = import.ok_or_else(|| Exception::throw_type(&ctx, &format!("{alias} is not a function on the mesh")))?;
         if import.intent != Intent::Write {
             return Err(Exception::throw_type(&ctx, &format!("{alias} is imported to read. Import it to write to call it.")));
         }
-        let request = serde_json::from_str(&json).map_err(|e| Exception::throw_type(&ctx, &e.to_string()))?;
+        let request = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
         let (promise, resolve, reject) = ctx.promise()?;
         // what the run wrote before the call goes out before it
         st.flush(run);
@@ -490,14 +495,14 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     g.set("__call", Function::new(ctx.clone(), call)?)?;
 
     let s = shared.clone();
-    let send = move |ctx: Ctx<'js>, alias: String, json: String| -> rquickjs::Result<()> {
+    let send = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
         let mut st = s.borrow_mut();
         let import = st.imports.get(&alias).filter(|i| i.kind == Kind::Topic);
         let import = import.ok_or_else(|| Exception::throw_type(&ctx, &format!("{alias} is not a topic, so it cannot send")))?;
         if import.intent != Intent::Write {
             return Err(Exception::throw_type(&ctx, &format!("{alias} is imported to read. Import it to write to send on it.")));
         }
-        let value = serde_json::from_str(&json).map_err(|e| Exception::throw_type(&ctx, &e.to_string()))?;
+        let value = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
         // what the run wrote before goes out before the message
         st.flush(run);
         st.send(FromScript::Send { run, alias, value });
@@ -529,8 +534,8 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     };
     g.set("__open", Function::new(ctx.clone(), open)?)?;
     let s = shared.clone();
-    let close = move |ctx: Ctx<'js>, json: String| -> rquickjs::Result<()> {
-        let answer = serde_json::from_str(&json).map_err(|e| Exception::throw_type(&ctx, &e.to_string()))?;
+    let close = move |ctx: Ctx<'js>, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
+        let answer = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
         s.borrow().send(FromScript::Close { run, answer });
         Ok(())
     };
@@ -560,18 +565,91 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     prelude.call::<_, ()>((to_js(ctx, &Value::List(imports))?, to_js(ctx, &Value::List(pages))?))
 }
 
-/// A value as JS reads it.
+/// A value as JS reads it: bytes as a Uint8Array, and a whole number past JS's safe ones as a
+/// BigInt, so none loses a digit.
 fn to_js<'js>(ctx: &Ctx<'js>, v: &Value) -> rquickjs::Result<rquickjs::Value<'js>> {
-    ctx.json_parse(text(v))
+    use rquickjs::{Array, BigInt, Object, TypedArray};
+    const SAFE: i128 = 1 << 53;
+    let c = ctx.clone();
+    Ok(match v {
+        Value::Null => rquickjs::Value::new_null(c),
+        Value::Bool(b) => rquickjs::Value::new_bool(c, *b),
+        Value::Int(n) => match (i32::try_from(*n), i64::try_from(*n)) {
+            (Ok(small), _) => rquickjs::Value::new_int(c, small),
+            _ if (-SAFE..=SAFE).contains(n) => rquickjs::Value::new_float(c, *n as f64),
+            (_, Ok(big)) => BigInt::from_i64(c, big)?.into_value(),
+            _ => BigInt::from_u64(c, u64::try_from(*n).unwrap_or(u64::MAX))?.into_value(),
+        },
+        Value::Float(f) => rquickjs::Value::new_float(c, *f),
+        Value::Text(t) => rquickjs::String::from_str(c, t)?.into_value(),
+        Value::Bytes(b) => TypedArray::<u8>::new_copy(c, b)?.into_value(),
+        Value::List(items) => {
+            let list = Array::new(c)?;
+            for (i, item) in items.iter().enumerate() {
+                list.set(i, to_js(ctx, item)?)?;
+            }
+            list.into_value()
+        }
+        Value::Map(fields) => {
+            let map = Object::new(c)?;
+            for (k, field) in fields {
+                map.set(k.as_str(), to_js(ctx, field)?)?;
+            }
+            map.into_value()
+        }
+    })
 }
 
-fn text(v: &Value) -> String {
-    serde_json::to_string(v).expect("a value writes")
+/// How deep a value JS gives may nest, which also stops one that holds itself.
+const DEPTH: usize = 64;
+
+/// A value JS gave. A field that is undefined is left out, as it is absent in JS.
+fn from_js(v: rquickjs::Value) -> Result<Value, String> {
+    read_js(v, 0)
 }
 
-/// A value JS gave.
-fn from_js(text: &str) -> Result<Value, String> {
-    serde_json::from_str(text).map_err(|e| e.to_string())
+fn read_js(v: rquickjs::Value, depth: usize) -> Result<Value, String> {
+    use rquickjs::{Array, Object, Type};
+    if depth > DEPTH {
+        return Err("a value nests too deep, or holds itself".into());
+    }
+    Ok(match v.type_of() {
+        Type::Uninitialized | Type::Undefined | Type::Null => Value::Null,
+        Type::Bool => Value::Bool(v.as_bool().unwrap_or(false)),
+        Type::Int => Value::Int(v.as_int().unwrap_or(0).into()),
+        Type::Float => Value::Float(v.as_float().unwrap_or(f64::NAN)),
+        Type::String => Value::Text(v.get::<String>().map_err(|e| e.to_string())?),
+        // read by its digits, since a BigInt's own to_i64 wraps past i64 without a word
+        Type::BigInt => {
+            let digits = v.get::<rquickjs::Coerced<String>>().map_err(|e| e.to_string())?.0;
+            let n = digits.parse::<i128>().ok().filter(|n| (i128::from(i64::MIN)..=i128::from(u64::MAX)).contains(n));
+            Value::Int(n.ok_or_else(|| format!("{digits} is past what a whole number holds, i64's least to u64's most"))?)
+        }
+        Type::Array => {
+            let list = Array::from_value(v).map_err(|e| e.to_string())?;
+            let mut items = Vec::with_capacity(list.len());
+            for item in list.iter::<rquickjs::Value>() {
+                items.push(read_js(item.map_err(|e| e.to_string())?, depth + 1)?);
+            }
+            Value::List(items)
+        }
+        Type::Object => {
+            let map = Object::from_value(v).map_err(|e| e.to_string())?;
+            if let Some(bytes) = map.as_typed_array::<u8>() {
+                // SAFETY: the bytes are copied at once, and no JS runs while they are borrowed
+                return Ok(Value::Bytes(unsafe { bytes.as_bytes() }.map(<[u8]>::to_vec).unwrap_or_default()));
+            }
+            let mut fields = Vec::new();
+            for prop in map.props::<String, rquickjs::Value>() {
+                let (k, field) = prop.map_err(|e| e.to_string())?;
+                if !field.is_undefined() {
+                    fields.push((k, read_js(field, depth + 1)?));
+                }
+            }
+            Value::Map(fields)
+        }
+        other => return Err(format!("a {} cannot be a value", other.as_str())),
+    })
 }
 
 #[cfg(test)]
