@@ -11,7 +11,7 @@ use ts_rs::TS;
 
 use crate::files;
 
-#[derive(Serialize, Deserialize, TS, Clone, Debug)]
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct ProjectInfo {
     pub name: String,
@@ -108,6 +108,10 @@ pub struct Project {
 }
 
 impl Project {
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Opens the folder, starting an empty project there when it holds none.
     pub fn open(root: &Path) -> Result<Project> {
         let hmi = root.join("hmi.toml");
@@ -119,20 +123,20 @@ impl Project {
                 .unwrap_or_else(|| "HMI".to_owned());
             fs::write(&hmi, toml::to_string(&ProjectInfo { name, start: None })?).with_context(|| format!("writing {}", hmi.display()))?;
         }
-        let info = toml::from_str(&read(&hmi)?).with_context(|| format!("reading {}", hmi.display()))?;
+        let info = toml::from_str(&read(&hmi)?).with_context(|| format!("reading {}", files::shown(root, &hmi)))?;
         let file = imports_file(root);
         let imports = match file.exists() {
-            true => toml::from_str::<ImportsFile>(&read(&file)?).with_context(|| format!("reading {}", file.display()))?.imports,
+            true => toml::from_str::<ImportsFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.imports,
             false => Vec::new(),
         };
         let file = variables_file(root);
         let variables = match file.exists() {
-            true => toml::from_str::<VariablesFile>(&read(&file)?).with_context(|| format!("reading {}", file.display()))?.variables,
+            true => toml::from_str::<VariablesFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.variables,
             false => Vec::new(),
         };
         let file = theme_file(root);
         let tokens = match file.exists() {
-            true => toml::from_str::<ThemeFile>(&read(&file)?).with_context(|| format!("reading {}", file.display()))?.tokens,
+            true => toml::from_str::<ThemeFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.tokens,
             false => Vec::new(),
         };
         Ok(Project { root: root.to_path_buf(), info, imports, variables, tokens })

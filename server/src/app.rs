@@ -20,6 +20,8 @@ use crate::script::{CallFailure, End, FromScript, Script, ToScript};
 
 /// How often changed values go out and the mesh is checked.
 const TICK: Duration = Duration::from_millis(33);
+/// How long the project's files stay still after a change before the HMI reads them.
+const QUIET: Duration = Duration::from_millis(150);
 /// A screen silent this long is lost.
 const SILENCE: Duration = Duration::from_millis(500);
 /// How many edits a screen can undo.
@@ -101,6 +103,8 @@ pub struct App {
     shared: HashMap<String, Value>,
     epoch: Option<u32>,
     health_at: Instant,
+    /// When a project file last changed outside the HMI, until it is read.
+    edited: Option<Instant>,
 }
 
 impl App {
@@ -130,11 +134,18 @@ impl App {
             shared,
             epoch: None,
             health_at: Instant::now(),
+            edited: None,
         }
     }
 
     /// Runs until Ctrl C.
-    pub async fn run(mut self, mut deliveries: UnboundedReceiver<Delivery>, mut inbound: UnboundedReceiver<Inbound>, mut heard: UnboundedReceiver<FromScript>) {
+    pub async fn run(
+        mut self,
+        mut deliveries: UnboundedReceiver<Delivery>,
+        mut inbound: UnboundedReceiver<Inbound>,
+        mut heard: UnboundedReceiver<FromScript>,
+        mut changed: UnboundedReceiver<()>,
+    ) {
         let mut tick = tokio::time::interval(TICK);
         self.rules_changed();
         self.run_rules(|r| matches!(r.when, When::Starts), Value::Null);
@@ -145,6 +156,7 @@ impl App {
                 Some(d) = deliveries.recv() => self.deliver(d),
                 Some(i) = inbound.recv() => self.inbound(i),
                 Some(s) = heard.recv() => self.scripted(s),
+                Some(()) = changed.recv() => self.edited = Some(Instant::now()),
                 _ = tick.tick() => self.tick(),
                 _ = &mut shutdown => break,
             }
@@ -308,6 +320,11 @@ impl App {
             info!("renamed the variable {name} to {}", v.name);
             self.follow_rename(session, &name, &v.name, false);
         }
+        self.start_variable(&v, kept_shared, kept_own);
+    }
+
+    /// Gives a variable its values: those kept, else its start.
+    fn start_variable(&mut self, v: &Variable, kept_shared: Option<Value>, mut kept_own: HashMap<u32, Value>) {
         match v.per {
             Per::Hmi => {
                 let value = kept_shared.unwrap_or_else(|| v.start.clone());
@@ -612,7 +629,73 @@ impl App {
         self.mesh.set(alias, path, value, last)
     }
 
+    /// Takes in the project as its files say now, after a change made outside the HMI. A file
+    /// with a mistake leaves everything as it was, and every screen hears why.
+    fn reload(&mut self) {
+        let root = self.project.root().to_path_buf();
+        let (project, pages) = match Project::open(&root).and_then(|p| Pages::open(&root).map(|q| (p, q))) {
+            Ok(both) => both,
+            Err(e) => {
+                warn!("{e:#}");
+                let text = format!("{e:#}. The HMI keeps what it had.");
+                return self.broadcast(&ServerMsg::Notice { text, level: Level::Warn });
+            }
+        };
+        let old = std::mem::replace(&mut self.project, project);
+        if old.info != self.project.info {
+            self.broadcast(&ServerMsg::Project { project: self.project.info.clone() });
+        }
+        if old.imports != self.project.imports {
+            for gone in old.imports.iter().filter(|i| !self.project.imports.contains(i)) {
+                self.mesh.detach(&gone.alias);
+                if !self.project.imports.iter().any(|i| i.alias == gone.alias) {
+                    self.values.remove(&gone.alias);
+                    self.changed.remove(&gone.alias);
+                }
+            }
+            for import in self.project.imports.clone() {
+                self.mesh.attach(&import);
+            }
+            self.imports_changed();
+        }
+        if old.variables != self.project.variables {
+            for v in old.variables.iter().filter(|v| !self.project.variables.contains(v)) {
+                self.shared.remove(&v.name);
+                self.sessions.values_mut().for_each(|s| drop(s.vars.remove(&v.name)));
+            }
+            self.script.send(ToScript::Variables(self.project.variables.clone()));
+            self.broadcast(&ServerMsg::Variables { variables: self.project.variables.clone() });
+            for v in self.project.variables.clone().iter().filter(|v| !old.variables.contains(v)) {
+                self.start_variable(v, None, HashMap::new());
+            }
+        }
+        if old.tokens != self.project.tokens {
+            self.broadcast(&ServerMsg::Theme { tokens: self.project.tokens.clone() });
+        }
+        let (pages_moved, rules_moved) = (pages.list != self.pages.list, pages.rules != self.pages.rules);
+        if pages_moved || rules_moved {
+            self.pages = pages;
+            // what a screen could undo no longer matches the files
+            self.sessions.values_mut().for_each(|s| {
+                s.undo.clear();
+                s.redo.clear();
+            });
+        }
+        if pages_moved {
+            self.script.send(ToScript::Pages(self.pages.keys()));
+            self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() });
+        }
+        if rules_moved {
+            self.broadcast(&ServerMsg::Rules { rules: self.pages.rules.clone() });
+            self.rules_changed();
+        }
+    }
+
     fn tick(&mut self) {
+        if self.edited.is_some_and(|t| t.elapsed() >= QUIET) {
+            self.edited = None;
+            self.reload();
+        }
         let epoch = self.mesh.epoch();
         if self.epoch != Some(epoch) {
             self.epoch = Some(epoch);

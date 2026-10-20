@@ -1,7 +1,8 @@
 # Project files
 
 An HMI project is a folder of plain text files. The designer writes them, and they read well
-in a diff.
+in a diff. A file changed by an editor or an AI reaches every screen at once, and one with a
+mistake leaves the last good version in place.
 
 ```
 hmi.toml

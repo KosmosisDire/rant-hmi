@@ -9,6 +9,7 @@ pub mod pages;
 pub mod project;
 pub mod protocol;
 pub mod script;
+pub mod watch;
 pub mod web;
 
 use std::path::PathBuf;
@@ -16,7 +17,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::unbounded_channel;
-use tracing::info;
+use tracing::{info, warn};
 
 use app::App;
 use mesh::{Mesh, MeshOptions};
@@ -55,6 +56,9 @@ pub async fn run(o: Options) -> Result<()> {
     tokio::spawn(web::serve(listener, o.client, inbound));
     let (said, heard) = unbounded_channel();
     let script = script::Script::start(said);
-    App::new(project, pages, mesh, script, NODE.to_owned(), build).run(delivered, received, heard).await;
+    let (changes, changed) = unbounded_channel();
+    // without a watcher the HMI still runs, it just misses edits made elsewhere
+    let _watcher = watch::watch(&o.project, changes).map_err(|e| warn!("could not watch {}: {e}", o.project.display())).ok();
+    App::new(project, pages, mesh, script, NODE.to_owned(), build).run(delivered, received, heard, changed).await;
     Ok(())
 }

@@ -230,10 +230,11 @@ impl Pages {
             };
             for file in files {
                 let id = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                let text = fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
-                let page = format::parse(&text, &id).map_err(|e| anyhow::anyhow!("{}, {e}", file.display()))?;
+                let name = files::shown(root, &file);
+                let text = fs::read_to_string(&file).with_context(|| format!("reading {name}"))?;
+                let page = format::parse(&text, &id).map_err(|e| anyhow::anyhow!("{name}, {e}"))?;
                 if (folder == "components") != page.interface.is_some() {
-                    anyhow::bail!("{} belongs in {}", file.display(), if folder == "pages" { "components" } else { "pages" });
+                    anyhow::bail!("{name} belongs in {}", if folder == "pages" { "components" } else { "pages" });
                 }
                 list.push(page);
             }
@@ -244,7 +245,7 @@ impl Pages {
         }
         let file = root.join("logic").join("handlers.html");
         let rules = match file.exists() {
-            true => logic::parse(&fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?).map_err(|e| anyhow::anyhow!("{}, {e}", file.display()))?,
+            true => logic::parse(&fs::read_to_string(&file).context("reading logic/handlers.html")?).map_err(|e| anyhow::anyhow!("logic/handlers.html, {e}"))?,
             false => Vec::new(),
         };
         let mut pages = Pages { root: root.to_path_buf(), list, rules, rules_changed: false };
