@@ -29,10 +29,12 @@ export default async function ({ page, d, hmi, check, eventually }) {
 
   await d.select("sketch");
   const dot = await d.addShape("circle", { Name: "dot", "Centre x": "Speed * 100", "Centre y": "50", Radius: "8" });
+  // the fields go out as typed, so the last one must land before the snapshot
+  await eventually(() => props(dot).r === "8", "the dot's radius");
   const before = { ...props(dot) };
   const cb = await d.el(dot).boundingBox();
   await d.gesture(cb.x + cb.width / 2, cb.y + cb.height / 2, 40, 0);
   await page.waitForTimeout(200);
-  check(JSON.stringify(props(dot)) === JSON.stringify(before), "a drag moved a shape a value places");
+  check(JSON.stringify(props(dot)) === JSON.stringify(before), `a drag moved a shape a value places: ${JSON.stringify(before)} became ${JSON.stringify(props(dot))}`);
   check((await page.locator(".ring .handle").count()) === 0, "a shape a value places shows grips");
 }
