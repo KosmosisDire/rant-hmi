@@ -1,12 +1,13 @@
 // Runs every scenario in tests/scenarios against one backend and the demo line, each on a
-// fresh page. A console error fails the scenario. Screenshots land in tests/out.
+// fresh page. A console error fails the scenario. Screenshots and the backend's log land in
+// tests/out.
 //
 //   node tests/run.mjs            every scenario
 //   node tests/run.mjs drag       those whose file name holds "drag"
 //
 // Build first: cargo build -p rant-hmi --bin rant-hmi --example demo, and npm run build.
 
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { designer } from "./designer.mjs";
@@ -55,7 +56,8 @@ for (const file of files) {
     console.log(`ok    ${name} (${Date.now() - started} ms)`);
   } catch (e) {
     failed++;
-    console.log(`FAIL  ${name}: ${e.message}`);
+    const at = /scenarios[\\/]([\w-]+\.mjs:\d+)/.exec(e.stack ?? "")?.[1];
+    console.log(`FAIL  ${name}: ${e.message}${at ? ` (${at})` : ""}`);
     // the backend's last words often say why
     const tail = sys.backend.log.trim().split(/\r?\n/).slice(-12);
     for (const line of tail) console.log(`        backend: ${line}`);
@@ -65,6 +67,7 @@ for (const file of files) {
   await context.close();
 }
 await browser.close();
+writeFileSync(join(out, "backend.log"), sys.backend.log);
 sys.stop();
 console.log(failed ? `${failed} of ${files.length} failed` : `all ${files.length} passed`);
 process.exit(failed ? 1 : 0);

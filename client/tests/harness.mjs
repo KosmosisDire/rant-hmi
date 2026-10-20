@@ -17,7 +17,7 @@ export const DOMAIN = 153;
 export const PORT = 6761;
 
 function run(path, args) {
-  const child = spawn(path, args, { cwd: ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(path, args, { cwd: ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RUST_BACKTRACE: "1", NO_COLOR: "1" } });
   child.log = "";
   child.stdout.on("data", (d) => (child.log += d));
   child.stderr.on("data", (d) => (child.log += d));
