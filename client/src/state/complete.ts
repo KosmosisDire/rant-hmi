@@ -3,6 +3,7 @@
 // the text before the caret only, so it never needs the code to parse.
 
 import type { FieldInfo } from "../protocol/FieldInfo";
+import type { Import } from "../protocol/Import";
 import type { Kind } from "../protocol/Kind";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import { typeLabel } from "./format";
@@ -62,7 +63,7 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   while (from > 0 && WORD.test(before[from - 1])) from--;
   const word = before.slice(from);
   if (/^\d/.test(word)) return null;
-  const items = before[from - 1] === "." ? (names ? [] : members(chain(before.slice(0, from - 1)))) : [...(names ?? top()), ...(place === "handler" ? [] : tokens()), ...API[place]];
+  const items = before[from - 1] === "." ? (names ? [] : members(chain(before.slice(0, from - 1)), place)) : [...(names ?? top(place)), ...(place === "handler" ? [] : tokens()), ...API[place]];
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
   const inside = items.filter((s) => !s.label.toLowerCase().startsWith(q) && s.label.toLowerCase().includes(q));
@@ -72,11 +73,14 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   return { from, items: found };
 }
 
-function top(): Suggestion[] {
-  const imports = state.imports.map((i): Suggestion => {
+function top(place: Place): Suggestion[] {
+  // an expression only reads, so nothing it could call is offered there
+  const callable = (i: Import) => i.kind === "function" || i.kind === "task";
+  const imports = state.imports.filter((i) => place !== "expression" || !callable(i)).map((i): Suggestion => {
     const v = live(i.alias);
     const t = entity(i.entity)?.schema;
-    return { label: i.alias, insert: i.alias, icon: i.kind, type: t?.name || bareType(t?.fields) || i.kind, value: v.value, known: v.known };
+    const insert = i.kind === "function" ? `await ${i.alias}(` : i.alias;
+    return { label: i.alias, insert, icon: i.kind, type: t?.name || bareType(t?.fields) || i.kind, value: v.value, known: v.known };
   });
   const variables = state.variables.map((x): Suggestion => {
     const v = live(x.name);
@@ -126,11 +130,15 @@ function chain(before: string): string[] {
   }
 }
 
-/** A value's fields, from its schema where the root is an import, else from the value. */
-function members(path: string[]): Suggestion[] {
+const SEND: Suggestion = { label: "send", insert: "send(", icon: "api", type: "publish a message" };
+
+/** A value's fields, from its schema where the root is an import, else from the value. A
+ *  handler's topic imported to write offers send first. */
+function members(path: string[], place: Place): Suggestion[] {
   if (path.length === 0) return [];
   const [root, ...rest] = path;
   const imp = state.imports.find((i) => i.alias === root);
+  if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && rest.length === 0) return [SEND, ...members(path, "expression")];
   let value: JsonValue | null = live(root).value;
   const known = live(root).known;
   for (const step of rest) value = at(value, step);

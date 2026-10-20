@@ -1,6 +1,7 @@
 // A new user types expressions with the list's help: names first, then a struct's fields,
 // then a number's format, each picked with the arrows and Enter, or with a click in a
-// handler. Enter with nothing picked keeps exactly what was typed.
+// handler. Enter with nothing picked keeps exactly what was typed. A handler offers send on a
+// topic imported to write.
 
 import { props } from "../designer.mjs";
 
@@ -51,4 +52,20 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.type(" = 1;");
   await page.keyboard.press("Control+Enter");
   await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code === "Speed = 1;", "the handler typed with a click on the list");
+
+  // a handler sends on a topic imported to write, which a property never offers
+  await hmi.import("JogOut", "Line1/Jog", "write");
+  await code.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("JogO");
+  await pick("JogOut");
+  await page.keyboard.type(".");
+  await eventually(async () => (await names())[0] === "send", "send on the topic");
+  await page.keyboard.press("Escape");
+  await text.click();
+  await text.fill("");
+  await page.keyboard.type("JogO");
+  await eventually(async () => (await names()).includes("JogOut"), "the topic to read in a property");
+  await page.keyboard.press("Escape");
 }
