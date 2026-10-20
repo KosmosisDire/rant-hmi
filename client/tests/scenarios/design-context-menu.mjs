@@ -22,7 +22,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // the rows the element offers
   await d.el(box).click({ button: "right" });
   const rows = await menu.locator(".menu-label").allTextContents();
-  const offered = "Add inside,Place a component inside,Cut,Copy,Paste,Duplicate,Make a component,Bring forward,Send backward,Bring to front,Send to back,Delete";
+  const offered = "Add inside,Place a component inside,Cut,Copy,Paste,Duplicate,Convert to component,Bring forward,Send backward,Bring to front,Send to back,Delete";
   check(rows.join() === offered, `the menu offers ${rows.join()}`);
   await page.keyboard.press("Escape");
   await eventually(async () => (await menu.count()) === 0, "Escape to close the menu");

@@ -77,7 +77,7 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
     { label: "Paste", keys: "Ctrl V", icon: <ClipboardPaste size={13} />, run: () => void pasteHere(page, ids.at(-1) ?? null) },
     { label: "Duplicate", keys: "Ctrl D", icon: <CopyPlus size={13} />, run: () => duplicate(page, picked) },
     "-",
-    { label: "Make a component", icon: <Component size={13} />, run: () => makeComponent(page, ids) },
+    { label: "Convert to component", icon: <Component size={13} />, run: () => makeComponent(page, ids) },
   );
   if (one) {
     entries.push(
