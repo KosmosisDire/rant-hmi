@@ -14,7 +14,7 @@ use rquickjs::{Context, Ctx, Exception, Function, Persistent, Promise, Runtime};
 use crate::value::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::project::{Import, Intent, Kind, Per, Variable};
+use crate::project::{Computed, Import, Intent, Kind, Per, Variable};
 
 /// How long code may run without waiting before it is stopped.
 const BUDGET: Duration = Duration::from_millis(250);
@@ -40,6 +40,13 @@ pub enum ToScript {
     Records(Vec<(String, String)>),
     /// Reads these records' sources now, answered with `Sampled`.
     Sample(Vec<String>),
+    /// The computed values, whole.
+    Computed(Vec<Computed>),
+    /// Works every computed value out now, answered with `Computed`.
+    Compute,
+    /// What a write of `v` to a computed value gives its setter's target, answered with
+    /// `Inverted`.
+    Invert { session: Option<u32>, name: String, v: Value },
     /// Every page as code names it, and its id, whole, after any change.
     Pages(Vec<(String, String)>),
     /// Runs code for a screen, or for none. `p` is what its event brought, `at` the copy of a
@@ -73,6 +80,10 @@ pub enum FromScript {
     Judged(Vec<(String, bool)>),
     /// Each record's value now, None where it reads an unknown value or fails.
     Sampled(Vec<(String, Option<Value>)>),
+    /// Each computed value now, None where it reads an unknown value or fails.
+    Computed(Vec<(String, Option<Value>)>),
+    /// What a write to the computed value `name` gives `target`, or why it gives nothing.
+    Inverted { session: Option<u32>, name: String, target: String, value: Result<Value, String> },
 }
 
 /// Expressions read together in a context of their own that reads but never writes, each a
@@ -114,6 +125,7 @@ struct Shared {
     out: UnboundedSender<FromScript>,
     imports: HashMap<String, Import>,
     variables: HashMap<String, Variable>,
+    computed: HashMap<String, Computed>,
     values: HashMap<String, Value>,
     /// Each screen's own variables.
     screens: HashMap<u32, HashMap<String, Value>>,
@@ -200,6 +212,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         out,
         imports: HashMap::new(),
         variables: HashMap::new(),
+        computed: HashMap::new(),
         values: HashMap::new(),
         screens: HashMap::new(),
         sessions: HashMap::new(),
@@ -216,6 +229,10 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
     let mut judge: Option<Reader> = None;
     let mut records: Vec<(String, String)> = Vec::new();
     let mut sampler: Option<Reader> = None;
+    let mut getters: Vec<(String, String)> = Vec::new();
+    let mut computer: Option<Reader> = None;
+    let mut setters: Vec<(String, String)> = Vec::new();
+    let mut inverter: Option<Reader> = None;
     loop {
         let next_timer = shared.borrow().timers.peek().map(|Reverse((t, _))| t.saturating_duration_since(Instant::now()));
         let msg = match next_timer {
@@ -278,9 +295,73 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 deadline.set(None);
                 shared.borrow().send(FromScript::Sampled(read));
             }
+            Ok(ToScript::Computed(list)) => {
+                getters = list.iter().map(|c| (c.name.clone(), format!("() => ({}\n)", c.get))).collect();
+                setters = list.iter().filter_map(|c| c.set.as_ref().map(|s| (c.name.clone(), format!("(v) => ({}\n)", s.value)))).collect();
+                shared.borrow_mut().computed = list.into_iter().map(|c| (c.name.clone(), c)).collect();
+                // every reader knows the names there are, these among them
+                (judge, sampler, computer, inverter) = (None, None, None, None);
+            }
+            Ok(ToScript::Compute) => {
+                let (ctx, fns) = computer.get_or_insert_with(|| make_reader(&rt, &shared, &getters));
+                // in order, each seen by those after it, and again while any moves, since one
+                // may read one later in the list
+                let mut out = Vec::new();
+                for _ in 0..fns.len().max(1) {
+                    let mut moved = false;
+                    out = ctx.with(|ctx| {
+                        fns.iter()
+                            .map(|(name, f)| {
+                                deadline.set(Some(Instant::now() + BUDGET));
+                                let value = match f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())) {
+                                    Ok(v) => from_js(v).ok(),
+                                    Err(_) => {
+                                        ctx.catch();
+                                        None
+                                    }
+                                };
+                                let mut st = shared.borrow_mut();
+                                if st.values.get(name) != value.as_ref() {
+                                    moved = true;
+                                    match &value {
+                                        Some(v) => st.values.insert(name.clone(), v.clone()),
+                                        None => st.values.remove(name),
+                                    };
+                                }
+                                (name.clone(), value)
+                            })
+                            .collect()
+                    });
+                    if !moved {
+                        break;
+                    }
+                }
+                deadline.set(None);
+                shared.borrow().send(FromScript::Computed(out));
+            }
+            Ok(ToScript::Invert { session, name, v }) => {
+                let target = shared.borrow().computed.get(&name).and_then(|c| c.set.as_ref()).map(|s| s.target.clone());
+                let (ctx, fns) = inverter.get_or_insert_with(|| make_reader(&rt, &shared, &setters));
+                let f = fns.iter().find(|(n, _)| *n == name).map(|(_, f)| f.clone());
+                let value = match (&target, f) {
+                    (Some(_), Some(f)) => ctx.with(|ctx| {
+                        deadline.set(Some(Instant::now() + BUDGET));
+                        let got = to_js(&ctx, &v).and_then(|v| f.restore(&ctx)?.call::<_, rquickjs::Value>((v,)));
+                        match got {
+                            Ok(x) => from_js(x),
+                            Err(_) => {
+                                let why = ctx.catch().as_exception().and_then(|e| e.message()).unwrap_or_default();
+                                Err(format!("{name}'s setter failed: {why}"))
+                            }
+                        }
+                    }),
+                    _ => Err(format!("{name}'s setter does not read")),
+                };
+                deadline.set(None);
+                shared.borrow().send(FromScript::Inverted { session, name, target: target.unwrap_or_default(), value });
+            }
             Ok(msg @ (ToScript::Imports(_) | ToScript::Variables(_))) => {
-                judge = None;
-                sampler = None;
+                (judge, sampler, computer, inverter) = (None, None, None, None);
                 handle(&rt, &home, &shared, &deadline, msg);
             }
             Ok(msg) => handle(&rt, &home, &shared, &deadline, msg),
@@ -318,9 +399,8 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
     shared.borrow_mut().waiters.clear();
 }
 
-/// The context conditions are judged in: the imports and variables to read, writes refused,
-/// and each condition compiled once. One that does not compile is never true.
-/// A reader of each `source`, a function's text, by name. One that does not compile is left out.
+/// A reader of each `source`, a function's text, by name, in a context of its own that reads
+/// every name and refuses writes, calls and sends. One that does not compile is left out.
 fn make_reader(rt: &Runtime, shared: &Rc<RefCell<Shared>>, sources: &[(String, String)]) -> Reader {
     let ctx = Context::full(rt).expect("QuickJS makes a context");
     let fns = ctx.with(|ctx| {
@@ -328,9 +408,11 @@ fn make_reader(rt: &Runtime, shared: &Rc<RefCell<Shared>>, sources: &[(String, S
             ctx.catch();
             return Vec::new();
         }
-        let refuse = Function::new(ctx.clone(), |ctx: Ctx<'_>| -> rquickjs::Result<()> { Err(Exception::throw_type(&ctx, "this only reads")) });
-        if let Ok(f) = refuse {
-            let _ = ctx.globals().set("__write", f);
+        for name in ["__write", "__call", "__send"] {
+            let refuse = Function::new(ctx.clone(), |ctx: Ctx<'_>| -> rquickjs::Result<()> { Err(Exception::throw_type(&ctx, "this only reads")) });
+            if let Ok(f) = refuse {
+                let _ = ctx.globals().set(name, f);
+            }
         }
         sources
             .iter()
@@ -350,7 +432,7 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
     match msg {
         ToScript::Imports(list) => shared.borrow_mut().imports = list.into_iter().map(|i| (i.alias.clone(), i)).collect(),
         // the loop takes these itself, since they need the readers it keeps
-        ToScript::Conditions(_) | ToScript::Judge | ToScript::Records(_) | ToScript::Sample(_) => {}
+        ToScript::Conditions(_) | ToScript::Judge | ToScript::Records(_) | ToScript::Sample(_) | ToScript::Computed(_) | ToScript::Compute | ToScript::Invert { .. } => {}
         ToScript::Pages(list) => shared.borrow_mut().pages = list,
         ToScript::Variables(list) => shared.borrow_mut().variables = list.into_iter().map(|v| (v.name.clone(), v)).collect(),
         ToScript::Screen { session, values } => shared.borrow_mut().screens.entry(session).or_default().extend(values),
@@ -457,7 +539,11 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let s = shared.clone();
     let write = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
         let mut st = s.borrow_mut();
-        if let Some(v) = st.variables.get(&alias) {
+        if let Some(c) = st.computed.get(&alias) {
+            if c.set.is_none() {
+                return Err(Exception::throw_type(&ctx, &format!("{alias} is worked out from other values, and has no setter to write it")));
+            }
+        } else if let Some(v) = st.variables.get(&alias) {
             if v.per == Per::Screen && st.sessions.get(&run).copied().flatten().is_none() {
                 return Err(Exception::throw_type(&ctx, &format!("{alias} is each screen's own, and this handler runs for no screen")));
             }
@@ -554,11 +640,11 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     };
     g.set("__end", Function::new(ctx.clone(), end)?)?;
 
-    // a variable reads and takes assignment as a variable import does
+    // a variable, or a computed value, reads and takes assignment as a variable import does
     let st = shared.borrow();
     let entry = |alias: &str, kind: String| Value::map([("alias", alias.into()), ("kind", kind.into())]);
     let mut imports: Vec<Value> = st.imports.values().map(|i| entry(&i.alias, format!("{:?}", i.kind).to_lowercase())).collect();
-    imports.extend(st.variables.keys().map(|name| entry(name, "variable".into())));
+    imports.extend(st.variables.keys().chain(st.computed.keys()).map(|name| entry(name, "variable".into())));
     drop(st);
     let pages: Vec<Value> = shared.borrow().pages.iter().map(|(key, id)| Value::map([("key", key.as_str().into()), ("id", id.as_str().into())])).collect();
     let prelude: Function = ctx.eval(PRELUDE)?;

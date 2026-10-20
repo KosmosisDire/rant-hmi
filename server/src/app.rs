@@ -18,7 +18,7 @@ use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
-use crate::project::{Import, Intent, Kind, Per, Project, Record, Variable};
+use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Variable};
 use crate::protocol::{ClientMsg, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, FromScript, Script, ToScript};
 use crate::video::{FromVideo, ToVideo};
@@ -183,6 +183,7 @@ impl App {
         let shared: HashMap<String, Value> = project.variables.iter().filter(|v| v.per == Per::Hmi).map(|v| (v.name.clone(), v.start.clone())).collect();
         script.send(ToScript::Values(shared.iter().map(|(k, v)| (k.clone(), Some(v.clone()))).collect()));
         script.send(ToScript::Records(sources(&project.records)));
+        script.send(ToScript::Computed(project.computed.clone()));
         App {
             project,
             pages,
@@ -293,6 +294,7 @@ impl App {
         self.send(session, &ServerMsg::Mesh { entities: self.mesh.entities() });
         self.send(session, &ServerMsg::Variables { variables: self.project.variables.clone() });
         self.send(session, &ServerMsg::Records { records: self.project.records.clone() });
+        self.send(session, &ServerMsg::Computed { computed: self.project.computed.clone() });
         for r in &self.project.records {
             let samples = self.history.get(&r.name).map(|h| h.iter().cloned().collect()).unwrap_or_default();
             self.send(session, &ServerMsg::Samples { name: r.name.clone(), samples, whole: true });
@@ -303,9 +305,11 @@ impl App {
         self.send(session, &ServerMsg::Health { peers: self.mesh.peers() });
     }
 
-    /// Every value a screen shows: the imports', the shared variables' and its own.
+    /// Every value a screen shows: the imports', the computed ones', the shared variables' and
+    /// its own.
     fn all_values(&self, session: u32) -> Vec<ValueUpdate> {
-        let mut values: Vec<ValueUpdate> = self.project.imports.iter().map(|i| self.update(&i.alias)).collect();
+        let names = self.project.imports.iter().map(|i| &i.alias).chain(self.project.computed.iter().map(|c| &c.name));
+        let mut values: Vec<ValueUpdate> = names.map(|name| self.update(name)).collect();
         if let Some(s) = self.sessions.get(&session) {
             values.extend(self.shared.iter().chain(s.vars.iter()).map(|(k, v)| known(k, v)));
         }
@@ -349,6 +353,7 @@ impl App {
             ClientMsg::ChangeImport { alias, import } => self.change_import(session, alias, import),
             ClientMsg::SetVariable { name, variable } => self.set_variable(session, name, variable),
             ClientMsg::SetRecord { name, record } => self.set_record(session, name, record),
+            ClientMsg::SetComputed { name, computed } => self.set_computed(session, name, computed),
             ClientMsg::SetToken { name, token } => {
                 let renamed = token.as_ref().filter(|t| t.name != name).map(|t| t.name.clone());
                 if let Err(text) = self.project.set_token(&name, token) {
@@ -446,6 +451,55 @@ impl App {
         let samples: VecDeque<Sample> = kept.unwrap_or_default();
         self.broadcast(&ServerMsg::Samples { name: r.name.clone(), samples: samples.iter().cloned().collect(), whole: true });
         self.history.insert(r.name, samples);
+    }
+
+    fn set_computed(&mut self, session: u32, name: String, to: Option<Computed>) {
+        if let Err(text) = self.project.set_computed(&name, to.clone()) {
+            self.send(session, &ServerMsg::Computed { computed: self.project.computed.clone() });
+            return self.refuse(session, text, None);
+        }
+        // a name no longer worked out reads as unknown on every screen
+        if to.as_ref().is_none_or(|c| c.name != name) {
+            self.values.remove(&name);
+            self.changed.insert(name.clone());
+        }
+        if let Some(c) = to.filter(|c| c.name != name) {
+            info!("renamed the computed value {name} to {}", c.name);
+            self.follow_rename(session, &name, &c.name, false);
+        }
+        self.computed_changed();
+    }
+
+    /// Asks the engine to judge the conditions and work the computed values out anew, by the
+    /// values it has now.
+    fn rethink(&self) {
+        self.script.send(ToScript::Judge);
+        if !self.project.computed.is_empty() {
+            self.script.send(ToScript::Compute);
+        }
+    }
+
+    /// Tells the engine and every screen the computed values, whole, and works them out anew.
+    fn computed_changed(&mut self) {
+        self.script.send(ToScript::Computed(self.project.computed.clone()));
+        self.script.send(ToScript::Compute);
+        self.broadcast(&ServerMsg::Computed { computed: self.project.computed.clone() });
+    }
+
+    /// Takes what the engine worked out as values, which go out as any value does.
+    fn computed(&mut self, list: Vec<(String, Option<Value>)>) {
+        for (name, value) in list {
+            let slot = self.values.entry(name.clone()).or_default();
+            if slot.value == value && slot.known == value.is_some() {
+                continue;
+            }
+            let previous = std::mem::replace(&mut slot.value, value.clone());
+            slot.known = value.is_some();
+            if let Some(v) = value {
+                self.moved.push((name.clone(), previous, v));
+            }
+            self.changed.insert(name);
+        }
     }
 
     /// Tells the engine and every screen the records, whole.
@@ -675,6 +729,18 @@ impl App {
                 }
             }
             FromScript::Judged(truths) => self.judged(truths),
+            FromScript::Computed(list) => self.computed(list),
+            FromScript::Inverted { session, name, target, value } => {
+                let done = value.and_then(|v| {
+                    info!("{name} sets {target} to {v}");
+                    self.set(session, &target, "", v)
+                });
+                match (done, session) {
+                    (Err(text), Some(s)) => self.refuse(s, text, Some(name)),
+                    (Err(text), None) => warn!("{text}"),
+                    _ => {}
+                }
+            }
             FromScript::Sampled(read) => self.sampled(read),
             FromScript::Done { run, end } => {
                 let text = match &end {
@@ -776,6 +842,17 @@ impl App {
     /// Writes a variable, the screen's own for one each screen has, or sets a variable import
     /// on the mesh.
     fn set(&mut self, session: Option<u32>, alias: &str, path: &str, value: Value) -> Result<(), String> {
+        // a computed value's setter works out what its target takes, then that is set
+        if let Some(c) = self.project.computed(alias) {
+            if c.set.is_none() {
+                return Err(format!("{alias} is worked out from other values, and has no setter to write it"));
+            }
+            if !path.is_empty() {
+                return Err(format!("{alias} is worked out whole, so it is set whole"));
+            }
+            self.script.send(ToScript::Invert { session, name: alias.to_owned(), v: value });
+            return Ok(());
+        }
         if let Some(per) = self.project.variable(alias).map(|v| v.per) {
             let held = match per {
                 Per::Hmi => self.shared.get_mut(alias),
@@ -862,6 +939,13 @@ impl App {
                 self.broadcast(&ServerMsg::Samples { name: r.name.clone(), samples: Vec::new(), whole: true });
             }
         }
+        if old.computed != self.project.computed {
+            for c in old.computed.iter().filter(|c| self.project.computed(&c.name).is_none()) {
+                self.values.remove(&c.name);
+                self.changed.insert(c.name.clone());
+            }
+            self.computed_changed();
+        }
         if old.tokens != self.project.tokens {
             self.broadcast(&ServerMsg::Theme { tokens: self.project.tokens.clone() });
         }
@@ -917,7 +1001,7 @@ impl App {
             self.script.send(ToScript::Values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known))).collect()));
             self.broadcast(&ServerMsg::Values { values });
             // the engine has the new values before it judges by them
-            self.script.send(ToScript::Judge);
+            self.rethink();
         }
         // a change runs the rules that wait on it, and a variable's asks the conditions anew,
         // its value already with the engine
@@ -927,7 +1011,7 @@ impl App {
             self.run_rules(|r| matches!(&r.when, When::Changes { name: n } if n == name), p);
         }
         if moved.iter().any(|(name, _, _)| self.project.variable(name).is_some()) {
-            self.script.send(ToScript::Judge);
+            self.rethink();
         }
         self.fire_turned();
         self.sample();

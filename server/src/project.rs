@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use crate::value::Value;
 use ts_rs::TS;
@@ -101,6 +102,40 @@ struct RecordsFile {
     records: Vec<Record>,
 }
 
+/// A value worked out from others, as a C# property is, named in camelCase: a pure getter,
+/// and a setter when a write can go back through one target.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Computed {
+    pub name: String,
+    /// An expression over imports, variables and other computed values, with no writes.
+    pub get: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub set: Option<Setter>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub unit: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub note: Option<String>,
+}
+
+/// Where a write to a computed value goes: `target` takes `value`, an expression of the new
+/// value `v`. `Duty` takes `v * 0.4`.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Setter {
+    pub target: String,
+    pub value: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ComputedFile {
+    #[serde(default, rename = "computed")]
+    computed: Vec<Computed>,
+}
+
 /// A design value with one value per mode, read as `$name` anywhere, components too.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
@@ -123,6 +158,7 @@ pub struct Project {
     pub imports: Vec<Import>,
     pub variables: Vec<Variable>,
     pub records: Vec<Record>,
+    pub computed: Vec<Computed>,
     pub tokens: Vec<Token>,
 }
 
@@ -144,27 +180,12 @@ impl Project {
             library::seed(root)?;
         }
         let info = toml::from_str(&read(&hmi)?).with_context(|| format!("reading {}", files::shown(root, &hmi)))?;
-        let file = imports_file(root);
-        let imports = match file.exists() {
-            true => toml::from_str::<ImportsFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.imports,
-            false => Vec::new(),
-        };
-        let file = variables_file(root);
-        let variables = match file.exists() {
-            true => toml::from_str::<VariablesFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.variables,
-            false => Vec::new(),
-        };
-        let file = records_file(root);
-        let records = match file.exists() {
-            true => toml::from_str::<RecordsFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.records,
-            false => Vec::new(),
-        };
-        let file = theme_file(root);
-        let tokens = match file.exists() {
-            true => toml::from_str::<ThemeFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.tokens,
-            false => Vec::new(),
-        };
-        Ok(Project { root: root.to_path_buf(), info, imports, variables, records, tokens })
+        let imports = load::<ImportsFile>(root, &imports_file(root))?.imports;
+        let variables = load::<VariablesFile>(root, &variables_file(root))?.variables;
+        let records = load::<RecordsFile>(root, &records_file(root))?.records;
+        let computed = load::<ComputedFile>(root, &computed_file(root))?.computed;
+        let tokens = load::<ThemeFile>(root, &theme_file(root))?.tokens;
+        Ok(Project { root: root.to_path_buf(), info, imports, variables, records, computed, tokens })
     }
 
     /// Adds, changes or with None removes the token called `name`, and saves. A change may
@@ -209,12 +230,7 @@ impl Project {
                 if v.start.is_null() {
                     return Err(format!("{} needs a start value", v.name));
                 }
-                if v.name != name && self.variable(&v.name).is_some() {
-                    return Err(format!("{} is already a variable", v.name));
-                }
-                if self.record(&v.name).is_some() {
-                    return Err(format!("{} is already a record", v.name));
-                }
+                self.free(&v.name, "variable", name)?;
                 match at {
                     Some(at) => self.variables[at] = v,
                     None => self.variables.push(v),
@@ -243,9 +259,7 @@ impl Project {
                 if !(MIN_EVERY_MS..=86_400_000).contains(&r.every_ms) || !(1..=86_400).contains(&r.keep_s) {
                     return Err(format!("{} samples every {MIN_EVERY_MS} ms or more, and keeps from 1 s to a day", r.name));
                 }
-                if (r.name != name && self.record(&r.name).is_some()) || self.variable(&r.name).is_some() {
-                    return Err(format!("{} is already a record or a variable", r.name));
-                }
+                self.free(&r.name, "record", name)?;
                 match at {
                     Some(at) => self.records[at] = r,
                     None => self.records.push(r),
@@ -253,6 +267,69 @@ impl Project {
             }
         }
         files::write_toml(&records_file(&self.root), &RecordsFile { records: self.records.clone() })
+    }
+
+    pub fn computed(&self, name: &str) -> Option<&Computed> {
+        self.computed.iter().find(|c| c.name == name)
+    }
+
+    /// Adds, changes or with None removes the computed value called `name`, and saves. A
+    /// change may rename it. The error is for the user.
+    pub fn set_computed(&mut self, name: &str, to: Option<Computed>) -> Result<(), String> {
+        let at = self.computed.iter().position(|c| c.name == name);
+        match (to, at) {
+            (None, Some(at)) => drop(self.computed.remove(at)),
+            (None, None) => return Err(format!("{name} is not a computed value")),
+            (Some(c), at) => {
+                check_local(&c.name)?;
+                self.free(&c.name, "computed value", name)?;
+                if c.get.trim().is_empty() {
+                    return Err(format!("{} needs an expression to work its value out", c.name));
+                }
+                if let Some(s) = &c.set {
+                    if s.value.trim().is_empty() {
+                        return Err(format!("{} needs the value its setter gives {}", c.name, s.target));
+                    }
+                    self.takes_writes(&s.target, &c.name)?;
+                }
+                let mut next = self.computed.clone();
+                match at {
+                    Some(at) => next[at] = c,
+                    None => next.push(c),
+                }
+                if let Some(cycle) = cycle(&next) {
+                    return Err(format!("{} reads itself through {}", cycle[0], cycle.join(", ")));
+                }
+                self.computed = next;
+            }
+        }
+        files::write_toml(&computed_file(&self.root), &ComputedFile { computed: self.computed.clone() })
+    }
+
+    /// Whether `target` takes a computed value's writes: a variable imported to write, an HMI
+    /// variable, or another computed value with a setter.
+    fn takes_writes(&self, target: &str, from: &str) -> Result<(), String> {
+        let ok = self.find(target).is_some_and(|i| i.kind == Kind::Variable && i.intent == Intent::Write)
+            || self.variable(target).is_some()
+            || (target != from && self.computed(target).is_some_and(|c| c.set.is_some()));
+        match ok {
+            true => Ok(()),
+            false => Err(format!("{target} takes no writes: a setter writes a variable imported to write, an HMI variable, or a computed value with a setter")),
+        }
+    }
+
+    /// Refuses `name` when another of the HMI's own names has it, a variable, a record or a
+    /// computed value, leaving out `own`, the one of `kind` being changed.
+    fn free(&self, name: &str, kind: &str, own: &str) -> Result<(), String> {
+        let uses = [
+            ("variable", self.variable(name).is_some()),
+            ("record", self.record(name).is_some()),
+            ("computed value", self.computed(name).is_some()),
+        ];
+        match uses.iter().find(|(what, used)| *used && !(*what == kind && name == own)) {
+            Some((what, _)) => Err(format!("{name} is already a {what}")),
+            None => Ok(()),
+        }
     }
 
     pub fn find(&self, alias: &str) -> Option<&Import> {
@@ -314,6 +391,80 @@ fn variables_file(root: &Path) -> PathBuf {
 
 fn records_file(root: &Path) -> PathBuf {
     root.join("data").join("records.toml")
+}
+
+fn computed_file(root: &Path) -> PathBuf {
+    root.join("data").join("computed.toml")
+}
+
+/// A data file, empty while there is none.
+fn load<F: DeserializeOwned + Default>(root: &Path, file: &Path) -> Result<F> {
+    match file.exists() {
+        true => toml::from_str(&read(file)?).with_context(|| format!("reading {}", files::shown(root, file))),
+        false => Ok(F::default()),
+    }
+}
+
+/// A chain of computed values that reads or writes back into its first, the names in order,
+/// else None. A getter reads the computed values it names, a setter writes its target.
+fn cycle(all: &[Computed]) -> Option<Vec<String>> {
+    let next = |c: &Computed| -> Vec<String> {
+        let mut out: Vec<String> = all.iter().filter(|o| names_in(&c.get).contains(&o.name)).map(|o| o.name.clone()).collect();
+        out.extend(c.set.iter().filter(|s| all.iter().any(|o| o.name == s.target)).map(|s| s.target.clone()));
+        out
+    };
+    fn walk(at: &str, all: &[Computed], next: &dyn Fn(&Computed) -> Vec<String>, path: &mut Vec<String>) -> bool {
+        if path.iter().any(|p| p == at) {
+            path.push(at.to_owned());
+            return true;
+        }
+        path.push(at.to_owned());
+        let found = all.iter().find(|c| c.name == at).is_some_and(|c| next(c).iter().any(|n| walk(n, all, next, path)));
+        if !found {
+            path.pop();
+        }
+        found
+    }
+    all.iter().find_map(|c| {
+        let mut path = Vec::new();
+        walk(&c.name, all, &next, &mut path).then(|| {
+            let start = path.iter().position(|p| p == path.last().unwrap()).unwrap();
+            path[start..].to_vec()
+        })
+    })
+}
+
+/// The names code mentions, leaving out quoted text. Text in backticks counts, so a name in a
+/// template's own words reads as used.
+fn names_in(code: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = code.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' || c == '\'' {
+            let mut escaped = false;
+            for d in chars.by_ref() {
+                if d == c && !escaped {
+                    break;
+                }
+                escaped = d == '\\' && !escaped;
+            }
+        } else if c.is_alphabetic() || c == '_' || c == '$' {
+            let mut word = c.to_string();
+            while let Some(&d) = chars.peek() {
+                if !(d.is_alphanumeric() || d == '_' || d == '$') {
+                    break;
+                }
+                word.push(d);
+                chars.next();
+            }
+            out.push(word);
+        } else if c.is_ascii_digit() {
+            while chars.peek().is_some_and(|d| d.is_alphanumeric() || *d == '.') {
+                chars.next();
+            }
+        }
+    }
+    out
 }
 
 /// The fastest a record samples, a little slower than the backend's tick.
@@ -409,6 +560,33 @@ mod tests {
     }
 
     #[test]
+    fn computed_values_refuse_a_taken_name_a_target_without_writes_and_a_cycle() {
+        let dir = scratch("computed");
+        let mut p = Project::open(&dir).unwrap();
+        p.import(speed()).unwrap();
+        let c = |name: &str, get: &str, set: Option<(&str, &str)>| Computed {
+            name: name.into(),
+            get: get.into(),
+            set: set.map(|(target, value)| Setter { target: target.into(), value: value.into() }),
+            unit: None,
+            note: None,
+        };
+        p.set_computed("percent", Some(c("percent", "Speed * 100", Some(("Speed", "v / 100"))))).unwrap();
+        p.set_variable("mode", Some(Variable { name: "mode".into(), start: value!("Auto"), per: Per::Hmi })).unwrap();
+        assert!(p.set_computed("mode", Some(c("mode", "1", None))).unwrap_err().contains("already a variable"));
+        assert!(p.set_variable("percent", Some(Variable { name: "percent".into(), start: value!(1), per: Per::Hmi })).unwrap_err().contains("already a computed value"));
+        assert!(p.set_computed("bad", Some(c("bad", "1", Some(("Nothing", "v"))))).unwrap_err().contains("takes no writes"));
+        p.set_computed("half", Some(c("half", "percent / 2", None))).unwrap();
+        assert!(p.set_computed("percent", Some(c("percent", "half * 2", None))).unwrap_err().contains("reads itself"));
+        // a name in quotes is text, not a read
+        p.set_computed("label", Some(c("label", "\"label: \" + half", None))).unwrap();
+        let again = Project::open(&dir).unwrap();
+        assert_eq!(again.computed.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["percent", "half", "label"]);
+        assert_eq!(again.computed[0].set.as_ref().unwrap().target, "Speed");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn variables_survive_a_reopen_and_keep_to_their_names() {
         let dir = scratch("variables");
         let mut p = Project::open(&dir).unwrap();
@@ -435,7 +613,7 @@ mod tests {
         assert_eq!(Project::open(&dir).unwrap().records, [record("speedHistory", 100)]);
         assert!(p.set_record("fast", Some(record("fast", 10))).unwrap_err().contains("50 ms or more"));
         p.set_variable("mode", Some(Variable { name: "mode".into(), start: value!("Auto"), per: Per::Hmi })).unwrap();
-        assert!(p.set_record("mode", Some(record("mode", 100))).unwrap_err().contains("already a record or a variable"));
+        assert!(p.set_record("mode", Some(record("mode", 100))).unwrap_err().contains("already a variable"));
         assert!(p.set_variable("speedHistory", Some(Variable { name: "speedHistory".into(), start: value!(0), per: Per::Hmi })).unwrap_err().contains("already a record"));
         p.set_record("speedHistory", None).unwrap();
         assert!(Project::open(&dir).unwrap().records.is_empty());

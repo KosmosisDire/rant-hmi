@@ -7,7 +7,7 @@ use ts_rs::TS;
 
 use crate::pages::logic::Rule;
 use crate::pages::{Edit, Page};
-use crate::project::{Import, Kind, ProjectInfo, Record, Token, Variable};
+use crate::project::{Computed, Import, Kind, ProjectInfo, Record, Token, Variable};
 
 /// From the backend to a screen.
 #[derive(Serialize, TS, Clone, Debug)]
@@ -48,6 +48,8 @@ pub enum ServerMsg {
     Pong { t: f64 },
     /// The answer to a screen's offer to play an import's video.
     Play { alias: String, answer: String },
+    /// The computed values, whole, after a change.
+    Computed { computed: Vec<Computed> },
     /// An action that was not done, and why, for the screen that asked.
     Refused { text: String, alias: Option<String> },
     /// Something for the person at this screen: what a handler said, or why it stopped.
@@ -83,6 +85,8 @@ pub enum ClientMsg {
     /// Plays an import's video: the screen's WebRTC offer, which the backend answers.
     Play { alias: String, offer: String },
     StopPlaying { alias: String },
+    /// Adds, changes or with None removes the computed value called `name`.
+    SetComputed { name: String, computed: Option<Computed> },
     Import { import: Import },
     Unimport { alias: String },
     /// Renames an import or changes its intent. Every use of the old alias follows.

@@ -271,3 +271,58 @@ fn runs_do_not_share_names() {
     let said = until_done(&mut rx, 2);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "undefined")));
 }
+
+fn computed(name: &str, get: &str, set: Option<(&str, &str)>) -> Computed {
+    let set = set.map(|(target, value)| crate::project::Setter { target: target.into(), value: value.into() });
+    Computed { name: name.into(), get: get.into(), set, unit: None, note: None }
+}
+
+/// The next message of the kind `pick` takes, skipping the rest.
+fn next<T>(rx: &mut UnboundedReceiver<FromScript>, pick: impl Fn(FromScript) -> Option<T>) -> T {
+    let start = std::time::Instant::now();
+    loop {
+        match rx.try_recv() {
+            Ok(msg) => {
+                if let Some(t) = pick(msg) {
+                    return t;
+                }
+            }
+            Err(_) if start.elapsed() > Duration::from_secs(3) => panic!("nothing came"),
+            Err(_) => std::thread::sleep(Duration::from_millis(2)),
+        }
+    }
+}
+
+#[test]
+fn computed_values_are_worked_out_in_any_order_and_unknown_while_what_they_read_is() {
+    let (script, mut rx) = engine();
+    // half reads percent, which comes after it in the list
+    script.send(ToScript::Computed(vec![
+        computed("half", "percent / 2", None),
+        computed("percent", "Speed * 100", Some(("Speed", "v / 100"))),
+        computed("on", "Running ? 1 : 0", None),
+    ]));
+    script.send(ToScript::Compute);
+    let got = next(&mut rx, |m| if let FromScript::Computed(list) = m { Some(list) } else { None });
+    assert_eq!(got, [("half".to_string(), Some(value!(50))), ("percent".to_string(), Some(value!(100))), ("on".to_string(), None)]);
+
+    // handlers read them as any value, and a write goes back through the setter
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "count = half; percent = 250;".into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 1);
+    assert_eq!(writes(&said), [("count".to_string(), value!(50)), ("percent".to_string(), value!(250))]);
+    script.send(ToScript::Invert { session: Some(7), name: "percent".into(), v: value!(250) });
+    let (target, value) = next(&mut rx, |m| if let FromScript::Inverted { target, value, .. } = m { Some((target, value)) } else { None });
+    assert_eq!((target.as_str(), value), ("Speed", Ok(value!(2.5))));
+}
+
+#[test]
+fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Computed(vec![computed("sneaky", "(Speed = 5, 1)", None), computed("plain", "Speed + 1", None)]));
+    script.send(ToScript::Compute);
+    let got = next(&mut rx, |m| if let FromScript::Computed(list) = m { Some(list) } else { None });
+    assert_eq!(got, [("sneaky".to_string(), None), ("plain".to_string(), Some(value!(2)))]);
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "plain = 3;".into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 1);
+    assert!(matches!(end(&said), End::Fault(text) if text.contains("no setter")));
+}
