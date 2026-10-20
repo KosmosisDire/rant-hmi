@@ -1,0 +1,51 @@
+/* A page as it runs. Its look is the project's own, so it never takes the editor's tokens:
+   these are only the defaults an element starts from. */
+
+.page {
+  position: relative;
+  overflow: hidden;
+  background: #15171a;
+  color: #e4e6e8;
+  font-family: var(--sans);
+  font-size: 16px;
+}
+
+.el {
+  position: absolute;
+  box-sizing: border-box;
+  border: 0 solid transparent;
+  overflow: hidden;
+}
+
+.el.text {
+  white-space: pre-wrap;
+  line-height: 1.25;
+}
+
+/* A value it shows is unknown: hatched, never a stale or invented value passed as true. */
+.el.unknown::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(135deg, rgba(140, 140, 140, 0.28) 0 5px, transparent 5px 10px);
+}
+
+.fit {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.fit-inner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.run {
+  height: 100%;
+  background: var(--ground);
+}

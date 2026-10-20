@@ -1,10 +1,3 @@
-build/
-bin/
+/target/
 node_modules/
-frontend/dist/
-*.pdb
-hmi.json
-hmi.state.json
-frontend/test/*.tmp.json
-fern-backend/
-*.bak
+/client/dist/

@@ -1,0 +1,563 @@
+/* The pieces every screen composes, after the explorer's components.rcss. A piece styles
+   itself and never sizes the space it sits in: shell.css does that. */
+
+/* ------------------------------------------------------------------ panes */
+
+.pane-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--bar);
+  padding: 0 10px 0 var(--pad);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--pad);
+}
+
+.pane-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  min-height: var(--bar);
+  padding: 0 10px 0 var(--pad);
+  border-top: 1px solid var(--border);
+}
+
+.pad {
+  padding: 0 var(--pad);
+}
+
+.head-title {
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.head-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The small caps word over a block, a table's columns or a list's group. */
+.section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 18px 0 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.placeholder {
+  padding: 18px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* ------------------------------------------------------------------ marks */
+
+.tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--faint);
+  background: var(--panel3);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+.tag.write {
+  color: var(--amber);
+  background: var(--amber-bg);
+}
+
+.tag.bad {
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+.dot {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--gray);
+}
+
+.dot.ok {
+  background: var(--green);
+}
+
+.dot.warn {
+  background: var(--amber);
+}
+
+.dot.bad {
+  background: var(--red);
+}
+
+/* A Rant kind's glyph, coloured per kind so a list scans at a glance. */
+.kind {
+  flex: 0 0 auto;
+  display: inline-flex;
+}
+
+.kind-topic {
+  color: var(--dim);
+}
+
+.kind-function {
+  color: var(--accent);
+}
+
+.kind-variable {
+  color: var(--amber);
+}
+
+.kind-task {
+  color: var(--green);
+}
+
+/* ------------------------------------------------------------------ buttons */
+
+.icon-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--hit);
+  height: var(--hit);
+  padding: 0 5px;
+  border-radius: 4px;
+  color: var(--dim);
+}
+
+.icon-btn:hover {
+  color: var(--text);
+  background: var(--panel3);
+}
+
+.button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 70px;
+  height: var(--hit);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--panel3);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+}
+
+.button:hover {
+  border-color: var(--dim);
+}
+
+.button.primary {
+  color: var(--on-fill);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.button:disabled,
+.icon-btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Two or more choices side by side, the chosen one lit. */
+.choice {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.choice button {
+  height: 22px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--dim);
+  border-radius: 4px;
+}
+
+.choice button:hover {
+  color: var(--text);
+}
+
+.choice button.on {
+  color: var(--text);
+  background: var(--panel3);
+}
+
+.choice button:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ fields */
+
+.filter {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: var(--field);
+  min-width: 0;
+  padding: 0 9px;
+  color: var(--faint);
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.filter input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font: 11px var(--mono);
+  color: var(--text);
+}
+
+.filter input::placeholder {
+  color: var(--faint);
+}
+
+/* A value in its raised grey box. */
+.value {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 6px;
+  font: 12px var(--mono);
+  color: var(--text);
+  background: var(--panel3);
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.value.unknown {
+  color: var(--faint);
+  background: repeating-linear-gradient(135deg, var(--panel3) 0 4px, var(--panel2) 4px 8px);
+}
+
+/* An editor looks like the value it replaces, with an outline that says it can be written. */
+.editor {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  font: 12px var(--mono);
+  color: var(--text);
+  background: var(--panel3);
+  border: 1px solid var(--border2);
+  border-radius: 3px;
+  outline: 0;
+}
+
+.editor:hover {
+  border-color: var(--dim);
+}
+
+.editor:focus {
+  border-color: var(--accent);
+}
+
+.editor.bad {
+  border-color: var(--red);
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 11px;
+}
+
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  margin-top: 10px;
+}
+
+.form-row .button {
+  margin-left: auto;
+}
+
+.text-field {
+  width: 100%;
+  height: var(--field);
+  padding: 0 9px;
+  font: 12px var(--mono);
+  color: var(--text);
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  outline: 0;
+}
+
+.text-field:focus {
+  border-color: var(--accent);
+}
+
+.switch {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 26px;
+  height: 14px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--border2);
+  transition: background-color 0.12s;
+}
+
+.switch::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--dim);
+  transition: transform 0.12s;
+}
+
+.switch.on {
+  background: var(--accent);
+}
+
+.switch.on::after {
+  background: var(--on-fill);
+  transform: translateX(12px);
+}
+
+/* Why something was refused, in full. */
+.error-line {
+  margin-top: 8px;
+  padding: 7px 10px;
+  font-size: 11px;
+  color: var(--red);
+  background: var(--red-bg);
+  border-radius: 4px;
+  word-break: break-word;
+}
+
+/* ------------------------------------------------------------------ lists */
+
+.list-group {
+  display: flex;
+  align-items: center;
+  padding: 14px var(--pad) 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* A row picked from a list. Selection is a fill, never a border. */
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: calc(100% - 12px);
+  height: var(--list);
+  margin: 0 6px;
+  padding: 0 8px;
+  color: var(--dim);
+  border-radius: var(--radius);
+  transition: background-color 0.1s;
+}
+
+.list-row:hover {
+  background: var(--panel2);
+}
+
+.list-row.selected {
+  background: var(--accent-bg);
+}
+
+.list-row:active {
+  background: var(--panel3);
+}
+
+.list-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.list-row.selected .list-label {
+  font-weight: 600;
+}
+
+.list-row.branch .list-label {
+  color: var(--dim);
+}
+
+.list-trail {
+  margin-left: auto;
+  padding-left: 6px;
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* The caret zone is always there, so names line up whether a row is a branch or not. */
+.caret {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 12px;
+  color: var(--dim);
+}
+
+/* ------------------------------------------------------------------ key value panel */
+
+.panel {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.kv {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  min-height: 30px;
+  padding: 5px var(--pad);
+  border-bottom: 1px solid var(--border);
+}
+
+.kv:last-child {
+  border-bottom: 0;
+}
+
+.kv .k {
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.kv .v {
+  margin-left: auto;
+  min-width: 0;
+  font: 11px var(--mono);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ value tree */
+
+.vrow {
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) auto minmax(90px, 1.3fr);
+  align-items: center;
+  gap: var(--gap);
+  min-height: var(--row);
+  padding-right: 2px;
+}
+
+.vrow .vname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.vrow.branch .vname {
+  color: var(--dim);
+}
+
+.vrow .vval {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ------------------------------------------------------------------ table */
+
+table.grid {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table.grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: var(--row);
+  padding: 0 8px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--faint);
+  background: var(--ground);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+table.grid td {
+  height: var(--row);
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+table.grid tr.row {
+  cursor: pointer;
+}
+
+table.grid tr.row:hover td {
+  background: var(--cell-hover);
+}
+
+table.grid tr.row.selected td {
+  background: var(--accent-bg);
+}
+
+table.grid td.name {
+  color: var(--text);
+}
+
+table.grid td.name > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}

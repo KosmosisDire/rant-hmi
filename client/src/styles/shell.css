@@ -1,0 +1,231 @@
+/* The frame and the slots a screen fills. The only file that sizes anything. */
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+}
+
+/* ------------------------------------------------------------------ top bar */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  padding: 0 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 0 10px var(--shadow);
+  position: relative;
+  z-index: 10;
+}
+
+.logo {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  color: var(--accent);
+}
+
+.tabs {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  margin-right: auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* The tab on show is told by colour and an accent underline that is always there,
+   transparent while off, so nothing moves. */
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 100%;
+  padding: 0 13px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dim);
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 0.12s;
+}
+
+.tab:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.tab .count {
+  font: 10px var(--mono);
+  color: var(--faint);
+}
+
+.bar-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius);
+  color: var(--dim);
+}
+
+.bar-btn:hover {
+  color: var(--text);
+  background: var(--panel3);
+}
+
+/* ------------------------------------------------------------------ status bar */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 26px;
+  padding: 0 14px;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  position: relative;
+  z-index: 10;
+}
+
+.statusbar .stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statusbar .right {
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------------------ screens */
+
+.content {
+  min-height: 0;
+  position: relative;
+}
+
+.screen {
+  display: flex;
+  height: 100%;
+}
+
+.sidebar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  box-shadow: 0 0 15px var(--shadow);
+  position: relative;
+  z-index: 2;
+}
+
+.sidebar.left {
+  width: 300px;
+  border-right: 1px solid var(--border);
+}
+
+.sidebar.right {
+  width: 360px;
+  border-left: 1px solid var(--border);
+}
+
+.detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ground);
+}
+
+.detail-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 16px 18px 4px;
+}
+
+.hero {
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.hint {
+  flex: 0 0 auto;
+  padding: 0 18px 10px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 18px 18px;
+}
+
+/* A screen that is not built yet says what comes there. */
+.later {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  color: var(--faint);
+}
+
+.later .hero {
+  color: var(--dim);
+}
+
+/* ------------------------------------------------------------------ narrow screens */
+
+@media (max-width: 900px) {
+  body {
+    overflow: auto;
+  }
+
+  .app {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .screen {
+    flex-direction: column;
+    height: auto;
+  }
+
+  .sidebar.left,
+  .sidebar.right {
+    width: auto;
+    max-height: 45vh;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .detail {
+    min-height: 40vh;
+  }
+}

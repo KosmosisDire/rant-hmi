@@ -1,0 +1,26 @@
+[package]
+name = "rant-hmi"
+version = "0.0.1"
+edition = "2024"
+description = "The Rant HMI backend: one Rant node on the system that serves the editor and every screen"
+publish = false
+
+[[bin]]
+name = "rant-hmi"
+path = "src/main.rs"
+
+[dependencies]
+rant = { package = "rant-middleware", git = "https://github.com/KosmosisDire/Rant.git", tag = "crate-v0.0.31" }
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+ciborium = "0.2"
+clap = { version = "4", features = ["derive"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
+toml = "0.8"
+tower-http = { version = "0.6", features = ["fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ts-rs = { version = "10", features = ["serde-json-impl"] }

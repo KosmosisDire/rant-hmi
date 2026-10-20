@@ -1,0 +1,149 @@
+/* The Design tab: the artboard, its selection, the outline and the property fields. */
+
+.artboard {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--ground);
+  touch-action: none;
+}
+
+.page-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+/* The grid every placement snaps to: faint cells, firmer every four. */
+.page.design {
+  box-shadow:
+    0 0 0 1px var(--border2),
+    0 10px 30px rgba(0, 0, 0, 0.45);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size:
+    11px 11px,
+    11px 11px,
+    44px 44px,
+    44px 44px;
+}
+
+.page.design .el {
+  cursor: move;
+}
+
+.page.design .el.faulty {
+  outline: 1px dashed var(--red);
+  outline-offset: -1px;
+}
+
+/* The selection: a ring at screen size, so its grips stay the same size at any zoom. */
+.ring {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  pointer-events: none;
+}
+
+.handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -5px 0 0 -5px;
+  background: var(--panel);
+  border: 1.5px solid var(--accent);
+  pointer-events: auto;
+}
+
+.handle.nw { left: 0; top: 0; cursor: nwse-resize; }
+.handle.n { left: 50%; top: 0; cursor: ns-resize; }
+.handle.ne { left: 100%; top: 0; cursor: nesw-resize; }
+.handle.e { left: 100%; top: 50%; cursor: ew-resize; }
+.handle.se { left: 100%; top: 100%; cursor: nwse-resize; }
+.handle.s { left: 50%; top: 100%; cursor: ns-resize; }
+.handle.sw { left: 0; top: 100%; cursor: nesw-resize; }
+.handle.w { left: 0; top: 50%; cursor: ew-resize; }
+
+.zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 10px;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--float);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+}
+
+/* ------------------------------------------------------------------ outline */
+
+.pages {
+  flex: 0 0 auto;
+  max-height: 30%;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.layers-head {
+  border-top: 1px solid var(--border);
+}
+
+.layer-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--dim);
+}
+
+/* ------------------------------------------------------------------ fields */
+
+.field {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 2px 8px;
+  min-height: 30px;
+}
+
+.field > label {
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* A field holding an expression is outlined in the blue of things the HMI computes. */
+.field.bound .editor {
+  border-color: var(--blue);
+}
+
+.field-note {
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--amber);
+  word-break: break-word;
+}
+
+.placement {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 12px;
+}
+
+.placement .field {
+  grid-template-columns: 14px 1fr;
+}
+
+.editor.css {
+  height: auto;
+  min-height: 84px;
+  padding: 6px;
+  line-height: 1.5;
+  resize: vertical;
+}
