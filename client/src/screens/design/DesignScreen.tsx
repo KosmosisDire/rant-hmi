@@ -1,4 +1,4 @@
-import { createEffect, createSignal, on, onCleanup, onMount, Show } from "solid-js";
+import { batch, createEffect, createSignal, on, onCleanup, onMount, Show } from "solid-js";
 import { send } from "../../net/connection";
 import { state } from "../../state/store";
 import { currentPage, openPage } from "../../state/view";
@@ -11,6 +11,13 @@ import { boxOf, childrenOf, find, literal, moveTo, parentOf, sendEdits, tops } f
 /** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
 export type Pick = (id: string | null, add?: boolean) => void;
 
+/** A request to type into an element's field: `key`'s, else its main one. `n` counts. */
+export interface Typing {
+  id: string;
+  key?: string;
+  n: number;
+}
+
 export function DesignScreen(p: { shown: boolean }) {
   const [selection, setSelection] = createSignal<string[]>([]);
   const pick: Pick = (id, add = false) => {
@@ -18,6 +25,20 @@ export function DesignScreen(p: { shown: boolean }) {
     else if (!add) setSelection([id]);
     else setSelection((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   };
+  const [typing, setTyping] = createSignal<Typing | null>(null);
+  let typed = 0;
+  /** Picks an element alone and puts the caret in its field, as a double click does. */
+  const edit = (id: string, key?: string) =>
+    batch(() => {
+      setSelection([id]);
+      setTyping({ id, key, n: ++typed });
+    });
+  // a request lasts while its element is the one selected
+  createEffect(() => {
+    const t = typing();
+    const s = selection();
+    if (t && !(s.length === 1 && s[0] === t.id)) setTyping(null);
+  });
 
   // what this screen just made: a new page opens, a new element is selected
   createEffect(
@@ -120,15 +141,15 @@ export function DesignScreen(p: { shown: boolean }) {
   return (
     <div class="screen" hidden={!p.shown}>
       <aside class="sidebar left">
-        <Outline page={currentPage()} selected={selection()} onPick={pick} />
+        <Outline page={currentPage()} selected={selection()} onPick={pick} onEdit={edit} />
       </aside>
       <section class="detail">
         <Show when={currentPage()} fallback={<div class="later">No page yet.</div>}>
-          {(page) => <Artboard page={page()} selected={selection()} onPick={pick} />}
+          {(page) => <Artboard page={page()} selected={selection()} onPick={pick} onEdit={edit} />}
         </Show>
       </section>
       <aside class="sidebar right">
-        <ElementInspector page={currentPage()} selected={selection()} />
+        <ElementInspector page={currentPage()} selected={selection()} typing={typing()} />
       </aside>
     </div>
   );

@@ -30,6 +30,7 @@ import {
   Type,
   X,
 } from "../../ui/icons";
+import type { Typing } from "./DesignScreen";
 import { type Align, align, find, sendEdits, setProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, with an example of what it takes. Anything else lives
@@ -61,7 +62,7 @@ const WhereContext = createContext<() => Where>((): Where => ({ scope: pageScope
 
 /** The right sidebar: the selected element's properties, a word on several, or the page's
  *  when none is selected. */
-export function ElementInspector(p: { page: Page | undefined; selected: string[] }) {
+export function ElementInspector(p: { page: Page | undefined; selected: string[]; typing: Typing | null }) {
   const element = createMemo(() => (p.page && p.selected.length === 1 ? find(p.page.children, p.selected[0]) : undefined));
   const where = createMemo((): Where => {
     const doc = p.page;
@@ -74,7 +75,7 @@ export function ElementInspector(p: { page: Page | undefined; selected: string[]
       {(page) => (
         <WhereContext.Provider value={where}>
           <Show when={element()} fallback={p.selected.length > 1 ? <Several page={page()} ids={p.selected} /> : <PageInspector page={page()} />}>
-            {(e) => <Properties page={page().id} element={e()} />}
+            {(e) => <Properties page={page().id} element={e()} typing={p.typing?.id === e().id ? p.typing : null} />}
           </Show>
         </WhereContext.Provider>
       )}
@@ -251,7 +252,7 @@ function PageInspector(p: { page: Page }) {
   );
 }
 
-function Properties(p: { page: string; element: Element }) {
+function Properties(p: { page: string; element: Element; typing: Typing | null }) {
   // a property's value and its write, as a field takes them
   const prop = (key: string) => ({
     get value() {
@@ -262,6 +263,12 @@ function Properties(p: { page: string; element: Element }) {
   const text = () => p.element.tag === "span";
   const instance = () => p.element.tag === "use";
   const input = () => p.element.tag === "input";
+  // the field a double click types into: the one asked for, else the element's main one
+  const typed = (key: string) => {
+    const t = p.typing;
+    const want = t?.key ?? (text() ? "text" : input() ? "value" : "name");
+    return t && want === key ? t.n : undefined;
+  };
   const other = () =>
     Object.entries(p.element.props)
       .filter(([k]) => !OWN.has(k) && !NAMED.has(k))
@@ -301,7 +308,7 @@ function Properties(p: { page: string; element: Element }) {
       </div>
       <div class="pane-body pad">
         <div class="section">Element</div>
-        <Field {...prop("name")} label="Name" plain />
+        <Field {...prop("name")} label="Name" plain focus={typed("name")} />
         <div class="section">Placement</div>
         <div class="placement">
           <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} />}</For>
@@ -334,11 +341,11 @@ function Properties(p: { page: string; element: Element }) {
         </Show>
         <Show when={text()}>
           <div class="section">Text</div>
-          <Field {...prop("text")} label="Text" />
+          <Field {...prop("text")} label="Text" focus={typed("text")} />
         </Show>
         <Show when={input()}>
           <div class="section">Input</div>
-          <Field {...prop("value")} label="Value" placeholder="Speed" />
+          <Field {...prop("value")} label="Value" placeholder="Speed" focus={typed("value")} />
           <div class="field-hint">A name such as Speed takes what an operator enters. Anything else only shows.</div>
         </Show>
         <Show when={text() || input()}>
@@ -443,7 +450,7 @@ function Events(p: { page: string; element: Element }) {
 
 /** One property, an expression unless `plain`. Under it, what stops it showing, and for
  *  words that fail for want of quotes, a way to make them text. */
-function Field(p: { label: string; value: string; onWrite: (text: string | null) => void; placeholder?: string; plain?: boolean }) {
+function Field(p: { label: string; value: string; onWrite: (text: string | null) => void; placeholder?: string; plain?: boolean; focus?: number }) {
   const where = useContext(WhereContext);
   const value = () => p.value;
   const write = (t: string) => p.onWrite(t.trim() === "" ? null : t);
@@ -457,7 +464,13 @@ function Field(p: { label: string; value: string; onWrite: (text: string | null)
   return (
     <div class="field" classList={{ bound: !p.plain && !isConstant(value()) }}>
       <label>{p.label}</label>
-      <DraftInput value={value()} placeholder={p.placeholder} onCommit={write} complete={p.plain ? undefined : (t, c) => complete(t, c, "expression", where().names)} />
+      <DraftInput
+        value={value()}
+        placeholder={p.placeholder}
+        focus={p.focus}
+        onCommit={write}
+        complete={p.plain ? undefined : (t, c) => complete(t, c, "expression", where().names)}
+      />
       <Show when={status()}>
         {(s) => (
           <span class="field-note">

@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createEffect, createSignal, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { Completion, Suggestion } from "../state/complete";
 import { Suggestions } from "./Suggestions";
@@ -19,8 +19,16 @@ export function DraftInput(p: {
   class?: string;
   placeholder?: string;
   title?: string;
+  /** Each new number puts the caret here with the text selected. */
+  focus?: number;
 }) {
   let field!: Field;
+  createEffect(() => {
+    if (p.focus) {
+      field.focus();
+      field.select();
+    }
+  });
   const [draft, setDraft] = createSignal<string | null>(null);
   const [bad, setBad] = createSignal(false);
   const [offer, setOffer] = createSignal<Completion | null>(null);

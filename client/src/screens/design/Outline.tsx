@@ -18,7 +18,7 @@ const STARTS: Record<Exclude<Tag, "use">, Record<string, string>> = {
 };
 
 /** The left sidebar: the pages, and the open page's elements as layers. */
-export function Outline(p: { page: Page | undefined; selected: string[]; onPick: Pick }) {
+export function Outline(p: { page: Page | undefined; selected: string[]; onPick: Pick; onEdit: (id: string, key: string) => void }) {
   const [picking, setPicking] = createSignal(false);
   // into the frame picked last, at its top left, else onto the page
   const place = (tag: Tag, props: Record<string, string>, component: string | null = null) => {
@@ -127,7 +127,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
         </div>
       </Show>
       <Show when={p.page && p.page.children.length > 0} fallback={<div class="pane-body placeholder">Add a frame or a text.</div>}>
-        <LayerList page={p.page!} selected={p.selected} onPick={p.onPick} />
+        <LayerList page={p.page!} selected={p.selected} onPick={p.onPick} onEdit={p.onEdit} />
       </Show>
     </>
   );
@@ -138,7 +138,7 @@ type Spot = { id: string; where: "front" | "behind" | "inside" };
 
 /** The layers, front first as they stack. A row dragged onto another's edge goes in front of
  *  or behind it, onto a frame's middle into that frame. */
-function LayerList(p: { page: Page; selected: string[]; onPick: Pick }) {
+function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (id: string, key: string) => void }) {
   let host!: HTMLDivElement;
   let press: { id: string; y: number } | null = null;
   const [dragging, setDragging] = createSignal<string | null>(null);
@@ -195,12 +195,20 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick }) {
 
   return (
     <div class="pane-body" ref={host} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-      <Layers elements={p.page.children} depth={0} selected={p.selected} dragging={dragging()} spot={spot()} onPick={p.onPick} />
+      <Layers elements={p.page.children} depth={0} selected={p.selected} dragging={dragging()} spot={spot()} onPick={p.onPick} onEdit={p.onEdit} />
     </div>
   );
 }
 
-function Layers(p: { elements: Element[]; depth: number; selected: string[]; dragging: string | null; spot: Spot | null; onPick: Pick }) {
+function Layers(p: {
+  elements: Element[];
+  depth: number;
+  selected: string[];
+  dragging: string | null;
+  spot: Spot | null;
+  onPick: Pick;
+  onEdit: (id: string, key: string) => void;
+}) {
   const at = (id: string) => (p.spot?.id === id ? p.spot.where : undefined);
   return (
     <For each={[...p.elements].reverse()}>
@@ -213,6 +221,7 @@ function Layers(p: { elements: Element[]; depth: number; selected: string[]; dra
             data-frame={e.tag === "div" ? "" : undefined}
             data-open={e.children.length > 0 ? "" : undefined}
             onClick={(ev) => p.onPick(e.id, ev.shiftKey || ev.ctrlKey || ev.metaKey)}
+            onDblClick={() => p.onEdit(e.id, "name")}
           >
             <span style={{ width: `${p.depth * 14}px` }} />
             <span class="layer-icon">
@@ -232,7 +241,7 @@ function Layers(p: { elements: Element[]; depth: number; selected: string[]; dra
             <span class="list-trail mono faint">{e.id}</span>
           </button>
           <Show when={e.children.length > 0}>
-            <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} onPick={p.onPick} />
+            <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} onPick={p.onPick} onEdit={p.onEdit} />
           </Show>
         </>
       )}

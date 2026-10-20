@@ -63,7 +63,7 @@ function ink(g: CanvasRenderingContext2D, ground: string): string {
   return 0.2126 * r + 0.7152 * gr + 0.0722 * b > 128 ? "0, 0, 0" : "255, 255, 255";
 }
 
-export function Artboard(p: { page: Page; selected: string[]; onPick: Pick }) {
+export function Artboard(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (id: string) => void }) {
   let host!: HTMLDivElement;
   let grid!: HTMLCanvasElement;
   const [view, setView] = createSignal({ k: 0.5, x: 0, y: 0 });
@@ -244,7 +244,19 @@ export function Artboard(p: { page: Page; selected: string[]; onPick: Pick }) {
   };
 
   return (
-    <div class="artboard" ref={host} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+    <div
+      class="artboard"
+      ref={host}
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+      onDblClick={(e) => {
+        // the press captured the pointer, so the target is the artboard: look beneath it
+        const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest(".el[data-id]")?.getAttribute("data-id");
+        if (hit) p.onEdit(hit);
+      }}
+    >
       <canvas class="artboard-grid" ref={grid} />
       <div class="page-layer" style={{ transform: `translate(${view().x}px, ${view().y}px) scale(${view().k})` }}>
         <PageView page={p.page} overrides={overrides} design />
