@@ -258,8 +258,9 @@ impl fmt::Display for Value {
     }
 }
 
-/// What screens see a value as, declared for TypeScript only: bytes arrive as a Uint8Array and
-/// a whole number past JS's safe ones as a bigint.
+// What screens see a value as, declared for TypeScript only: bytes arrive as a Uint8Array and
+// a whole number past JS's safe ones as a bigint. Not a doc comment, since ts-rs writes the
+// file both from here and from every type using it, and those must agree.
 #[derive(TS)]
 #[ts(rename = "Value", untagged, export)]
 #[allow(dead_code)]
