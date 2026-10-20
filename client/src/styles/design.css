@@ -162,6 +162,71 @@
   padding: 6px 0;
 }
 
+/* Components as cards, each a live picture of it over its name. A sideways drag places one,
+   while a vertical swipe still scrolls them. */
+.pages.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  align-content: start;
+  gap: 6px;
+  padding: 6px;
+}
+
+.pages.cards .list-hint {
+  grid-column: 1 / -1;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 6px;
+  border-radius: 6px;
+  text-align: left;
+  touch-action: pan-y;
+}
+
+:root:not([data-pointer="touch"]) .card:hover {
+  background: var(--panel2);
+}
+
+.card.selected {
+  background: var(--accent-bg);
+}
+
+.card.selected .list-label {
+  font-weight: 600;
+}
+
+.card.dragged {
+  opacity: 0.45;
+}
+
+.card-thumb {
+  position: relative;
+  height: 64px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--panel3);
+}
+
+.card-fit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+}
+
+/* What a drag carries, under the pointer and never in its way. */
+.card-ghost {
+  position: fixed;
+  z-index: 50;
+  transform: translate(-50%, -50%);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
 /* With the layers folded away, the lists share their room. */
 .pages.tall {
   flex: 0 1 auto;

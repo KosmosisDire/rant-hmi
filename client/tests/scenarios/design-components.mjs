@@ -56,6 +56,6 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.openPage("Lamps");
   await d.el(first.id).click({ position: { x: 5, y: 5 } });
   await side("right").locator("button", { hasText: "Open it" }).click();
-  await eventually(async () => (await page.locator(".pages .list-row.selected").first().textContent()).includes("Light"), "Open it to open the component");
+  await eventually(async () => (await page.locator(".pages :is(.list-row, .card).selected").first().textContent()).includes("Light"), "Open it to open the component");
   check(props(hmi, lamp.id, hmi.page(lamp.id).children[0].id) !== undefined, "the component lost its parts");
 }

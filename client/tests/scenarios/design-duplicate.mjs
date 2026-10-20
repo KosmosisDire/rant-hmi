@@ -6,7 +6,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await hmi.addElement(line, "div", { name: "Box", x: "44", y: "44", w: "88", h: "88", background: "#2a2f35" });
   const duplicate = (name) => d.menu(d.pageRow(name), "Duplicate");
   const named = (name) => hmi.state.pages.find((p) => p.name === name);
-  const open = (name) => page.locator(".pages .list-row.selected", { hasText: name }).waitFor();
+  const open = (name) => page.locator(".pages :is(.list-row, .card).selected", { hasText: name }).waitFor();
 
   await d.openPage("Line");
   await duplicate("Line");

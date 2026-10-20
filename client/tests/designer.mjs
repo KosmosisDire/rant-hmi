@@ -12,10 +12,10 @@ export function designer(page) {
   // a page or component from its list's +, open once its row is the one selected: until then
   // the inspector still shows the one open before, which a name typed now would rename
   const fresh = async (button, named) => {
-    const rows = left().locator(".pages .list-row");
+    const rows = left().locator(".pages :is(.list-row, .card)");
     const before = await rows.count();
     await left().locator(`button[title="${button}"]`).click();
-    const open = left().locator(".pages .list-row.selected .list-label");
+    const open = left().locator(".pages :is(.list-row, .card).selected .list-label");
     await until(async () => (await rows.count()) > before && (await open.count()) === 1 && named.test((await open.textContent()) ?? ""), `the new one from ${button}`);
   };
   // the element the editor has selected, by its layer row
@@ -43,7 +43,7 @@ export function designer(page) {
     /** Opens a page or a component by its exact name. */
     async openPage(name) {
       await d.tab("Design");
-      await page.locator(".pages .list-row", { has: page.getByText(name, { exact: true }) }).click();
+      await page.locator(".pages :is(.list-row, .card)", { has: page.getByText(name, { exact: true }) }).click();
     },
 
     el(id) {
@@ -108,7 +108,7 @@ export function designer(page) {
       await d.tab("Design");
       await fresh("Add a component", /^Component\d*$/);
       await d.setField("Name", name);
-      await left().locator(".list-row.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
+      await left().locator(":is(.list-row, .card).selected", { has: page.getByText(name, { exact: true }) }).waitFor();
       await d.set({ w: String(w), h: String(h) });
     },
 
@@ -215,7 +215,7 @@ export function designer(page) {
 
     /** A row of the pages or components list by its name. */
     pageRow(name) {
-      return left().locator(".pages .list-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
+      return left().locator(".pages :is(.list-row, .card)", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
     },
 
     /** Selects an element by its name in the layers. */

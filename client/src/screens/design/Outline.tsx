@@ -9,6 +9,7 @@ import { openPage } from "../../state/view";
 import { ChevronDown, ChevronRight, Component, CopyPlus, File, Plus, Star, Trash } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
 import { addElement } from "./add";
+import { ComponentCard } from "./ComponentCard";
 import type { Pick } from "./DesignScreen";
 import { addMenu, elementMenu, layersMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
@@ -116,19 +117,9 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
           <Plus size={14} />
         </button>
       </FoldHead>
-      <div class="pages" classList={{ tall: !shown("layers") }} hidden={!shown("components")}>
+      <div class="pages cards" classList={{ tall: !shown("layers") }} hidden={!shown("components")}>
         <For each={components()} fallback={<div class="field-hint list-hint">Make a part once, place it on many pages.</div>}>
-          {(c) => (
-            <button class="list-row" classList={{ selected: c.id === p.page?.id }} onClick={() => openPage(c.id)} onContextMenu={(e) => pageMenu(e, c)}>
-              <span class="kind kind-local">
-                <Component size={14} />
-              </span>
-              <span class="list-label">{c.name}</span>
-              <span class="list-trail mono">
-                {c.width}x{c.height}
-              </span>
-            </button>
-          )}
+          {(c) => <ComponentCard component={c} open={c.id === p.page?.id} page={p.page} onMenu={(e) => pageMenu(e, c)} />}
         </For>
       </div>
       <FoldHead title="Layers" pane="layers">
