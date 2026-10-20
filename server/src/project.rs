@@ -342,6 +342,10 @@ impl Project {
         if self.find(&import.alias).is_some() {
             return Err(format!("{} is already an import", import.alias));
         }
+        // the mesh gives a node one handle per entity, so one alias each
+        if let Some(other) = self.imports.iter().find(|i| i.entity == import.entity) {
+            return Err(format!("{} is already imported as {}", import.entity, other.alias));
+        }
         self.imports.push(import);
         self.save()
     }
@@ -655,6 +659,7 @@ mod tests {
         assert!(p.import(Import { alias: "Line-1".into(), ..speed() }).is_err());
         p.import(speed()).unwrap();
         assert_eq!(p.import(speed()).unwrap_err(), "Speed is already an import");
+        assert_eq!(p.import(Import { alias: "Pace".into(), ..speed() }).unwrap_err(), "Line1/Speed is already imported as Speed");
         p.unimport("Speed").unwrap();
         assert!(p.imports.is_empty());
         fs::remove_dir_all(&dir).unwrap();

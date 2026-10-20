@@ -80,6 +80,9 @@ export class Hmi {
   async import(alias, entity, intent = "read") {
     await this.until((s) => s.entities.some((e) => e.name === entity), `${entity} on the mesh`);
     const kind = this.state.entities.find((e) => e.name === entity).kind;
+    // an entity takes one alias, so an earlier scenario's import of it goes first
+    const before = this.state.imports.find((i) => i.entity === entity && i.alias !== alias);
+    if (before) await this.unimport(before.alias);
     this.send({ type: "import", import: { alias, entity, kind, intent } });
     await this.next((m) => m.type === "imports" && m.imports.some((i) => i.alias === alias));
   }
