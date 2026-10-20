@@ -171,13 +171,14 @@ export function Artboard(p: {
     if (p.page.id !== fittedFor) fit();
   });
 
-  // a written drag keeps showing until the page carries its numbers, so nothing jumps back
+  // a written drag keeps showing until the page carries its numbers, so nothing jumps back.
+  // The page is read before the skip, so its numbers arriving after the drag run this again.
   createEffect(() => {
     const h = held();
     for (const id of Object.keys(h)) {
-      if (drag && "ids" in drag && drag.ids.includes(id)) continue;
       const e = find(p.page.children, id);
-      if (!e || ["x", "y", "w", "h"].every((k) => number(e.props[k]) === h[id].box[k as keyof Box])) release(id);
+      const carried = !e || ["x", "y", "w", "h"].every((k) => number(e.props[k]) === h[id].box[k as keyof Box]);
+      if (carried && !(drag && "ids" in drag && drag.ids.includes(id))) release(id);
     }
   });
 

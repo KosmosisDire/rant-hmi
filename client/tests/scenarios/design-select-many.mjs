@@ -12,6 +12,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.openPage("Many");
   const x = (id) => props(hmi, pageId, id).x;
   const head = page.locator(".screen:not([hidden]) .sidebar.right .head-title");
+  const drawn = (id) => d.el(id).evaluate((e) => `${e.style.left} ${e.style.top}`);
   const row = (name) => page.locator(".screen:not([hidden]) .sidebar.left .list-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
 
   // a box drawn with Shift around A and B takes both, and leaves C
@@ -34,6 +35,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(props(hmi, pageId, a).y === props(hmi, pageId, b).y, "A and B left their row");
   await page.keyboard.press("Control+z");
   await eventually(() => x(a) === "44" && x(b) === "220", "one undo to take both back");
+  // the page acts on what it draws, so it draws the undo before the next key
+  await eventually(async () => (await drawn(a)) === "44px 44px" && (await drawn(b)) === "220px 44px", "the page to draw both back", 1500);
 
   await page.keyboard.press("ArrowRight");
   await eventually(() => x(a) === "55" && x(b) === "231", "the arrows to nudge both");
@@ -44,6 +47,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await head.textContent()) === "2 elements", "Shift click to take B away");
 
   await hmi.setProps(pageId, c, { x: "500", y: "132" });
+  await eventually(async () => (await drawn(c)) === "500px 132px", "the page to draw C moved");
   await page.keyboard.press("Control+a");
   await eventually(async () => (await head.textContent()) === "3 elements", "Ctrl A to take the page");
   const tool = (title) => page.locator(`.screen:not([hidden]) .sidebar.right button[title="${title}"]`);
