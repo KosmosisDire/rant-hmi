@@ -309,6 +309,45 @@ export function Artboard(p: {
     onCleanup(() => cancelAnimationFrame(frame));
   });
 
+  // how the one picked element turns as drawn, each frame while it is picked, as live values
+  // may turn it: its angle, the point it turns about from its corner, and that point on screen
+  const [turn, setTurn] = createSignal<{ id: string; angle: number; ox: number; oy: number; at: { x: number; y: number } } | null>(null);
+  createEffect(() => {
+    const id = p.selected.length === 1 ? p.selected[0] : null;
+    setTurn(null);
+    if (!id) return;
+    let frame = requestAnimationFrame(function measure() {
+      setTurn(turnOf(id));
+      frame = requestAnimationFrame(measure);
+    });
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
+  const turnOf = (id: string) => {
+    const el = host.querySelector(`.page-layer [data-id="${id}"]`);
+    if (!el) return null;
+    const style = getComputedStyle(el);
+    const angle = parseFloat(style.rotate) || 0;
+    const [ox, oy] = style.transformOrigin.split(" ").map(parseFloat);
+    const r = host.getBoundingClientRect();
+    if (el instanceof SVGGraphicsElement) {
+      // a shape turns about a point of its own outline's box, in the drawing's units
+      const b = el.getBBox();
+      const m = (el.parentNode as SVGGraphicsElement).getScreenCTM();
+      if (!m) return null;
+      const at = new DOMPoint(b.x + ox, b.y + oy).matrixTransform(m);
+      return { id, angle, ox, oy, at: { x: at.x - r.left, y: at.y - r.top } };
+    }
+    const b = absolute(p.page, id, overrides);
+    if (!b) return null;
+    const v = view();
+    return { id, angle, ox, oy, at: { x: v.x + (b.x + ox) * v.k, y: v.y + (b.y + oy) * v.k } };
+  };
+  // the point shows once the element says how it turns
+  const turns = (id: string) => {
+    const e = find(p.page.children, id);
+    return !!e && (e.props.rotate !== undefined || e.props["transform-origin"] !== undefined);
+  };
+
   /** Where an element's ring goes on screen, on whole pixels so its thin line stays crisp. */
   const ring = (id: string) => {
     if (shape(id)) {
@@ -323,7 +362,10 @@ export function Artboard(p: {
     const v = view();
     const [left, top] = [Math.round(v.x + b.x * v.k), Math.round(v.y + b.y * v.k)];
     const [right, bottom] = [Math.round(v.x + (b.x + b.w) * v.k), Math.round(v.y + (b.y + b.h) * v.k)];
-    return { left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px` };
+    // a frame's ring turns with it
+    const t = turn();
+    const turned = t?.id === id && t.angle !== 0 ? { transform: `rotate(${t.angle}deg)`, "transform-origin": `${t.ox * v.k}px ${t.oy * v.k}px` } : {};
+    return { left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px`, ...turned };
   };
 
   return (
@@ -361,6 +403,7 @@ export function Artboard(p: {
           </Show>
         )}
       </For>
+      <Show when={turn() && turns(turn()!.id) && turn()}>{(t) => <div class="origin" style={{ left: `${t().at.x}px`, top: `${t().at.y}px` }} />}</Show>
       <div class="zoom">
         <button class="icon-btn mono" title="Show at 100%" onClick={actual} onPointerDown={(e) => e.stopPropagation()}>
           {Math.round(view().k * 100)}%

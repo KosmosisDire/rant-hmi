@@ -34,7 +34,7 @@ import {
 import { makeComponent } from "./component";
 import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, kindOf, type Where, WhereContext } from "./Field";
-import { AddShape, GEOMETRY, PAINT, shapeKeys } from "./ShapeFields";
+import { AddShape, GEOMETRY, PAINT, shapeKeys, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { type Align, align, chain, find, scopeOf, sendEdits, setHandler, setProps, showProps, spread, tops } from "./tree";
 
@@ -52,7 +52,7 @@ const TEXT_LOOK: Look[] = [
   ["Weight", "font-weight", { kind: "choice", options: ["300", "400", "500", "600", "700"], placeholder: "400" }],
   ["Align", "text-align", { kind: "choice", options: ['"left"', '"center"', '"right"'], placeholder: '"left"' }],
 ];
-const NAMED = new Set([...[...LOOK, ...TEXT_LOOK].map(([, key]) => key), "border-width", "border-style", "border-color"]);
+const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color"]);
 
 /** The right sidebar: the selected element's properties, a word on several, or the page's
  *  when none is selected. */
@@ -322,6 +322,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} />}</For>
           </div>
           <div class="field-hint">Pixels, or a share of what holds it: 50% of its width for x and w, of its height for y and h.</div>
+          <Turn prop={prop} />
         </Show>
         <Show when={p.element.tag === "img"}>
           <div class="section">Image</div>
@@ -344,6 +345,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={shape()}>
           <div class="section">{TAG_WORDS[p.element.tag]}</div>
           <For each={GEOMETRY[p.element.tag] ?? []}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} focus={typed(key)} />}</For>
+          <Turn prop={prop} />
           <div class="section">Paint</div>
           <For each={PAINT.filter(([, key]) => !(p.element.tag === "g" && key === "transform"))}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More attributes</div>
@@ -411,6 +413,17 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         </button>
       </div>
     </WhereContext.Provider>
+  );
+}
+
+/** How the element turns, the same section for a frame and a shape. */
+function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" | "onShow"> }) {
+  return (
+    <>
+      <div class="section">Turn</div>
+      <For each={TURN}>{([label, key, more]) => <Field {...p.prop(key)} {...more} label={label} />}</For>
+      <div class="field-hint">Degrees, clockwise, about a point of its own box: "50% 100%" is the middle of its bottom edge. The canvas marks the point.</div>
+    </>
   );
 }
 

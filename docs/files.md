@@ -80,6 +80,9 @@ component placed on a page is a tag named after it.
   property goes in `style`.
 - `x`, `y`, `w` and `h` are pixels, or with a trailing `%` a share of what holds the element:
   its width for `x` and `w`, its height for `y` and `h`. `w="50%"`, `x="(Speed * 10)%"`.
+- `rotate`, in degrees clockwise, and `transform-origin`, the point it turns about, are CSS
+  on every element, shapes too: `rotate: Speed * 90; transform-origin: "50% 100%"`. A
+  shape's point is on its own outline's box, as a frame's is.
 - Every value but the name is an expression, kept raw: text goes in quotes, and `a < b`
   needs no escaping.
 - `<on>` holds a handler's code, first inside its element. A `hold` handler runs once a

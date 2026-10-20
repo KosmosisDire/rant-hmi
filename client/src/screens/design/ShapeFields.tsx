@@ -42,8 +42,14 @@ export const PAINT: Spec[] = [
 ];
 
 /** The attributes a shape's fields name, so the rest show as more attributes. */
+/** How any element turns: by degrees, clockwise, about a point of its own box. */
+export const TURN: Spec[] = [
+  ["Rotate", "rotate", n("0")],
+  ["Turns about", "transform-origin", { kind: "choice", options: ['"50% 50%"', '"50% 100%"', '"50% 0%"', '"0% 50%"', '"100% 50%"', '"0% 0%"'], placeholder: '"50% 50%"' }],
+];
+
 export function shapeKeys(tag: Tag): Set<string> {
-  return new Set([...(GEOMETRY[tag] ?? []), ...PAINT].map(([, key]) => key));
+  return new Set([...(GEOMETRY[tag] ?? []), ...PAINT, ...TURN].map(([, key]) => key));
 }
 
 /** The shapes the inspector adds, in the order its menu lists them. */

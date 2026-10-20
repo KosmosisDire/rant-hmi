@@ -109,8 +109,13 @@ export function PageView(p: { page: Page; overrides?: Overrides; size?: { width:
 
 function css(key: string, v: unknown): string {
   const text = String(v);
-  return LENGTHS.has(key) && /^-?\d+(\.\d+)?$/.test(text) ? `${text}px` : text;
+  if (!/^-?\d+(\.\d+)?$/.test(text)) return text;
+  return LENGTHS.has(key) ? `${text}px` : key === "rotate" ? `${text}deg` : text;
 }
+
+/** How a shape turns, as CSS: about a point of its own box, as a frame does, never the
+ *  drawing's corner. SVG's own rotate attribute turns a text's letters instead. */
+const TURNS = new Set(["rotate", "transform-origin"]);
 
 function words(v: unknown): string {
   if (v === undefined || v === null) return "";
@@ -312,6 +317,7 @@ function ElementView(p: ElementProps & { at?: At }) {
 function ShapeView(p: ElementProps & { at?: At }) {
   const look = createMemo(() => {
     const attrs: Record<string, string> = {};
+    const style: Record<string, string> = {};
     const faults: string[] = [];
     let unknown = false;
     let text = "";
@@ -324,16 +330,19 @@ function ShapeView(p: ElementProps & { at?: At }) {
       } else if (key === "text") {
         text = words(r.value);
       } else if (r.value !== undefined && r.value !== null && r.value !== "") {
-        attrs[CASED[key] ?? key] = String(r.value);
+        if (TURNS.has(key)) style[key] = css(key, r.value);
+        else attrs[CASED[key] ?? key] = String(r.value);
       }
     }
-    return { attrs, faults, unknown, text };
+    if (Object.keys(style).length > 0) Object.assign(style, { "transform-box": "fill-box", "transform-origin": style["transform-origin"] ?? "50% 50%" });
+    return { attrs, style, faults, unknown, text };
   });
   const press = usePress(p);
   return (
     <Dynamic
       component={p.element.tag}
       {...look().attrs}
+      style={look().style}
       data-id={p.inside ? undefined : p.element.id}
       data-name={p.element.props.name}
       class="el shape"
