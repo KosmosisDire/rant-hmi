@@ -248,10 +248,10 @@ export function runHandler(code: string, scope: Scope, emit: (name: string, payl
         if (key in own) return own[key];
         if (written.has(key)) return written.get(key);
         if (scope.has(key)) return scope.get(key);
-        throw new ReferenceError(`${key} names no input`);
+        throw new ReferenceError(scope.missing(key));
       },
       set: (_, key, value) => {
-        if (typeof key !== "string" || !scope.has(key)) throw new ReferenceError(`${String(key)} names no input`);
+        if (typeof key !== "string" || !scope.has(key)) throw new ReferenceError(scope.missing(String(key)));
         scope.set(key, "", value);
         written.set(key, value);
         return true;
