@@ -11,6 +11,8 @@ export { default as AlignStartHorizontal } from "lucide-solid/icons/align-start-
 export { default as AlignStartVertical } from "lucide-solid/icons/align-start-vertical";
 export { default as AlignVerticalDistributeCenter } from "lucide-solid/icons/align-vertical-distribute-center";
 export { default as ArrowDown } from "lucide-solid/icons/arrow-down";
+export { default as ArrowLeft } from "lucide-solid/icons/arrow-left";
+export { default as ArrowRight } from "lucide-solid/icons/arrow-right";
 export { default as ArrowUp } from "lucide-solid/icons/arrow-up";
 export { default as Braces } from "lucide-solid/icons/braces";
 export { default as BringToFront } from "lucide-solid/icons/bring-to-front";

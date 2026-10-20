@@ -13,10 +13,9 @@ export default async function ({ page, hmi, sys, d, eventually }) {
   const other = await page.context().browser().newContext({ viewport: { width: 1200, height: 800 } });
   const tablet = await other.newPage();
   await tablet.goto(sys.url);
+  await tablet.locator(".tab", { hasText: "Design" }).click();
+  await tablet.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Jog/ }).click();
   await tablet.locator(".tab", { hasText: "Run" }).click();
-  await tablet.locator(".pages .list-row").first().waitFor({ state: "attached" });
-  await tablet.evaluate((id) => localStorage.setItem("rant-hmi.page", id), pageId);
-  await tablet.reload();
   const button = tablet.locator(`.run-layer:not([hidden]) .el[data-id="${jog}"]`);
   const b = await button.boundingBox();
   await tablet.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
