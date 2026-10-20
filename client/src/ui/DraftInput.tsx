@@ -29,15 +29,15 @@ export function DraftInput(p: {
   class?: string;
   placeholder?: string;
   title?: string;
-  /** Each new number puts the caret here with the text selected. */
+  /** Each new number puts the caret here, with the text selected, or at the end of code. */
   focus?: number;
 }) {
   let field!: Field;
   createEffect(() => {
-    if (p.focus) {
-      field.focus();
-      field.select();
-    }
+    if (!p.focus) return;
+    field.focus();
+    if (p.code) field.setSelectionRange(field.value.length, field.value.length);
+    else field.select();
   });
   const [draft, setDraft] = createSignal<string | null>(null);
   const [bad, setBad] = createSignal(false);

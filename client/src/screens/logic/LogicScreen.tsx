@@ -12,7 +12,7 @@ import { complete, componentNames, REPEAT } from "../../state/complete";
 import { brings, flat, offered, ruleBrings } from "../../state/events";
 import { putLocal, state } from "../../state/store";
 import { uses } from "../../state/uses";
-import { currentPage } from "../../state/view";
+import { currentPage, openElement } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
 import { Edge } from "../../ui/Sidebars";
 import { painted } from "../../ui/highlight";
@@ -90,7 +90,7 @@ const onKey = (pg: Page, e: Element, event: string) => `on:${pg.id}:${e.id}:${ev
 /** What a page's or component's handler code names in place of the mesh imports. */
 const namesOf = (pg: Page) => (pg.interface ? componentNames(pg) : undefined);
 
-export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void }) {
+export function LogicScreen(p: { shown: boolean }) {
   const [filter, setFilter] = createSignal("");
   const [chosen, setChosen] = createSignal("");
   const [wanted, setWanted] = createSignal("");
@@ -146,7 +146,7 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
   const handlerMenu = (e: MouseEvent, pg: Page, el: Element, event: string) => {
     setChosen(onKey(pg, el, event));
     openMenu(e, [
-      { label: "Open in Design", icon: <PenTool size={13} />, run: () => p.onOpen(pg.id) },
+      { label: "Open in Design", icon: <PenTool size={13} />, run: () => openElement({ page: pg.id, element: el.id, event }) },
       "-",
       { label: "Delete", icon: <Trash size={13} />, run: () => setHandler(pg.id, el.id, event, null) },
     ]);
@@ -229,9 +229,7 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
               <>
                 <div class="detail-head">
                   <span class="hero mono">{h().e.props.name ?? h().e.id}</span>
-                  <span class="tag">{h().h.event}</span>
-                  <span class="tag">{h().pg.name}</span>
-                  <button class="button" onClick={() => p.onOpen(h().pg.id)}>
+                  <button class="button" onClick={() => openElement({ page: h().pg.id, element: h().e.id, event: h().h.event })}>
                     Open in Design
                   </button>
                 </div>

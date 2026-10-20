@@ -62,6 +62,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
+  // Open in Design shows the element picked, with the caret in its handler
+  check((await logic.locator(".detail-head .tag").count()) === 0, "the handler's head shows tags");
+  await logic.locator(".detail-head button", { hasText: "Open in Design" }).click();
+  const typing = () => page.evaluate(() => document.activeElement?.closest(".screen:not([hidden]) .sidebar.right .event")?.querySelector(".event-name")?.textContent ?? "");
+  await eventually(async () => (await typing()) === "tap", "the caret in the tap handler");
+  const picked = await page.locator(".screen:not([hidden]) .sidebar.left .list-row.selected[data-id]").evaluateAll((rows) => rows.map((r) => r.dataset.id));
+  check(picked.join() === start, `the layers pick ${picked.join(", ")}`);
+  await d.tab("Logic");
+
   // the HMI's own handler on a change brings the new value and the old
   await logic.locator('button[title="Add a handler"]').click();
   await logic.locator(".rule-kind").selectOption("changes");

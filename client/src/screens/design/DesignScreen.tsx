@@ -1,6 +1,6 @@
-import { batch, createEffect, createSignal, on, onCleanup, onMount, Show } from "solid-js";
+import { batch, createEffect, createSignal, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import { state } from "../../state/store";
-import { currentPage, openPage } from "../../state/view";
+import { currentPage, openPage, tookWanted, wanted } from "../../state/view";
 import { Edge } from "../../ui/Sidebars";
 import { Artboard, GRID } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
@@ -59,8 +59,22 @@ export function DesignScreen(p: { shown: boolean }) {
     ),
   );
 
-  // another page opened starts with nothing selected, since ids repeat across pages
-  createEffect(on(() => currentPage()?.id, () => setSelection([]), { defer: true }));
+  // another page opened starts with nothing selected, since ids repeat across pages, unless
+  // an element on it was asked for, as the Logic tab asks for a handler's, once this shows
+  let at = currentPage()?.id;
+  createEffect(() => {
+    const id = currentPage()?.id;
+    const w = p.shown ? wanted() : null;
+    untrack(() => {
+      if (w && w.page === id) {
+        edit(w.element, w.event === undefined ? undefined : `on:${w.event}`);
+        tookWanted();
+      } else if (id !== at) {
+        setSelection([]);
+      }
+      at = id;
+    });
+  });
 
   // an element that went away leaves the selection
   createEffect(() => {

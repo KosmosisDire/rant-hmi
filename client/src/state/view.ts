@@ -79,6 +79,25 @@ export function openPage(id: string, t: Tab = tab()) {
   go({ tab: t, page: id });
 }
 
+/** An element Design is asked to show, and its handler to type in, until Design takes it. */
+export interface Wanted {
+  page: string;
+  element: string;
+  event?: string;
+}
+
+const [wanted, setWanted] = createSignal<Wanted | null>(null);
+export { wanted };
+
+/** Opens an element's page in Design with it selected, and the caret in its `event` handler. */
+export function openElement(w: Wanted) {
+  setWanted(w);
+  openPage(w.page, "design");
+}
+
+/** Design took what was asked for. */
+export const tookWanted = () => setWanted(null);
+
 /** Follows the browser's back and forward from here on. The editor's alone: an operator's
  *  screen keeps its own page stack in the history. */
 export function followHistory() {

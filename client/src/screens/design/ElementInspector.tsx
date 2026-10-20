@@ -359,7 +359,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">More CSS</div>
           <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
         </Show>
-        <Events page={p.page} element={p.element} />
+        <Events page={p.page} element={p.element} focus={(event) => typed(`on:${event}`)} />
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => send({ type: "edit", edit: { kind: "remove_element", page: p.page, id: p.element.id } })}>
@@ -383,7 +383,7 @@ function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" |
 
 /** The element's handlers, each a card: the event on top, the code below. Every change names
  *  one event, so two quick changes never undo each other. */
-function Events(p: { page: string; element: Element }) {
+function Events(p: { page: string; element: Element; focus: (event: string) => number | undefined }) {
   const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
   let ghost!: HTMLButtonElement;
@@ -419,6 +419,7 @@ function Events(p: { page: string; element: Element }) {
                 names={where().names}
                 also={where().also}
                 brings={brings(p.element, event)}
+                focus={p.focus(event)}
                 placeholder={where().place === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
               />
             )}

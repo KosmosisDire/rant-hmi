@@ -36,7 +36,7 @@ export function App() {
           <DataScreen onOpen={openInDesign} />
         </div>
         <DesignScreen shown={tab() === "design"} />
-        <LogicScreen shown={tab() === "logic"} onOpen={openInDesign} />
+        <LogicScreen shown={tab() === "logic"} />
         <RunScreen shown={tab() === "run"} />
       </main>
       <StatusBar />

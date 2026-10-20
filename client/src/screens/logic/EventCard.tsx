@@ -32,6 +32,8 @@ export function EventCard(p: {
   placeholder?: string;
   /** What the event hands the code as `p`. */
   brings?: Brought;
+  /** Each new number puts the caret in the code. */
+  focus?: number;
   /** A hold's time, an expression in ms, and its write. */
   after?: string;
   onAfter?: (text: string) => void;
@@ -90,6 +92,7 @@ export function EventCard(p: {
         class="editor code"
         value={p.code}
         placeholder={p.placeholder}
+        focus={p.focus}
         onCommit={p.onCode}
         complete={(t, c) => complete(t, c, p.place, p.names, reads())}
       />
