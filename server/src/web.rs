@@ -3,7 +3,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::Router;
@@ -23,7 +23,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeader;
 use tracing::{error, warn};
 
-use crate::app::Inbound;
+use crate::app::{Inbound, Outbox};
 use crate::protocol::ClientMsg;
 
 /// How often the socket pings its screen. The browser answers by itself, even in a hidden tab
@@ -68,7 +68,8 @@ async fn upgrade(ws: WebSocketUpgrade, State(shared): State<Shared>, ConnectInfo
 async fn screen(socket: WebSocket, shared: Shared, local: IpAddr) {
     let session = shared.next.fetch_add(1, Ordering::Relaxed);
     let (out, mut outgoing) = unbounded_channel::<Bytes>();
-    if shared.inbound.send(Inbound::Open { session, out, local }).is_err() {
+    let queued = Arc::new(AtomicUsize::new(0));
+    if shared.inbound.send(Inbound::Open { session, out: Outbox::new(out, queued.clone()), local }).is_err() {
         return;
     }
     let (mut sink, mut stream) = socket.split();
@@ -83,7 +84,10 @@ async fn screen(socket: WebSocket, shared: Shared, local: IpAddr) {
                 },
                 _ = ping.tick() => Message::Ping(Bytes::new()),
             };
-            if sink.send(frame).await.is_err() {
+            let sent = if let Message::Binary(b) = &frame { b.len() } else { 0 };
+            let failed = sink.send(frame).await.is_err();
+            queued.fetch_sub(sent, Ordering::Relaxed);
+            if failed {
                 break;
             }
         }

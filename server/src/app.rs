@@ -1,8 +1,11 @@
 //! The backend's one loop. It owns the project, the mesh and every screen's session, so
 //! nothing is shared and nothing locks.
 
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
@@ -29,6 +32,9 @@ const SILENCE: Duration = Duration::from_millis(500);
 /// A screen silent this long is lost. A busy page stops reading its socket a while, which
 /// is no reason to start it over.
 const LOST: Duration = Duration::from_secs(5);
+/// A screen this many bytes behind gets no values until it catches up, then all at once, so
+/// a slow link carries a camera at the rate it can and nothing piles up.
+const BEHIND: usize = 1 << 20;
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
@@ -38,16 +44,50 @@ const ONCE: [&str; 5] = ["tap", "press", "release", "hold", "outside"];
 
 /// What a screen's connection hands the loop.
 pub enum Inbound {
-    /// `out` takes the screen's encoded messages. `local` is the address it reached the HMI on.
-    Open { session: u32, out: UnboundedSender<Bytes>, local: IpAddr },
+    /// `local` is the address the screen reached the HMI on.
+    Open { session: u32, out: Outbox, local: IpAddr },
     Message { session: u32, msg: ClientMsg },
     /// The screen answered the socket's ping.
     Heard { session: u32 },
     Close { session: u32 },
 }
 
+/// A screen's way out. `queued` counts the bytes its socket has not taken yet, which the
+/// socket's writer takes off as it sends.
+pub struct Outbox {
+    tx: UnboundedSender<Bytes>,
+    queued: Arc<AtomicUsize>,
+    /// Values were left out while the screen was behind, so it needs them all.
+    stale: Cell<bool>,
+}
+
+impl Outbox {
+    pub fn new(tx: UnboundedSender<Bytes>, queued: Arc<AtomicUsize>) -> Outbox {
+        Outbox { tx, queued, stale: Cell::new(false) }
+    }
+
+    /// Sends, but leaves values out while the screen is behind, since newer ones replace them.
+    fn put(&self, bytes: Bytes, values: bool) {
+        if values && self.queued.load(Ordering::Relaxed) > BEHIND {
+            self.stale.set(true);
+            return;
+        }
+        self.queued.fetch_add(bytes.len(), Ordering::Relaxed);
+        let _ = self.tx.send(bytes);
+    }
+
+    /// True once a screen that missed values has caught up, and then only once.
+    fn caught_up(&self) -> bool {
+        let caught = self.stale.get() && self.queued.load(Ordering::Relaxed) < BEHIND / 2;
+        if caught {
+            self.stale.set(false);
+        }
+        caught
+    }
+}
+
 struct Session {
-    out: UnboundedSender<Bytes>,
+    out: Outbox,
     local: IpAddr,
     heard: Instant,
     /// The edits that undo this screen's own edits, newest last, and those that redo them.
@@ -259,11 +299,17 @@ impl App {
         }
         self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
         self.send(session, &ServerMsg::Theme { tokens: self.project.tokens.clone() });
-        let mut values: Vec<ValueUpdate> = self.project.imports.iter().map(|i| self.update(&i.alias)).collect();
-        let own = self.sessions.get(&session).map(|s| s.vars.clone()).unwrap_or_default();
-        values.extend(self.shared.iter().chain(own.iter()).map(|(k, v)| known(k, v)));
-        self.send(session, &ServerMsg::Values { values });
+        self.send(session, &ServerMsg::Values { values: self.all_values(session) });
         self.send(session, &ServerMsg::Health { peers: self.mesh.peers() });
+    }
+
+    /// Every value a screen shows: the imports', the shared variables' and its own.
+    fn all_values(&self, session: u32) -> Vec<ValueUpdate> {
+        let mut values: Vec<ValueUpdate> = self.project.imports.iter().map(|i| self.update(&i.alias)).collect();
+        if let Some(s) = self.sessions.get(&session) {
+            values.extend(self.shared.iter().chain(s.vars.iter()).map(|(k, v)| known(k, v)));
+        }
+        values
     }
 
     fn handle(&mut self, session: u32, msg: ClientMsg) {
@@ -889,6 +935,10 @@ impl App {
             self.health_at = Instant::now();
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
         }
+        let caught: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.out.caught_up()).map(|(id, _)| *id).collect();
+        for session in caught {
+            self.send(session, &ServerMsg::Values { values: self.all_values(session) });
+        }
         let silent: Vec<(u32, Duration)> = self.sessions.iter().map(|(id, s)| (*id, s.heard.elapsed())).filter(|(_, t)| *t > SILENCE).collect();
         for (session, silence) in silent {
             match silence > LOST {
@@ -984,7 +1034,7 @@ impl App {
 
     fn send(&self, session: u32, msg: &ServerMsg) {
         if let Some(s) = self.sessions.get(&session) {
-            let _ = s.out.send(encode(msg));
+            s.out.put(encode(msg), matches!(msg, ServerMsg::Values { .. }));
         }
     }
 
@@ -994,7 +1044,7 @@ impl App {
         }
         let text = encode(msg);
         for s in self.sessions.values() {
-            let _ = s.out.send(text.clone());
+            s.out.put(text.clone(), matches!(msg, ServerMsg::Values { .. }));
         }
     }
 }
@@ -1013,4 +1063,27 @@ fn encode(msg: &ServerMsg) -> Bytes {
 /// Each record's source by name, as the engine reads them.
 fn sources(records: &[Record]) -> Vec<(String, String)> {
     records.iter().map(|r| (r.name.clone(), r.source.clone())).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc::unbounded_channel;
+
+    #[test]
+    fn a_screen_behind_misses_values_but_nothing_else_then_hears_it_caught_up() {
+        let (tx, mut rx) = unbounded_channel();
+        let queued = Arc::new(AtomicUsize::new(BEHIND + 1));
+        let out = Outbox::new(tx, queued.clone());
+        out.put(Bytes::from_static(b"values"), true);
+        out.put(Bytes::from_static(b"page"), false);
+        assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"page"));
+        assert!(rx.try_recv().is_err());
+        assert!(!out.caught_up());
+        queued.store(0, Ordering::Relaxed);
+        assert!(out.caught_up());
+        assert!(!out.caught_up());
+        out.put(Bytes::from_static(b"values"), true);
+        assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"values"));
+    }
 }
