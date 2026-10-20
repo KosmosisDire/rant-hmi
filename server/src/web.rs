@@ -13,7 +13,9 @@ use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use axum::http::{HeaderValue, header};
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeader;
 use tracing::{error, warn};
 
 use crate::app::Inbound;
@@ -27,6 +29,8 @@ struct Shared {
 
 pub async fn serve(listener: TcpListener, client: PathBuf, inbound: UnboundedSender<Inbound>) {
     let pages = ServeDir::new(&client).fallback(ServeFile::new(client.join("index.html")));
+    // a screen asks again each time, so after an update it loads the new client
+    let pages = SetResponseHeader::overriding(pages, header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     let app = Router::new()
         .route("/ws", get(upgrade))
         .fallback_service(pages)

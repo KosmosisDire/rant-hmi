@@ -92,6 +92,8 @@ pub struct App {
     /// Values that changed since the last tick, with what they were before.
     moved: Vec<(String, Option<Value>, Value)>,
     node: String,
+    /// The client script the backend serves.
+    build: String,
     sessions: HashMap<u32, Session>,
     values: HashMap<String, Slot>,
     changed: BTreeSet<String>,
@@ -102,7 +104,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, node: String) -> App {
+    pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, node: String, build: String) -> App {
         script.send(ToScript::Imports(project.imports.clone()));
         script.send(ToScript::Pages(pages.keys()));
         script.send(ToScript::Variables(project.variables.clone()));
@@ -121,6 +123,7 @@ impl App {
             turned: HashMap::new(),
             moved: Vec::new(),
             node,
+            build,
             sessions: HashMap::new(),
             values: HashMap::new(),
             changed: BTreeSet::new(),
@@ -189,6 +192,7 @@ impl App {
             project: self.project.info.clone(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             node: self.node.clone(),
+            build: self.build.clone(),
         };
         self.send(session, &hello);
         self.send(session, &ServerMsg::Imports { imports: self.project.imports.clone() });

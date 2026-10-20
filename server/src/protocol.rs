@@ -15,7 +15,9 @@ use crate::project::{Import, Kind, ProjectInfo, Token, Variable};
 #[ts(export)]
 pub enum ServerMsg {
     /// The first message on a connection.
-    Hello { session: u32, project: ProjectInfo, version: String, node: String },
+    /// `build` names the client script this backend serves, so a screen running another
+    /// knows to load it.
+    Hello { session: u32, project: ProjectInfo, version: String, node: String, build: String },
     /// The project's settings, whole, after a change.
     Project { project: ProjectInfo },
     /// Every import, whole, after any change.

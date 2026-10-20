@@ -77,6 +77,20 @@ export const [state, setState] = createStore<State>({
   notices: [],
 });
 
+/** Loads the client the backend serves when this screen runs another, as after an update.
+ *  Only once per build, so a screen that still differs never reloads for ever. */
+function catchUp(build: string) {
+  const own = document.querySelector<HTMLScriptElement>('script[type="module"]')?.getAttribute("src") ?? "";
+  if (!build || !own.startsWith("/assets/") || own === build) return;
+  try {
+    if (sessionStorage.getItem("rant-hmi.reloaded") === build) return;
+    sessionStorage.setItem("rant-hmi.reloaded", build);
+  } catch {
+    return;
+  }
+  location.reload();
+}
+
 let notices = 0;
 
 export function notify(text: string, level: Level) {
@@ -93,6 +107,7 @@ export function receive(msg: ServerMsg) {
   switch (msg.type) {
     case "hello":
       setState({ project: msg.project, node: msg.node, version: msg.version });
+      catchUp(msg.build);
       break;
     case "project":
       setState("project", msg.project);

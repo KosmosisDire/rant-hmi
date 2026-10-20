@@ -45,13 +45,16 @@ pub async fn run(o: Options) -> Result<()> {
         .await
         .with_context(|| format!("could not listen on {}:{}", o.bind, o.port))?;
     info!("{} on http://{}", project.info.name, listener.local_addr()?);
-    if !o.client.join("index.html").exists() {
+    let index = std::fs::read_to_string(o.client.join("index.html")).unwrap_or_default();
+    if index.is_empty() {
         info!("no client at {}: build it with npm run build in client", o.client.display());
     }
+    // the built client's script, whose name changes with each build
+    let build = index.split("src=\"").nth(1).and_then(|s| s.split('"').next()).filter(|s| s.starts_with("/assets/")).unwrap_or_default().to_owned();
     let (inbound, received) = unbounded_channel();
     tokio::spawn(web::serve(listener, o.client, inbound));
     let (said, heard) = unbounded_channel();
     let script = script::Script::start(said);
-    App::new(project, pages, mesh, script, NODE.to_owned()).run(delivered, received, heard).await;
+    App::new(project, pages, mesh, script, NODE.to_owned(), build).run(delivered, received, heard).await;
     Ok(())
 }
