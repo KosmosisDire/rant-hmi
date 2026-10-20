@@ -20,7 +20,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
     Name: "line",
     Points: 'values.length ? values.map((s) => ((s.t - values[values.length - 1].t) / (seconds * 1000) + 1) * 100 + "," + (100 - ((s.v - min) / (max - min)) * 100)).join(" ") : ""',
     Stroke: "#4a8fd6",
-    Width: "2",
+    Thickness: "2",
   });
   await d.css('vector-effect: "non-scaling-stroke"\nstroke-linejoin: "round"');
 

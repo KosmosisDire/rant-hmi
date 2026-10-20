@@ -18,7 +18,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.css('line-height: "44px"');
   await d.select("face");
   await d.add("drawing", { Name: "chevron", x: "184", y: "12", w: "20", h: "20" });
-  await d.addShape("polyline", { Points: '"4,7 10,13 16,7"', Stroke: "#9aa0a6", Width: "2", Transform: '`rotate(${open ? 180 : 0} 10 10)`' });
+  await d.addShape("polyline", { Points: '"4,7 10,13 16,7"', Stroke: "#9aa0a6", Thickness: "2", Transform: '`rotate(${open ? 180 : 0} 10 10)`' });
   await d.select("face");
   await d.add("frame", { Name: "list", x: "0", y: "48", w: "220", h: "options.length * 40 + 8", Fill: "#2a2f35", Radius: "6" });
   await d.css('display: open ? "block" : "none"\nbox-shadow: "0 8px 24px #000a"');

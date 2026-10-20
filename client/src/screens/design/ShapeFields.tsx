@@ -34,7 +34,7 @@ export const GEOMETRY: Partial<Record<Tag, Spec[]>> = {
 export const PAINT: Spec[] = [
   ["Fill", "fill", { kind: "colour", placeholder: "#000000" }],
   ["Stroke", "stroke", { kind: "colour", placeholder: '"none"' }],
-  ["Width", "stroke-width", { ...n("1"), min: 0, step: 0.5 }],
+  ["Thickness", "stroke-width", { ...n("1"), min: 0, step: 0.5 }],
   ["Opacity", "opacity", { ...n("1"), min: 0, max: 1, step: 0.01 }],
   ["Dashes", "stroke-dasharray", { placeholder: '"4 4"' }],
   ["Ends", "stroke-linecap", { kind: "choice", options: ['"butt"', '"round"', '"square"'], placeholder: '"butt"' }],

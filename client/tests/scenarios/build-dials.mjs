@@ -3,7 +3,7 @@
 // it. Bound to Speed, the gauge and readout show it and turning the knob sets it.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  const arc = (r, colour, width) => ({ "Centre x": "88", "Centre y": "88", Radius: String(r), Fill: '"none"', Stroke: colour, Width: String(width), Ends: '"round"', Transform: '"rotate(135 88 88)"' });
+  const arc = (r, colour, width) => ({ "Centre x": "88", "Centre y": "88", Radius: String(r), Fill: '"none"', Stroke: colour, Thickness: String(width), Ends: '"round"', Transform: '"rotate(135 88 88)"' });
 
   await d.addComponent("Gauge", 176, 176);
   await d.addInput("value", "0");
@@ -25,13 +25,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addSends("change");
   await d.add("drawing", { Name: "dial", x: "0", y: "0", w: "132", h: "132" });
   await d.handler("drag", "const k = Math.min(Math.max((p.angle + 135) / 270, 0), 1);\nvalue = min + k * (max - min);\nemit(\"change\", value);");
-  const ring = { "Centre x": "66", "Centre y": "66", Radius: "58", Fill: '"none"', Width: "6", Ends: '"round"', Transform: '"rotate(135 66 66)"' };
+  const ring = { "Centre x": "66", "Centre y": "66", Radius: "58", Fill: '"none"', Thickness: "6", Ends: '"round"', Transform: '"rotate(135 66 66)"' };
   await d.addShape("circle", { Name: "track", ...ring, Stroke: "#3a4046" });
   await d.css('pathlength: 100\nstroke-dasharray: "75 100"');
   await d.addShape("circle", { Name: "level", ...ring, Stroke: "#4a8fd6" });
   await d.css('pathlength: 100\nstroke-dasharray: `${(value - min) / (max - min) * 75} 100`');
-  await d.addShape("circle", { Name: "face", "Centre x": "66", "Centre y": "66", Radius: "46", Fill: 'root.pressed ? "#2f3540" : "#2a2f35"', Stroke: "#3a4046", Width: "2" });
-  await d.addShape("line", { Name: "pointer", "From x": "66", "From y": "50", "To x": "66", "To y": "28", Stroke: "#e4e6e8", Width: "5", Transform: "`rotate(${-135 + (value - min) / (max - min) * 270} 66 66)`" });
+  await d.addShape("circle", { Name: "face", "Centre x": "66", "Centre y": "66", Radius: "46", Fill: 'root.pressed ? "#2f3540" : "#2a2f35"', Stroke: "#3a4046", Thickness: "2" });
+  await d.addShape("line", { Name: "pointer", "From x": "66", "From y": "50", "To x": "66", "To y": "28", Stroke: "#e4e6e8", Thickness: "5", Transform: "`rotate(${-135 + (value - min) / (max - min) * 270} 66 66)`" });
 
   await d.addComponent("Readout", 220, 88);
   await d.addInput("label", '"Speed"');

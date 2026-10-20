@@ -21,9 +21,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
     'emit("move", { x: kx, y: -ky });',
   ].join("\n"));
   await d.handler("release", 'kx = 0;\nky = 0;\nemit("move", { x: 0, y: 0 });');
-  await d.addShape("circle", { Name: "base", "Centre x": "110", "Centre y": "110", Radius: "104", Fill: "#1e2125", Stroke: "#3a4046", Width: "2" });
-  await d.addShape("circle", { Name: "ring", "Centre x": "110", "Centre y": "110", Radius: "travel", Fill: '"none"', Stroke: "#2f3540", Width: "2", Dashes: '"4 6"' });
-  await d.addShape("circle", { Name: "knob", "Centre x": "110 + kx * travel", "Centre y": "110 + ky * travel", Radius: "34", Fill: 'root.pressed ? "#4a8fd6" : "#3a4046"', Stroke: "#e4e6e8", Width: "2" });
+  await d.addShape("circle", { Name: "base", "Centre x": "110", "Centre y": "110", Radius: "104", Fill: "#1e2125", Stroke: "#3a4046", Thickness: "2" });
+  await d.addShape("circle", { Name: "ring", "Centre x": "110", "Centre y": "110", Radius: "travel", Fill: '"none"', Stroke: "#2f3540", Thickness: "2", Dashes: '"4 6"' });
+  await d.addShape("circle", { Name: "knob", "Centre x": "110 + kx * travel", "Centre y": "110 + ky * travel", Radius: "34", Fill: 'root.pressed ? "#4a8fd6" : "#3a4046"', Stroke: "#e4e6e8", Thickness: "2" });
 
   await d.addPage("Joystick");
   const stick = await d.place("Joystick", { x: "44", y: "44", w: "220", h: "220" });
