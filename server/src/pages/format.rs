@@ -645,4 +645,159 @@ mod tests {
         let page = parse("<!-- the overview -->\n<page name=\"A\">\n<!-- a box -->\n<div id=\"e1\"/>\n</page>\n", "a").unwrap();
         assert_eq!(page.children.len(), 1);
     }
+
+    /// A small xorshift, so the random pages need no crate and are the same each run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+
+        fn pick(&mut self, from: &[&str]) -> String {
+            from[self.below(from.len())].to_owned()
+        }
+    }
+
+    /// One line values as people write them, with the quotes, brackets and closing tags a
+    /// reader could trip on.
+    const VALUES: [&str; 16] = [
+        "Speed",
+        "Speed.toFixed(1)",
+        r#""Running""#,
+        "'it'",
+        r#""a; b: c""#,
+        r#"Speed < 1 ? "slow; </span>" : `fast ${Speed}`"#,
+        "`t ${Speed} </on> </markup>`",
+        "a && b || !c",
+        r#""both ' and \" quotes""#,
+        r#""x &amp; y &quot; z""#,
+        "[1, 2, 3].map((x) => x * 2)",
+        "#2a2f35",
+        "-3.5",
+        "$accent",
+        "Speed > 1 && Running ? 'red' : #e4e6e8",
+        r#"{ a: "}" }.a"#,
+    ];
+
+    /// Code over lines, with closing tags in its strings, templates and comments.
+    const CODE: [&str; 6] = [
+        "Speed = Speed + 0.1;",
+        "if (Running) {\n  Speed = 0; // never \"</on>\" here\n}",
+        "log(`done\n</on> </markup>`);",
+        "x = 1;\n\ny = '</span>';",
+        "`<svg viewBox=\"0 0 10 10\">\n  <circle r=\"${Speed}\"/>\n</svg>`",
+        "/* a </on> comment */ emit(\"change\", { v: 1 });",
+    ];
+
+    const STYLE: [&str; 5] = ["background", "color", "font-size", "border-radius", "opacity"];
+
+    fn some_props(rng: &mut Rng, keys: &[&str]) -> BTreeMap<String, String> {
+        let mut props = BTreeMap::new();
+        for _ in 0..rng.below(4) {
+            props.insert(rng.pick(keys), rng.pick(&VALUES));
+        }
+        props
+    }
+
+    /// Handlers in the order a read sorts them, a hold's sometimes with its time.
+    fn some_handlers(rng: &mut Rng, tag: Tag) -> Vec<Handler> {
+        let events: &[&str] = if tag == Tag::Input { &["change"] } else { &crate::pages::POINTER };
+        let mut out = Vec::new();
+        for e in events {
+            if rng.below(4) == 0 {
+                let after = if *e == "hold" && rng.below(2) == 0 { rng.pick(&VALUES) } else { String::new() };
+                out.push(Handler { event: (*e).to_owned(), code: rng.pick(&CODE), after });
+            }
+        }
+        out
+    }
+
+    fn random_shapes(rng: &mut Rng, ids: &mut usize, depth: usize) -> Vec<Element> {
+        let mut out = Vec::new();
+        for _ in 0..rng.below(3) {
+            *ids += 1;
+            let tag = [Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::Group][rng.below(5)];
+            let mut props = some_props(rng, &["name", "cx", "r", "fill", "stroke", "d", "transform"]);
+            if tag == Tag::SvgText {
+                props.insert(TEXT.to_owned(), rng.pick(&VALUES));
+            }
+            let id = format!("e{ids}");
+            let children = if tag == Tag::Group && depth < 3 { random_shapes(rng, ids, depth + 1) } else { Vec::new() };
+            out.push(Element { id, tag, component: None, props, handlers: some_handlers(rng, tag), children });
+        }
+        out
+    }
+
+    fn random_element(rng: &mut Rng, ids: &mut usize, depth: usize) -> Element {
+        *ids += 1;
+        let id = format!("e{ids}");
+        let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Use][rng.below(7)];
+        let keys: Vec<&str> = ATTRS.iter().chain(STYLE.iter()).copied().collect();
+        let mut props = some_props(rng, &keys);
+        let mut children = Vec::new();
+        let mut component = None;
+        match tag {
+            Tag::Div if depth < 3 => {
+                for _ in 0..rng.below(3) {
+                    children.push(random_element(rng, ids, depth + 1));
+                }
+            }
+            Tag::Span if rng.below(4) > 0 => {
+                props.insert(TEXT.to_owned(), rng.pick(&VALUES));
+            }
+            Tag::Input => {
+                props.insert(VALUE.to_owned(), rng.pick(&VALUES));
+            }
+            Tag::Media => {
+                props.insert(SRC.to_owned(), rng.pick(&VALUES));
+                props.insert(FIT.to_owned(), "\"slice\"".to_owned());
+            }
+            Tag::Svg => {
+                props.insert(VIEWBOX.to_owned(), "\"0 0 100 100\"".to_owned());
+                children = random_shapes(rng, ids, depth);
+            }
+            Tag::Markup if rng.below(4) > 0 => {
+                props.insert(MARKUP.to_owned(), rng.pick(&CODE));
+            }
+            Tag::Use => {
+                component = Some("Meter".to_owned());
+                props = some_props(rng, &["name", "x", "w", "level", "text"]);
+            }
+            _ => {}
+        }
+        let handlers = some_handlers(rng, tag);
+        Element { id, tag, component, props, handlers, children }
+    }
+
+    fn random_page(rng: &mut Rng) -> Page {
+        let mut ids = 0;
+        let interface = (rng.below(3) == 0).then(|| Interface {
+            inputs: vec![Input { name: "level".into(), default: rng.pick(&VALUES), bindable: rng.below(2) == 0 }],
+            events: vec!["change".into()],
+            variables: vec![Local { name: "state".into(), start: rng.pick(&VALUES) }],
+        });
+        let shows = if rng.below(3) == 0 { Shows::Over } else { Shows::Full };
+        // a component draws on what holds it, so only a page has a fill
+        let fill = if interface.is_none() && rng.below(2) == 0 { rng.pick(&VALUES) } else { String::new() };
+        let mut children = Vec::new();
+        for _ in 0..1 + rng.below(4) {
+            children.push(random_element(rng, &mut ids, 0));
+        }
+        Page { id: "p".into(), name: "Overview".into(), width: 1408, height: 792, shows, fill, interface, children }
+    }
+
+    #[test]
+    fn random_pages_read_back_as_written() {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        for _ in 0..10000 {
+            let page = random_page(&mut rng);
+            let text = write(&page);
+            let back = parse(&text, "p").unwrap_or_else(|e| panic!("{e} in\n{text}"));
+            assert_eq!(back, page, "read back otherwise:\n{text}");
+        }
+    }
 }
