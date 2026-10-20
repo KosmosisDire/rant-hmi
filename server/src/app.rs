@@ -27,6 +27,9 @@ const SILENCE: Duration = Duration::from_millis(500);
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
+/// Events a second of, while the first still runs, is ignored. Any other is a stream, such as a
+/// drag or a joystick's move, whose latest must land, so it waits for the run.
+const ONCE: [&str; 5] = ["tap", "press", "release", "hold", "outside"];
 
 /// What a screen's connection hands the loop.
 pub enum Inbound {
@@ -69,6 +72,9 @@ struct Running {
 /// An element a screen holds pressed: the screen, page, element and copy of a repeat.
 type Pressed = (u32, String, String, Option<u32>);
 
+/// An element's handler for an event: page, element, copy of a repeat and event.
+type HandlerKey = (String, String, Option<u32>, String);
+
 /// A rule's condition: true since when, and whether it has fired since it turned true.
 #[derive(Default)]
 struct Turned {
@@ -93,6 +99,9 @@ pub struct App {
     asks: HashMap<u64, u32>,
     /// Elements a screen holds pressed, as screen, page, element and the copy of a repeat.
     pressed: HashSet<Pressed>,
+    /// The latest stream event that came while its handler still ran, with its screen, what it
+    /// brought and its copy. It runs when that run ends.
+    waiting: HashMap<HandlerKey, (u32, Value, Option<(u32, Value)>)>,
     /// When each timer rule is next due.
     timers: HashMap<String, Instant>,
     turned: HashMap<String, Turned>,
@@ -128,6 +137,7 @@ impl App {
             next_run: 0,
             asks: HashMap::new(),
             pressed: HashSet::new(),
+            waiting: HashMap::new(),
             timers: HashMap::new(),
             turned: HashMap::new(),
             moved: Vec::new(),
@@ -398,6 +408,9 @@ impl App {
         let Some(h) = e.handlers.iter().find(|h| h.event == event) else { return };
         let index = at.as_ref().map(|(i, _)| *i);
         if self.runs.values().any(|r| r.page == page && r.id == id && r.index == index && r.event == event) {
+            if !ONCE.contains(&event.as_str()) {
+                self.waiting.insert((page, id, index, event), (session, payload, at));
+            }
             return;
         }
         let label = format!("{} {event}", e.props.get("name").unwrap_or(&id));
@@ -522,7 +535,13 @@ impl App {
                     warn!("{}: {text}", self.label(run));
                     self.tell(run, level, text);
                 }
-                self.runs.remove(&run);
+                // what waited for this run goes now, if its screen is still here
+                let Some(r) = self.runs.remove(&run) else { return };
+                if let Some((session, payload, at)) = self.waiting.remove(&(r.page.clone(), r.id.clone(), r.index, r.event.clone())) {
+                    if self.sessions.contains_key(&session) {
+                        self.fire(session, r.page, r.id, r.event, payload, at);
+                    }
+                }
             }
         }
     }

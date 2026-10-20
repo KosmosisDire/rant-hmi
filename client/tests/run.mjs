@@ -22,7 +22,7 @@ export async function eventually(fn, what, timeoutMs = 4000) {
   for (;;) {
     const v = await fn();
     if (v) return v;
-    if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${typeof what === "function" ? what() : what}`);
     await new Promise((r) => setTimeout(r, 30));
   }
 }
