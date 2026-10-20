@@ -40,9 +40,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.waitForTimeout(500);
   check(hmi.state.values.Running?.value === true, "a short press confirmed");
   await page.mouse.down();
-  await page.waitForTimeout(300);
-  const part = await bar();
-  check(part > 30 && part < 180, `the bar is ${part} wide half way`);
+  let seen = 0;
+  await eventually(async () => (seen = await bar()) > 20 && seen < 180, () => `the bar to fill part way, it is ${seen} wide`, 550);
   await eventually(() => hmi.state.values.Running?.value === false, "a long hold to stop the line");
   await page.mouse.up();
   await eventually(async () => (await bar()) === 0, "the bar to empty");

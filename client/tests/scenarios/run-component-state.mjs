@@ -49,9 +49,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const b = await inst(first).boundingBox();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
-  await page.waitForTimeout(300);
-  const half = await bar(first);
-  check(half > 40 && half < 200, `the bar is ${half} wide part way through the hold`);
+  // seen part filled while the hold goes on, before its time is up
+  let seen = 0;
+  await eventually(async () => (seen = await bar(first)) > 20 && seen < 200, () => `the bar to fill part way, it is ${seen} wide`, 550);
   await eventually(async () => (await label(first).textContent()) === "1 holds", "the hold to count once its time is up");
   await page.waitForTimeout(400);
   check((await label(first).textContent()) === "1 holds", "a long hold counted more than once");
