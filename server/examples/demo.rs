@@ -1,9 +1,10 @@
-//! A small line to try the HMI on: a conveyor whose speed and running you can set, a reset
-//! that answers how many parts it cleared, and a robot's pose and joints moving on their own.
+//! A small line to try the HMI on: a conveyor whose speed and running you can set, a jog topic
+//! whose messages set the speed too, a reset that answers how many parts it cleared, and a
+//! robot's pose and joints moving on their own.
 //!
 //! `cargo run --example demo -- --loopback` keeps it on this host, `--domain N` moves it.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -49,6 +50,9 @@ fn main() -> Result<(), rant::Error> {
     let conveyor = node.publisher::<Conveyor>("Line1/Conveyor", Qos::new())?;
     let pose = node.publisher::<Pose>("Robot/Pose", Qos::new())?;
     let joints = node.publisher::<JointState>("Robot/Joints", Qos::new())?;
+    let jog = Arc::new(Mutex::new(None::<f64>));
+    let heard = jog.clone();
+    let _jog = node.subscriber::<f64>("Line1/Jog", Qos::new(), move |m| *heard.lock().unwrap() = Some(m.into_inner()))?;
     let parts = Arc::new(AtomicU32::new(0));
     let cleared = parts.clone();
     let _reset = node.function_definition("Line1/Reset", FunctionOptions::new(), move |_: Request<Empty, u32>| Ok::<_, &str>(cleared.swap(0, Ordering::Relaxed)))?;
@@ -57,6 +61,9 @@ fn main() -> Result<(), rant::Error> {
     let start = Instant::now();
     let mut tick = 0u32;
     loop {
+        if let Some(v) = jog.lock().unwrap().take() {
+            speed.set(&v)?;
+        }
         let t = start.elapsed().as_secs_f64();
         let on = running.get()?.unwrap_or(false);
         let v = if on { speed.get()?.unwrap_or(0.0) } else { 0.0 };
