@@ -97,7 +97,7 @@ function RuleBox(p: { rule: Rule }) {
     <div class="handler rule">
       <div class="handler-head">
         <DraftInput class="editor input-name" value={p.rule.name} accept={(t) => t.trim() !== ""} onCommit={(name) => change({ name: name.trim() })} />
-        <select class="editor rule-kind" value={p.rule.when.kind} onChange={(e) => change({ when: KINDS.find(([k]) => k === e.currentTarget.value)![2] })}>
+        <select class="editor rule-kind" value={p.rule.when.kind} onChange={(e) => change({ when: { ...KINDS.find(([k]) => k === e.currentTarget.value)![2] } })}>
           <For each={KINDS}>{([k, label]) => <option value={k}>{label}</option>}</For>
         </select>
         <button class="icon-btn" title={`Remove ${p.rule.name}`} onClick={() => setRule(p.rule.id, null)}>
