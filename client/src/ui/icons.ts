@@ -63,6 +63,7 @@ export { default as Spline } from "lucide-solid/icons/spline";
 export { default as Square } from "lucide-solid/icons/square";
 export { default as SquareDashedMousePointer } from "lucide-solid/icons/square-dashed-mouse-pointer";
 export { default as SquareFunction } from "lucide-solid/icons/square-function";
+export { default as SquareRoundCorner } from "lucide-solid/icons/square-round-corner";
 export { default as Star } from "lucide-solid/icons/star";
 export { default as Sun } from "lucide-solid/icons/sun";
 export { default as TextCursorInput } from "lucide-solid/icons/text-cursor-input";

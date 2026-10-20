@@ -61,7 +61,7 @@ const [raised, setRaised] = createSignal<Element | null>(null);
 const HOLD = 500;
 
 /** CSS lengths that read a bare number as pixels. */
-const LENGTHS = new Set(["font-size", "border-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
+const LENGTHS = new Set(["font-size", "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
 
 /** A page's ground from its fill, none for the default or a component. */
 export function pageGround(page: Page): string | undefined {

@@ -30,7 +30,7 @@ import {
   Zap,
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
-import { BorderField, Field, type FieldProps, kindOf, type Where, WhereContext } from "./Field";
+import { BorderField, Field, type FieldProps, kindOf, RADII, RadiusField, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, PAINT, shapeKeys, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { type Align, align, chain, find, remove, scopeOf, setHandler, setProps, showProps, spread, tops } from "./tree";
@@ -40,7 +40,6 @@ import { type Align, align, chain, find, remove, scopeOf, setHandler, setProps, 
 type Look = [string, string, Partial<FieldProps>];
 const LOOK: Look[] = [
   ["Fill", "background", { kind: "colour", placeholder: "#2a2f35" }],
-  ["Radius", "border-radius", { kind: "number", min: 0, placeholder: "0" }],
   ["Opacity", "opacity", { kind: "number", min: 0, max: 1, step: 0.01, placeholder: "1" }],
 ];
 const TEXT_LOOK: Look[] = [
@@ -49,7 +48,7 @@ const TEXT_LOOK: Look[] = [
   ["Weight", "font-weight", { kind: "choice", options: ["300", "400", "500", "600", "700"], placeholder: "400" }],
   ["Align", "text-align", { kind: "choice", options: ['"left"', '"center"', '"right"'], placeholder: '"left"' }],
 ];
-const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color"]);
+const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...RADII]);
 
 /** The right sidebar: the selected element's properties, a word on several, or the page's
  *  when none is selected. */
@@ -353,6 +352,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">Look</div>
           <Field {...prop("background")} {...LOOK[0][2]} label="Fill" />
           <BorderField props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
+          <RadiusField props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
           <For each={LOOK.slice(1)}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
           <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />

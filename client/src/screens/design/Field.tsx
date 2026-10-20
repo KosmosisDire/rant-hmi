@@ -3,14 +3,14 @@
 // gesture acts only on a plain literal, so it never overwrites code, while a pick from a list
 // is asked for and replaces it.
 
-import { createContext, createMemo, createSignal, For, Match, Show, Switch, useContext } from "solid-js";
+import { createContext, createMemo, createSignal, For, type JSX, Match, Show, Switch, useContext } from "solid-js";
 import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope } from "../../state/bind";
 import { complete, type Place, type Suggestion } from "../../state/complete";
 import { mode } from "../../state/mode";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
 import { DraftInput } from "../../ui/DraftInput";
-import { Braces, ChevronsUpDown, Copy, Hash, Link, RotateCcw, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
+import { Braces, ChevronsUpDown, Copy, Hash, Link, RotateCcw, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
 
@@ -62,6 +62,9 @@ export interface FieldProps {
   /** Placement: a trailing % is a share of what holds the element. */
   percent?: boolean;
   focus?: number;
+  /** A lead of its own: its icon, its title and what a click on it does, while a drag on it
+   *  still scrubs a number. */
+  lead?: { icon: JSX.Element; title: string; onClick: () => void };
 }
 
 /** One property, an expression unless `plain`. Under it, what stops it showing, and for
@@ -160,7 +163,8 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   // a number that scrubs takes its click when the drag ends without moving
   const click = () => {
     if (scrubs()) return;
-    if (kind() === "colour" || kind() === "choice") setOpened(!opened());
+    if (p.lead) p.lead.onClick();
+    else if (kind() === "colour" || kind() === "choice") setOpened(!opened());
     else if (kind() === "flag" && literal()) p.onWrite(p.value.trim() === "true" ? "false" : "true");
     else focusText();
   };
@@ -197,13 +201,14 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
       lead.removeEventListener("lostpointercapture", up);
       window.removeEventListener("keydown", cancel, true);
       if (moved) p.onWrite(String(Number(at.toFixed(decimals(step) + 1))) + unit);
-      else if (travel < 3) focusText();
+      else if (travel < 3) (p.lead?.onClick ?? focusText)();
     };
     lead.addEventListener("pointermove", move);
     lead.addEventListener("lostpointercapture", up);
     window.addEventListener("keydown", cancel, true);
   };
   const title = () => {
+    if (p.lead) return p.lead.title;
     if (kind() === "number") return scrubs() ? "Drag to change it, Shift for finer steps" : "An expression gives it, so a drag leaves it be";
     if (kind() === "colour") return "Pick a colour";
     if (kind() === "choice") return "Pick one";
@@ -235,9 +240,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
           <Match when={!literal()}>
             <Link size={12} />
           </Match>
-          <Match when={kind() === "number"}>
-            <Hash size={12} />
-          </Match>
+          <Match when={kind() === "number"}>{p.lead?.icon ?? <Hash size={12} />}</Match>
           <Match when={kind() === "choice"}>
             <ChevronsUpDown size={12} />
           </Match>
@@ -340,6 +343,82 @@ export function BorderField(p: { props: Record<string, string | undefined>; writ
           <For each={BORDER}>
             {([label, key, kind, more]) => (
               <Field label={label} kind={kind} {...more} value={part(key)} onWrite={(t) => write(key, t)} onShow={(t) => p.show({ [key]: t })} />
+            )}
+          </For>
+        </Popover>
+      </Show>
+    </div>
+  );
+}
+
+/** Each corner's radius, in the order CSS lists them. */
+const CORNERS: [string, string][] = [
+  ["Top left", "border-top-left-radius"],
+  ["Top right", "border-top-right-radius"],
+  ["Bottom right", "border-bottom-right-radius"],
+  ["Bottom left", "border-bottom-left-radius"],
+];
+
+/** What the radius field writes, which More CSS leaves to it. */
+export const RADII = ["border-radius", ...CORNERS.map(([, key]) => key)];
+
+/** The corners' radius: one for all that scrubs from its lead, a click on which opens a field
+ *  per corner. Corners of their own take the place of the one for all, never sit beside it,
+ *  since CSS would let whichever comes later win. */
+export function RadiusField(p: { props: Record<string, string | undefined>; write: (props: Record<string, string | null>) => void; show: (props: Record<string, string>) => void }) {
+  const [opened, setOpened] = createSignal(false);
+  let host!: HTMLDivElement;
+  const part = (key: string) => p.props[key] ?? "";
+  const own = () => CORNERS.some(([, key]) => part(key) !== "");
+  const toggle = () => setOpened(!opened());
+  // a first corner of its own starts the others at the one for all
+  const corner = (key: string, text: string | null) => {
+    const props: Record<string, string | null> = { [key]: text };
+    if (!own()) {
+      for (const [, k] of CORNERS) if (k !== key) props[k] = part("border-radius") || null;
+      props["border-radius"] = null;
+    }
+    p.write(props);
+  };
+  // one for all again, at the top left's
+  const same = () => p.write({ "border-radius": part("border-top-left-radius") || null, ...Object.fromEntries(CORNERS.map(([, k]) => [k, null])) });
+  return (
+    <div ref={host}>
+      <Show
+        when={own()}
+        fallback={
+          <Field
+            label="Radius"
+            kind="number"
+            min={0}
+            placeholder="0"
+            value={part("border-radius")}
+            onWrite={(t) => p.write({ "border-radius": t })}
+            onShow={(t) => p.show({ "border-radius": t })}
+            lead={{ icon: <SquareRoundCorner size={12} />, title: "Drag to change every corner, click for each one", onClick: toggle }}
+          />
+        }
+      >
+        <div class="field" classList={{ bound: CORNERS.some(([, key]) => !isConstant(part(key))) }}>
+          <label>Radius</label>
+          <span class="vbox has-lead">
+            <button type="button" class="editor border-sum" onClick={toggle}>
+              <For each={CORNERS}>{([, key]) => <span classList={{ linked: !isConstant(part(key)) }}>{part(key) || "0"}</span>}</For>
+            </button>
+            <button type="button" class="lead" title="Each corner" onClick={toggle}>
+              <SquareRoundCorner size={12} />
+            </button>
+            <button class="icon-btn tail" title="One radius for every corner" onClick={same}>
+              <X size={12} />
+            </button>
+          </span>
+        </div>
+      </Show>
+      <Show when={opened()}>
+        <Popover anchor={host} onClose={() => setOpened(false)} class="parts">
+          <For each={CORNERS}>
+            {([label, key]) => (
+              <Field label={label} kind="number" min={0} placeholder={part("border-radius") || "0"} value={part(key)} onWrite={(t) => corner(key, t)} onShow={(t) => p.show({ [key]: t })} />
             )}
           </For>
         </Popover>
