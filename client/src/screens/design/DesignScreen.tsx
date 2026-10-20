@@ -1,5 +1,4 @@
 import { batch, createEffect, createSignal, on, onCleanup, onMount, Show } from "solid-js";
-import { send } from "../../net/connection";
 import { state } from "../../state/store";
 import { currentPage, openPage } from "../../state/view";
 import { Edge } from "../../ui/Sidebars";
@@ -77,11 +76,6 @@ export function DesignScreen(p: { shown: boolean }) {
       if (!p.shown || (e.target as HTMLElement).closest("input, textarea, select")) return;
       const mod = e.ctrlKey || e.metaKey;
       const letter = e.key.toLowerCase();
-      if (mod && (letter === "z" || letter === "y")) {
-        e.preventDefault();
-        send({ type: letter === "z" && !e.shiftKey ? "undo" : "redo" });
-        return;
-      }
       if (e.key === "?") {
         setKeys(!keys());
         return;
