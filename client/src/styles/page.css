@@ -130,6 +130,10 @@
   inset: 0;
 }
 
+.run-layer.stacked {
+  overflow-y: auto;
+}
+
 .run-page {
   position: absolute;
   left: 0;

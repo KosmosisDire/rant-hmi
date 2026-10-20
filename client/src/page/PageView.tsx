@@ -5,7 +5,7 @@ import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
-import { bareRef, componentScope, docScope, pageScope, resolve, type Scope } from "../state/bind";
+import { bareRef, componentScope, docScope, number, pageScope, resolve, type Scope } from "../state/bind";
 import { short } from "../state/format";
 import { component, notify } from "../state/store";
 import { componentAct, type Act } from "./act";
@@ -36,11 +36,38 @@ export function pageGround(page: Page): string | undefined {
   return r.ok && r.value !== undefined && r.value !== null && r.value !== "" ? String(r.value) : undefined;
 }
 
-/** A page, or a component drawn on its own with its inputs' defaults. */
-export function PageView(p: { page: Page; overrides?: Overrides; design?: boolean; act?: Act }) {
+/** The space between blocks a narrow screen stacks. */
+const GAP = 22;
+
+/** A page as a narrow screen shows it: its top level elements one under another in reading
+ *  order, rows by how far down they start, left to right within a row. */
+export function stacked(page: Page): { width: number; height: number; at: Overrides } {
+  const boxes = page.children.map((e) => ({ id: e.id, b: { x: number(e.props.x), y: number(e.props.y), w: number(e.props.w), h: number(e.props.h) } }));
+  boxes.sort((p, q) => p.b.y - q.b.y);
+  const order: typeof boxes = [];
+  for (let i = 0; i < boxes.length; ) {
+    // a row holds each block that starts before the first one in it ends
+    let j = i + 1;
+    while (j < boxes.length && boxes[j].b.y < boxes[i].b.y + boxes[i].b.h) j++;
+    order.push(...boxes.slice(i, j).sort((p, q) => p.b.x - q.b.x));
+    i = j;
+  }
+  const places = new Map<string, Box>();
+  let y = GAP;
+  for (const { id, b } of order) {
+    places.set(id, { ...b, x: GAP, y });
+    y += b.h + GAP;
+  }
+  return { width: Math.max(1, ...order.map(({ b }) => b.w)) + 2 * GAP, height: y, at: (id) => places.get(id) };
+}
+
+/** A page, or a component drawn on its own with its inputs' defaults. `size` stands in for
+ *  the page's own, as when a narrow screen stacks it. */
+export function PageView(p: { page: Page; overrides?: Overrides; size?: { width: number; height: number }; design?: boolean; act?: Act }) {
   const scope = createMemo(() => docScope(p.page));
+  const size = () => p.size ?? p.page;
   return (
-    <div class="page" classList={{ design: p.design }} style={{ width: `${p.page.width}px`, height: `${p.page.height}px`, "--page-ground": pageGround(p.page) }}>
+    <div class="page" classList={{ design: p.design }} style={{ width: `${size().width}px`, height: `${size().height}px`, "--page-ground": pageGround(p.page) }}>
       <For each={p.page.children}>{(e) => <ElementView element={e} scope={scope()} overrides={p.overrides} design={p.design} act={p.act} />}</For>
     </div>
   );

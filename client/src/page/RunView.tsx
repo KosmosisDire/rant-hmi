@@ -1,12 +1,12 @@
-// A screen's open pages as an operator sees them: the top full page fits the screen, and
-// pages over it float at its scale above a dimmed backdrop.
+// A screen's open pages as an operator sees them: the top full page fits the screen, stacked
+// on a narrow one, and pages over it float at its scale above a dimmed backdrop.
 
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { Page } from "../protocol/Page";
 import { back, prune, stack } from "../state/stack";
 import { page } from "../state/store";
 import { pageAct } from "./act";
-import { PageView } from "./PageView";
+import { PageView, stacked } from "./PageView";
 
 export function RunView(p: { active: boolean }) {
   let host!: HTMLDivElement;
@@ -29,6 +29,15 @@ export function RunView(p: { active: boolean }) {
     const k = Math.min(scale(), size().w / pg.width, size().h / pg.height);
     return `translate(${(size().w - pg.width * k) / 2}px, ${(size().h - pg.height * k) / 2}px) scale(${k})`;
   };
+  // a portrait screen reads a landscape page as its blocks one under another, at one zoom
+  const layout = (pg: Page, n: number) => {
+    if (n !== base() || size().w >= size().h || pg.width <= pg.height) return { transform: place(pg) };
+    const stack = stacked(pg);
+    const k = size().w / stack.width;
+    // the page's ground reaches the screen's foot even when its blocks end above it
+    const tall = { ...stack, height: Math.max(stack.height, Math.floor(size().h / k)) };
+    return { transform: `scale(${k})`, stack: tall, height: tall.height * k };
+  };
 
   onMount(() => {
     const watch = new ResizeObserver(() => setSize({ w: host.clientWidth, h: host.clientHeight }));
@@ -44,16 +53,21 @@ export function RunView(p: { active: boolean }) {
   return (
     <div class="run-view" ref={host}>
       <For each={pages()}>
-        {(pg, n) => (
-          <div class="run-layer" data-page={pg.id} hidden={n() < base()}>
-            <Show when={n() > base()}>
-              <div class="run-backdrop" onPointerDown={() => n() === pages().length - 1 && back()} />
-            </Show>
-            <div class="run-page" classList={{ over: n() > base() }} style={{ transform: place(pg) }}>
-              <PageView page={pg} act={pageAct(pg.id)} />
+        {(pg, n) => {
+          const shown = () => layout(pg, n());
+          return (
+            <div class="run-layer" classList={{ stacked: !!shown().stack }} data-page={pg.id} hidden={n() < base()}>
+              <Show when={n() > base()}>
+                <div class="run-backdrop" onPointerDown={() => n() === pages().length - 1 && back()} />
+              </Show>
+              <div class="run-page" classList={{ over: n() > base() }} style={{ transform: shown().transform }}>
+                <PageView page={pg} act={pageAct(pg.id)} overrides={shown().stack?.at} size={shown().stack} />
+              </div>
+              {/* the stacked page's height, which its scaled drawing does not take */}
+              <Show when={shown().height}>{(h) => <div style={{ height: `${h()}px` }} />}</Show>
             </div>
-          </div>
-        )}
+          );
+        }}
       </For>
     </div>
   );
