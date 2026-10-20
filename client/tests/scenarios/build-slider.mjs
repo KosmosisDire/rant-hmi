@@ -2,7 +2,7 @@
 // value, and a drag across it that sets the value in steps. Bound to Speed, a press jumps the
 // line's speed there, a drag sets it, and a readout beside it follows.
 
-export default async function ({ page, hmi, d, check, eventually }) {
+export default async function ({ page, hmi, d, eventually }) {
   await d.addComponent("Slider", 300, 44);
   await d.addInput("value", "0", true);
   await d.addInput("min", "0");
@@ -35,7 +35,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.mouse.move(b.x + b.width * 0.25, b.y + b.height / 2, { steps: 8 });
   await page.mouse.up();
   await eventually(() => Math.abs((hmi.state.values.Speed?.value ?? 0) - 0.5) < 0.01, "a drag back to set it to 0.5");
-  const thumb = await inst.locator('.el[data-name="thumb"]').boundingBox();
-  check(Math.abs(thumb.x + thumb.width / 2 - (b.x + b.width * 0.25)) < 4, `the thumb sits at ${thumb.x}, not under the pointer`);
+  // the page draws the value a moment after this test hears it
+  let middle = 0;
+  const under = async () => {
+    const t = await inst.locator('.el[data-name="thumb"]').boundingBox();
+    middle = t.x + t.width / 2;
+    return Math.abs(middle - (b.x + b.width * 0.25)) < 4;
+  };
+  await eventually(under, () => `the thumb to sit under the pointer, not at ${middle}`);
   await eventually(async () => (await page.locator(".run-layer:not([hidden]) .el.text", { hasText: "m/s" }).textContent()) === "0.5 m/s", "the readout to follow");
 }
