@@ -1,11 +1,11 @@
 import { createSignal } from "solid-js";
 import { Datapoints } from "./Datapoints";
-import { ThemeTable } from "./Theme";
-import { VariablesTable } from "./Variables";
 import { Inspector } from "./Inspector";
 import { MeshTree } from "./MeshTree";
+import { ThemeTable } from "./Theme";
+import { VariablesTable } from "./Variables";
 
-/** What the Data screen has picked: an entity on the mesh, an import or a variable. */
+/** What the Data screen has picked: an entity on the mesh, an import, a variable or a token. */
 export type Selection =
   | { kind: "entity"; name: string }
   | { kind: "import"; alias: string }

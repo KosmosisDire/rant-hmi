@@ -1,8 +1,8 @@
-import { ChevronDown, ChevronRight, Plus, Search, X } from "../../ui/icons";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import type { EntityInfo } from "../../protocol/EntityInfo";
 import { send } from "../../net/connection";
+import type { EntityInfo } from "../../protocol/EntityInfo";
 import { importOf, setState, state } from "../../state/store";
+import { ChevronDown, ChevronRight, Plus, Search, X } from "../../ui/icons";
 import { KindIcon } from "../../ui/marks";
 import type { Picking } from "./DataScreen";
 import { suggest } from "./ImportForm";
@@ -131,7 +131,7 @@ export function MeshTree(p: Picking) {
       </div>
       <div class="pane-foot">
         <span class="section" style={{ margin: 0 }}>
-          {state.entities.length} entities
+          {state.entities.length === 1 ? "1 entity" : `${state.entities.length} entities`}
         </span>
       </div>
     </>

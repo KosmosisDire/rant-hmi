@@ -6,9 +6,9 @@ import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import { componentScope, docScope, resolve, type Scope } from "../state/bind";
+import { short } from "../state/format";
 import { component } from "../state/store";
 import { componentAct, type Act } from "./act";
-import { short } from "../state/format";
 
 export interface Box {
   x: number;
