@@ -4,7 +4,7 @@
 import { Decoder, Encoder } from "cbor-x";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
-import { receive, setState, state } from "../state/store";
+import { notify, receive, setState, state } from "../state/store";
 
 const HEARTBEAT_MS = 100;
 const RETRY_MAX_MS = 2000;
@@ -47,8 +47,15 @@ export function connect() {
   };
 }
 
-export function send(msg: ClientMsg) {
-  if (socket?.readyState === WebSocket.OPEN) socket.send(cbor.encoder.encode(msg));
+/** Sends at once, true when it went. Without a link nothing can be done, so the person hears
+ *  it was not. */
+export function send(msg: ClientMsg): boolean {
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(cbor.encoder.encode(msg));
+    return true;
+  }
+  if (msg.type !== "ping") notify("The HMI is out of reach, so that was not done.", "warn");
+  return false;
 }
 
 document.addEventListener("visibilitychange", () => {
