@@ -19,7 +19,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => handlers().map((h) => h.event).join() === "tap,press", "a tap handler listed first");
   check(handlers()[1].code.includes("Speed"), "adding a tap lost the press code");
 
-  await page.locator('button[title="Remove the press handler"]').click();
+  await page.locator('.screen:not([hidden]) button[title="Remove the press handler"]').click();
   await eventually(() => handlers().length === 1 && handlers()[0].event === "tap", "the press handler to go");
   await page.keyboard.press("Control+z");
   await eventually(() => handlers().length === 2 && handlers()[1].code.includes("Speed"), "undo to bring it back");
