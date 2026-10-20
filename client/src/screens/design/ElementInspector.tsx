@@ -6,6 +6,7 @@ import type { Element } from "../../protocol/Element";
 import type { Event } from "../../protocol/Event";
 import type { Page } from "../../protocol/Page";
 import { isConstant, resolve } from "../../state/bind";
+import { complete } from "../../state/complete";
 import { DraftInput } from "../../ui/DraftInput";
 import { Plus, Square, Trash, Type, X } from "../../ui/icons";
 import { find, setProps } from "./tree";
@@ -212,7 +213,14 @@ function Events(p: { page: string; element: Element }) {
                     <X size={13} />
                   </button>
                 </div>
-                <DraftInput multiline class="editor code" value={h().code} placeholder="Speed = Speed + 0.1;" onCommit={(code) => write(event, code)} />
+                <DraftInput
+                  multiline
+                  class="editor code"
+                  value={h().code}
+                  placeholder="Speed = Speed + 0.1;"
+                  onCommit={(code) => write(event, code)}
+                  complete={(t, c) => complete(t, c, "handler")}
+                />
               </div>
             )}
           </Show>
@@ -237,7 +245,7 @@ function Field(p: { page: string; element: Element; key: string; label: string; 
   return (
     <div class="field" classList={{ bound: !p.plain && !isConstant(value()) }}>
       <label>{p.label}</label>
-      <DraftInput value={value()} placeholder={p.placeholder} onCommit={write} />
+      <DraftInput value={value()} placeholder={p.placeholder} onCommit={write} complete={p.plain ? undefined : (t, c) => complete(t, c, "expression")} />
       <Show when={status()}>
         {(s) => (
           <span class="field-note">

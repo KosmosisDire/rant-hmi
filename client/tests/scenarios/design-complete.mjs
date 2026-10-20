@@ -1,0 +1,54 @@
+// A new user types expressions with the list's help: names first, then a struct's fields,
+// then a number's format, each picked with the arrows and Enter, or with a click in a
+// handler. Enter with nothing picked keeps exactly what was typed.
+
+import { props } from "../designer.mjs";
+
+export default async function ({ page, hmi, d, check, eventually }) {
+  const pageId = await hmi.addPage("Complete");
+  const id = await hmi.addElement(pageId, "span", { name: "Joint", x: "44", y: "44", w: "264", h: "44", text: '""', color: "#e4e6e8" });
+  await d.openPage("Complete");
+  await d.el(id).click();
+  const list = page.locator(".suggest .suggest-name");
+  const names = () => list.allTextContents();
+  const pick = async (name) => {
+    const at = (await names()).indexOf(name);
+    check(at >= 0, `${name} is not offered among ${(await names()).join(", ")}`);
+    for (let i = 0; i <= at; i++) await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+  };
+
+  const text = d.field("Text");
+  await text.click();
+  check((await list.count()) === 0, "a filled field opened the list on focus");
+  await text.fill("");
+  await page.keyboard.type("Jo");
+  await eventually(async () => (await names()).includes("Joints"), "Joints in the list");
+  check((await page.locator(".suggest-row.chosen").count()) === 0, "the list picked a row by itself");
+  await pick("Joints");
+  await page.keyboard.type(".");
+  await eventually(async () => (await names()).join() === "position,velocity,effort", "the fields of Joints in schema order");
+  await page.keyboard.type("pos");
+  await pick("position");
+  await page.keyboard.type("[0].");
+  await eventually(async () => (await names()).includes("toFixed"), "a number's format");
+  await pick("toFixed");
+  await page.keyboard.press("Enter");
+  await eventually(() => props(hmi, pageId, id).text === "Joints.position[0].toFixed(1)", "the expression built from picks");
+  await eventually(async () => /^-?\d+\.\d$/.test(await d.el(id).textContent()), "the live joint on the canvas");
+
+  await text.click();
+  await text.fill("Spee");
+  await page.keyboard.press("Enter");
+  await eventually(() => props(hmi, pageId, id).text === "Spee", "Enter with nothing picked to keep what was typed");
+
+  await page.locator('button[title="Add an event"]').click();
+  await page.locator(".event-menu button", { hasText: "Tap" }).click();
+  const code = page.locator(".handler .editor.code");
+  await code.click();
+  await page.keyboard.type("Sp");
+  await page.locator(".suggest-row", { hasText: "Speed" }).click();
+  await page.keyboard.type(" = 1;");
+  await page.keyboard.press("Control+Enter");
+  await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code === "Speed = 1;", "the handler typed with a click on the list");
+}
