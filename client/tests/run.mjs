@@ -56,6 +56,9 @@ for (const file of files) {
   } catch (e) {
     failed++;
     console.log(`FAIL  ${name}: ${e.message}`);
+    // the backend's last words often say why
+    const tail = sys.backend.log.trim().split(/\r?\n/).slice(-12);
+    for (const line of tail) console.log(`        backend: ${line}`);
   }
   await page.screenshot({ path: join(out, `${name}.png`) });
   hmi.close();
