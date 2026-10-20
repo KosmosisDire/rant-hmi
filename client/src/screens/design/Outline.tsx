@@ -1,17 +1,45 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, For, type JSX, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
+import { remembered } from "../../state/remember";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
-import { Component, CopyPlus, File, Plus, Star, Trash } from "../../ui/icons";
+import { ChevronDown, ChevronRight, Component, CopyPlus, File, Plus, Star, Trash } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
 import { addElement } from "./add";
 import type { Pick } from "./DesignScreen";
 import { addMenu, elementMenu, layersMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
 import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
+
+const FOLDS = ["open", "closed"] as const;
+
+/** Whether each pane of the sidebar shows its body, as this browser remembers it. */
+const folds = {
+  pages: remembered("pane-pages", "open", FOLDS),
+  components: remembered("pane-components", "open", FOLDS),
+  layers: remembered("pane-layers", "open", FOLDS),
+};
+
+/** A pane's head whose word folds the body away and back, its actions on the right. */
+function FoldHead(p: { title: string; pane: keyof typeof folds; first?: boolean; children: JSX.Element }) {
+  const [fold, setFold] = folds[p.pane];
+  return (
+    <div class="pane-head" classList={{ "layers-head": !p.first }}>
+      <button class="head-title fold" aria-expanded={fold() === "open"} onClick={() => setFold(fold() === "open" ? "closed" : "open")}>
+        <Show when={fold() === "open"} fallback={<ChevronRight size={12} />}>
+          <ChevronDown size={12} />
+        </Show>
+        <span>{p.title}</span>
+      </button>
+      {p.children}
+    </div>
+  );
+}
+
+const shown = (pane: keyof typeof folds) => folds[pane][0]() === "open";
 
 /** The left sidebar: the pages, and the open page's elements as layers. */
 export function Outline(p: { page: Page | undefined; selected: string[]; onPick: Pick; onEdit: (id: string, key: string) => void }) {
@@ -62,13 +90,12 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
 
   return (
     <>
-      <div class="pane-head">
-        <span class="head-title">Pages</span>
+      <FoldHead title="Pages" pane="pages" first>
         <button class="icon-btn" title="Add a page" onClick={addPage}>
           <Plus size={14} />
         </button>
-      </div>
-      <div class="pages">
+      </FoldHead>
+      <div class="pages" classList={{ tall: !shown("layers") }} hidden={!shown("pages")}>
         <For each={pages()}>
           {(pg) => (
             <button class="list-row" classList={{ selected: pg.id === p.page?.id }} onClick={() => openPage(pg.id)} onContextMenu={(e) => pageMenu(e, pg)}>
@@ -84,13 +111,12 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
           )}
         </For>
       </div>
-      <div class="pane-head layers-head">
-        <span class="head-title">Components</span>
+      <FoldHead title="Components" pane="components">
         <button class="icon-btn" title="Add a component" onClick={addComponent}>
           <Plus size={14} />
         </button>
-      </div>
-      <div class="pages">
+      </FoldHead>
+      <div class="pages" classList={{ tall: !shown("layers") }} hidden={!shown("components")}>
         <For each={components()} fallback={<div class="field-hint list-hint">Make a part once, place it on many pages.</div>}>
           {(c) => (
             <button class="list-row" classList={{ selected: c.id === p.page?.id }} onClick={() => openPage(c.id)} onContextMenu={(e) => pageMenu(e, c)}>
@@ -105,18 +131,19 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
           )}
         </For>
       </div>
-      <div class="pane-head layers-head">
-        <span class="head-title">Layers</span>
+      <FoldHead title="Layers" pane="layers">
         <button ref={adder} class="icon-btn" title="Add an element" onClick={openAdd}>
           <Plus size={14} />
         </button>
-      </div>
+      </FoldHead>
       <Show
-        when={p.page && p.page.children.length > 0}
+        when={shown("layers") && p.page && p.page.children.length > 0}
         fallback={
-          <div class="pane-body placeholder" onContextMenu={(e) => p.page && layersMenu(e, p.page, p.onPick, () => {})}>
-            Nothing here yet. Add with the + above, or a right click.
-          </div>
+          <Show when={shown("layers")}>
+            <div class="pane-body placeholder" onContextMenu={(e) => p.page && layersMenu(e, p.page, p.onPick, () => {})}>
+              Nothing here yet. Add with the + above, or a right click.
+            </div>
+          </Show>
         }
       >
         <LayerList page={p.page!} selected={p.selected} onPick={p.onPick} onEdit={p.onEdit} />

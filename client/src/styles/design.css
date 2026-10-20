@@ -162,6 +162,24 @@
   padding: 6px 0;
 }
 
+/* With the layers folded away, the lists share their room. */
+.pages.tall {
+  flex: 0 1 auto;
+  max-height: none;
+}
+
+/* A pane's word folds its body, the whole head left of its actions. */
+.fold {
+  align-self: stretch;
+  color: inherit;
+  text-align: left;
+}
+
+.fold > svg {
+  flex: 0 0 auto;
+  color: var(--dim);
+}
+
 .layers-head {
   border-top: 1px solid var(--border);
 }
