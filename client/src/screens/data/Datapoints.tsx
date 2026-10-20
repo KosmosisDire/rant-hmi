@@ -1,7 +1,7 @@
 import { For, Show } from "solid-js";
-import { short } from "../../state/format";
 import { live, state } from "../../state/store";
 import { KindIcon } from "../../ui/marks";
+import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
 
 /** Every import with its live value. Pages and handlers will see only these. */
@@ -43,10 +43,8 @@ export function Datapoints(p: Picking) {
                           {i.intent}
                         </span>
                       </td>
-                      <td>
-                        <span class="value" classList={{ unknown: !v().known }}>
-                          {v().value === null && !v().known ? "unknown" : short(v().value)}
-                        </span>
+                      <td class="cell-value">
+                        <Preview value={v().value} known={v().known} />
                       </td>
                     </tr>
                   );

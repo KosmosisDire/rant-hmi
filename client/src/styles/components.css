@@ -274,6 +274,88 @@
   background: repeating-linear-gradient(135deg, var(--panel3) 0 4px, var(--panel2) 4px 8px);
 }
 
+/* A value at a glance: see ui/Preview.tsx. */
+.pv-num,
+.pv-text {
+  font: 12px var(--mono);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.pv-none {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.pv-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 12px var(--mono);
+  color: var(--dim);
+}
+
+.pv-flag::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.pv-flag.on {
+  color: var(--text);
+}
+
+.pv-flag.on::before {
+  background: var(--green);
+}
+
+.pv-fields {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.pv-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.pv-key {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.pv-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pv-bars {
+  display: inline-flex;
+  gap: 1px;
+  height: 16px;
+}
+
+.pv-bar {
+  position: relative;
+  width: 3px;
+  background: var(--panel3);
+}
+
+.pv-bar > span {
+  position: absolute;
+  left: 0;
+  right: 0;
+  min-height: 1px;
+  background: var(--blue);
+}
+
 /* An editor looks like the value it replaces, with an outline that says it can be written. */
 .editor {
   width: 100%;

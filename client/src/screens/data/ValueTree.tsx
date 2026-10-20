@@ -1,8 +1,9 @@
 import { For, Match, Show, Switch } from "solid-js";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { JsonValue } from "../../protocol/serde_json/JsonValue";
-import { INTEGERS, SCALARS, short, typeLabel } from "../../state/format";
+import { INTEGERS, SCALARS, typeLabel } from "../../state/format";
 import { DraftInput } from "../../ui/DraftInput";
+import { Preview } from "../../ui/Preview";
 
 type Commit = (path: string, value: JsonValue) => void;
 
@@ -60,11 +61,7 @@ function Cell(p: { field: FieldInfo; value: JsonValue | null; known: boolean; pa
   return (
     <Show
       when={editable()}
-      fallback={
-        <span class="value" classList={{ unknown: !p.known }}>
-          {short(p.value)}
-        </span>
-      }
+      fallback={<Preview value={p.value} known={p.known} />}
     >
       <Switch fallback={<DraftInput value={p.value === null ? "" : String(p.value)} accept={(t) => parse(t) !== undefined} onCommit={(t) => set(parse(t)!)} />}>
         <Match when={p.field.kind === "bool"}>
