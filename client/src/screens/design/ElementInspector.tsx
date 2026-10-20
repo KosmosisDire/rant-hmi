@@ -118,6 +118,13 @@ function PageInspector(p: { page: Page }) {
           when={!isComponent()}
           fallback={<div class="placeholder">Place it on a page with the component button over the layers. Every instance shows what is drawn here.</div>}
         >
+          <div class="section">Look</div>
+          <Field
+            label="Fill"
+            value={p.page.fill}
+            placeholder="#15171a"
+            onWrite={(fill) => send({ type: "edit", edit: { kind: "set_fill", page: p.page.id, fill: fill ?? "" } })}
+          />
           <div class="field">
             <label>Shows</label>
             <div class="choice">
@@ -164,6 +171,13 @@ function PageInspector(p: { page: Page }) {
 }
 
 function Properties(p: { page: string; element: Element }) {
+  // a property's value and its write, as a field takes them
+  const prop = (key: string) => ({
+    get value() {
+      return p.element.props[key] ?? "";
+    },
+    onWrite: (t: string | null) => setProps(p.page, p.element.id, { [key]: t }),
+  });
   const text = () => p.element.tag === "span";
   const instance = () => p.element.tag === "use";
   const other = () =>
@@ -202,10 +216,10 @@ function Properties(p: { page: string; element: Element }) {
       </div>
       <div class="pane-body pad">
         <div class="section">Element</div>
-        <Field {...p} key="name" label="Name" plain />
+        <Field {...prop("name")} label="Name" plain />
         <div class="section">Placement</div>
         <div class="placement">
-          <For each={["x", "y", "w", "h"]}>{(k) => <Field {...p} key={k} label={k} />}</For>
+          <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} />}</For>
         </div>
         <Show when={instance()}>
           <div class="section">Component</div>
@@ -228,19 +242,19 @@ function Properties(p: { page: string; element: Element }) {
             <>
               <div class="section">Inputs</div>
               <For each={c().interface?.inputs} fallback={<div class="field-hint">{c().name} takes no inputs yet. Add them on the component.</div>}>
-                {(i) => <Field {...p} key={i.name} label={i.name} placeholder={i.default} />}
+                {(i) => <Field {...prop(i.name)} label={i.name} placeholder={i.default} />}
               </For>
             </>
           )}
         </Show>
         <Show when={text()}>
           <div class="section">Text</div>
-          <Field {...p} key="text" label="Text" />
-          <For each={TEXT_LOOK}>{([label, key, hint]) => <Field {...p} key={key} label={label} placeholder={hint} />}</For>
+          <Field {...prop("text")} label="Text" />
+          <For each={TEXT_LOOK}>{([label, key, hint]) => <Field {...prop(key)} label={label} placeholder={hint} />}</For>
         </Show>
         <Show when={!instance()}>
           <div class="section">Look</div>
-          <For each={LOOK}>{([label, key, hint]) => <Field {...p} key={key} label={label} placeholder={hint} />}</For>
+          <For each={LOOK}>{([label, key, hint]) => <Field {...prop(key)} label={label} placeholder={hint} />}</For>
           <div class="section">More CSS</div>
           <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
         </Show>
@@ -334,10 +348,10 @@ function Events(p: { page: string; element: Element }) {
 
 /** One property, an expression unless `plain`. Under it, what stops it showing, and for
  *  words that fail for want of quotes, a way to make them text. */
-function Field(p: { page: string; element: Element; key: string; label: string; placeholder?: string; plain?: boolean }) {
+function Field(p: { label: string; value: string; onWrite: (text: string | null) => void; placeholder?: string; plain?: boolean }) {
   const where = useContext(WhereContext);
-  const value = () => p.element.props[p.key] ?? "";
-  const write = (t: string) => setProps(p.page, p.element.id, { [p.key]: t.trim() === "" ? null : t });
+  const value = () => p.value;
+  const write = (t: string) => p.onWrite(t.trim() === "" ? null : t);
   const status = createMemo(() => {
     if (p.plain) return undefined;
     const r = resolve(value(), where().scope);

@@ -71,6 +71,7 @@ component placed on a page is a tag named after it.
   needs no escaping.
 - `<on>` holds a handler's code, first inside its element.
 - `shows="over"` on a page opens it over the page beneath, as a dialog.
+- `fill` is a page's ground, an expression too, so `fill="$ground"` follows light and dark.
 
 A component has the same body, with its inputs and the events it sends first.
 

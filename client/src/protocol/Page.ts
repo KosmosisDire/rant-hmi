@@ -15,4 +15,8 @@ id: string,
 /**
  * A component's is PascalCase, as instances name it.
  */
-name: string, width: number, height: number, shows: Shows, interface: Interface | null, children: Array<Element>, };
+name: string, width: number, height: number, shows: Shows, 
+/**
+ * A page's ground, an expression such as `$ground`. Empty draws the default.
+ */
+fill: string, interface: Interface | null, children: Array<Element>, };

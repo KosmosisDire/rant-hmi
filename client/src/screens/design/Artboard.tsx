@@ -2,7 +2,7 @@
 // resize on the grid (Alt slips it), and a drag writes when it ends.
 
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { type Box, PageView } from "../../page/PageView";
+import { type Box, PageView, pageGround } from "../../page/PageView";
 import type { Page } from "../../protocol/Page";
 import { number } from "../../state/bind";
 import { absolute, boxOf, find, literal, setProps } from "./tree";
@@ -88,8 +88,9 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
     if (!g) return;
     g.clearRect(0, 0, cw, ch);
     const v = view();
+    // the page's fill, else the default its style gives
     const sheet = host.querySelector<HTMLElement>(".page");
-    const ground = (sheet && getComputedStyle(sheet).getPropertyValue("--page-ground").trim()) || "#000000";
+    const ground = pageGround(p.page) ?? ((sheet && getComputedStyle(sheet).getPropertyValue("--page-ground").trim()) || "#000000");
     const [x0, y0] = [Math.round(v.x * dpr), Math.round(v.y * dpr)];
     const [x1, y1] = [Math.round((v.x + p.page.width * v.k) * dpr), Math.round((v.y + p.page.height * v.k) * dpr)];
     const lines = ink(g, ground);

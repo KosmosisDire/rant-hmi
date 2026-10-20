@@ -46,4 +46,30 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await set("Name", "brand");
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === frame)?.props.background === "$brand", "the page to follow the rename");
   await eventually(() => hmi.page(badge).children[0].props.background === "$brand", "the component to follow the rename");
+
+  // a page's fill reads the theme too, so the ground follows light and dark
+  await page.locator("button", { hasText: "Add a token" }).click();
+  await right.locator(".head-title", { hasText: "$color" }).waitFor();
+  await set("Name", "ground");
+  await right.locator(".head-title", { hasText: "$ground" }).waitFor();
+  await set("Dark", "#101418");
+  await set("Light", "#f4f4f4");
+  await d.openPage("Themed");
+  await page.keyboard.press("Escape");
+  await d.setField("Fill", "$ground");
+  await eventually(() => hmi.page(pageId).fill === "$ground", "the page's fill");
+  const ground = () =>
+    page.evaluate(() => {
+      const c = document.querySelector(".artboard-grid");
+      const [sheet, host] = [document.querySelector(".artboard .page").getBoundingClientRect(), c.getBoundingClientRect()];
+      const at = (v) => Math.round((v + 3) * devicePixelRatio);
+      return [...c.getContext("2d").getImageData(at(sheet.left - host.left), at(sheet.top - host.top), 1, 1).data.slice(0, 3)].join();
+    });
+  await eventually(async () => (await ground()) === "16,20,24", "the artboard to draw the dark fill");
+  await page.locator('button[title="Switch the theme"]').click();
+  await eventually(async () => (await ground()) === "244,244,244", "the artboard to draw the light fill");
+  await page.locator('button[title="Switch the theme"]').click();
+  await d.tab("Run");
+  const run = page.locator(".run-layer:not([hidden]) .page");
+  await eventually(async () => (await colour(run)) === "rgb(16, 20, 24)", "the running page to show its fill");
 }

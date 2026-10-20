@@ -15,7 +15,8 @@ const TEXT: &str = "text";
 pub fn write(page: &Page) -> String {
     let root = if page.interface.is_some() { "component" } else { "page" };
     let shows = if page.shows == Shows::Over { " shows=\"over\"" } else { "" };
-    let mut out = format!("<{root} name={} size=\"{}x{}\"{shows}>\n", quote(&page.name), page.width, page.height);
+    let fill = if page.fill.is_empty() { String::new() } else { format!(" fill={}", quote(&page.fill)) };
+    let mut out = format!("<{root} name={} size=\"{}x{}\"{shows}{fill}>\n", quote(&page.name), page.width, page.height);
     for i in page.interface.iter().flat_map(|i| &i.inputs) {
         let bindable = if i.bindable { " bindable=\"true\"" } else { "" };
         out.push_str(&format!("  <prop name={} default={}{bindable}/>\n", quote(&i.name), quote(&i.default)));
@@ -112,7 +113,7 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     let attrs = r.attrs()?;
     r.expect(">")?;
     let interface = (root == "component").then(Interface::default);
-    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 1408, height: 792, shows: Shows::Full, interface, children: Vec::new() };
+    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 1408, height: 792, shows: Shows::Full, fill: String::new(), interface, children: Vec::new() };
     for (k, v) in attrs {
         match k.as_str() {
             "name" => page.name = v,
@@ -121,6 +122,7 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
                 page.width = w.trim().parse().map_err(|_| r.error("size is written WxH, like 1408x792"))?;
                 page.height = h.trim().parse().map_err(|_| r.error("size is written WxH, like 1408x792"))?;
             }
+            "fill" if root == "page" => page.fill = v,
             "shows" => {
                 page.shows = match v.as_str() {
                     "full" => Shows::Full,
@@ -398,6 +400,14 @@ mod tests {
         assert_eq!(speed.props["color"], "Speed > 1 && Running ? 'red' : #e4e6e8");
         assert_eq!(page.children[0].children[1].props["text"], "\"Belt <1> & rollers\"");
         assert_eq!(write(&page), PAGE);
+    }
+
+    #[test]
+    fn a_page_keeps_its_fill() {
+        let text = "<page name=\"A\" size=\"1408x792\" fill=\"$ground\">\n</page>\n";
+        let page = parse(text, "a").unwrap();
+        assert_eq!(page.fill, "$ground");
+        assert_eq!(write(&page), text);
     }
 
     #[test]

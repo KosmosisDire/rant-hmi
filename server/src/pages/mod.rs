@@ -29,6 +29,9 @@ pub struct Page {
     pub height: u32,
     #[serde(default)]
     pub shows: Shows,
+    /// A page's ground, an expression such as `$ground`. Empty draws the default.
+    #[serde(default)]
+    pub fill: String,
     #[serde(default)]
     pub interface: Option<Interface>,
     pub children: Vec<Element>,
@@ -154,6 +157,7 @@ pub enum Edit {
     RenamePage { page: String, name: String },
     ResizePage { page: String, width: u32, height: u32 },
     SetShows { page: String, shows: Shows },
+    SetFill { page: String, fill: String },
     RemovePage { page: String },
     /// Puts a whole page back, ids and all, as undoing its removal does.
     PutPage { page: Page },
@@ -302,7 +306,10 @@ impl Pages {
     pub fn rename(&mut self, from: &str, to: &str, components: bool) -> Result<Vec<String>, String> {
         let mut touched = Vec::new();
         for p in self.list.iter_mut().filter(|p| components || p.interface.is_none()) {
-            if p.children.iter_mut().fold(false, |c, e| rename_in(e, from, to) | c) {
+            let fill = js::rename(&p.fill, from, to);
+            let changed = fill != p.fill;
+            p.fill = fill;
+            if p.children.iter_mut().fold(changed, |c, e| rename_in(e, from, to) | c) {
                 touched.push(p.id.clone());
             }
         }
@@ -368,7 +375,7 @@ impl Pages {
             Edit::AddPage { name } => {
                 let name = named(&name)?;
                 let id = self.free_id(&slug(&name));
-                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, interface: None, children: Vec::new() });
+                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, fill: String::new(), interface: None, children: Vec::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
@@ -377,7 +384,7 @@ impl Pages {
                 let name = self.component_name(&name, None)?;
                 let id = self.free_id(&slug(&name));
                 let interface = Some(Interface::default());
-                self.insert_page(Page { id: id.clone(), name, width: COMPONENT_WIDTH, height: COMPONENT_HEIGHT, shows: Shows::Full, interface, children: Vec::new() });
+                self.insert_page(Page { id: id.clone(), name, width: COMPONENT_WIDTH, height: COMPONENT_HEIGHT, shows: Shows::Full, fill: String::new(), interface, children: Vec::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
@@ -408,6 +415,14 @@ impl Pages {
             Edit::SetShows { page, shows } => {
                 let old = std::mem::replace(&mut self.page_mut(&page)?.shows, shows);
                 Edit::SetShows { page: page.clone(), shows: old }
+            }
+            Edit::SetFill { page, fill } => {
+                let p = self.page_mut(&page)?;
+                if p.interface.is_some() {
+                    return Err(format!("{} draws on what holds it, so it has no fill", p.name));
+                }
+                let old = std::mem::replace(&mut p.fill, fill.trim().to_owned());
+                Edit::SetFill { page: page.clone(), fill: old }
             }
             Edit::RemovePage { page } => {
                 let at = self.list.iter().position(|p| p.id == page).ok_or_else(|| format!("there is no page {page}"))?;
@@ -618,7 +633,8 @@ impl Pages {
             Edit::Batch { .. } => unreachable!("taken above"),
         };
         let page = match &undo {
-            Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::SetShows { page, .. } | Edit::RemoveElement { page, .. } => page,
+            Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::SetShows { page, .. } | Edit::SetFill { page, .. } => page,
+            Edit::RemoveElement { page, .. } => page,
             Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } | Edit::SetHandler { page, .. } => page,
             Edit::SetInput { page, .. } | Edit::SetEvent { page, .. } => page,
             _ => unreachable!("page edits return early"),
@@ -959,6 +975,18 @@ mod tests {
     }
 
     #[test]
+    fn a_page_fill_follows_a_rename_and_a_component_has_none() {
+        let dir = scratch("fill");
+        let mut pages = Pages::open(&dir).unwrap();
+        pages.apply(Edit::SetFill { page: "overview".into(), fill: "$ground".into() }).unwrap();
+        assert_eq!(pages.rename("$ground", "$base", true).unwrap(), ["overview"]);
+        assert_eq!(Pages::open(&dir).unwrap().get("overview").unwrap().fill, "$base");
+        let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into() }).unwrap().made.unwrap().1;
+        assert_eq!(pages.apply(Edit::SetFill { page: gauge, fill: "#000".into() }).err().unwrap(), "Gauge draws on what holds it, so it has no fill");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn handler_code_names_pages_by_their_names() {
         let dir = scratch("keys");
         let mut pages = Pages::open(&dir).unwrap();
@@ -982,6 +1010,7 @@ mod tests {
             Edit::RenamePage { page: "line-two".into(), name: "Line 2".into() },
             Edit::ResizePage { page: "line-two".into(), width: 390, height: 844 },
             Edit::SetShows { page: "line-two".into(), shows: Shows::Over },
+            Edit::SetFill { page: "line-two".into(), fill: "$ground".into() },
             add(o(), None, Tag::Div, props(&[("x", "44"), ("background", "#222")])),
             add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"a\"")])),
             add(o(), None, Tag::Span, props(&[("text", "Speed")])),

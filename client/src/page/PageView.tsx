@@ -5,7 +5,7 @@ import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
-import { componentScope, docScope, resolve, type Scope } from "../state/bind";
+import { componentScope, docScope, pageScope, resolve, type Scope } from "../state/bind";
 import { short } from "../state/format";
 import { component } from "../state/store";
 import { componentAct, type Act } from "./act";
@@ -26,11 +26,18 @@ export const OWN = new Set(["name", "x", "y", "w", "h", "text"]);
 /** CSS lengths that read a bare number as pixels. */
 const LENGTHS = new Set(["font-size", "border-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
 
+/** A page's ground from its fill, none for the default or a component. */
+export function pageGround(page: Page): string | undefined {
+  if (page.interface || !page.fill) return undefined;
+  const r = resolve(page.fill, pageScope);
+  return r.ok && r.value !== undefined && r.value !== null && r.value !== "" ? String(r.value) : undefined;
+}
+
 /** A page, or a component drawn on its own with its inputs' defaults. */
 export function PageView(p: { page: Page; overrides?: Overrides; design?: boolean; act?: Act }) {
   const scope = createMemo(() => docScope(p.page));
   return (
-    <div class="page" classList={{ design: p.design }} style={{ width: `${p.page.width}px`, height: `${p.page.height}px` }}>
+    <div class="page" classList={{ design: p.design }} style={{ width: `${p.page.width}px`, height: `${p.page.height}px`, "--page-ground": pageGround(p.page) }}>
       <For each={p.page.children}>{(e) => <ElementView element={e} scope={scope()} overrides={p.overrides} design={p.design} act={p.act} />}</For>
     </div>
   );
