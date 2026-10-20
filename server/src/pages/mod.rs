@@ -233,6 +233,9 @@ impl Pages {
             }
         }
         list.sort_by(|a, b| a.id.cmp(&b.id));
+        if let Some(twice) = list.windows(2).find(|w| w[0].id == w[1].id) {
+            anyhow::bail!("pages/{0}.html and components/{0}.html share a name, which must be one of a kind", twice[0].id);
+        }
         let file = root.join("logic").join("handlers.html");
         let rules = match file.exists() {
             true => logic::parse(&fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?).map_err(|e| anyhow::anyhow!("{}, {e}", file.display()))?,
