@@ -14,7 +14,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(text.includes("hl-variable:Running") && text.includes("hl-variable:Speed"), `the imports are not in their colour: ${text}`);
   check(text.includes('hl-str:" m/s, going steady on the line"'), "the text is not green");
   check(!text.some((r) => r.endsWith(":toFixed")), "a field after a dot took a name's colour");
-  const code = await runs(".handler");
+  const code = await runs(".event");
   check(code.includes("hl-com:// count") && code.includes("hl-local:presses"), `the handler is not in colour: ${code}`);
 
   const field = d.field("Text");

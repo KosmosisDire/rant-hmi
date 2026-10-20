@@ -46,6 +46,18 @@ export function designer(page) {
       return page.locator(".sidebar.right .field, .popover .field", { has: named }).locator("input, textarea");
     },
 
+    /** Adds a handler from the inspector's Add event row. */
+    async addEvent(event) {
+      await page.locator(".screen:not([hidden]) .sidebar.right .ghost").click();
+      await page.locator(".popover .menu-item", { hasText: new RegExp(`^${event}$`) }).click();
+    },
+
+    /** The code box of the inspector's handler for an event, or of its first one. */
+    code(event) {
+      const cards = page.locator(".screen:not([hidden]) .sidebar.right .event");
+      return (event ? cards.filter({ has: page.locator(".event-name", { hasText: new RegExp(`^${event}$`) }) }) : cards.first()).locator(".editor.code");
+    },
+
     async setField(label, text) {
       const f = d.field(label);
       await f.click();

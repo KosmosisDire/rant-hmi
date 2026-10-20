@@ -1,5 +1,6 @@
 // A user writes the HMI's own handlers: a counting timer, a warning when the line runs too
-// fast, one that follows Running. A removed timer stops, and element handlers are listed.
+// fast, one that follows Running. A new one opens in the middle, a removed timer stops, and
+// element handlers are listed by page with what they read and write.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const variable = (name, start) => hmi.send({ type: "set_variable", name, variable: { name, start, per: "hmi" } });
@@ -7,30 +8,32 @@ export default async function ({ page, hmi, d, check, eventually }) {
   variable("lastRunning", "none");
   const pageId = await hmi.addPage("Logic page");
   const lamp = await hmi.addElement(pageId, "div", { name: "Lamp", x: "44", y: "44", w: "88", h: "88" });
-  await hmi.setHandler(pageId, lamp, "tap", "log(1);");
+  await hmi.setHandler(pageId, lamp, "tap", "if (Speed > 1) ticks = 0;");
 
   await d.tab("Logic");
-  const boxes = page.locator(".rules .handler");
+  const box = page.locator(".screen.logic .detail");
   const add = async () => {
     const before = hmi.state.rules.length;
-    await page.locator("button", { hasText: "Add a handler" }).click();
-    await eventually(async () => hmi.state.rules.length === before + 1 && (await boxes.count()) === before + 1, "a new handler");
-    return boxes.nth(before);
+    await page.locator('.screen.logic button[title="Add a handler"]').click();
+    await eventually(() => hmi.state.rules.length === before + 1, "a new handler");
+    const name = hmi.state.rules.at(-1).name;
+    await eventually(async () => (await box.locator(".hero-name").inputValue()) === name, "the new handler to open");
+    return box;
   };
   const commit = async (locator, text) => {
     await locator.fill(text);
     await locator.press(text.includes("\n") ? "Control+Enter" : "Enter");
   };
 
-  let box = await add();
-  await commit(box.locator(".input-name"), "Count");
+  await add();
+  await commit(box.locator(".hero-name"), "Count");
   await commit(box.locator(".rule-field input"), "200");
   await box.locator(".editor.code").fill("ticks = ticks + 1;");
   await box.locator(".editor.code").press("Control+Enter");
   await eventually(() => hmi.state.values.ticks?.value >= 3, "the timer to count", 5000);
 
-  box = await add();
-  await commit(box.locator(".input-name"), "Too fast");
+  await add();
+  await commit(box.locator(".hero-name"), "Too fast");
   await box.locator(".rule-kind").selectOption("turns");
   await commit(box.locator(".rule-field input").first(), "Speed > 1.5");
   await commit(box.locator(".rule-field input").nth(1), "300");
@@ -43,7 +46,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // the line runs before the rule is made, whatever scenarios before left it at
   hmi.set("Running", true);
   await eventually(() => hmi.state.values.Running?.value === true, "the line running");
-  box = await add();
+  await add();
   await box.locator(".rule-kind").selectOption("changes");
   await commit(box.locator(".rule-field input"), "Running");
   await box.locator(".editor.code").fill("lastRunning = p.value;");
@@ -53,13 +56,18 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => hmi.state.values.lastRunning?.value === false, "the change rule to see Running go false");
   await hmi.set("Running", true);
 
-  await page.locator('.rules button[title="Remove Count"]').click();
+  await page.locator(".handler-list .list-row", { hasText: "Count" }).click();
+  await page.locator('.screen.logic .detail button[title="Remove Count"]').click();
   await eventually(() => !hmi.state.rules.some((r) => r.name === "Count"), "the timer to go");
   const stopped = hmi.state.values.ticks.value;
   await page.waitForTimeout(600);
   check(hmi.state.values.ticks.value <= stopped + 1, "a removed timer still counts");
 
-  check((await page.locator(".overview-page", { hasText: "Logic page" }).count()) === 1, "the overview misses the page with a handler");
-  await page.locator(".overview-page", { hasText: "Logic page" }).click();
+  check((await page.locator(".handler-list .list-group", { hasText: "Logic page" }).count()) === 1, "the list misses the page with a handler");
+  await page.locator(".handler-list .list-row", { hasText: "Lamp" }).click();
+  const rows = () => page.locator(".screen.logic .uses-row").allTextContents();
+  await eventually(async () => (await rows()).join() === "Speedvariable, write,tickssets", "the lamp's reads and writes");
+  check((await box.locator(".event-meta").textContent()) === "sets ticks", "the card does not sum up what it does");
+  await box.locator("button", { hasText: "Open in Design" }).click();
   await page.locator(".pages .list-row.selected", { hasText: "Logic page" }).waitFor();
 }

@@ -8,10 +8,12 @@ import type { Interface } from "../../protocol/Interface";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import { docScope, pageScope } from "../../state/bind";
-import { complete, type Suggestion } from "../../state/complete";
+import type { Suggestion } from "../../state/complete";
 import { component, page as pageOf, setState, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
+import { Popover } from "../../ui/Popover";
+import { EventCard } from "../logic/EventCard";
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -29,6 +31,7 @@ import {
   Trash,
   Type,
   X,
+  Zap,
 } from "../../ui/icons";
 import { makeComponent } from "./component";
 import type { Typing } from "./DesignScreen";
@@ -375,14 +378,12 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   );
 }
 
-/** An event as a person reads it: Tap, or a component's own as it is spelled. */
-const label = (event: string) => ([...POINTER, "change"].includes(event) ? event[0].toUpperCase() + event.slice(1) : event);
-
-/** The element's handlers, each a box: the event on top, the code below. Every change names
+/** The element's handlers, each a card: the event on top, the code below. Every change names
  *  one event, so two quick changes never undo each other. */
 function Events(p: { page: string; element: Element }) {
   const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
+  let ghost!: HTMLButtonElement;
   const write = (event: string, code: string | null) => send({ type: "edit", edit: { kind: "set_handler", page: p.page, id: p.element.id, event, code } });
   // what this element hears: an input what is entered, others the pointer's events, and an
   // instance its component's own
@@ -393,63 +394,59 @@ function Events(p: { page: string; element: Element }) {
   const unused = () => offered().filter((e) => !p.element.handlers.some((h) => h.event === e));
   return (
     <>
-      <div class="section section-row">
-        Events
-        <Show when={unused().length > 0}>
-          <button class="icon-btn" classList={{ on: adding() }} title="Add an event" onClick={() => setAdding(!adding())}>
-            <Plus size={13} />
-          </button>
-        </Show>
-      </div>
+      <div class="section">Events</div>
+      {/* one card per event, so a card never turns into another event's under the pointer */}
+      <For each={events()}>
+        {(event) => (
+          <Show when={p.element.handlers.find((h) => h.event === event)}>
+            {(h) => (
+              <EventCard
+                name={event}
+                code={h().code}
+                onCode={(code) => write(event, code)}
+                onRemove={() => write(event, null)}
+                removeTitle={`Remove the ${event} handler`}
+                place={where().place}
+                names={where().names}
+                inputs={where().names?.map((n) => n.label)}
+                placeholder={where().place === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
+              />
+            )}
+          </Show>
+        )}
+      </For>
+      <Show when={unused().length > 0}>
+        <button ref={ghost} class="ghost" classList={{ on: adding() }} onClick={() => setAdding(!adding())}>
+          <Plus size={13} />
+          Add event
+          <span class="ghost-trail">{unused().join(", ")}</span>
+        </button>
+      </Show>
       <Show when={adding() && unused().length > 0}>
-        <div class="event-menu">
+        <Popover anchor={ghost} onClose={() => setAdding(false)} class="choice-list">
           <For each={unused()}>
             {(e) => (
               <button
-                class="button"
+                class="menu-item"
                 onClick={() => {
                   setAdding(false);
                   write(e, "");
                 }}
               >
-                {label(e)}
+                <Zap size={13} />
+                <span class="mono">{e}</span>
               </button>
             )}
           </For>
-        </div>
+        </Popover>
       </Show>
-      <Show when={p.element.handlers.length === 0 && !adding()}>
+      <Show when={p.element.handlers.length === 0}>
         <div class="field-hint">
           {p.element.tag === "input"
             ? "Add one to run code when an operator enters a value. The code reads it as p.value."
             : "Add one to run code when this is tapped, pressed, let go or dragged. The code reads where as p.x and p.y."}
         </div>
       </Show>
-      {/* one box per event, so a box never turns into another event's under the pointer */}
-      <For each={events()}>
-        {(event) => (
-          <Show when={p.element.handlers.find((h) => h.event === event)}>
-            {(h) => (
-              <div class="handler">
-                <div class="handler-head">
-                  <span class="handler-event">{label(event)}</span>
-                  <button class="icon-btn" title={`Remove the ${event} handler`} onClick={() => write(event, null)}>
-                    <X size={13} />
-                  </button>
-                </div>
-                <DraftInput
-                  multiline
-                  class="editor code"
-                  value={h().code}
-                  placeholder={where().place === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
-                  onCommit={(code) => write(event, code)}
-                  complete={(t, c) => complete(t, c, where().place, where().names)}
-                />
-              </div>
-            )}
-          </Show>
-        )}
-      </For>
     </>
   );
 }

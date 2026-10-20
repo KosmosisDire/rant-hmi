@@ -8,9 +8,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => hmi.page(pageId).children.length === 1, "an input");
   const id = hmi.page(pageId).children[0].id;
   await d.setField("Value", "Speed");
-  await page.locator('button[title="Add an event"]').click();
-  await page.locator(".event-menu button", { hasText: "Change" }).click();
-  await page.locator(".screen:not([hidden]) .sidebar.right .handler .editor.code").click();
+  await d.addEvent("change");
+  await d.code("change").click();
   await page.keyboard.type('notify("Speed set to " + p.value);');
   await page.keyboard.press("Control+Enter");
   await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code.includes("Speed set"), "the change handler");

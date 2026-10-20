@@ -41,9 +41,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Enter");
   await eventually(() => props(hmi, pageId, id).text === "Spee", "Enter with nothing picked to keep what was typed");
 
-  await page.locator('button[title="Add an event"]').click();
-  await page.locator(".event-menu button", { hasText: "Tap" }).click();
-  const code = page.locator(".screen:not([hidden]) .sidebar.right .handler .editor.code");
+  await d.addEvent("tap");
+  const code = d.code("tap");
   await code.click();
   await page.keyboard.type("Sp");
   await page.locator(".suggest-row", { hasText: "Speed" }).click();

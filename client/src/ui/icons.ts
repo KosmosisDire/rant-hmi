@@ -1,6 +1,7 @@
 // Every Lucide icon the client draws, each from its own module, so a build compiles these
 // and not the whole set.
 
+export { default as Activity } from "lucide-solid/icons/activity";
 export { default as AlignCenterHorizontal } from "lucide-solid/icons/align-center-horizontal";
 export { default as AlignCenterVertical } from "lucide-solid/icons/align-center-vertical";
 export { default as AlignEndHorizontal } from "lucide-solid/icons/align-end-horizontal";
@@ -27,17 +28,21 @@ export { default as Info } from "lucide-solid/icons/info";
 export { default as Keyboard } from "lucide-solid/icons/keyboard";
 export { default as Link } from "lucide-solid/icons/link";
 export { default as ListClock } from "lucide-solid/icons/list-clock";
+export { default as Monitor } from "lucide-solid/icons/monitor";
+export { default as MonitorOff } from "lucide-solid/icons/monitor-off";
 export { default as Moon } from "lucide-solid/icons/moon";
 export { default as Parentheses } from "lucide-solid/icons/parentheses";
 export { default as PenTool } from "lucide-solid/icons/pen-tool";
 export { default as Play } from "lucide-solid/icons/play";
 export { default as Plus } from "lucide-solid/icons/plus";
+export { default as Power } from "lucide-solid/icons/power";
 export { default as Rss } from "lucide-solid/icons/rss";
 export { default as Search } from "lucide-solid/icons/search";
 export { default as Square } from "lucide-solid/icons/square";
 export { default as SquareFunction } from "lucide-solid/icons/square-function";
 export { default as Sun } from "lucide-solid/icons/sun";
 export { default as TextCursorInput } from "lucide-solid/icons/text-cursor-input";
+export { default as Timer } from "lucide-solid/icons/timer";
 export { default as ToggleLeft } from "lucide-solid/icons/toggle-left";
 export { default as ToggleRight } from "lucide-solid/icons/toggle-right";
 export { default as Trash } from "lucide-solid/icons/trash";
@@ -45,3 +50,4 @@ export { default as TriangleAlert } from "lucide-solid/icons/triangle-alert";
 export { default as Type } from "lucide-solid/icons/type";
 export { default as Variable } from "lucide-solid/icons/variable";
 export { default as X } from "lucide-solid/icons/x";
+export { default as Zap } from "lucide-solid/icons/zap";

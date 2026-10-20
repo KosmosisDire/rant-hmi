@@ -22,6 +22,8 @@ export function DraftInput(p: {
   accept?: (text: string) => boolean;
   /** Enter makes a new line, Ctrl Enter commits. */
   multiline?: boolean;
+  /** Code: numbered lines that never wrap, in a box that grows with them. */
+  code?: boolean;
   /** What may be typed at the caret. Nothing is picked until the user picks it. */
   complete?: (text: string, caret: number) => Completion | null;
   class?: string;
@@ -105,20 +107,35 @@ export function DraftInput(p: {
   // A field with completion holds code, shown in colour by a layer over it, which copies its
   // box and scroll. The field's own letters are clear, so its caret and selection still show.
   let colours: HTMLPreElement | undefined;
+  let gutter: HTMLPreElement | undefined;
   const follow = () => {
     if (!colours) return;
     colours.scrollTop = field.scrollTop;
     colours.scrollLeft = field.scrollLeft;
+  };
+  const grow = () => {
+    if (!p.code) return;
+    field.style.height = "0";
+    field.style.height = `${field.scrollHeight + 2}px`;
   };
   const fit = () => {
     if (!colours) return;
     const css = getComputedStyle(field);
     for (const k of BOX) colours.style.setProperty(k, css.getPropertyValue(k));
     Object.assign(colours.style, { left: `${field.offsetLeft}px`, top: `${field.offsetTop}px`, width: `${field.offsetWidth}px`, height: `${field.offsetHeight}px` });
+    if (gutter) {
+      for (const k of ["padding-top", "border-top-width", "font-family", "font-size", "line-height"]) gutter.style.setProperty(k, css.getPropertyValue(k));
+      Object.assign(gutter.style, { left: `${field.offsetLeft}px`, top: `${field.offsetTop}px`, height: `${field.offsetHeight}px` });
+    }
     // one line stands in the middle of its field, as a line its full height does
     if (!p.multiline) colours.style.lineHeight = `${field.clientHeight}px`;
     follow();
   };
+  createEffect(() => {
+    draft();
+    p.value;
+    queueMicrotask(grow);
+  });
   onMount(() => {
     if (!colours) return;
     const watch = new ResizeObserver(fit);
@@ -142,6 +159,7 @@ export function DraftInput(p: {
       title={p.title}
       spellcheck={false}
       rows={p.multiline ? 4 : undefined}
+      wrap={p.code ? "off" : undefined}
       onInput={(e: InputEvent & { currentTarget: Field }) => {
         setDraft(e.currentTarget.value);
         look();
@@ -157,9 +175,14 @@ export function DraftInput(p: {
   );
   return (
     <Show when={p.complete} fallback={input}>
-      <span class="draft">
+      <span class="draft" classList={{ code: p.code }}>
         {input}
-        <pre class="hl" classList={{ wrap: p.multiline }} ref={colours} aria-hidden="true" innerHTML={shown()} />
+        <Show when={p.code}>
+          <pre class="gutter" ref={gutter} aria-hidden="true">
+            {Array.from({ length: (draft() ?? p.value).split("\n").length }, (_, i) => i + 1).join("\n")}
+          </pre>
+        </Show>
+        <pre class="hl" classList={{ wrap: p.multiline && !p.code }} ref={colours} aria-hidden="true" innerHTML={shown()} />
         <Show when={offer()}>{(o) => <Suggestions items={o().items} chosen={chosen()} onTake={take} />}</Show>
       </span>
     </Show>
