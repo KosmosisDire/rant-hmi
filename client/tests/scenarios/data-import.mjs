@@ -1,6 +1,6 @@
 // A user imports the robot's pose with the + beside it, uses it on a page and in a handler,
 // then renames it: the page and the handler follow. They change its intent, and a name code
-// already uses is refused with a reason.
+// already uses is refused with a reason. Each entity picked starts the import form over.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Data");
@@ -30,4 +30,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await alias.fill("Math");
   await alias.press("Enter");
   await page.locator(".screen:not([hidden]) .sidebar.right .error-line", { hasText: "Math is a name code already uses" }).waitFor();
+
+  const pick = (name) => page.locator(`.screen:not([hidden]) .sidebar.left .list-row[title="${name}"]`).click();
+  const form = page.locator("#alias");
+  await pick("Line1/Conveyor");
+  await eventually(async () => (await form.inputValue()) === "Conveyor", "the form to suggest Conveyor");
+  await form.fill("Belt");
+  await pick("Line1/Jog");
+  await eventually(async () => (await form.inputValue()) === "Jog", "another entity to start the form over");
 }

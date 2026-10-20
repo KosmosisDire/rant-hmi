@@ -52,7 +52,10 @@ export function Inspector(p: Picking) {
   return (
     <Switch fallback={<div class="placeholder">Pick an entity in the mesh, or a datapoint.</div>}>
       <Match when={imported()}>{(i) => <ImportView imp={i()} />}</Match>
-      <Match when={onMesh()}>{(e) => <EntityView entity={e()} />}</Match>
+      {/* keyed, so another entity starts its import form over */}
+      <Match when={onMesh()} keyed>
+        {(e) => <EntityView entity={e} />}
+      </Match>
       <Match when={token()}>{(t) => <TokenView token={t()} onRenamed={(name) => p.onSelect({ kind: "token", name })} />}</Match>
       <Match when={variable()}>{(v) => <VariableView variable={v()} onRenamed={(name) => p.onSelect({ kind: "variable", name })} />}</Match>
     </Switch>
