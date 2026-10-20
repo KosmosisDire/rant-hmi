@@ -1,12 +1,13 @@
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import { state } from "../../state/store";
 import { OWN } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
+import type { Event } from "../../protocol/Event";
 import type { Page } from "../../protocol/Page";
 import { isConstant, resolve } from "../../state/bind";
 import { DraftInput } from "../../ui/DraftInput";
-import { Square, Trash, Type } from "../../ui/icons";
+import { Plus, Square, Trash, Type, X } from "../../ui/icons";
 import { find, setProps } from "./tree";
 
 /** The CSS a field offers by name, with an example of what it takes. Anything else lives
@@ -134,6 +135,7 @@ function Properties(p: { page: string; element: Element }) {
         <For each={LOOK}>{([label, key, hint]) => <Field {...p} key={key} label={label} placeholder={hint} />}</For>
         <div class="section">More CSS</div>
         <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
+        <Events page={p.page} element={p.element} />
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => send({ type: "edit", edit: { kind: "remove_element", page: p.page, id: p.element.id } })}>
@@ -141,6 +143,70 @@ function Properties(p: { page: string; element: Element }) {
           Delete
         </button>
       </div>
+    </>
+  );
+}
+
+const EVENTS: [Event, string][] = [
+  ["tap", "Tap"],
+  ["press", "Press"],
+  ["release", "Release"],
+];
+
+/** The element's handlers, each a box: the event on top, the code the backend runs below.
+ *  Every change names one event, so two quick changes never undo each other. */
+function Events(p: { page: string; element: Element }) {
+  const [adding, setAdding] = createSignal(false);
+  const write = (event: Event, code: string | null) => send({ type: "edit", edit: { kind: "set_handler", page: p.page, id: p.element.id, event, code } });
+  const unused = () => EVENTS.filter(([e]) => !p.element.handlers.some((h) => h.event === e));
+  return (
+    <>
+      <div class="section section-row">
+        Events
+        <Show when={unused().length > 0}>
+          <button class="icon-btn" classList={{ on: adding() }} title="Add an event" onClick={() => setAdding(!adding())}>
+            <Plus size={13} />
+          </button>
+        </Show>
+      </div>
+      <Show when={adding() && unused().length > 0}>
+        <div class="event-menu">
+          <For each={unused()}>
+            {([e, label]) => (
+              <button
+                class="button"
+                onClick={() => {
+                  setAdding(false);
+                  write(e, "");
+                }}
+              >
+                {label}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={p.element.handlers.length === 0 && !adding()}>
+        <div class="field-hint">Add one to run code when this is tapped, pressed or let go.</div>
+      </Show>
+      {/* one box per event, so a box never turns into another event's under the pointer */}
+      <For each={EVENTS}>
+        {([event, label]) => (
+          <Show when={p.element.handlers.find((h) => h.event === event)}>
+            {(h) => (
+              <div class="handler">
+                <div class="handler-head">
+                  <span class="handler-event">{label}</span>
+                  <button class="icon-btn" title={`Remove the ${event} handler`} onClick={() => write(event, null)}>
+                    <X size={13} />
+                  </button>
+                </div>
+                <DraftInput multiline class="editor code" value={h().code} placeholder="Speed = Speed + 0.1;" onCommit={(code) => write(event, code)} />
+              </div>
+            )}
+          </Show>
+        )}
+      </For>
     </>
   );
 }

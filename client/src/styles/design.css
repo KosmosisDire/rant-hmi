@@ -179,6 +179,60 @@
   grid-template-columns: 14px 1fr;
 }
 
+.section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* A handler: its event on top, its code below, as one box. */
+.handler {
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel2);
+}
+
+.handler-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+}
+
+.handler-event {
+  flex: 1;
+  padding-left: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.event-menu {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.handler .editor.code {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 66px;
+  padding: 6px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  resize: vertical;
+}
+
 .editor.css {
   height: auto;
   min-height: 84px;

@@ -32,7 +32,39 @@ pub struct Element {
     pub id: String,
     pub tag: Tag,
     pub props: BTreeMap<String, String>,
+    /// At most one per event, in the order events are listed.
+    pub handlers: Vec<Handler>,
     pub children: Vec<Element>,
+}
+
+/// Code the backend runs when its event happens on the element.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Handler {
+    pub event: Event,
+    pub code: String,
+}
+
+/// What a pointer does to an element: goes down on it, comes up, or both without straying.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Event {
+    Tap,
+    Press,
+    Release,
+}
+
+impl Event {
+    pub const ALL: [Event; 3] = [Event::Tap, Event::Press, Event::Release];
+
+    pub fn word(self) -> &'static str {
+        match self {
+            Event::Tap => "tap",
+            Event::Press => "press",
+            Event::Release => "release",
+        }
+    }
 }
 
 /// What an element renders as. A frame is a div, a text a span.
@@ -83,6 +115,8 @@ pub enum Edit {
     MoveElement { page: String, id: String, parent: Option<String>, index: usize },
     /// Sets each property to its value, or removes it where the value is null.
     SetProps { page: String, id: String, props: BTreeMap<String, Option<String>> },
+    /// Sets the code the element runs on `event`, or removes its handler where it is null.
+    SetHandler { page: String, id: String, event: Event, code: Option<String> },
     /// Several edits as one: all apply or none do, and one undo takes them all back.
     Batch { edits: Vec<Edit> },
 }
@@ -262,11 +296,24 @@ impl Pages {
                 }
                 Edit::SetProps { page: page.clone(), id, props: old }
             }
+            Edit::SetHandler { page, id, event, code } => {
+                let p = self.page_mut(&page)?;
+                let e = find_mut(&mut p.children, &id).ok_or_else(|| format!("{id} is not on {page}"))?;
+                let at = e.handlers.partition_point(|h| h.event < event);
+                let old = e.handlers.get(at).filter(|h| h.event == event).map(|h| h.code.clone());
+                if old.is_some() {
+                    e.handlers.remove(at);
+                }
+                if let Some(code) = code {
+                    e.handlers.insert(at, Handler { event, code: format::dedent(&code) });
+                }
+                Edit::SetHandler { page: page.clone(), id, event, code: old }
+            }
             Edit::Batch { .. } => unreachable!("taken above"),
         };
         let page = match &undo {
             Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::RemoveElement { page, .. } => page,
-            Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } => page,
+            Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } | Edit::SetHandler { page, .. } => page,
             _ => unreachable!("page edits return early"),
         };
         touched.push(page.clone());
@@ -419,7 +466,7 @@ mod tests {
     }
 
     fn add(page: String, parent: Option<String>, tag: Tag, props: BTreeMap<String, String>) -> Edit {
-        Edit::AddElement { page, parent, index: None, element: Element { id: String::new(), tag, props, children: Vec::new() } }
+        Edit::AddElement { page, parent, index: None, element: Element { id: String::new(), tag, props, handlers: Vec::new(), children: Vec::new() } }
     }
 
     #[test]
@@ -491,6 +538,9 @@ mod tests {
             add(o(), None, Tag::Span, props(&[("text", "Speed")])),
             Edit::SetProps { page: o(), id: "e1".into(), props: [("x".to_string(), Some("88".to_string())), ("background".to_string(), None)].into() },
             Edit::MoveElement { page: o(), id: "e3".into(), parent: Some("e1".into()), index: 0 },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: Event::Release, code: Some("  Speed = 1;\n  log(\"</on>\")".into()) },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: Event::Tap, code: Some("Speed = 2;".into()) },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: Event::Release, code: None },
             Edit::RemoveElement { page: o(), id: "e1".into() },
             Edit::Batch {
                 edits: vec![
@@ -525,15 +575,15 @@ mod tests {
         let o = || "overview".to_string();
         pages.apply(add(o(), None, Tag::Div, BTreeMap::new())).unwrap();
         pages.apply(add(o(), None, Tag::Div, BTreeMap::new())).unwrap();
-        let leaf = |id: &str, tag| Element { id: id.into(), tag, props: BTreeMap::new(), children: Vec::new() };
-        let copy = Element { id: "e1".into(), tag: Tag::Div, props: props(&[("x", "11")]), children: vec![leaf("e2", Tag::Span), leaf("x", Tag::Div)] };
+        let leaf = |id: &str, tag| Element { id: id.into(), tag, props: BTreeMap::new(), handlers: Vec::new(), children: Vec::new() };
+        let copy = Element { id: "e1".into(), tag: Tag::Div, props: props(&[("x", "11")]), handlers: Vec::new(), children: vec![leaf("e2", Tag::Span), leaf("x", Tag::Div)] };
         let made = pages.apply(Edit::AddElement { page: o(), parent: None, index: Some(1), element: copy }).unwrap().made.unwrap().1;
         assert_eq!(made, "e3");
         let ids: Vec<_> = pages.list[0].children.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, ["e1", "e3", "e2"]);
         let kids: Vec<_> = pages.list[0].children[1].children.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(kids, ["e4", "e5"]);
-        let bad = Element { id: String::new(), tag: Tag::Span, props: BTreeMap::new(), children: vec![leaf("", Tag::Span)] };
+        let bad = Element { id: String::new(), tag: Tag::Span, props: BTreeMap::new(), handlers: Vec::new(), children: vec![leaf("", Tag::Span)] };
         assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame holds other elements");
         fs::remove_dir_all(&dir).unwrap();
     }

@@ -154,7 +154,8 @@
   color: var(--dim);
 }
 
-.icon-btn:hover {
+.icon-btn:hover,
+.icon-btn.on {
   color: var(--text);
   background: var(--panel3);
 }

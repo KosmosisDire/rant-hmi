@@ -23,7 +23,7 @@ export function Outline(p: { page: Page | undefined; selected: string | null; on
     const holder = p.selected ? find(page.children, p.selected) : undefined;
     const inside = holder?.tag === "div";
     const props = { ...STARTS[tag], ...(inside ? { x: "11", y: "11" } : {}) };
-    send({ type: "edit", edit: { kind: "add_element", page: page.id, parent: inside ? holder.id : null, index: null, element: { id: "", tag, props, children: [] } } });
+    send({ type: "edit", edit: { kind: "add_element", page: page.id, parent: inside ? holder.id : null, index: null, element: { id: "", tag, props, handlers: [], children: [] } } });
   };
   const addPage = () => send({ type: "edit", edit: { kind: "add_page", name: `Page ${state.pages.length + 1}` } });
 

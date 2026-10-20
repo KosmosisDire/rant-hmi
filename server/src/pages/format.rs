@@ -1,11 +1,15 @@
 //! A page as an HTML like file. Elements are written as the HTML they render as, a frame a
 //! `div` and a text a `span`. `name`, `x`, `y`, `w` and `h` are attributes, a span's text is
 //! its body, every other property goes in `style`. Every value but the name is an expression,
-//! kept raw, so `a < b && c` needs no escaping and text is in quotes.
+//! kept raw, so `a < b && c` needs no escaping and text is in quotes. Handlers come first
+//! inside their element, their code raw too.
 //!
 //! ```html
 //! <page name="Overview" size="1408x792">
 //!   <div id="e1" name="Speed card" x="44" y="44" w="264" h="132" style="background: #1e2125">
+//!     <on event="tap">
+//!       Speed = Speed + 0.1;
+//!     </on>
 //!     <span id="e2" x="22" y="22" w="220" h="44" style="font-size: 32">Speed.toFixed(2)</span>
 //!   </div>
 //! </page>
@@ -13,7 +17,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use super::{Element, Page, Tag};
+use super::{Element, Event, Handler, Page, Tag};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 5] = ["name", "x", "y", "w", "h"];
@@ -48,11 +52,26 @@ fn element(out: &mut String, e: &Element, depth: usize) {
     if !style.is_empty() {
         out.push_str(&format!(" style={}", quote(&style.join("; "))));
     }
-    match (e.tag, e.props.get(TEXT)) {
-        (Tag::Span, Some(text)) => out.push_str(&format!(">{text}</span>\n")),
-        _ if e.children.is_empty() => out.push_str("/>\n"),
+    let text = e.props.get(TEXT).filter(|_| e.tag == Tag::Span);
+    match text {
+        Some(text) if e.handlers.is_empty() => out.push_str(&format!(">{text}</span>\n")),
+        _ if e.handlers.is_empty() && e.children.is_empty() => out.push_str("/>\n"),
         _ => {
             out.push_str(">\n");
+            let inner = "  ".repeat(depth + 1);
+            for h in &e.handlers {
+                out.push_str(&format!("{inner}<on event=\"{}\">\n", h.event.word()));
+                for line in h.code.lines() {
+                    if !line.trim().is_empty() {
+                        out.push_str(&format!("{inner}  {line}"));
+                    }
+                    out.push('\n');
+                }
+                out.push_str(&format!("{inner}</on>\n"));
+            }
+            if let Some(text) = text {
+                out.push_str(&format!("{inner}{text}\n"));
+            }
             for child in &e.children {
                 element(out, child, depth + 1);
             }
@@ -60,6 +79,16 @@ fn element(out: &mut String, e: &Element, depth: usize) {
             out.push_str(&format!("</{tag}>\n"));
         }
     }
+}
+
+/// Code with its common indent and its blank first and last lines taken off, as it is kept.
+pub fn dedent(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let indent = lines.iter().filter(|l| !l.trim().is_empty()).map(|l| l.len() - l.trim_start().len()).min().unwrap_or(0);
+    let kept: Vec<&str> = lines.iter().map(|l| if l.trim().is_empty() { "" } else { &l[indent..] }).collect();
+    let first = kept.iter().position(|l| !l.is_empty()).unwrap_or(kept.len());
+    let last = kept.iter().rposition(|l| !l.is_empty()).map_or(first, |n| n + 1);
+    kept[first..last].iter().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n")
 }
 
 /// Double quotes, or single ones when the value holds a double quote, so an expression
@@ -181,6 +210,35 @@ impl Reader<'_> {
         Ok(v)
     }
 
+    /// The `<on>` blocks at the reading point.
+    fn handlers(&mut self) -> Result<Vec<Handler>, String> {
+        let mut out = Vec::new();
+        loop {
+            self.gap();
+            if !(self.rest().starts_with("<on ") || self.rest().starts_with("<on>")) {
+                return Ok(out);
+            }
+            self.expect("<on")?;
+            let mut event = None;
+            for (k, v) in self.attrs()? {
+                match k.as_str() {
+                    "event" => event = Some(Event::ALL.into_iter().find(|e| e.word() == v).ok_or_else(|| self.error(&format!("{v} is not an event")))?),
+                    other => return Err(self.error(&format!("<on> takes no attribute {other}"))),
+                }
+            }
+            let event = event.ok_or_else(|| self.error("<on> needs an event"))?;
+            self.expect(">")?;
+            let n = outside(self.rest(), "</on>").ok_or_else(|| self.error("<on> never closes"))?;
+            if out.iter().any(|h: &Handler| h.event == event) {
+                return Err(self.error(&format!("a second {} handler", event.word())));
+            }
+            out.push(Handler { event, code: dedent(&self.rest()[..n]) });
+            self.at += n;
+            self.expect("</on>")?;
+            out.sort_by_key(|h| h.event);
+        }
+    }
+
     /// Elements until `</closing>`.
     fn children(&mut self, closing: &str) -> Result<Vec<Element>, String> {
         let mut out = Vec::new();
@@ -225,8 +283,10 @@ impl Reader<'_> {
             return Err(self.error(&format!("the id {id} is used twice")));
         }
         let mut children = Vec::new();
+        let mut handlers = Vec::new();
         if !self.eat("/>") {
             self.expect(">")?;
+            handlers = self.handlers()?;
             match tag {
                 Tag::Div => children = self.children("div")?,
                 Tag::Span => {
@@ -240,17 +300,19 @@ impl Reader<'_> {
                 }
             }
         }
-        Ok(Element { id, tag, props, children })
+        Ok(Element { id, tag, props, handlers, children })
     }
 }
 
-/// Where `what` first starts in `s` outside JS strings and template literals.
+/// Where `what` first starts in `s` outside JS strings, template literals and comments.
 fn outside(s: &str, what: &str) -> Option<usize> {
     let b = s.as_bytes();
     let mut i = 0;
     while i < b.len() {
         match b[i] {
             q @ (b'"' | b'\'' | b'`') => i = string_end(b, i, q)?,
+            b'/' if b.get(i + 1) == Some(&b'/') => i = s[i..].find('\n').map_or(b.len(), |n| i + n),
+            b'/' if b.get(i + 1) == Some(&b'*') => i = s[i + 2..].find("*/").map_or(b.len(), |n| i + n + 3),
             _ if s[i..].starts_with(what) => return Some(i),
             _ => {}
         }
@@ -360,6 +422,41 @@ mod tests {
         }
         page.children[1].props.insert("x".into(), "Mode == \"Auto\"".into());
         assert!(write(&page).contains("x='Mode == \"Auto\"'"));
+    }
+
+    #[test]
+    fn handlers_read_and_write_back_the_same() {
+        let text = r#"<page name="A" size="1408x792">
+  <div id="e1" x="0">
+    <on event="tap">
+      if (Running) {
+        Speed = Speed + 0.1; // never "</on>" here
+      }
+
+      log(`done
+      </on>`);
+    </on>
+    <on event="release">
+      Speed = 0;
+    </on>
+    <span id="e2">
+      <on event="press">
+        Jog = 1;
+      </on>
+      Speed.toFixed(1)
+    </span>
+    <span id="e3">"plain"</span>
+  </div>
+</page>
+"#;
+        let page = parse(text, "a").unwrap();
+        let e1 = &page.children[0];
+        assert_eq!(e1.handlers[0].code, "if (Running) {\n  Speed = Speed + 0.1; // never \"</on>\" here\n}\n\nlog(`done\n</on>`);");
+        assert_eq!(e1.handlers[1].event, Event::Release);
+        assert_eq!(e1.children[0].handlers[0].code, "Jog = 1;");
+        assert_eq!(e1.children[0].props["text"], "Speed.toFixed(1)");
+        assert_eq!(write(&page), text);
+        assert_eq!(parse("<page><div id=\"a\"><on event=\"hover\"></on></div></page>", "a").unwrap_err(), "line 1: hover is not an event");
     }
 
     #[test]
