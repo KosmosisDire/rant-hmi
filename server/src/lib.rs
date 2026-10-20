@@ -7,6 +7,7 @@ pub mod mesh;
 pub mod pages;
 pub mod project;
 pub mod protocol;
+pub mod script;
 pub mod web;
 
 use std::path::PathBuf;
@@ -48,6 +49,8 @@ pub async fn run(o: Options) -> Result<()> {
     }
     let (inbound, received) = unbounded_channel();
     tokio::spawn(web::serve(listener, o.client, inbound));
-    App::new(project, pages, mesh, NODE.to_owned()).run(delivered, received).await;
+    let (said, heard) = unbounded_channel();
+    let script = script::Script::start(said);
+    App::new(project, pages, mesh, script, NODE.to_owned()).run(delivered, received, heard).await;
     Ok(())
 }

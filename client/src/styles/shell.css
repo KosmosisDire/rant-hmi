@@ -1,5 +1,63 @@
 /* The frame and the slots a screen fills. The only file that sizes anything. */
 
+/* Notices stack in the lower right, above the status bar, newest at the bottom. */
+.notices {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--bar) + 12px);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 6px 9px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--float);
+  border: 1px solid var(--border2);
+  border-left: 3px solid var(--blue);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+.notice > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--blue);
+}
+
+.notice.warn {
+  border-left-color: var(--amber);
+}
+
+.notice.warn > svg {
+  color: var(--amber);
+}
+
+.notice.fault {
+  border-left-color: var(--red);
+}
+
+.notice.fault > svg {
+  color: var(--red);
+}
+
+.notice-text {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+  overflow-wrap: anywhere;
+}
+
 .app {
   display: grid;
   grid-template-rows: auto 1fr auto;
@@ -207,7 +265,65 @@
     overflow: auto;
   }
 
-  .app {
+  /* Notices stack in the lower right, above the status bar, newest at the bottom. */
+.notices {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--bar) + 12px);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 6px 9px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--float);
+  border: 1px solid var(--border2);
+  border-left: 3px solid var(--blue);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+.notice > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--blue);
+}
+
+.notice.warn {
+  border-left-color: var(--amber);
+}
+
+.notice.warn > svg {
+  color: var(--amber);
+}
+
+.notice.fault {
+  border-left-color: var(--red);
+}
+
+.notice.fault > svg {
+  color: var(--red);
+}
+
+.notice-text {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+  overflow-wrap: anywhere;
+}
+
+.app {
     height: auto;
     min-height: 100%;
   }

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::pages::{Edit, Page};
+use crate::pages::{Edit, Event, Page};
 use crate::project::{Import, Kind, ProjectInfo};
 
 /// From the backend to a screen.
@@ -34,6 +34,17 @@ pub enum ServerMsg {
     Pong { t: f64 },
     /// An action that was not done, and why, for the screen that asked.
     Refused { text: String, alias: Option<String> },
+    /// Something for the person at this screen: what a handler said, or why it stopped.
+    Notice { text: String, level: Level },
+}
+
+#[derive(Serialize, TS, Clone, Copy, Debug)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Level {
+    Info,
+    Warn,
+    Fault,
 }
 
 /// From a screen to the backend.
@@ -52,6 +63,8 @@ pub enum ClientMsg {
     /// Takes back this screen's last edit, or puts back the last one it took back.
     Undo,
     Redo,
+    /// A pointer did `event` to an element of a running page.
+    Fire { page: String, id: String, event: Event },
 }
 
 /// One entity on the mesh.

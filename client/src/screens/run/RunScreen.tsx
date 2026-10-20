@@ -1,4 +1,5 @@
 import { Show } from "solid-js";
+import { send } from "../../net/connection";
 import { Fit, PageView } from "../../page/PageView";
 import { currentPage } from "../../state/view";
 
@@ -9,7 +10,7 @@ export function RunScreen(p: { shown: boolean }) {
       <Show when={currentPage()} fallback={<div class="later">No page yet.</div>}>
         {(page) => (
           <Fit width={page().width} height={page().height}>
-            <PageView page={page()} />
+            <PageView page={page()} fire={(id, event) => send({ type: "fire", page: page().id, id, event })} />
           </Fit>
         )}
       </Show>

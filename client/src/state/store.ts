@@ -5,6 +5,7 @@ import { createStore, reconcile } from "solid-js/store";
 import type { EntityInfo } from "../protocol/EntityInfo";
 import type { Import } from "../protocol/Import";
 import type { Page } from "../protocol/Page";
+import type { Level } from "../protocol/Level";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
@@ -19,6 +20,15 @@ export interface Refusal {
   text: string;
   alias: string | null;
 }
+
+export interface Notice {
+  n: number;
+  text: string;
+  level: Level;
+}
+
+/** How long a notice stays, by how much it matters. */
+const STAYS: Record<Level, number> = { info: 4000, warn: 7000, fault: 10000 };
 
 export interface State {
   link: "connecting" | "open" | "closed";
@@ -36,6 +46,8 @@ export interface State {
    *  still reads as new. */
   made: { page: string; id: string; n: number } | null;
   refused: Refusal | null;
+  /** What this screen should tell the person, newest last. */
+  notices: Notice[];
 }
 
 export const [state, setState] = createStore<State>({
@@ -51,7 +63,20 @@ export const [state, setState] = createStore<State>({
   pages: [],
   made: null,
   refused: null,
+  notices: [],
 });
+
+let notices = 0;
+
+export function notify(text: string, level: Level) {
+  const n = ++notices;
+  setState("notices", (all) => [...all.slice(-4), { n, text, level }]);
+  setTimeout(() => dismiss(n), STAYS[level]);
+}
+
+export function dismiss(n: number) {
+  setState("notices", (all) => all.filter((x) => x.n !== n));
+}
 
 export function receive(msg: ServerMsg) {
   switch (msg.type) {
@@ -86,6 +111,11 @@ export function receive(msg: ServerMsg) {
       break;
     case "refused":
       setState("refused", { text: msg.text, alias: msg.alias });
+      // one about a datapoint shows beside it, any other here
+      if (msg.alias === null) notify(msg.text, "fault");
+      break;
+    case "notice":
+      notify(msg.text, msg.level);
       break;
     case "pong":
       break;

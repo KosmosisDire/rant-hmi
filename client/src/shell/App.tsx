@@ -4,6 +4,7 @@ import { Later } from "../screens/Later";
 import { RunScreen } from "../screens/run/RunScreen";
 import { remembered } from "../state/remember";
 import { Code } from "../ui/icons";
+import { Notices } from "../ui/Notices";
 import { StatusBar } from "./StatusBar";
 import { TABS, TopBar, type Tab } from "./TopBar";
 
@@ -22,6 +23,7 @@ export function App() {
         <RunScreen shown={tab() === "run"} />
       </main>
       <StatusBar />
+      <Notices />
     </div>
   );
 }

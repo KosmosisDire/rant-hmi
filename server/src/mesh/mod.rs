@@ -4,13 +4,16 @@ pub mod codec;
 
 use std::collections::HashMap;
 
-use rant::{Bytes, Entity, EntityKind, Node, NodeOptions, Qos, RemoteVariable, Schema, Subscriber, VariableOptions};
+use std::future::Future;
+
+use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Qos, RemoteFunction, RemoteVariable, Schema, Subscriber, VariableOptions};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
 use crate::project::{Import, Kind};
 use crate::protocol::{EntityInfo, PeerInfo};
+use crate::script::CallFailure;
 use codec::Shape;
 
 pub struct MeshOptions {
@@ -44,8 +47,10 @@ enum Handle {
     /// Held only so its subscription lives. Dropping it ends the subscription.
     Topic { _subscription: Subscriber<Bytes> },
     Variable(RemoteVariable<Bytes>),
-    /// A function or task. Handlers will call it, nothing watches it.
-    Call,
+    /// A function: its request goes by the import's schema, its answer by `answer`'s.
+    Function { remote: RemoteFunction<Bytes, Bytes>, answer: Option<(Schema, Vec<Shape>)> },
+    /// A task. Handlers will start it, nothing watches it.
+    Task,
 }
 
 impl Mesh {
@@ -144,7 +149,19 @@ impl Mesh {
                 var.on_change(move |u| deliver(codec::decode(&u.into_inner(), &tree))).map_err(|e| e.to_string())?;
                 Handle::Variable(var)
             }
-            Kind::Function | Kind::Task => Handle::Call,
+            Kind::Function => {
+                let mut o = FunctionOptions::new().request_schema(&schema);
+                if let Some(answer) = &entity.response_schema {
+                    o = o.response_schema(answer);
+                }
+                let remote = self.node.remote_function::<Bytes, Bytes>(&import.entity, o).map_err(|e| e.to_string())?;
+                let answer = entity.response_schema.clone().map(|s| {
+                    let shapes = codec::shapes(&s);
+                    (s, shapes)
+                });
+                Handle::Function { remote, answer }
+            }
+            Kind::Task => Handle::Task,
         };
         Ok(Attached { generation: entity.generation, schema, shapes, handle })
     }
@@ -166,6 +183,41 @@ impl Mesh {
         };
         let bytes = codec::encode(&a.schema, &a.shapes, &whole)?;
         var.set(&bytes).map_err(|e| format!("{alias} refused the write: {e}"))
+    }
+
+    /// Calls a function import. The call leaves at once, the answer comes when awaited.
+    pub fn call(&self, alias: &str, request: &Value) -> Result<impl Future<Output = Result<Value, CallFailure>> + Send + 'static, String> {
+        let a = self.attached.get(alias).ok_or_else(|| format!("{alias} is not on the mesh right now"))?;
+        let Handle::Function { remote, answer } = &a.handle else {
+            return Err(format!("{alias} is not a function, so it cannot be called"));
+        };
+        let bytes = codec::encode(&a.schema, &a.shapes, request)?;
+        let pending = remote.call_async(&bytes, CallOptions::new()).map_err(|e| format!("{alias} could not be called: {e}"))?;
+        let answer = answer.clone();
+        Ok(async move {
+            let r = pending.await;
+            if !r.is_ok() {
+                return Err(CallFailure { status: status_word(r.status()).to_owned(), message: r.message().to_owned() });
+            }
+            Ok(match (r.value(), answer) {
+                (Some(bytes), Some((schema, shapes))) => codec::decode(&schema.view(bytes), &shapes),
+                _ => Value::Null,
+            })
+        })
+    }
+}
+
+fn status_word(s: CallStatus) -> &'static str {
+    match s {
+        CallStatus::Ok => "ok",
+        CallStatus::AppError => "app_error",
+        CallStatus::NoHandler => "no_handler",
+        CallStatus::Timeout => "timeout",
+        CallStatus::PeerLost => "peer_lost",
+        CallStatus::Cancelled => "cancelled",
+        CallStatus::Running => "running",
+        CallStatus::NoProvider => "no_provider",
+        _ => "unknown",
     }
 }
 

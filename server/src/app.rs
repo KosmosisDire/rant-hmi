@@ -11,9 +11,10 @@ use tracing::{info, warn};
 
 use crate::authorize::{Who, authorize};
 use crate::mesh::{Delivery, Mesh};
-use crate::pages::{Edit, Pages};
+use crate::pages::{Edit, Event, Pages};
 use crate::project::{Intent, Kind, Project};
-use crate::protocol::{ClientMsg, ServerMsg, ValueUpdate};
+use crate::protocol::{ClientMsg, Level, ServerMsg, ValueUpdate};
+use crate::script::{CallFailure, End, FromScript, Script, ToScript};
 
 /// How often changed values go out and the mesh is checked.
 const TICK: Duration = Duration::from_millis(33);
@@ -47,6 +48,15 @@ enum Step {
     Redo,
 }
 
+/// A handler run going on: who started it, and what it is called in the log.
+struct Running {
+    session: u32,
+    page: String,
+    id: String,
+    event: Event,
+    label: String,
+}
+
 #[derive(Default)]
 struct Slot {
     value: Option<Value>,
@@ -57,6 +67,9 @@ pub struct App {
     project: Project,
     pages: Pages,
     mesh: Mesh,
+    script: Script,
+    runs: HashMap<u64, Running>,
+    next_run: u64,
     node: String,
     sessions: HashMap<u32, Session>,
     values: HashMap<String, Slot>,
@@ -66,11 +79,15 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(project: Project, pages: Pages, mesh: Mesh, node: String) -> App {
+    pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, node: String) -> App {
+        script.send(ToScript::Imports(project.imports.clone()));
         App {
             project,
             pages,
             mesh,
+            script,
+            runs: HashMap::new(),
+            next_run: 0,
             node,
             sessions: HashMap::new(),
             values: HashMap::new(),
@@ -81,7 +98,7 @@ impl App {
     }
 
     /// Runs until Ctrl C.
-    pub async fn run(mut self, mut deliveries: UnboundedReceiver<Delivery>, mut inbound: UnboundedReceiver<Inbound>) {
+    pub async fn run(mut self, mut deliveries: UnboundedReceiver<Delivery>, mut inbound: UnboundedReceiver<Inbound>, mut heard: UnboundedReceiver<FromScript>) {
         let mut tick = tokio::time::interval(TICK);
         let shutdown = tokio::signal::ctrl_c();
         tokio::pin!(shutdown);
@@ -89,6 +106,7 @@ impl App {
             tokio::select! {
                 Some(d) = deliveries.recv() => self.deliver(d),
                 Some(i) = inbound.recv() => self.inbound(i),
+                Some(s) = heard.recv() => self.scripted(s),
                 _ = tick.tick() => self.tick(),
                 _ = &mut shutdown => break,
             }
@@ -153,6 +171,7 @@ impl App {
                     info!("imported {} as {}", import.entity, import.alias);
                     self.mesh.attach(&import);
                     self.refresh_known();
+                    self.script.send(ToScript::Imports(self.project.imports.clone()));
                     self.broadcast(&ServerMsg::Imports { imports: self.project.imports.clone() });
                 }
                 Err(text) => self.refuse(session, text, Some(import.alias)),
@@ -163,6 +182,7 @@ impl App {
                     self.mesh.detach(&alias);
                     self.values.remove(&alias);
                     self.changed.remove(&alias);
+                    self.script.send(ToScript::Imports(self.project.imports.clone()));
                     self.broadcast(&ServerMsg::Imports { imports: self.project.imports.clone() });
                 }
                 Err(text) => self.refuse(session, text, Some(alias)),
@@ -183,6 +203,69 @@ impl App {
                     self.edit(session, edit, Step::Redo);
                 }
             }
+            ClientMsg::Fire { page, id, event } => self.fire(session, page, id, event),
+        }
+    }
+
+    /// Starts the element's handler for `event`, unless it is still running from before.
+    fn fire(&mut self, session: u32, page: String, id: String, event: Event) {
+        let Some(e) = self.pages.element(&page, &id) else { return };
+        let Some(h) = e.handlers.iter().find(|h| h.event == event) else { return };
+        if self.runs.values().any(|r| r.page == page && r.id == id && r.event == event) {
+            return;
+        }
+        let label = format!("{} {}", e.props.get("name").unwrap_or(&id), event.word());
+        let code = h.code.clone();
+        self.next_run += 1;
+        self.runs.insert(self.next_run, Running { session, page, id, event, label });
+        self.script.send(ToScript::Run { run: self.next_run, code });
+    }
+
+    /// What a run did: every write and call is logged with the screen that started it.
+    fn scripted(&mut self, msg: FromScript) {
+        match msg {
+            FromScript::Write { run, alias, value } => {
+                info!("{} sets {alias} to {value}", self.label(run));
+                if let Err(text) = self.set(&alias, "", value) {
+                    self.tell(run, Level::Fault, text);
+                }
+            }
+            FromScript::Call { run, call, alias, request } => {
+                info!("{} calls {alias} with {request}", self.label(run));
+                match self.mesh.call(&alias, &request) {
+                    Ok(answer) => {
+                        let script = self.script.clone();
+                        tokio::spawn(async move { script.send(ToScript::Answer { call, outcome: answer.await }) });
+                    }
+                    Err(message) => self.script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "no_provider".into(), message }) }),
+                }
+            }
+            FromScript::Notify { run, text } => self.tell(run, Level::Info, text),
+            FromScript::Log { run, text } => info!("{}: {text}", self.label(run)),
+            FromScript::Done { run, end } => {
+                let text = match &end {
+                    End::Ok => None,
+                    End::Unknown(alias) => Some((Level::Warn, format!("stopped, since {alias} is unknown"))),
+                    End::Fault(text) => Some((Level::Fault, text.clone())),
+                };
+                if let Some((level, text)) = text {
+                    warn!("{}: {text}", self.label(run));
+                    self.tell(run, level, text);
+                }
+                self.runs.remove(&run);
+            }
+        }
+    }
+
+    fn label(&self, run: u64) -> String {
+        self.runs.get(&run).map_or_else(|| format!("run {run}"), |r| format!("screen {} {}", r.session, r.label))
+    }
+
+    /// Tells the screen that started a run, naming what said it.
+    fn tell(&self, run: u64, level: Level, text: String) {
+        if let Some(r) = self.runs.get(&run) {
+            let text = if matches!(level, Level::Info) { text } else { format!("{}: {text}", r.label) };
+            self.send(r.session, &ServerMsg::Notice { text, level });
         }
     }
 
@@ -243,7 +326,8 @@ impl App {
             self.broadcast(&ServerMsg::Mesh { entities: self.mesh.entities() });
         }
         if !self.changed.is_empty() {
-            let values = std::mem::take(&mut self.changed).iter().map(|a| self.update(a)).collect();
+            let values: Vec<ValueUpdate> = std::mem::take(&mut self.changed).iter().map(|a| self.update(a)).collect();
+            self.script.send(ToScript::Values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known))).collect()));
             self.broadcast(&ServerMsg::Values { values });
         }
         if self.health_at.elapsed() >= HEALTH_EVERY {

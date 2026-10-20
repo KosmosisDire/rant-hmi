@@ -166,6 +166,10 @@ impl Pages {
         self.list.iter().find(|p| p.id == id)
     }
 
+    pub fn element(&self, page: &str, id: &str) -> Option<&Element> {
+        self.get(page).and_then(|p| find(&p.children, id))
+    }
+
     /// Applies an edit and saves what it touched. The error is for the user.
     pub fn apply(&mut self, edit: Edit) -> Result<Applied, String> {
         let mut pages = Vec::new();

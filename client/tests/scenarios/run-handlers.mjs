@@ -1,0 +1,48 @@
+// An operator uses buttons a designer made: a tap that speeds the line up, a jog that holds a
+// speed only while pressed even when the pointer slides off before letting go, a call to the
+// line's Reset that tells what it answered, and a handler with a typo that says what went wrong.
+
+export default async function ({ page, hmi, d, check, eventually }) {
+  await hmi.import("Reset", "Line1/Reset", "write");
+  const pageId = await hmi.addPage("Buttons");
+  const button = async (name, x, event, code) => {
+    const id = await hmi.addElement(pageId, "div", { name, x: String(x), y: "44", w: "176", h: "88", background: "#2a2f35" });
+    await hmi.setHandler(pageId, id, event, code);
+    return id;
+  };
+  const faster = await button("Faster", 44, "tap", "Speed = Speed + 0.5;");
+  const jog = await button("Jog", 264, "press", "Speed = 2;");
+  await hmi.setHandler(pageId, jog, "release", "Speed = 0.25;");
+  const reset = await button("Reset", 484, "tap", "const cleared = await Reset();\nnotify(`Reset after ${cleared} parts`);");
+  const broken = await button("Broken", 704, "tap", "Speed = Sped;");
+
+  await d.openPage("Buttons");
+  await d.tab("Run");
+  const speed = () => hmi.state.values.Speed?.value;
+  const el = (id) => page.locator(`.run .el[data-id="${id}"]`);
+  await eventually(() => typeof speed() === "number", "the speed to be known");
+  await hmi.set("Speed", 1);
+  await eventually(() => speed() === 1, "the speed to start at 1");
+
+  await el(faster).click();
+  await eventually(() => speed() === 1.5, "a tap to speed the line up");
+
+  const b = await el(jog).boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await eventually(() => speed() === 2, "a press to jog");
+  check(await el(jog).evaluate((e) => e.classList.contains("pressed")), "the jog does not look pressed");
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height * 3, { steps: 4 });
+  await page.mouse.up();
+  await eventually(() => speed() === 0.25, "letting go off the button to end the jog");
+
+  await el(reset).click();
+  await page.locator(".notice.info", { hasText: /^Reset after \d+ parts$/ }).waitFor({ timeout: 4000 });
+
+  await el(broken).click();
+  const fault = page.locator(".notice.fault");
+  await fault.waitFor({ timeout: 4000 });
+  const text = await fault.textContent();
+  check(text.includes("Broken tap") && text.includes("Sped names no datapoint (line 1)"), `the fault says ${text}`);
+  check(speed() === 0.25, "the broken handler wrote something");
+}
