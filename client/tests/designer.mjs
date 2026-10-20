@@ -48,7 +48,7 @@ export function designer(page) {
 
     /** Adds a handler from the inspector's Add event row. */
     async addEvent(event) {
-      await page.locator(".screen:not([hidden]) .sidebar.right .ghost").click();
+      await page.locator(".screen:not([hidden]) .sidebar.right .ghost", { hasText: "Add event" }).click();
       await page.locator(".popover .menu-item", { hasText: new RegExp(`^${event}$`) }).click();
     },
 

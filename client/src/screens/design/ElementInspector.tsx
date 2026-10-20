@@ -1,7 +1,7 @@
-import { createMemo, createSignal, For, Match, Show, Switch, useContext } from "solid-js";
+import { createMemo, createSignal, For, Show, useContext } from "solid-js";
 import { produce } from "solid-js/store";
 import { send } from "../../net/connection";
-import { OWN, POINTER } from "../../page/PageView";
+import { OWN, POINTER, SHAPES } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Interface } from "../../protocol/Interface";
@@ -27,16 +27,15 @@ import {
   Component,
   Copy,
   Plus,
-  Square,
-  TextCursorInput,
   Trash,
-  Type,
   X,
   Zap,
 } from "../../ui/icons";
 import { makeComponent } from "./component";
 import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, kindOf, type Where, WhereContext } from "./Field";
+import { AddShape, GEOMETRY, PAINT, shapeKeys } from "./ShapeFields";
+import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { type Align, align, chain, find, scopeOf, sendEdits, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
@@ -272,15 +271,20 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const text = () => p.element.tag === "span";
   const instance = () => p.element.tag === "use";
   const input = () => p.element.tag === "input";
+  const drawing = () => p.element.tag === "svg";
+  const shape = () => SHAPES.has(p.element.tag);
   // the field a double click types into: the one asked for, else the element's main one
   const typed = (key: string) => {
     const t = p.typing;
-    const want = t?.key ?? (text() ? "text" : input() ? "value" : "name");
+    const want = t?.key ?? (text() || p.element.tag === "text" ? "text" : input() ? "value" : "name");
     return t && want === key ? t.n : undefined;
   };
+  // the properties no field names, as CSS lines, or a shape's as attribute lines
+  const named = () => (shape() ? shapeKeys(p.element.tag) : NAMED);
+  const loose = (k: string) => !OWN.has(k) && !named().has(k);
   const other = () =>
     Object.entries(p.element.props)
-      .filter(([k]) => !OWN.has(k) && !NAMED.has(k))
+      .filter(([k]) => loose(k))
       .map(([k, v]) => `${k}: ${v}`)
       .join("\n");
   const setOther = (body: string) => {
@@ -291,7 +295,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     }
     const props: Record<string, string | null> = {};
     for (const [k] of Object.entries(p.element.props)) {
-      if (!OWN.has(k) && !NAMED.has(k) && !next.has(k)) props[k] = null;
+      if (loose(k) && !next.has(k)) props[k] = null;
     }
     for (const [k, v] of next) props[k] = v;
     setProps(p.page, p.element.id, props);
@@ -300,20 +304,10 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     <WhereContext.Provider value={where}>
       <div class="pane-head">
         <span class="head-title">
-          <Switch fallback={<Square size={14} />}>
-            <Match when={text()}>
-              <Type size={14} />
-            </Match>
-            <Match when={instance()}>
-              <Component size={14} />
-            </Match>
-            <Match when={input()}>
-              <TextCursorInput size={14} />
-            </Match>
-          </Switch>
+          <TagIcon tag={p.element.tag} size={14} />
           <span>{p.element.props.name ?? p.element.id}</span>
         </span>
-        <span class="tag">{instance() ? "instance" : text() ? "text" : input() ? "input" : "frame"}</span>
+        <span class="tag">{TAG_WORDS[p.element.tag]}</span>
       </div>
       <div class="pane-body pad">
         <div class="section">Element</div>
@@ -322,10 +316,27 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={p.element.props.repeat}>
           <div class="field-hint">Drawn once for each item. It and all inside it read index, from 0, and item.</div>
         </Show>
-        <div class="section">Placement</div>
-        <div class="placement">
-          <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside min={k === "w" || k === "h" ? 0 : undefined} />}</For>
-        </div>
+        <Show when={!shape()}>
+          <div class="section">Placement</div>
+          <div class="placement">
+            <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside min={k === "w" || k === "h" ? 0 : undefined} />}</For>
+          </div>
+        </Show>
+        <Show when={drawing()}>
+          <div class="section">Drawing</div>
+          <Field {...prop("viewbox")} label="View box" placeholder="its size" />
+          <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
+          <div class="field-hint">Shapes are drawn in the view box's units, by default its size in pixels. Each value is an expression, so a shape can follow a live value.</div>
+        </Show>
+        <Show when={shape()}>
+          <div class="section">{TAG_WORDS[p.element.tag]}</div>
+          <For each={GEOMETRY[p.element.tag] ?? []}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} focus={typed(key)} />}</For>
+          <div class="section">Paint</div>
+          <For each={PAINT.filter(([, key]) => !(p.element.tag === "g" && key === "transform"))}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
+          <div class="section">More attributes</div>
+          <DraftInput multiline class="editor css" value={other()} placeholder={'stroke-linejoin: "round"'} onCommit={setOther} />
+        </Show>
+        <Show when={(drawing() || shape()) && pageOf(p.page)}>{(pg) => <AddShape page={pg()} element={p.element} />}</Show>
         <Show when={instance()}>
           <div class="section">Component</div>
           <div class="field">
@@ -364,7 +375,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={text() || input()}>
           <For each={TEXT_LOOK}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
         </Show>
-        <Show when={!instance()}>
+        <Show when={!instance() && !shape()}>
           <div class="section">Look</div>
           <Field {...prop("background")} {...LOOK[0][2]} label="Fill" />
           <BorderField props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />

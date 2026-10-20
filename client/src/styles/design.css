@@ -51,6 +51,11 @@
   outline-offset: -1px;
 }
 
+.page.design .el.shape.faulty {
+  stroke: var(--red);
+  stroke-dasharray: 3 3;
+}
+
 /* The keys list, above the zoom in the artboard's corner. */
 .keys {
   position: absolute;
@@ -288,6 +293,11 @@
   width: 12px;
   height: 12px;
   overflow: hidden;
+}
+
+/* No paint at all: a clear box struck through. */
+.lead-swatch.empty {
+  background: linear-gradient(to top right, transparent calc(50% - 1px), var(--red) 50%, transparent calc(50% + 1px)), var(--panel);
 }
 
 .lead-swatch > i {

@@ -1,4 +1,4 @@
-import { createSignal, For, Match, Show, Switch } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
@@ -6,15 +6,32 @@ import type { Tag } from "../../protocol/Tag";
 import { number } from "../../state/bind";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
-import { Component, File, Plus, Square, TextCursorInput, Type } from "../../ui/icons";
+import { Component, File, Plus, Shapes, Square, TextCursorInput, Type } from "../../ui/icons";
 import type { Pick } from "./DesignScreen";
-import { chain, childrenOf, find, moveTo, parentOf } from "./tree";
+import { TagIcon } from "./TagIcon";
+import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
 
-/** What a new frame or text starts as: visible, on the grid, and plainly named. */
-const STARTS: Record<Exclude<Tag, "use">, Record<string, string>> = {
+/** What a new element starts as: visible, on the grid, and plainly named. A drawing starts
+ *  empty, its shapes added from the inspector. */
+const STARTS: Record<"div" | "span" | "input" | "svg", Record<string, string>> = {
   div: { name: "Frame", x: "44", y: "44", w: "176", h: "88", background: "#2a2f35", "border-radius": "8" },
   span: { name: "Text", x: "44", y: "44", w: "176", h: "44", text: '"Text"', color: "#e4e6e8", "font-size": "18" },
-  input: { name: "Input", x: "44", y: "44", w: "176", h: "44", background: "#1e2125", border: '"1px solid #3a4046"', "border-radius": "6", padding: '"0 11px"', color: "#e4e6e8", "font-size": "18" },
+  input: {
+    name: "Input",
+    x: "44",
+    y: "44",
+    w: "176",
+    h: "44",
+    background: "#1e2125",
+    "border-width": "1",
+    "border-style": '"solid"',
+    "border-color": "#3a4046",
+    "border-radius": "6",
+    padding: '"0 11px"',
+    color: "#e4e6e8",
+    "font-size": "18",
+  },
+  svg: { name: "Drawing", x: "44", y: "44", w: "176", h: "176" },
 };
 
 /** The left sidebar: the pages, and the open page's elements as layers. */
@@ -26,7 +43,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     if (!page) return;
     const last = p.selected.at(-1);
     const holder = last ? find(page.children, last) : undefined;
-    const inside = holder?.tag === "div";
+    const inside = !!holder && holds(holder.tag, tag);
     // step past what already sits there, so a new element never hides behind an old one
     const siblings = inside ? holder.children : page.children;
     let n = inside ? 11 : 44;
@@ -34,7 +51,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     const at = { x: String(n), y: String(n) };
     send({ type: "edit", edit: { kind: "add_element", page: page.id, parent: inside ? holder.id : null, index: null, element: { id: "", tag, component, props: { ...props, ...at }, handlers: [], children: [] } } });
   };
-  const add = (tag: Exclude<Tag, "use">) => place(tag, STARTS[tag]);
+  const add = (tag: keyof typeof STARTS) => place(tag, STARTS[tag]);
   const addInstance = (c: Page) => {
     setPicking(false);
     place("use", { name: c.name, w: String(c.width), h: String(c.height) }, c.name);
@@ -108,6 +125,9 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
         <button class="icon-btn" title="Add an input" onClick={() => add("input")}>
           <TextCursorInput size={14} />
         </button>
+        <button class="icon-btn" title="Add a drawing" onClick={() => add("svg")}>
+          <Shapes size={14} />
+        </button>
         <button class="icon-btn" classList={{ on: picking() }} title="Place a component" onClick={() => setPicking(!picking())}>
           <Component size={14} />
         </button>
@@ -151,9 +171,15 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
       const over = row.dataset.id!;
       if (chain(p.page.children, over)?.some((e) => e.id === id)) return null;
       const f = (y - r.top) / r.height;
-      const frame = row.dataset.frame !== undefined;
+      // only where what is dragged may go: shapes in drawings, the rest in frames
+      const tag = find(p.page.children, id)?.tag;
+      const at = find(p.page.children, over);
+      const parent = parentOf(p.page, over);
+      if (!tag) return null;
+      const frame = !!at && holds(at.tag, tag);
       // under an open frame the next row is its front child, so its lower edge means inside too
       if (frame && f > 0.25 && (f < 0.75 || row.dataset.open !== undefined)) return { id: over, where: "inside" };
+      if (!holds(parent ? (find(p.page.children, parent)?.tag ?? null) : null, tag)) return null;
       return { id: over, where: f < 0.5 ? "front" : "behind" };
     }
     return null;
@@ -218,24 +244,14 @@ function Layers(p: {
             class="list-row"
             classList={{ selected: p.selected.includes(e.id), dragged: e.id === p.dragging, "drop-front": at(e.id) === "front", "drop-behind": at(e.id) === "behind", "drop-inside": at(e.id) === "inside" }}
             data-id={e.id}
-            data-frame={e.tag === "div" ? "" : undefined}
+            data-frame={e.tag === "div" || e.tag === "svg" || e.tag === "g" ? "" : undefined}
             data-open={e.children.length > 0 ? "" : undefined}
             onClick={(ev) => p.onPick(e.id, ev.shiftKey || ev.ctrlKey || ev.metaKey)}
             onDblClick={() => p.onEdit(e.id, "name")}
           >
             <span style={{ width: `${p.depth * 14}px` }} />
             <span class="layer-icon">
-              <Switch fallback={<Type size={13} />}>
-                <Match when={e.tag === "div"}>
-                  <Square size={13} />
-                </Match>
-                <Match when={e.tag === "use"}>
-                  <Component size={13} />
-                </Match>
-                <Match when={e.tag === "input"}>
-                  <TextCursorInput size={13} />
-                </Match>
-              </Switch>
+              <TagIcon tag={e.tag} size={13} />
             </span>
             <span class="list-label">{e.props.name ?? e.id}</span>
             <span class="list-trail mono faint">{e.id}</span>

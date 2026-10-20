@@ -140,15 +140,58 @@ pub enum Tag {
     Use,
     /// A field an operator types a value into.
     Input,
+    /// A drawing: placed like a frame, holding shapes drawn in its own units.
+    Svg,
+    Path,
+    Circle,
+    Ellipse,
+    Rect,
+    Line,
+    Polyline,
+    Polygon,
+    /// A text in a drawing.
+    #[serde(rename = "text")]
+    SvgText,
+    /// Shapes kept together in a drawing, moved as one by a transform.
+    #[serde(rename = "g")]
+    Group,
 }
+
+/// Each tag and the word its file writes, but an instance, which takes its component's name.
+const WORDS: [(Tag, &str); 13] = [
+    (Tag::Div, "div"),
+    (Tag::Span, "span"),
+    (Tag::Input, "input"),
+    (Tag::Svg, "svg"),
+    (Tag::Path, "path"),
+    (Tag::Circle, "circle"),
+    (Tag::Ellipse, "ellipse"),
+    (Tag::Rect, "rect"),
+    (Tag::Line, "line"),
+    (Tag::Polyline, "polyline"),
+    (Tag::Polygon, "polygon"),
+    (Tag::SvgText, "text"),
+    (Tag::Group, "g"),
+];
 
 impl Tag {
     pub fn from_word(word: &str) -> Option<Tag> {
-        match word {
-            "div" => Some(Tag::Div),
-            "span" => Some(Tag::Span),
-            "input" => Some(Tag::Input),
-            _ => None,
+        WORDS.iter().find(|(_, w)| *w == word).map(|(t, _)| *t)
+    }
+
+    /// A shape draws inside a drawing, and its every property is an SVG attribute.
+    pub fn is_shape(self) -> bool {
+        matches!(self, Tag::Path | Tag::Circle | Tag::Ellipse | Tag::Rect | Tag::Line | Tag::Polyline | Tag::Polygon | Tag::SvgText | Tag::Group)
+    }
+
+    /// Whether this may hold a `child`: a frame holds elements, a drawing or a group shapes.
+    fn holds(self, child: Tag) -> Result<(), String> {
+        match self {
+            Tag::Div if child.is_shape() => Err("a shape goes in a drawing".into()),
+            Tag::Div => Ok(()),
+            Tag::Svg | Tag::Group if child.is_shape() => Ok(()),
+            Tag::Svg | Tag::Group => Err("a drawing holds only shapes".into()),
+            _ => Err("only a frame or a drawing holds other elements".into()),
         }
     }
 }
@@ -157,10 +200,8 @@ impl Element {
     /// The tag the file writes: an instance takes its component's name.
     pub fn word(&self) -> &str {
         match self.tag {
-            Tag::Div => "div",
-            Tag::Span => "span",
-            Tag::Input => "input",
             Tag::Use => self.component.as_deref().unwrap_or("Missing"),
+            tag => WORDS.iter().find(|(t, _)| *t == tag).map(|(_, w)| *w).expect("every tag but use has a word"),
         }
     }
 }
@@ -506,7 +547,7 @@ impl Pages {
                 renumber(&mut element, &mut next);
                 check_tree(&element, &mut HashSet::new())?;
                 let id = element.id.clone();
-                let list = holder(p, &parent)?;
+                let list = holder(p, &parent, element.tag)?;
                 list.insert(index.unwrap_or(list.len()).min(list.len()), element);
                 *made = Some((page.clone(), id.clone()));
                 Edit::RemoveElement { page: page.clone(), id }
@@ -514,7 +555,8 @@ impl Pages {
             Edit::RemoveElement { page, id } => {
                 let p = self.page_mut(&page)?;
                 let (parent, index) = locate(&p.children, &id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
-                let element = holder(p, &parent)?.remove(index);
+                let tag = find(&p.children, &id).expect("located above").tag;
+                let element = holder(p, &parent, tag)?.remove(index);
                 Edit::PutElement { page: page.clone(), parent, index, element }
             }
             Edit::PutElement { page, parent, index, element } => {
@@ -524,7 +566,7 @@ impl Pages {
                 p.children.iter().for_each(|e| all_ids(e, &mut ids));
                 check_tree(&element, &mut ids)?;
                 let id = element.id.clone();
-                let list = holder(p, &parent)?;
+                let list = holder(p, &parent, element.tag)?;
                 list.insert(index.min(list.len()), element);
                 *made = Some((page.clone(), id.clone()));
                 Edit::RemoveElement { page: page.clone(), id }
@@ -532,15 +574,16 @@ impl Pages {
             Edit::MoveElement { page, id, parent, index } => {
                 let p = self.page_mut(&page)?;
                 let (from, at) = locate(&p.children, &id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
+                let moved = find(&p.children, &id).expect("located above");
+                let tag = moved.tag;
                 if let Some(target) = &parent {
-                    let moved = find(&p.children, &id).expect("located above");
                     if target == &id || find(&moved.children, target).is_some() {
                         return Err("a frame cannot go inside itself".into());
                     }
-                    holder(p, &parent)?;
                 }
-                let element = holder(p, &from)?.remove(at);
-                let list = holder(p, &parent)?;
+                holder(p, &parent, tag)?;
+                let element = holder(p, &from, tag)?.remove(at);
+                let list = holder(p, &parent, tag)?;
                 list.insert(index.min(list.len()), element);
                 Edit::MoveElement { page: page.clone(), id, parent: from, index: at }
             }
@@ -914,9 +957,7 @@ fn renumber(e: &mut Element, next: &mut u32) {
 /// to `ids`, which gains them.
 fn check_tree(e: &Element, ids: &mut HashSet<String>) -> Result<(), String> {
     check_props(e.props.keys())?;
-    if e.tag != Tag::Div && !e.children.is_empty() {
-        return Err("only a frame holds other elements".into());
-    }
+    e.children.iter().try_for_each(|c| e.tag.holds(c.tag))?;
     if (e.tag == Tag::Use) != e.component.is_some() {
         return Err("an instance, and only an instance, names a component".into());
     }
@@ -931,13 +972,13 @@ fn all_ids(e: &Element, ids: &mut HashSet<String>) {
     e.children.iter().for_each(|c| all_ids(c, ids));
 }
 
-/// The list an element goes into: the page's own, or a frame's.
-fn holder<'a>(page: &'a mut Page, parent: &Option<String>) -> Result<&'a mut Vec<Element>, String> {
-    let Some(parent) = parent else { return Ok(&mut page.children) };
+/// The list an element with `tag` goes into: the page's own, a frame's or a drawing's.
+fn holder<'a>(page: &'a mut Page, parent: &Option<String>, tag: Tag) -> Result<&'a mut Vec<Element>, String> {
+    let Some(parent) = parent else {
+        return if tag.is_shape() { Err("a shape goes in a drawing".into()) } else { Ok(&mut page.children) };
+    };
     let e = find_mut(&mut page.children, parent).ok_or_else(|| format!("{parent} is not on {}", page.id))?;
-    if e.tag != Tag::Div {
-        return Err("only a frame holds other elements".into());
-    }
+    e.tag.holds(tag)?;
     Ok(&mut e.children)
 }
 
@@ -1020,7 +1061,7 @@ mod tests {
         let o = || "overview".to_string();
         let span = pages.apply(add(o(), None, Tag::Span, BTreeMap::new())).unwrap().made.unwrap().1;
         let into_span = add(o(), Some(span.clone()), Tag::Div, BTreeMap::new());
-        assert_eq!(pages.apply(into_span).err().unwrap(), "only a frame holds other elements");
+        assert_eq!(pages.apply(into_span).err().unwrap(), "only a frame or a drawing holds other elements");
         let bad = add(o(), None, Tag::Div, props(&[("Background", "red")]));
         assert_eq!(pages.apply(bad).err().unwrap(), "\"Background\" is not a property name");
         assert!(pages.apply(Edit::RemoveElement { page: o(), id: "e9".into() }).is_err());
@@ -1143,7 +1184,7 @@ mod tests {
         let kids: Vec<_> = pages.list[0].children[1].children.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(kids, ["e4", "e5"]);
         let bad = Element { id: String::new(), tag: Tag::Span, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: vec![leaf("", Tag::Span)] };
-        assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame holds other elements");
+        assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame or a drawing holds other elements");
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1226,6 +1267,25 @@ mod tests {
         pages.apply(Edit::SetInput { page: menu.clone(), name: "size".into(), input }).unwrap();
         assert!(pages.apply(Edit::SetLocal { page: menu.clone(), name: "size".into(), local: local("size") }).unwrap_err().contains("already has size"));
         assert!(pages.apply(Edit::SetLocal { page: "overview".into(), name: "a".into(), local: local("a") }).unwrap_err().contains("only a component"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn shapes_go_only_in_drawings_and_drawings_hold_only_shapes() {
+        let dir = scratch("shapes");
+        let mut pages = Pages::open(&dir).unwrap();
+        let drawing = pages.apply(add("overview".into(), None, Tag::Svg, props(&[]))).unwrap().made.unwrap().1;
+        let frame = pages.apply(add("overview".into(), None, Tag::Div, props(&[]))).unwrap().made.unwrap().1;
+        let circle = pages.apply(add("overview".into(), Some(drawing.clone()), Tag::Circle, props(&[("r", "10")]))).unwrap().made.unwrap().1;
+        assert_eq!(pages.apply(add("overview".into(), None, Tag::Circle, props(&[]))).unwrap_err(), "a shape goes in a drawing");
+        assert_eq!(pages.apply(add("overview".into(), Some(frame.clone()), Tag::Rect, props(&[]))).unwrap_err(), "a shape goes in a drawing");
+        assert_eq!(pages.apply(add("overview".into(), Some(drawing.clone()), Tag::Div, props(&[]))).unwrap_err(), "a drawing holds only shapes");
+        let into_frame = Edit::MoveElement { page: "overview".into(), id: circle.clone(), parent: Some(frame), index: 0 };
+        assert_eq!(pages.apply(into_frame).unwrap_err(), "a shape goes in a drawing");
+        let group = pages.apply(add("overview".into(), Some(drawing.clone()), Tag::Group, props(&[]))).unwrap().made.unwrap().1;
+        pages.apply(Edit::MoveElement { page: "overview".into(), id: circle.clone(), parent: Some(group.clone()), index: 0 }).unwrap();
+        let again = Pages::open(&dir).unwrap();
+        assert_eq!(find(&again.get("overview").unwrap().children, &group).unwrap().children[0].id, circle);
         fs::remove_dir_all(&dir).unwrap();
     }
 

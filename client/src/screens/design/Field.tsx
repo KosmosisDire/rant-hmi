@@ -210,7 +210,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
         <Switch fallback={<Braces size={12} />}>
           <Match when={p.inside}>{p.label}</Match>
           <Match when={kind() === "colour"}>
-            <span class="swatch lead-swatch" classList={{ none: !parseColour(shown()) }}>
+            <span class="swatch lead-swatch" classList={{ none: !parseColour(shown()) && shown() !== "none", empty: shown() === "none" }}>
               <Show when={parseColour(shown())}>
                 <i style={{ background: shown() }} />
               </Show>

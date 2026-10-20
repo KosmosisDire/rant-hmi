@@ -1,10 +1,11 @@
 // Finding elements and their boxes in a page's tree.
 
 import { send } from "../../net/connection";
-import type { Box, Overrides } from "../../page/PageView";
+import { type Box, type Overrides, SHAPES } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
+import type { Tag } from "../../protocol/Tag";
 import { produce } from "solid-js/store";
 import { docScope, isNumber, number, pageScope, repeatScope, resolve, type Scope } from "../../state/bind";
 import { setState } from "../../state/store";
@@ -83,9 +84,18 @@ export function absolute(page: Page, id: string, overrides?: Overrides): Box | u
   return { x: own.x + offset.x, y: own.y + offset.y, w: own.w, h: own.h };
 }
 
-/** True when each of `keys` is a plain number or unset, so a drag may write them. */
+/** True when each of `keys` is a plain number or unset, so a drag may write them. A shape
+ *  has no box of ours to drag: its attributes place it. */
 export function literal(e: Element, keys: (keyof Box)[]): boolean {
-  return keys.every((k) => e.props[k] === undefined || isNumber(e.props[k]));
+  return !SHAPES.has(e.tag) && keys.every((k) => e.props[k] === undefined || isNumber(e.props[k]));
+}
+
+/** Whether `parent`, or the page for null, may hold a `child`: a frame holds elements, a
+ *  drawing or a group shapes, as the backend allows. */
+export function holds(parent: Tag | null, child: Tag): boolean {
+  const shape = SHAPES.has(child);
+  if (parent === null || parent === "div") return !shape;
+  return (parent === "svg" || parent === "g") && shape;
 }
 
 /** Moves an element to `index` of `parent`, counted without it. Into another frame it keeps

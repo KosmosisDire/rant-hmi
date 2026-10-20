@@ -3,6 +3,7 @@
 
 import { createMemo, createSignal, For, Index, Match, onCleanup, Show, Switch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
+import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
@@ -22,7 +23,16 @@ export interface Box {
 export type Overrides = (id: string) => Box | undefined;
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "text", "value"]);
+export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "text", "value", "viewbox", "fit"]);
+
+/** What a drawing holds: SVG shapes, whose every property but the name is an attribute. */
+export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
+
+/** Attributes SVG spells with a capital, which the file writes in small letters. */
+const CASED: Record<string, string> = { pathlength: "pathLength", textlength: "textLength", gradienttransform: "gradientTransform" };
+
+/** How a drawing's view box fits its box: whole, filling it, or stretched to it. */
+const FITS: Record<string, string> = { meet: "xMidYMid meet", slice: "xMidYMid slice", stretch: "none" };
 
 /** At most this many copies of a repeat, so a mistaken one never floods the page. */
 const COPIES = 500;
@@ -132,42 +142,10 @@ function Placed(p: ElementProps) {
   );
 }
 
-/** One element. `inside` marks one drawn as part of an instance: it is the component's, not
- *  the page's, so it carries no id to pick it by. `at` is the copy of a repeat it is. */
-function ElementView(p: ElementProps & { at?: At }) {
-  const look = createMemo(() => {
-    const style: Record<string, string> = {};
-    const faults: string[] = [];
-    let unknown = false;
-    const take = (key: string): unknown => {
-      const r = resolve(p.element.props[key], p.scope);
-      if (r.ok) return r.value;
-      if (r.unknown) unknown = true;
-      else faults.push(`${key}: ${r.error}`);
-      return undefined;
-    };
-    // an instance's other properties are its inputs, never CSS
-    for (const key of p.element.tag === "use" ? [] : Object.keys(p.element.props)) {
-      if (OWN.has(key)) continue;
-      const v = take(key);
-      if (v !== undefined && v !== null && v !== "") style[key] = css(key, v);
-    }
-    const o = p.overrides?.(p.element.id);
-    const at = (k: keyof Box) => {
-      if (o) return o[k];
-      const n = Number(take(k) ?? 0);
-      return Number.isFinite(n) ? n : 0;
-    };
-    style.left = `${at("x")}px`;
-    style.top = `${at("y")}px`;
-    style.width = `${at("w")}px`;
-    style.height = `${at("h")}px`;
-    const text = p.element.tag === "span" ? words(take("text")) : "";
-    const value = p.element.tag === "input" ? take("value") : undefined;
-    return { style, unknown, faults, text, value, w: at("w"), h: at("h") };
-  });
-  // Pressed shows at once. Its release is heard on the window, so letting go anywhere ends
-  // a press, and a tap needs the release over the element.
+/** What pressing an element does: it shows pressed at once and sends press, drag, hold,
+ *  release and tap. The release is heard on the window, so letting go anywhere ends a press,
+ *  and a tap needs the release over the element. */
+function usePress(p: ElementProps & { at?: At }) {
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => POINTER.includes(h.event));
   const fire = (event: string, payload: Pointer) => p.act?.fire(p.element, event, payload, p.at);
@@ -179,10 +157,10 @@ function ElementView(p: ElementProps & { at?: At }) {
     const n = r.ok ? Number(r.value) : NaN;
     return Number.isFinite(n) ? n : HOLD;
   };
-  const down = (e: PointerEvent & { currentTarget: HTMLDivElement }) => {
+  const down = (e: PointerEvent & { currentTarget: Element | globalThis.Element }) => {
     if (!live() || e.button !== 0 || pressed()) return;
-    const el = e.currentTarget;
-    const on = (e.target as HTMLElement).closest<HTMLElement>(".el[data-name]")?.dataset.name ?? null;
+    const el = e.currentTarget as globalThis.Element;
+    const on = (e.target as globalThis.Element).closest<HTMLElement | SVGElement>(".el[data-name]")?.dataset.name ?? null;
     setPressed(true);
     fire("press", pointer(el, e, on));
     fire("drag", pointer(el, e, on));
@@ -218,19 +196,68 @@ function ElementView(p: ElementProps & { at?: At }) {
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
   };
+  return { pressed, live, down };
+}
+
+/** One element. `inside` marks one drawn as part of an instance: it is the component's, not
+ *  the page's, so it carries no id to pick it by. `at` is the copy of a repeat it is. */
+function ElementView(p: ElementProps & { at?: At }) {
+  if (SHAPES.has(p.element.tag)) return <ShapeView {...p} />;
+  const look = createMemo(() => {
+    const style: Record<string, string> = {};
+    const faults: string[] = [];
+    let unknown = false;
+    const take = (key: string): unknown => {
+      const r = resolve(p.element.props[key], p.scope);
+      if (r.ok) return r.value;
+      if (r.unknown) unknown = true;
+      else faults.push(`${key}: ${r.error}`);
+      return undefined;
+    };
+    // an instance's other properties are its inputs, never CSS
+    for (const key of p.element.tag === "use" ? [] : Object.keys(p.element.props)) {
+      if (OWN.has(key)) continue;
+      const v = take(key);
+      if (v !== undefined && v !== null && v !== "") style[key] = css(key, v);
+    }
+    const o = p.overrides?.(p.element.id);
+    const at = (k: keyof Box) => {
+      if (o) return o[k];
+      const n = Number(take(k) ?? 0);
+      return Number.isFinite(n) ? n : 0;
+    };
+    style.left = `${at("x")}px`;
+    style.top = `${at("y")}px`;
+    style.width = `${at("w")}px`;
+    style.height = `${at("h")}px`;
+    const text = p.element.tag === "span" ? words(take("text")) : "";
+    const value = p.element.tag === "input" ? take("value") : undefined;
+    const drawing = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
+    return { style, unknown, faults, text, value, drawing, w: at("w"), h: at("h") };
+  });
+  const press = usePress(p);
+  const inner = (c: Element) => <Placed element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
   return (
     <div
       data-id={p.inside ? undefined : p.element.id}
       data-name={p.element.props.name}
       class="el"
-      classList={{ text: p.element.tag === "span", unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: live(), pressed: pressed() }}
+      classList={{ text: p.element.tag === "span", unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), pressed: press.pressed() }}
       style={look().style}
       title={p.design && look().faults.length > 0 ? look().faults.join("\n") : undefined}
-      onPointerDown={down}
+      onPointerDown={press.down}
     >
       <Switch fallback={look().text}>
         <Match when={p.element.tag === "div"}>
-          <For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>
+          <For each={p.element.children}>{inner}</For>
+        </Match>
+        <Match when={look().drawing}>
+          {(d) => (
+            // its own units by default are its box's pixels
+            <svg class="drawing" viewBox={d().box ? String(d().box) : `0 0 ${look().w} ${look().h}`} {...({ preserveAspectRatio: FITS[String(d().fit)] ?? FITS.meet } as Record<string, string>)}>
+              <For each={p.element.children}>{inner}</For>
+            </svg>
+          )}
         </Match>
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} act={p.act} />
@@ -240,6 +267,48 @@ function ElementView(p: ElementProps & { at?: At }) {
         </Match>
       </Switch>
     </div>
+  );
+}
+
+/** A shape in a drawing: each property an SVG attribute, its value an expression. */
+function ShapeView(p: ElementProps & { at?: At }) {
+  const look = createMemo(() => {
+    const attrs: Record<string, string> = {};
+    const faults: string[] = [];
+    let unknown = false;
+    let text = "";
+    for (const [key, value] of Object.entries(p.element.props)) {
+      if (key === "name" || key === "repeat") continue;
+      const r = resolve(value, p.scope);
+      if (!r.ok) {
+        if (r.unknown) unknown = true;
+        else faults.push(`${key}: ${r.error}`);
+      } else if (key === "text") {
+        text = words(r.value);
+      } else if (r.value !== undefined && r.value !== null && r.value !== "") {
+        attrs[CASED[key] ?? key] = String(r.value);
+      }
+    }
+    return { attrs, faults, unknown, text };
+  });
+  const press = usePress(p);
+  return (
+    <Dynamic
+      component={p.element.tag}
+      {...look().attrs}
+      data-id={p.inside ? undefined : p.element.id}
+      data-name={p.element.props.name}
+      class="el shape"
+      classList={{ unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), pressed: press.pressed() }}
+      onPointerDown={press.down}
+    >
+      <Show when={p.element.tag === "text"} fallback={<For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>}>
+        {look().text}
+      </Show>
+      <Show when={p.design && look().faults.length > 0}>
+        <title>{look().faults.join("\n")}</title>
+      </Show>
+    </Dynamic>
   );
 }
 
@@ -309,7 +378,7 @@ interface Pointer {
   inside: boolean;
 }
 
-function pointer(el: HTMLElement, e: PointerEvent, on: string | null): Pointer {
+function pointer(el: globalThis.Element, e: PointerEvent, on: string | null): Pointer {
   const r = el.getBoundingClientRect();
   const [dx, dy] = [e.clientX - r.left, e.clientY - r.top];
   const clamp = (v: number) => Math.min(1, Math.max(0, v));

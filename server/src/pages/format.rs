@@ -11,6 +11,18 @@ const ATTRS: [&str; 6] = ["name", "repeat", "x", "y", "w", "h"];
 const TEXT: &str = "text";
 /// An input's value, an attribute as HTML writes it.
 const VALUE: &str = "value";
+/// A drawing's view box and how it fits its box, attributes as SVG writes them.
+const VIEWBOX: &str = "viewbox";
+const FIT: &str = "fit";
+
+/// What a tag keeps as attributes of its own, besides `ATTRS`.
+fn own_attrs(tag: Tag) -> &'static [&'static str] {
+    match tag {
+        Tag::Input => &[VALUE],
+        Tag::Svg => &[VIEWBOX, FIT],
+        _ => &[],
+    }
+}
 
 // ------------------------------------------------------------------------------ writing
 
@@ -40,30 +52,42 @@ fn element(out: &mut String, e: &Element, depth: usize) {
     let tag = e.word();
     out.push_str(&"  ".repeat(depth));
     out.push_str(&format!("<{tag} id={}", quote(&e.id)));
-    for key in ATTRS {
-        if let Some(v) = e.props.get(key) {
-            out.push_str(&format!(" {key}={}", quote(v)));
-        }
-    }
-    let value = e.props.get(VALUE).filter(|_| e.tag == Tag::Input);
-    if let Some(v) = value {
-        out.push_str(&format!(" {VALUE}={}", quote(v)));
-    }
-    let rest = e.props.iter().filter(|(k, _)| !ATTRS.contains(&k.as_str()) && k.as_str() != TEXT && !(value.is_some() && k.as_str() == VALUE));
-    if e.tag == Tag::Use {
-        // an instance's inputs are attributes of their own
-        for (k, v) in rest {
+    let body = matches!(e.tag, Tag::Span | Tag::SvgText);
+    if e.tag.is_shape() {
+        // a shape's every property is an SVG attribute, its name first
+        let attrs = e.props.iter().filter(|(k, _)| !(body && k.as_str() == TEXT));
+        for (k, v) in attrs.clone().filter(|(k, _)| k.as_str() == "name").chain(attrs.filter(|(k, _)| k.as_str() != "name")) {
             out.push_str(&format!(" {k}={}", quote(v)));
         }
     } else {
-        let style: Vec<String> = rest.map(|(k, v)| format!("{k}: {v}")).collect();
-        if !style.is_empty() {
-            out.push_str(&format!(" style={}", quote(&style.join("; "))));
+        for key in ATTRS {
+            if let Some(v) = e.props.get(key) {
+                out.push_str(&format!(" {key}={}", quote(v)));
+            }
+        }
+        // an input's value and a drawing's view box and fit are attributes, as HTML and SVG write them
+        let own = own_attrs(e.tag);
+        for k in own {
+            if let Some(v) = e.props.get(*k) {
+                out.push_str(&format!(" {k}={}", quote(v)));
+            }
+        }
+        let rest = e.props.iter().filter(|(k, _)| !ATTRS.contains(&k.as_str()) && k.as_str() != TEXT && !own.contains(&k.as_str()));
+        if e.tag == Tag::Use {
+            // an instance's inputs are attributes of their own
+            for (k, v) in rest {
+                out.push_str(&format!(" {k}={}", quote(v)));
+            }
+        } else {
+            let style: Vec<String> = rest.map(|(k, v)| format!("{k}: {v}")).collect();
+            if !style.is_empty() {
+                out.push_str(&format!(" style={}", quote(&style.join("; "))));
+            }
         }
     }
-    let text = e.props.get(TEXT).filter(|_| e.tag == Tag::Span);
+    let text = e.props.get(TEXT).filter(|_| body);
     match text {
-        Some(text) if e.handlers.is_empty() => out.push_str(&format!(">{text}</span>\n")),
+        Some(text) if e.handlers.is_empty() => out.push_str(&format!(">{text}</{tag}>\n")),
         _ if e.handlers.is_empty() && e.children.is_empty() => out.push_str("/>\n"),
         _ => {
             out.push_str(">\n");
@@ -373,11 +397,11 @@ impl Reader<'_> {
         for (k, v) in self.attrs()? {
             match k.as_str() {
                 "id" => id = Some(v),
-                k if tag == Tag::Use && k != "style" => {
+                k if (tag == Tag::Use && k != "style") || tag.is_shape() => {
                     props.insert(k.to_owned(), v);
                 }
-                VALUE if tag == Tag::Input => {
-                    props.insert(VALUE.to_owned(), v);
+                k if own_attrs(tag).contains(&k) => {
+                    props.insert(k.to_owned(), v);
                 }
                 "style" => {
                     for decl in split_outside(&v, ';') {
@@ -401,17 +425,18 @@ impl Reader<'_> {
             self.expect(">")?;
             handlers = self.handlers()?;
             match tag {
-                Tag::Div => children = self.children("div")?,
-                Tag::Use | Tag::Input => self.expect(&format!("</{word}>"))?,
-                Tag::Span => {
-                    let n = outside(self.rest(), "</span>").ok_or_else(|| self.error("<span> never closes"))?;
+                Tag::Div | Tag::Svg | Tag::Group => children = self.children(&word)?,
+                Tag::Span | Tag::SvgText => {
+                    let closing = format!("</{word}>");
+                    let n = outside(self.rest(), &closing).ok_or_else(|| self.error(&format!("<{word}> never closes")))?;
                     let text = self.rest()[..n].trim().to_owned();
                     if !text.is_empty() {
                         props.insert(TEXT.to_owned(), text);
                     }
                     self.at += n;
-                    self.expect("</span>")?;
+                    self.expect(&closing)?;
                 }
+                _ => self.expect(&format!("</{word}>"))?,
             }
         }
         Ok(Element { id, tag, component, props, handlers, children })
@@ -466,6 +491,18 @@ mod tests {
         let i = page.interface.as_ref().unwrap();
         assert_eq!(i.variables, [Local { name: "open".into(), start: "false".into() }]);
         assert_eq!(page.children[0].handlers[0].after, "holdMs");
+        assert_eq!(write(&page), text);
+    }
+
+    #[test]
+    fn a_drawing_keeps_its_shapes_with_every_value_an_attribute() {
+        let text = "<page name=\"A\" size=\"1408x792\">\n  <svg id=\"e1\" name=\"Gauge\" x=\"44\" y=\"44\" w=\"176\" h=\"176\" viewbox='\"0 0 100 100\"' style=\"opacity: 0.9\">\n    <circle id=\"e2\" name=\"track\" cx=\"50\" cy=\"50\" fill='\"none\"' r=\"40\" stroke=\"#3a4046\" stroke-width=\"8\"/>\n    <g id=\"e3\" transform=\"`rotate(${Speed * 90} 50 50)`\">\n      <line id=\"e4\" x1=\"50\" x2=\"50\" y1=\"50\" y2=\"14\">\n        <on event=\"tap\">\n          log(1);\n        </on>\n      </line>\n    </g>\n    <text id=\"e5\" x=\"50\" y=\"80\">Speed.toFixed(1)</text>\n  </svg>\n</page>\n";
+        let page = parse(text, "a").unwrap();
+        let svg = &page.children[0];
+        assert_eq!((svg.tag, svg.props["viewbox"].as_str(), svg.props["opacity"].as_str()), (Tag::Svg, "\"0 0 100 100\"", "0.9"));
+        assert_eq!((svg.children[0].tag, svg.children[0].props["r"].as_str()), (Tag::Circle, "40"));
+        assert_eq!(svg.children[1].children[0].handlers[0].code, "log(1);");
+        assert_eq!((svg.children[2].tag, svg.children[2].props["text"].as_str()), (Tag::SvgText, "Speed.toFixed(1)"));
         assert_eq!(write(&page), text);
     }
 

@@ -90,6 +90,20 @@
   outline-offset: -1px;
 }
 
+/* A drawing's shapes fill its box, and may draw past it as a frame's children do. */
+.drawing {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* A shape showing an unknown value fades, since a hatch cannot fill a stroke. */
+.el.shape.unknown {
+  opacity: 0.3;
+}
+
 /* A value it shows is unknown: hatched, never a stale or invented value passed as true. */
 .el.unknown::after {
   content: "";

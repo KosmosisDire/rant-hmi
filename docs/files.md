@@ -75,6 +75,11 @@ component placed on a page is a tag named after it.
 - `repeat` draws an element once per item of a list, or a number of times:
   `<div repeat="6" x="44 + index * 132">`. It and all inside it read `index`, from 0, and
   `item`, and so do their handlers.
+- `<svg>` is a drawing, placed like a frame. It holds shapes (`path`, `circle`, `ellipse`,
+  `rect`, `line`, `polyline`, `polygon`, `text`, and `g` to group them), drawn in its
+  `viewbox` units, by default its size in pixels. `fit` is `"meet"`, `"slice"` or
+  `"stretch"`. Every property of a shape is an SVG attribute holding an expression:
+  `<line x1="88" y1="88" x2="88" y2="22" transform="`rotate(${Speed * 90} 88 88)`"/>`.
 - `<input value="Speed"/>` is a field an operator types into. A bare name as its value takes
   the entry, and its `change` handler reads it as `p.value`.
 - `shows="over"` on a page opens it over the page beneath, as a dialog.

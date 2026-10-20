@@ -2,7 +2,7 @@
 // resize on the grid (Alt slips it), and a drag writes when it ends.
 
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { type Box, PageView, pageGround } from "../../page/PageView";
+import { type Box, PageView, pageGround, SHAPES } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
@@ -287,8 +287,34 @@ export function Artboard(p: {
     return { left: `${v.x}px`, top: `${v.y}px`, width: `${p.page.width * v.k}px`, height: `${p.page.height * v.k}px` };
   };
 
+  // a shape's attributes place it, so its ring is measured from the drawn page, each frame
+  // while one is picked, as live values may move it
+  const shape = (id: string) => SHAPES.has(find(p.page.children, id)?.tag ?? "");
+  const [measured, setMeasured] = createSignal<Record<string, DOMRect>>({});
+  createEffect(() => {
+    const ids = p.selected.filter(shape);
+    if (ids.length === 0) return;
+    let frame = requestAnimationFrame(function measure() {
+      const at: Record<string, DOMRect> = {};
+      for (const id of ids) {
+        const el = host.querySelector(`.page-layer [data-id="${id}"]`);
+        if (el) at[id] = el.getBoundingClientRect();
+      }
+      setMeasured(at);
+      frame = requestAnimationFrame(measure);
+    });
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
+
   /** Where an element's ring goes on screen, on whole pixels so its thin line stays crisp. */
   const ring = (id: string) => {
+    if (shape(id)) {
+      const m = measured()[id];
+      const r = host.getBoundingClientRect();
+      if (!m) return undefined;
+      const [left, top] = [Math.round(m.left - r.left), Math.round(m.top - r.top)];
+      return { left: `${left}px`, top: `${top}px`, width: `${Math.round(m.right - r.left) - left}px`, height: `${Math.round(m.bottom - r.top) - top}px` };
+    }
     const b = absolute(p.page, id, overrides);
     if (!b) return undefined;
     const v = view();
@@ -323,7 +349,7 @@ export function Artboard(p: {
           <Show when={ring(id)}>
             {(r) => (
               <div class="ring" style={r()}>
-                <Show when={p.selected.length === 1}>
+                <Show when={p.selected.length === 1 && !shape(id)}>
                   <For each={HANDLES}>{(h) => <span class={`handle ${h}`} data-handle={h} />}</For>
                 </Show>
               </div>

@@ -6,7 +6,7 @@ import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import { isNumber } from "../../state/bind";
 import { GRID } from "./Artboard";
-import { childrenOf, find, parentOf, sendEdits } from "./tree";
+import { childrenOf, find, holds, parentOf, sendEdits } from "./tree";
 
 const MARK = "rant-hmi elements";
 
@@ -39,7 +39,7 @@ export function paste(e: ClipboardEvent, page: Page, selected: string | null) {
   const own = clip.page === page.id && clip.elements.some((c) => c.id === selected);
   let parent: string | null = null;
   let index: number | null = null;
-  if (at && at.tag === "div" && !own) {
+  if (at && clip.elements.length > 0 && holds(at.tag, clip.elements[0].tag) && !own) {
     parent = at.id;
   } else if (at) {
     parent = parentOf(page, at.id);
