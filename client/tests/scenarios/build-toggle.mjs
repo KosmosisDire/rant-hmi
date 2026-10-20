@@ -1,6 +1,7 @@
 // A designer builds a Toggle in the editor alone: a two way value, a track that turns green, a
 // knob that slides, and a tap that flips it and sends change. On a page, one bound to Running
-// stops and starts the line, and one bound to !Running, which takes no writes, only shows.
+// stops and starts the line, and one bound to !Running, which takes no writes, only shows. A
+// component's code never names the mesh.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.addComponent("Toggle", 88, 44);
@@ -31,4 +32,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(hmi.state.values.Running?.value === false && (await knobX(shown)) > 30, "a toggle bound one way wrote or moved");
   await inst(line).click();
   await eventually(() => hmi.state.values.Running?.value === true, "a second tap to start it");
+
+  await d.tab("Design");
+  await d.openPage("Toggle");
+  await d.select("track");
+  await d.handler("tap", "Speed = 1;");
+  await d.tab("Run");
+  await inst(line).click();
+  await page.locator(".notice.fault", { hasText: "Speed is no input, variable or part of Toggle" }).waitFor({ timeout: 4000 });
 }

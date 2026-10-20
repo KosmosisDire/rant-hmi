@@ -20,8 +20,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Control+z");
   await eventually(() => !named("Line copy 2"), "Ctrl Z to take the second copy away");
 
-  await hmi.addComponent("Gauge");
-  await d.openPage("Gauge");
+  await hmi.addComponent("Lamp");
+  await d.openPage("Lamp");
   await duplicate();
-  await eventually(() => named("GaugeCopy")?.interface, "the component's copy");
+  await eventually(() => named("LampCopy")?.interface, "the component's copy");
 }

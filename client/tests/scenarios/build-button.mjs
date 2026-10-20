@@ -15,7 +15,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.select("face");
   await d.add("frame", { Name: "bar", x: "0", y: "60", w: "holdMs ? 220 * Math.min(root.heldFor / holdMs, 1) : 0", h: "6", Fill: "#ffffffaa" });
 
-  await d.addPage("Buttons");
+  await d.addPage("Hold buttons");
   const start = await d.place("Button", { x: "44", y: "44", w: "220", h: "66", text: '"Start"' });
   await d.handler("confirm", "Running = true;");
   const stop = await d.place("Button", { x: "308", y: "44", w: "220", h: "66", text: '"Hold to stop"', holdMs: "600" });
