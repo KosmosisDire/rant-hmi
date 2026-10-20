@@ -23,7 +23,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await page.keyboard.press("Control+z");
   await eventually(() => at()?.background === "#ff0000", "undo to bring the frame back");
-  check((await page.locator(".list-row.selected", { hasText: "Frame" }).count()) > 0, "the frame came back unselected");
+  await eventually(async () => (await page.locator(".list-row.selected", { hasText: "Frame" }).count()) > 0, "the frame to come back selected");
   await page.keyboard.press("Control+z");
   await eventually(() => at().background === start.background, "undo to put the fill back");
   await page.keyboard.press("Control+z");
