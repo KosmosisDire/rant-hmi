@@ -1,5 +1,7 @@
 /* The Design tab: the artboard, its selection, the outline and the property fields. */
 
+/* Nothing on it selects as text or drags as an image: a press on selected text would start
+   the browser's own drag and cancel ours. */
 .artboard {
   position: relative;
   flex: 1;
@@ -7,6 +9,8 @@
   overflow: hidden;
   background: var(--ground);
   touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .page-layer {

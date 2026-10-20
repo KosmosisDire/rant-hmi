@@ -94,6 +94,8 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
   const down = (e: PointerEvent) => {
     const target = e.target as HTMLElement;
     const v = view();
+    // a field being typed in commits before the canvas takes over
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     if (e.button === 1) {
       drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
     } else if (e.button === 0) {
