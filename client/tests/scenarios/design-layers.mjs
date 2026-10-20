@@ -35,6 +35,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await dragRow("B", "C", 0.5);
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === c)?.children[0]?.id === b, "B to go inside C");
   check(props(hmi, pageId, b).x === String(220 - 396), `B inside C has x ${props(hmi, pageId, b).x}`);
+  // measured once the page draws it there, not while its old element goes
+  await page.locator(`.artboard .el[data-id="${c}"] .el[data-id="${b}"]`).waitFor();
   const after = await d.box(b);
   check(Math.abs(after.x - before.x) < 1 && Math.abs(after.y - before.y) < 1, "B moved on the page when it went into C");
 
