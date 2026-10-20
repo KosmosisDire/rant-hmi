@@ -9,7 +9,8 @@ import type { Page } from "../../protocol/Page";
 import { number } from "../../state/bind";
 import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
-import { absolute, boxOf, find, literal, parentOf, placementText, roomOf, sendEdits, tops } from "./tree";
+import { moving, type Reshape, reshape } from "./geometry";
+import { absolute, boxOf, find, literal, parentOf, placementText, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 export const GRID = 11;
 /** Grid lines every so many units and how strong each set is. A set fades out as its lines
@@ -45,7 +46,8 @@ const KEYS: [string, string][] = [
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "box"; sx: number; sy: number }
-  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number };
+  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number }
+  | { kind: "shape"; how: "move" | Handle; id: string; sx: number; sy: number; base: Element; screen: DOMMatrix; outline: DOMRect; props: Record<string, string> | null };
 
 /** A box shown in place of an element's own until the page carries it. `n` names the drag
  *  that made it, so a finished drag never clears a newer one's box. */
@@ -73,6 +75,20 @@ function dragged(kind: "move" | Handle, b: Box, dx: number, dy: number, free: bo
   if (kind.includes("n")) y = Math.min(snap(y + dy, free), bottom - GRID);
   if (kind.includes("s")) bottom = Math.max(snap(bottom + dy, free), y + GRID);
   return { x, y, w: right - x, h: bottom - y };
+}
+
+/** A shape scaled by a grip, about the far side of its outline. A flat side, as a level
+ *  line's height, has nothing to scale. */
+function scaling(h: Handle, b: DOMRect, du: number, dv: number): Reshape {
+  const by = (size: number, grow: number) => (size > 0 ? Math.max(0.05, (size + grow) / size) : 1);
+  return {
+    sx: h.includes("e") ? by(b.width, du) : h.includes("w") ? by(b.width, -du) : 1,
+    sy: h.includes("s") ? by(b.height, dv) : h.includes("n") ? by(b.height, -dv) : 1,
+    ax: h.includes("w") ? b.x + b.width : b.x,
+    ay: h.includes("n") ? b.y + b.height : b.y,
+    dx: 0,
+    dy: 0,
+  };
 }
 
 /** Light lines on a dark page, dark ones on a light page. */
@@ -196,11 +212,25 @@ export function Artboard(p: {
         const bases = Object.fromEntries(group.map((g) => [g.id, boxOf(g, roomOf(p.page, g.id))]));
         drag = { kind, lead, ids: group.map((g) => g.id), sx: e.clientX, sy: e.clientY, bases, boxes: { ...bases }, n: ++drags };
       };
-      if (handle && p.selected.length === 1) {
+      // a shape's own attributes move and scale it, in its drawing's units
+      const startShape = (how: "move" | Handle, id: string) => {
+        const el = host.querySelector(`.page-layer [data-id="${id}"]`);
+        const base = find(p.page.children, id);
+        const screen = el instanceof SVGGraphicsElement ? (el.parentNode as SVGGraphicsElement).getScreenCTM() : null;
+        if (!(el instanceof SVGGraphicsElement) || !base || !screen || !reshape(base, moving(0, 0))) return;
+        const props = { ...base.props };
+        drag = { kind: "shape", how, id, sx: e.clientX, sy: e.clientY, base: { ...base, props }, screen, outline: el.getBBox(), props: null };
+      };
+      if (handle && p.selected.length === 1 && shape(p.selected[0])) {
+        startShape(handle, p.selected[0]);
+      } else if (handle && p.selected.length === 1) {
         const one = find(p.page.children, p.selected[0]);
         if (one && literal(one, keysFor(handle))) start(handle, one.id, [one]);
       } else if (hit && (e.shiftKey || e.ctrlKey || e.metaKey)) {
         return p.onPick(hit, true);
+      } else if (hit && shape(hit)) {
+        p.onPick(hit);
+        startShape("move", hit);
       } else if (hit) {
         // a press on one of several selected moves them all, any other picks it alone
         const keep = p.selected.length > 1 && p.selected.includes(hit);
@@ -229,6 +259,18 @@ export function Artboard(p: {
       setBox({ left: Math.min(drag.sx, e.clientX) - r.left, top: Math.min(drag.sy, e.clientY) - r.top, width: Math.abs(dx), height: Math.abs(dy) });
       return;
     }
+    if (drag.kind === "shape") {
+      // the pointer's travel in the drawing's units, whole ones unless Alt
+      const m = drag.screen.inverse();
+      const unit = (v: number) => (e.altKey ? Number(v.toFixed(2)) : Math.round(v));
+      const [du, dv] = [unit(m.a * dx + m.c * dy), unit(m.b * dx + m.d * dy)];
+      const props = reshape(drag.base, drag.how === "move" ? moving(du, dv) : scaling(drag.how, drag.outline, du, dv));
+      if (props) {
+        drag.props = props;
+        showProps(p.page.id, drag.id, props);
+      }
+      return;
+    }
     const d = drag;
     const k = view().k;
     const lead = d.bases[d.lead];
@@ -245,6 +287,7 @@ export function Artboard(p: {
     const d = drag;
     drag = null;
     if (d?.kind === "box") return takeBox();
+    if (d?.kind === "shape") return d.props && setProps(p.page.id, d.id, d.props);
     if (!d || d.kind === "pan") return;
     const edits: Edit[] = [];
     for (const id of d.ids) {
@@ -342,6 +385,17 @@ export function Artboard(p: {
     const v = view();
     return { id, angle, ox, oy, at: { x: v.x + (b.x + ox) * v.k, y: v.y + (b.y + oy) * v.k } };
   };
+  // a shape shows grips while its attributes can scale, as a group's transform cannot
+  const scales = (id: string) => {
+    const e = find(p.page.children, id);
+    return !!e && reshape(e, { sx: 2, sy: 2, ax: 0, ay: 0, dx: 0, dy: 0 }) !== null;
+  };
+  // a flat side, as a level line's, has nothing to scale, and its grips would cover the
+  // middle a press moves it by
+  const grips = (id: string) => {
+    const m = shape(id) ? measured()[id] : undefined;
+    return HANDLES.filter((h) => !(m && m.height < 2 && /^[ns]$/.test(h)) && !(m && m.width < 2 && /^[ew]$/.test(h)));
+  };
   // the point shows once the element says how it turns
   const turns = (id: string) => {
     const e = find(p.page.children, id);
@@ -395,8 +449,8 @@ export function Artboard(p: {
           <Show when={ring(id)}>
             {(r) => (
               <div class="ring" style={r()}>
-                <Show when={p.selected.length === 1 && !shape(id)}>
-                  <For each={HANDLES}>{(h) => <span class={`handle ${h}`} data-handle={h} />}</For>
+                <Show when={p.selected.length === 1 && (!shape(id) || scales(id))}>
+                  <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} />}</For>
                 </Show>
               </div>
             )}

@@ -1,6 +1,6 @@
 // A designer makes a dial from the editor: adds a drawing, adds a circle and a line from the
 // inspector, turns the line by Speed and gives the circle a tap. The page shows the needle at
-// Speed's angle, a shape cannot be dragged out of its drawing, and a tap on it runs.
+// Speed's angle, a drag moves a shape in its drawing but never out of it, and a tap runs.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Dial");
@@ -29,18 +29,24 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await layer("Circle").click();
   const [ring, shape] = [await page.locator(".ring").first().boundingBox(), await d.el(circle).boundingBox()];
   check(Math.abs(ring.x - shape.x) < 2 && Math.abs(ring.width - shape.width) < 2, `the ring is at ${ring.x}, the circle at ${shape.x}`);
-  check((await page.locator(".ring .handle").count()) === 0, "a shape shows grips it cannot use");
+  check((await page.locator(".ring .handle").count()) === 8, "a plain circle shows no grips to scale it");
 
-  // a drag on a shape moves nothing, and its layer cannot leave the drawing
-  const before = JSON.stringify(drawing());
-  await d.gesture(shape.x + 6, shape.y + shape.height / 2, 60, 30);
-  await page.waitForTimeout(200);
-  check(JSON.stringify(drawing()) === before, "a drag changed a shape");
-  // onto the drawing's top edge means beside it, on the page, where no shape may go
+  // a drag on a shape moves it in its drawing's units
+  const at = () => drawing().children.find((s) => s.id === circle).props;
+  const [cx, cy] = [Number(at().cx), Number(at().cy)];
+  const k = shape.width / (2 * Number(at().r));
+  // pressed left of the middle, clear of the needle drawn over it
+  await d.gesture(shape.x + shape.width * 0.2, shape.y + shape.height / 2, 60, 30);
+  await eventually(() => Number(at().cx) !== cx, "the drag to move the circle");
+  check(Math.abs(Number(at().cx) - cx - 60 / k) <= 1 && Math.abs(Number(at().cy) - cy - 30 / k) <= 1, `the circle moved to ${at().cx}, ${at().cy}`);
+  // its layer cannot leave the drawing: onto the drawing's top edge means beside it, on the
+  // page, where no shape may go
+  const shapes = () => JSON.stringify(drawing().children.map((s) => s.id));
+  const before = shapes();
   const [from, to] = [await layer("Circle").boundingBox(), await layer("Drawing").boundingBox()];
   await d.gesture(from.x + 40, from.y + from.height / 2, 0, to.y + 3 - (from.y + from.height / 2));
   await page.waitForTimeout(200);
-  check(JSON.stringify(drawing()) === before, "a shape was dragged out of its drawing");
+  check(shapes() === before && hmi.page(pageId).children.length === 1, "a shape was dragged out of its drawing");
 
   await layer("Circle").click();
   await d.addEvent("tap");
