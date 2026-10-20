@@ -50,8 +50,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
   // seen part filled while the hold goes on, before its time is up
-  let seen = 0;
-  await eventually(async () => (seen = await bar(first)) > 20 && seen < 200, () => `the bar to fill part way, it is ${seen} wide`, 550);
+  let [seen, look] = [0, ""];
+  const filling = async () => {
+    look = await inst(first).locator('.el[data-name="face"]').getAttribute("class");
+    return (seen = await bar(first)) > 20 && seen < 200;
+  };
+  await eventually(filling, () => `the bar to fill part way, it is ${seen} wide and the face is ${look}`, 550);
   await eventually(async () => (await label(first).textContent()) === "1 holds", "the hold to count once its time is up");
   await page.waitForTimeout(400);
   check((await label(first).textContent()) === "1 holds", "a long hold counted more than once");

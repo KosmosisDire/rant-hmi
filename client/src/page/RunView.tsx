@@ -39,8 +39,11 @@ export function RunView(p: { active: boolean }) {
     return { transform: `scale(${k})`, stack: tall, height: tall.height * k };
   };
 
+  // measured at once when the tab shows, so its first frame is never drawn at no size
+  const measure = () => setSize({ w: host.clientWidth, h: host.clientHeight });
+  createEffect(() => p.active && measure());
   onMount(() => {
-    const watch = new ResizeObserver(() => setSize({ w: host.clientWidth, h: host.clientHeight }));
+    const watch = new ResizeObserver(measure);
     watch.observe(host);
     const key = (e: KeyboardEvent) => p.active && e.key === "Escape" && back();
     window.addEventListener("keydown", key);
