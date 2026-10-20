@@ -20,21 +20,16 @@
   transform-origin: 0 0;
 }
 
-/* The grid every placement snaps to: faint cells, firmer every four. */
+/* The page's ground and grid are drawn on the canvas beneath. */
+.grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
 .page.design {
-  box-shadow:
-    0 0 0 1px var(--border2),
-    0 10px 30px rgba(0, 0, 0, 0.45);
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
-  background-size:
-    11px 11px,
-    11px 11px,
-    44px 44px,
-    44px 44px;
+  background: transparent;
 }
 
 .page.design .el {

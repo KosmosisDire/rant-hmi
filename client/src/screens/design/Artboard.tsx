@@ -9,6 +9,13 @@ import { number } from "../../state/bind";
 import { absolute, boxOf, find, literal, setProps } from "./tree";
 
 export const GRID = 11;
+/** Grid lines every so many units and how strong each set is. A set fades out as its lines
+ *  close up on screen, so zoomed out the grid thins instead of turning grey. */
+const LEVELS = [
+  [GRID, 0.045],
+  [GRID * 4, 0.06],
+  [GRID * 16, 0.06],
+] as const;
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 type Handle = (typeof HANDLES)[number];
 
@@ -44,8 +51,18 @@ function dragged(kind: "move" | Handle, b: Box, dx: number, dy: number, free: bo
   return { x, y, w: right - x, h: bottom - y };
 }
 
+/** Light lines on a dark page, dark ones on a light page. */
+function ink(g: CanvasRenderingContext2D, ground: string): string {
+  g.fillStyle = ground;
+  const hex = /^#([0-9a-f]{6})$/i.exec(String(g.fillStyle))?.[1];
+  if (!hex) return "255, 255, 255";
+  const [r, gr, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return 0.2126 * r + 0.7152 * gr + 0.0722 * b > 128 ? "0, 0, 0" : "255, 255, 255";
+}
+
 export function Artboard(p: { page: Page; selected: string | null; onSelect: (id: string | null) => void }) {
   let host!: HTMLDivElement;
+  let grid!: HTMLCanvasElement;
   const [view, setView] = createSignal({ k: 0.5, x: 0, y: 0 });
   const [held, setHeld] = createSignal<Held>({});
   const overrides = (id: string) => held()[id]?.box;
@@ -62,9 +79,42 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
     setView({ k, x: (r.width - p.page.width * k) / 2, y: (r.height - p.page.height * k) / 2 });
     fittedFor = p.page.id;
   };
+  // the page's ground and its grid, drawn at screen size so every line is one crisp pixel
+  const draw = () => {
+    const r = host.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const [cw, ch] = [Math.round(r.width * dpr), Math.round(r.height * dpr)];
+    if (grid.width !== cw || grid.height !== ch) [grid.width, grid.height] = [cw, ch];
+    const g = grid.getContext("2d");
+    if (!g) return;
+    g.clearRect(0, 0, cw, ch);
+    const v = view();
+    const sheet = host.querySelector<HTMLElement>(".page");
+    const ground = (sheet && getComputedStyle(sheet).getPropertyValue("--page-ground").trim()) || "#000000";
+    const [x0, y0] = [Math.round(v.x * dpr), Math.round(v.y * dpr)];
+    const [x1, y1] = [Math.round((v.x + p.page.width * v.k) * dpr), Math.round((v.y + p.page.height * v.k) * dpr)];
+    const lines = ink(g, ground);
+    g.save();
+    g.shadowColor = "rgba(0, 0, 0, 0.45)";
+    g.shadowBlur = 30 * dpr;
+    g.shadowOffsetY = 10 * dpr;
+    g.fillStyle = ground;
+    g.fillRect(x0, y0, x1 - x0, y1 - y0);
+    g.restore();
+    const width = Math.max(1, Math.round(dpr));
+    for (const [step, strength] of LEVELS) {
+      const a = strength * Math.min(1, Math.max(0, (step * v.k - 4) / 8));
+      if (a <= 0) continue;
+      g.fillStyle = `rgba(${lines}, ${a})`;
+      for (let u = step; u < p.page.width; u += step) g.fillRect(Math.round((v.x + u * v.k) * dpr), y0, width, y1 - y0);
+      for (let u = step; u < p.page.height; u += step) g.fillRect(x0, Math.round((v.y + u * v.k) * dpr), x1 - x0, width);
+    }
+  };
+  createEffect(draw);
+
   onMount(() => {
     // fits once the artboard first has a size, and again for each page opened
-    const watch = new ResizeObserver(() => fittedFor !== p.page.id && fit());
+    const watch = new ResizeObserver(() => (fittedFor !== p.page.id ? fit() : draw()));
     watch.observe(host);
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -158,6 +208,7 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
 
   return (
     <div class="artboard" ref={host} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+      <canvas class="grid" ref={grid} />
       <div class="page-layer" style={{ transform: `translate(${view().x}px, ${view().y}px) scale(${view().k})` }}>
         <PageView page={p.page} overrides={overrides} design />
       </div>

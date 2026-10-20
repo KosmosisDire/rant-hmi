@@ -2,9 +2,10 @@
    these are only the defaults an element starts from. */
 
 .page {
+  --page-ground: #15171a;
   position: relative;
   overflow: hidden;
-  background: #15171a;
+  background: var(--page-ground);
   color: #e4e6e8;
   font-family: var(--sans);
   font-size: 16px;
