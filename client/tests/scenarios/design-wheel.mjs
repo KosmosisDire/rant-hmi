@@ -1,5 +1,5 @@
 // A user scrolls the wheel over the page to look closer: it zooms about the pointer, so the
-// spot under it stays put.
+// spot under it stays put. A click on the percent shows the page at its true size.
 
 export default async function ({ page, d, check }) {
   await d.tab("Design");
@@ -19,4 +19,8 @@ export default async function ({ page, d, check }) {
   const u = (px - after.x) / after.width;
   const v = (py - after.y) / after.height;
   check(Math.abs(u - 0.3) < 0.01 && Math.abs(v - 0.6) < 0.01, `the spot under the pointer moved to ${u.toFixed(3)}, ${v.toFixed(3)}`);
+
+  await page.locator('button[title="Show at 100%"]').click();
+  check((await zoom()) === "100%", "the percent did not show the page at its true size");
+  check(Math.abs((await sheet()).width - 1408) < 1, "the page is not drawn at its true size");
 }

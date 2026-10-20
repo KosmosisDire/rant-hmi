@@ -220,6 +220,14 @@ export function Artboard(p: { page: Page; selected: string[]; onPick: Pick }) {
     window.setTimeout(() => d.ids.forEach((id) => release(id, d.n)), 3000);
   };
 
+  // the page at its true size, about the middle of the view
+  const actual = () => {
+    const r = host.getBoundingClientRect();
+    const v = view();
+    const [cx, cy] = [r.width / 2, r.height / 2];
+    setView({ k: 1, x: cx - (cx - v.x) / v.k, y: cy - (cy - v.y) / v.k });
+  };
+
   const sheet = () => {
     const v = view();
     return { left: `${v.x}px`, top: `${v.y}px`, width: `${p.page.width * v.k}px`, height: `${p.page.height * v.k}px` };
@@ -257,7 +265,9 @@ export function Artboard(p: { page: Page; selected: string[]; onPick: Pick }) {
         )}
       </For>
       <div class="zoom">
-        <span class="mono">{Math.round(view().k * 100)}%</span>
+        <button class="icon-btn mono" title="Show at 100%" onClick={actual} onPointerDown={(e) => e.stopPropagation()}>
+          {Math.round(view().k * 100)}%
+        </button>
         <button class="icon-btn" title="Fit the page" onClick={fit} onPointerDown={(e) => e.stopPropagation()}>
           Fit
         </button>
