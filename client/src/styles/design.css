@@ -51,6 +51,13 @@
   outline-offset: -1px;
 }
 
+/* A row of tool buttons in the inspector, such as the ways to line elements up. */
+.tool-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
 /* The selection: a ring at screen size, so its grips stay the same size at any zoom. */
 .ring {
   position: absolute;

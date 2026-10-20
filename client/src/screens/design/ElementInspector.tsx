@@ -12,8 +12,24 @@ import { complete, type Place, type Suggestion } from "../../state/complete";
 import { component, setState, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
-import { Component, Plus, Square, TextCursorInput, Trash, Type, X } from "../../ui/icons";
-import { find, sendEdits, setProps, tops } from "./tree";
+import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalDistributeCenter,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalDistributeCenter,
+  Component,
+  Plus,
+  Square,
+  TextCursorInput,
+  Trash,
+  Type,
+  X,
+} from "../../ui/icons";
+import { type Align, align, find, sendEdits, setProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, with an example of what it takes. Anything else lives
  *  in the free CSS box. */
@@ -65,9 +81,20 @@ export function ElementInspector(p: { page: Page | undefined; selected: string[]
   );
 }
 
-/** Several selected elements: how many, what works on all of them, and removing them. */
+/** The ways to line elements up, each as its button says it. */
+const LINE_UP: [Align, string, typeof AlignStartVertical][] = [
+  ["left", "Line up left edges", AlignStartVertical],
+  ["centre", "Line up centres across", AlignCenterVertical],
+  ["right", "Line up right edges", AlignEndVertical],
+  ["top", "Line up top edges", AlignStartHorizontal],
+  ["middle", "Line up middles", AlignCenterHorizontal],
+  ["bottom", "Line up bottom edges", AlignEndHorizontal],
+];
+
+/** Several selected elements: how many, lining them up, and removing them. */
 function Several(p: { page: Page; ids: string[] }) {
   const remove = () => sendEdits(tops(p.page, p.ids).map((e) => ({ kind: "remove_element", page: p.page.id, id: e.id })));
+  const few = () => tops(p.page, p.ids).length < 3;
   return (
     <>
       <div class="pane-head">
@@ -75,6 +102,25 @@ function Several(p: { page: Page; ids: string[] }) {
         <span class="tag">selection</span>
       </div>
       <div class="pane-body pad">
+        <div class="section">Line up</div>
+        <div class="tool-row">
+          <For each={LINE_UP}>
+            {([how, title, Icon]) => (
+              <button class="icon-btn" title={title} onClick={() => align(p.page, p.ids, how)}>
+                <Icon size={15} />
+              </button>
+            )}
+          </For>
+        </div>
+        <div class="section">Spread</div>
+        <div class="tool-row">
+          <button class="icon-btn" title="Spread evenly across" disabled={few()} onClick={() => spread(p.page, p.ids, true)}>
+            <AlignHorizontalDistributeCenter size={15} />
+          </button>
+          <button class="icon-btn" title="Spread evenly down" disabled={few()} onClick={() => spread(p.page, p.ids, false)}>
+            <AlignVerticalDistributeCenter size={15} />
+          </button>
+        </div>
         <div class="placeholder">Drag one to move them all, or nudge them with the arrows. Shift click adds an element or takes it away.</div>
       </div>
       <div class="pane-foot">

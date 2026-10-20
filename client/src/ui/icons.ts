@@ -1,6 +1,14 @@
 // Every Lucide icon the client draws, each from its own module, so a build compiles these
 // and not the whole set.
 
+export { default as AlignCenterHorizontal } from "lucide-solid/icons/align-center-horizontal";
+export { default as AlignCenterVertical } from "lucide-solid/icons/align-center-vertical";
+export { default as AlignEndHorizontal } from "lucide-solid/icons/align-end-horizontal";
+export { default as AlignEndVertical } from "lucide-solid/icons/align-end-vertical";
+export { default as AlignHorizontalDistributeCenter } from "lucide-solid/icons/align-horizontal-distribute-center";
+export { default as AlignStartHorizontal } from "lucide-solid/icons/align-start-horizontal";
+export { default as AlignStartVertical } from "lucide-solid/icons/align-start-vertical";
+export { default as AlignVerticalDistributeCenter } from "lucide-solid/icons/align-vertical-distribute-center";
 export { default as ChevronDown } from "lucide-solid/icons/chevron-down";
 export { default as ChevronRight } from "lucide-solid/icons/chevron-right";
 export { default as Code } from "lucide-solid/icons/code";

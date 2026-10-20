@@ -83,6 +83,58 @@ export function moveTo(page: Page, id: string, parent: string | null, index: num
   sendEdits(edits);
 }
 
+/** An edge or centre several elements line up on. */
+export type Align = "left" | "centre" | "right" | "top" | "middle" | "bottom";
+
+/** The selected elements that can move, each with its box on the page and where its frame
+ *  starts there. */
+function placed(page: Page, ids: string[]) {
+  return tops(page, ids)
+    .filter((e) => literal(e, ["x", "y"]))
+    .flatMap((e) => {
+      const b = absolute(page, e.id);
+      const own = boxOf(e);
+      return b ? [{ e, b, origin: { x: b.x - own.x, y: b.y - own.y } }] : [];
+    });
+}
+
+/** Lines elements up on one edge or centre of the box around them, as one undo. */
+export function align(page: Page, ids: string[], how: Align) {
+  const all = placed(page, ids);
+  const across = how === "left" || how === "centre" || how === "right";
+  const start = Math.min(...all.map(({ b }) => (across ? b.x : b.y)));
+  const end = Math.max(...all.map(({ b }) => (across ? b.x + b.w : b.y + b.h)));
+  sendEdits(
+    all.flatMap(({ e, b, origin }) => {
+      const size = across ? b.w : b.h;
+      const at = how === "left" || how === "top" ? start : how === "right" || how === "bottom" ? end - size : Math.round((start + end - size) / 2);
+      const key = across ? "x" : "y";
+      const local = at - (across ? origin.x : origin.y);
+      return local === number(e.props[key]) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: String(local) } } as Edit];
+    }),
+  );
+}
+
+/** Spreads three or more elements so the gaps between them are equal, across or down, the
+ *  first and last staying put. */
+export function spread(page: Page, ids: string[], across: boolean) {
+  const all = placed(page, ids).sort((p, q) => (across ? p.b.x - q.b.x : p.b.y - q.b.y));
+  if (all.length < 3) return;
+  const size = (b: Box) => (across ? b.w : b.h);
+  const first = across ? all[0].b.x : all[0].b.y;
+  const last = all.at(-1)!;
+  const gap = ((across ? last.b.x : last.b.y) + size(last.b) - first - all.reduce((n, { b }) => n + size(b), 0)) / (all.length - 1);
+  let at = first;
+  sendEdits(
+    all.flatMap(({ e, b, origin }) => {
+      const key = across ? "x" : "y";
+      const local = Math.round(at) - (across ? origin.x : origin.y);
+      at += size(b) + gap;
+      return local === number(e.props[key]) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: String(local) } } as Edit];
+    }),
+  );
+}
+
 /** Sends edits as one, so one undo takes them all back. */
 export function sendEdits(edits: Edit[]) {
   if (edits.length > 0) send({ type: "edit", edit: edits.length === 1 ? edits[0] : { kind: "batch", edits } });

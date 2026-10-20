@@ -1,5 +1,5 @@
 // A user picks several elements with Shift and Ctrl: a drag moves them together as one undo,
-// the arrows nudge them, Ctrl A takes the whole page, and Delete removes them all as one undo.
+// the arrows nudge them, Ctrl A takes the page, they line up and spread, and Delete removes all.
 
 import { props } from "../designer.mjs";
 
@@ -37,8 +37,18 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.el(b).click({ modifiers: ["Shift"] });
   await eventually(async () => (await head.textContent()) === "2 elements", "Shift click to take B away");
 
+  await hmi.setProps(pageId, c, { x: "500", y: "132" });
   await page.keyboard.press("Control+a");
   await eventually(async () => (await head.textContent()) === "3 elements", "Ctrl A to take the page");
+  const tool = (title) => page.locator(`.screen:not([hidden]) .sidebar.right button[title="${title}"]`);
+  await tool("Line up top edges").click();
+  await eventually(() => [a, b, c].every((id) => props(hmi, pageId, id).y === "44"), "the tops to line up");
+  await tool("Spread evenly across").click();
+  const gaps = () => {
+    const [xa, xb, xc] = [a, b, c].map((id) => Number(x(id)));
+    return xa === 55 && xc === 500 && Math.abs(xb - xa - (xc - xb)) <= 1;
+  };
+  await eventually(gaps, "even gaps across");
   await page.keyboard.press("Delete");
   await eventually(() => hmi.page(pageId).children.length === 0, "Delete to remove all");
   await page.keyboard.press("Control+z");
