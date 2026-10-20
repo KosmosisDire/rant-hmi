@@ -3,8 +3,8 @@ import { Dynamic } from "solid-js/web";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
 
-/** A text field that shows the live value until focused, then what is typed, so a live
- *  update never erases an edit. Enter or leaving commits (Ctrl Enter when multiline, where
+/** A text field that shows the live value until typed in, then what is typed, so a live
+ *  update never erases an edit and a field only focused never writes. Enter or leaving commits (Ctrl Enter when multiline, where
  *  Enter makes a new line), Escape puts the value back. A commit `accept` refuses stays in
  *  the field, outlined red. */
 export function DraftInput(p: {
@@ -48,7 +48,6 @@ export function DraftInput(p: {
       title={p.title}
       spellcheck={false}
       rows={p.multiline ? 4 : undefined}
-      onFocus={() => setDraft(p.value)}
       onInput={(e: InputEvent & { currentTarget: Field }) => setDraft(e.currentTarget.value)}
       onBlur={commit}
       onKeyDown={key}
