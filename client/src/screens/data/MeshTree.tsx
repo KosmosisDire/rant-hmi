@@ -9,30 +9,38 @@ import type { Picking } from "./DataScreen";
 import { suggest } from "./ImportForm";
 import { unimport } from "./Inspector";
 
-interface Folder {
+/** One step of a name: the entity there, if any, and the names under it. An entity may hold
+ *  others, as a camera holds its `Video`. */
+interface Branch {
   name: string;
   path: string;
-  folders: Folder[];
-  entities: EntityInfo[];
+  entity?: EntityInfo;
+  children: Branch[];
 }
 
-/** The entity names as a tree split on "/", holding only names that match the filter. */
-function grow(entities: EntityInfo[], filter: string): Folder {
-  const root: Folder = { name: "", path: "", folders: [], entities: [] };
+/** The entity names as a tree split on "/", holding only names that match the filter, those
+ *  holding others before those that hold none. */
+function grow(entities: EntityInfo[], filter: string): Branch {
+  const root: Branch = { name: "", path: "", children: [] };
   const q = filter.trim().toLowerCase();
   for (const e of entities) {
     if (q && !e.name.toLowerCase().includes(q)) continue;
     let at = root;
-    for (const part of e.name.split("/").slice(0, -1)) {
-      let next = at.folders.find((f) => f.name === part);
+    for (const part of e.name.split("/")) {
+      let next = at.children.find((f) => f.name === part);
       if (!next) {
-        next = { name: part, path: at.path ? `${at.path}/${part}` : part, folders: [], entities: [] };
-        at.folders.push(next);
+        next = { name: part, path: at.path ? `${at.path}/${part}` : part, children: [] };
+        at.children.push(next);
       }
       at = next;
     }
-    at.entities.push(e);
+    at.entity = e;
   }
+  const order = (b: Branch) => {
+    b.children.sort((x, y) => Number(y.children.length > 0) - Number(x.children.length > 0));
+    b.children.forEach(order);
+  };
+  order(root);
   return root;
 }
 
@@ -75,64 +83,82 @@ export function MeshTree(p: Picking) {
     return s?.kind === "import" && importOf(e.name)?.alias === s.alias;
   };
 
-  const Level = (l: { folder: Folder; depth: number }) => (
-    <>
-      <For each={l.folder.folders}>
-        {(f) => (
-          <>
-            <button class="list-row branch" onClick={() => toggle(f.path)}>
-              <span style={{ width: `${l.depth * INDENT}px` }} />
-              <span class="caret">
-                <Show when={open(f.path)} fallback={<ChevronRight size={12} />}>
-                  <ChevronDown size={12} />
-                </Show>
-              </span>
-              <span class="list-label mono">{f.name}/</span>
-            </button>
-            <Show when={open(f.path)}>
-              <Level folder={f} depth={l.depth + 1} />
-            </Show>
-          </>
-        )}
-      </For>
-      <For each={l.folder.entities}>
-        {(e) => (
-          <div
-            class="list-row"
-            role="button"
-            tabIndex={0}
-            classList={{ selected: picked(e) }}
-            onClick={() => pick(e)}
-            onContextMenu={(ev) => menu(ev, e)}
-            onKeyDown={(k) => k.key === "Enter" && pick(e)}
-            title={e.name}
+  const Caret = (c: { branch: Branch }) => (
+    <Show when={open(c.branch.path)} fallback={<ChevronRight size={12} />}>
+      <ChevronDown size={12} />
+    </Show>
+  );
+
+  const Level = (l: { branch: Branch; depth: number }) => (
+    <For each={l.branch.children}>
+      {(b) => (
+        <>
+          <Show
+            when={b.entity}
+            fallback={
+              <button class="list-row branch" onClick={() => toggle(b.path)}>
+                <span style={{ width: `${l.depth * INDENT}px` }} />
+                <span class="caret">
+                  <Caret branch={b} />
+                </span>
+                <span class="list-label mono">{b.name}/</span>
+              </button>
+            }
           >
-            <span style={{ width: `${l.depth * INDENT}px` }} />
-            <span class="caret" />
-            <KindIcon kind={e.kind} />
-            <span class="list-label mono">{e.name.split("/").pop()}</span>
-            {/* the alias it is imported as, else in the same place a + that imports it */}
-            <Show
-              when={importOf(e.name)}
-              fallback={
-                <button
-                  class="row-add"
-                  title={`Import ${e.name}`}
-                  onClick={(c) => {
-                    c.stopPropagation();
-                    quick(e);
-                  }}
+            {(e) => (
+              <div
+                class="list-row"
+                role="button"
+                tabIndex={0}
+                classList={{ selected: picked(e()) }}
+                onClick={() => pick(e())}
+                onContextMenu={(ev) => menu(ev, e())}
+                onKeyDown={(k) => k.key === "Enter" && pick(e())}
+                title={e().name}
+              >
+                <span style={{ width: `${l.depth * INDENT}px` }} />
+                {/* an entity holding others opens by its caret, and a press on the rest picks it */}
+                <Show when={b.children.length > 0} fallback={<span class="caret" />}>
+                  <span
+                    class="caret open-caret"
+                    title={open(b.path) ? "Hide what it holds" : "Show what it holds"}
+                    onClick={(c) => {
+                      c.stopPropagation();
+                      toggle(b.path);
+                    }}
+                  >
+                    <Caret branch={b} />
+                  </span>
+                </Show>
+                <KindIcon kind={e().kind} />
+                <span class="list-label mono">{b.name}</span>
+                {/* the alias it is imported as, else in the same place a + that imports it */}
+                <Show
+                  when={importOf(e().name)}
+                  fallback={
+                    <button
+                      class="row-add"
+                      title={`Import ${e().name}`}
+                      onClick={(c) => {
+                        c.stopPropagation();
+                        quick(e());
+                      }}
+                    >
+                      <Plus size={15} />
+                    </button>
+                  }
                 >
-                  <Plus size={15} />
-                </button>
-              }
-            >
-              {(i) => <span class="list-trail mono">{i().alias}</span>}
-            </Show>
-          </div>
-        )}
-      </For>
-    </>
+                  {(i) => <span class="list-trail mono">{i().alias}</span>}
+                </Show>
+              </div>
+            )}
+          </Show>
+          <Show when={b.children.length > 0 && open(b.path)}>
+            <Level branch={b} depth={l.depth + 1} />
+          </Show>
+        </>
+      )}
+    </For>
   );
 
   return (
@@ -151,7 +177,7 @@ export function MeshTree(p: Picking) {
       <div class="pane-body">
         <div class="list-group">Mesh</div>
         <Show when={state.entities.length > 0} fallback={<div class="placeholder">Nothing on the mesh yet.</div>}>
-          <Level folder={tree()} depth={0} />
+          <Level branch={tree()} depth={0} />
         </Show>
       </div>
       <div class="pane-foot">

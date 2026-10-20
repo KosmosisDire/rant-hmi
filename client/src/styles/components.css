@@ -662,6 +662,16 @@
   color: var(--dim);
 }
 
+/* An entity's caret opens what it holds, the row's whole height a target for a finger. */
+.open-caret {
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  margin: 0 -3px;
+  cursor: pointer;
+}
+
 /* Imports an entity in one click. */
 .row-add {
   display: inline-flex;

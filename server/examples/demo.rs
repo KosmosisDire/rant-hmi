@@ -55,6 +55,8 @@ fn main() -> Result<(), rant::Error> {
     let pose = node.publisher::<Pose>("Robot/Pose", Qos::new())?;
     let joints = node.publisher::<JointState>("Robot/Joints", Qos::new())?;
     let camera = node.publisher::<Image>("Cell/Camera", Qos::new())?;
+    // a setting held under the camera, as the transcoder's Video is, in ms
+    let _exposure = node.variable_definition::<f64>("Cell/Camera/Exposure", VariableOptions::new().initial(8.0))?;
     let inspection = node.publisher::<VideoFrame>("Cell/Inspection", Qos::new())?;
     let detections = node.publisher::<Detections>("Cell/Detections", Qos::new())?;
     let jog = Arc::new(Mutex::new(None::<f64>));
