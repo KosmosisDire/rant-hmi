@@ -12,11 +12,13 @@ export interface Act {
   fire(e: Element, event: string, payload?: unknown): void;
 }
 
-/** A page's events, sent to the backend for the handler there. */
+/** A page's events, sent to the backend for the handler there. Press and release go for any
+ *  element with a handler, so the backend knows what a screen holds should the screen be lost. */
 export function pageAct(page: string): Act {
   return {
     fire: (e, event, payload) => {
-      if (e.handlers.some((h) => h.event === event)) send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as JsonValue });
+      const held = (event === "press" || event === "release") && e.handlers.length > 0;
+      if (held || e.handlers.some((h) => h.event === event)) send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as JsonValue });
     },
   };
 }
