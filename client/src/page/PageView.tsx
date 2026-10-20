@@ -418,6 +418,10 @@ function Instance(p: { element: Element; scope: Scope; w: number; h: number; des
       {(c) => {
         const scope = componentScope(c(), { props: p.element.props, outer: p.scope, own, kept: p.act ? kept : undefined });
         const act = p.act && componentAct(c(), scope, p.element, p.act);
+        // a control whose values are all bound one way, and whose instance handles nothing,
+        // only shows: it takes no input and does not look pressable
+        const bindable = () => c().interface?.inputs.filter((i) => i.bindable) ?? [];
+        const display = () => p.element.handlers.length === 0 && bindable().length > 0 && !bindable().some((i) => scope.writes(i.name));
         const k = () => Math.min(p.w / c().width, p.h / c().height);
         const place = () => `translate(${(p.w - c().width * k()) / 2}px, ${(p.h - c().height * k()) / 2}px) scale(${k()})`;
         return (
@@ -427,11 +431,11 @@ function Instance(p: { element: Element; scope: Scope; w: number; h: number; des
             class="instance"
             style={{ width: `${c().width}px`, height: `${c().height}px`, transform: place() }}
             ref={(el) => el.addEventListener("pointerdown", hold, true)}
-            onPointerDown={(e) => p.act && kept.press(e)}
-            onPointerOver={(e) => p.act && kept.over(e)}
+            onPointerDown={(e) => p.act && !display() && kept.press(e)}
+            onPointerOver={(e) => p.act && !display() && kept.over(e)}
             onPointerLeave={() => kept.leave()}
           >
-            <For each={c().children}>{(e) => <Placed element={e} scope={scope} design={p.design} act={act} inside />}</For>
+            <For each={c().children}>{(e) => <Placed element={e} scope={scope} design={p.design} act={display() ? undefined : act} inside />}</For>
           </div>
         );
       }}
