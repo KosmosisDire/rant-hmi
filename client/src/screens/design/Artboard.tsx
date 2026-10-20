@@ -1,6 +1,6 @@
-// The page on its artboard: pan with a wheel or a drag on empty space, zoom with Ctrl and
-// the wheel, select by clicking, move by dragging, resize by the grips. Everything snaps to
-// the grid, and Alt lets it slip. A drag shows at once and writes when it ends.
+// The page on its artboard: zoom with the wheel, pan with a drag on empty space or the middle
+// button, select by clicking, move by dragging, resize by the grips. Everything snaps to the
+// grid, and Alt lets it slip. A drag shows at once and writes when it ends.
 
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { type Box, PageView } from "../../page/PageView";
@@ -69,14 +69,12 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       const v = view();
-      if (e.ctrlKey) {
-        const r = host.getBoundingClientRect();
-        const [px, py] = [e.clientX - r.left, e.clientY - r.top];
-        const k = Math.min(8, Math.max(0.1, v.k * Math.exp(-e.deltaY * 0.002)));
-        setView({ k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k });
-      } else {
-        setView({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY });
-      }
+      const r = host.getBoundingClientRect();
+      const [px, py] = [e.clientX - r.left, e.clientY - r.top];
+      // a wheel's notch, a trackpad's glide and a pinch all zoom, never by a leap
+      const dy = Math.max(-120, Math.min(120, e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY));
+      const k = Math.min(8, Math.max(0.1, v.k * Math.exp(-dy * 0.002)));
+      setView({ k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k });
     };
     host.addEventListener("wheel", wheel, { passive: false });
     onCleanup(() => {
