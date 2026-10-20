@@ -39,12 +39,26 @@
     });
   };
 
+  // A message or request from what code passes: one value whole, or its fields in order. A
+  // lone object is the whole, unless its one field is an object and the object lacks its name.
+  const shape = (call, alias, args) => {
+    const form = __form(alias);
+    if (!form || args.length === 0) return args[0];
+    const { name, fields } = form;
+    const [first] = args;
+    const whole = first !== null && typeof first === "object" && !Array.isArray(first) && !ArrayBuffer.isView(first);
+    if (args.length === 1 && (fields.length === 0 || (whole && (fields.length > 1 || fields[0] in first)))) return first;
+    if (args.length === fields.length) return Object.fromEntries(fields.map((f, i) => [f, args[i]]));
+    const type = name || "value";
+    throw new TypeError(fields.length === 0 ? `${call} takes one ${type}` : `${call} takes ${fields.join(", ")}, or one ${type} with them`);
+  };
+
   // A topic reads as its latest message, and `send` publishes one, read or not.
   const topic = (alias) =>
     new Proxy(
       {},
       {
-        get: (_, key) => (key === "send" ? (msg) => __send(alias, msg ?? null) : wrap(alias, read(alias), [])[key]),
+        get: (_, key) => (key === "send" ? (...args) => __send(alias, shape(`${alias}.send`, alias, args) ?? null) : wrap(alias, read(alias), [])[key]),
         has: (_, key) => key in read(alias),
         ownKeys: () => Reflect.ownKeys(read(alias)),
         getOwnPropertyDescriptor: (_, key) => ({ value: read(alias)[key], enumerable: true, configurable: true }),
@@ -55,8 +69,8 @@
     if (kind === "topic") {
       Object.defineProperty(globalThis, alias, { get: () => topic(alias), set: (v) => write(alias, v), enumerable: true });
     } else if (kind === "function") {
-      // one value is sent bare, none as an empty request
-      const call = (...args) => __call(alias, args.length === 0 ? {} : args[0]);
+      // none is an empty request
+      const call = (...args) => __call(alias, args.length === 0 ? {} : shape(alias, alias, args));
       Object.defineProperty(globalThis, alias, { value: call, enumerable: true });
     } else {
       Object.defineProperty(globalThis, alias, {

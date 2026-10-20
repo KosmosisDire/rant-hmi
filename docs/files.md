@@ -64,6 +64,9 @@ light = "#0088ff"
 ```
 
 - `kind` is `topic`, `variable`, `function` or `task`. `intent` is `read` or `write`.
+- A topic imported to write sends with `Jog.send(...)`, and a function is called with
+  `await Reset(...)`. Either takes one value of its type, or the type's fields in order:
+  `Jog.send({ x: 1, y: 0 })` or `Jog.send(1, 0)`.
 - `per` is `hmi` for one value every screen shares, `screen` for one per screen.
 - A record samples `source`, an expression, every `every_ms` (50 or more) and keeps each
   sample `keep_s` seconds, in memory, whether or not a screen watches.

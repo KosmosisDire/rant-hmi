@@ -266,6 +266,28 @@ fn a_topic_sends_after_the_writes_before_it_and_reads_its_latest() {
 }
 
 #[test]
+fn a_message_is_passed_whole_or_by_its_fields() {
+    let (script, mut rx) = engine();
+    let form = |name: &str, fields: &[&str]| Form { name: name.into(), fields: fields.iter().map(|f| f.to_string()).collect() };
+    script.send(ToScript::Forms(HashMap::from([("Jog".into(), form("Vector3", &["x", "y", "z"])), ("Reset".into(), form("ResetRequest", &["line"]))])));
+    let mut sends = |code: &str, run: u64| {
+        script.send(ToScript::Run { run, session: Some(7), code: code.into(), p: Value::Null, at: None });
+        until_done(&mut rx, run)
+    };
+    let sent = |said: &[FromScript]| said.iter().find_map(|m| if let FromScript::Send { value, .. } = m { Some(value.clone()) } else { None });
+    assert_eq!(sent(&sends("Jog.send(1, 2, 3);", 1)), Some(value!({ "x": 1, "y": 2, "z": 3 })));
+    assert_eq!(sent(&sends("Jog.send({ x: 1, y: 2, z: 3 });", 2)), Some(value!({ "x": 1, "y": 2, "z": 3 })));
+    assert_eq!(end(&sends("Jog.send(1, 2);", 3)), &End::Fault("Jog.send takes x, y, z, or one Vector3 with them (line 1)".into()));
+
+    // a request of one field takes that field bare
+    script.send(ToScript::Run { run: 4, session: Some(7), code: "await Reset(4);".into(), p: Value::Null, at: None });
+    let FromScript::Call { call, request, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
+    assert_eq!(request, value!({ "line": 4 }));
+    script.send(ToScript::Answer { call, outcome: Ok(Value::Null) });
+    until_done(&mut rx, 4);
+}
+
+#[test]
 fn runs_do_not_share_names() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "globalThis.mine = 1;".into(), p: Value::Null, at: None });

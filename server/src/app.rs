@@ -20,7 +20,7 @@ use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
 use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Variable};
 use crate::protocol::{ClientMsg, Level, Sample, ServerMsg, ValueUpdate};
-use crate::script::{CallFailure, End, FromScript, Script, ToScript};
+use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::video::{FromVideo, ToVideo};
 
 /// How often changed values go out and the mesh is checked.
@@ -170,6 +170,8 @@ pub struct App {
     history: HashMap<String, VecDeque<Sample>>,
     sample_at: HashMap<String, Instant>,
     epoch: Option<u32>,
+    /// What the engine was last told each import's message is made of.
+    forms: HashMap<String, Form>,
     health_at: Instant,
     /// When a project file last changed outside the HMI, until it is read.
     edited: Option<Instant>,
@@ -208,6 +210,7 @@ impl App {
             history: HashMap::new(),
             sample_at: HashMap::new(),
             epoch: None,
+            forms: HashMap::new(),
             health_at: Instant::now(),
             edited: None,
         }
@@ -595,6 +598,7 @@ impl App {
     fn imports_changed(&mut self) {
         self.refresh_known();
         self.script.send(ToScript::Imports(self.project.imports.clone()));
+        self.forms_changed();
         self.broadcast(&ServerMsg::Imports { imports: self.project.imports.clone() });
     }
 
@@ -985,6 +989,7 @@ impl App {
                 self.mesh.attach(&import);
             }
             self.refresh_known();
+            self.forms_changed();
             // a camera's Video child can come or go, which changes where its video comes from
             for alias in self.playing.keys().cloned().collect::<Vec<_>>() {
                 if let Some(import) = self.project.find(&alias).cloned() {
@@ -1049,6 +1054,15 @@ impl App {
                 slot.known = known;
                 self.changed.insert(import.alias.clone());
             }
+        }
+    }
+
+    /// Tells the engine what each import's message is made of, once that changed.
+    fn forms_changed(&mut self) {
+        let forms = self.mesh.forms();
+        if forms != self.forms {
+            self.forms = forms.clone();
+            self.script.send(ToScript::Forms(forms));
         }
     }
 

@@ -45,6 +45,11 @@ fn bare(shapes: &[Shape]) -> Option<&Shape> {
     }
 }
 
+/// The names of the top level's fields, none for a bare type.
+pub fn top_fields(shapes: &[Shape]) -> Vec<String> {
+    if bare(shapes).is_some() { Vec::new() } else { shapes.iter().map(|s| s.field.name.clone()).collect() }
+}
+
 fn join(prefix: &str, name: &str) -> String {
     if prefix.is_empty() { name.to_owned() } else { format!("{prefix}.{name}") }
 }

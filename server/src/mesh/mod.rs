@@ -15,7 +15,7 @@ use tracing::warn;
 
 use crate::project::{Import, Intent, Kind};
 use crate::protocol::{EntityInfo, PeerInfo};
-use crate::script::CallFailure;
+use crate::script::{CallFailure, Form};
 use codec::Shape;
 
 pub struct MeshOptions {
@@ -130,6 +130,15 @@ impl Mesh {
                 false
             }
         }
+    }
+
+    /// What each attached topic's message and function's request is made of.
+    pub fn forms(&self) -> HashMap<String, Form> {
+        self.attached
+            .iter()
+            .filter(|(_, a)| matches!(a.handle, Handle::Topic { .. } | Handle::Function { .. }))
+            .map(|(alias, a)| (alias.clone(), Form { name: a.schema.name(), fields: codec::top_fields(&a.shapes) }))
+            .collect()
     }
 
     pub fn detach(&mut self, alias: &str) {

@@ -24,6 +24,9 @@ const PRELUDE: &str = include_str!("prelude.js");
 pub enum ToScript {
     /// Every import, whole, after any change.
     Imports(Vec<Import>),
+    /// What each topic's message and function's request on the mesh is made of, by alias,
+    /// whole, after any change.
+    Forms(HashMap<String, Form>),
     /// Every variable, whole, after any change.
     Variables(Vec<Variable>),
     /// Mesh imports and shared variables whose value changed, None while unknown.
@@ -57,6 +60,14 @@ pub enum ToScript {
     Run { run: u64, session: Option<u32>, code: String, p: Value, at: Option<(u32, Value)> },
     /// How a call ended: its answer, or why it failed.
     Answer { call: u64, outcome: Result<Value, CallFailure> },
+}
+
+/// A message's type by name and its fields, none for a bare type, so code may pass the fields
+/// one by one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Form {
+    pub name: String,
+    pub fields: Vec<String>,
 }
 
 pub struct CallFailure {
@@ -201,6 +212,7 @@ struct Waiter {
 struct Shared {
     out: UnboundedSender<FromScript>,
     imports: HashMap<String, Import>,
+    forms: HashMap<String, Form>,
     variables: HashMap<String, Variable>,
     computed: HashMap<String, Computed>,
     values: HashMap<String, Value>,
@@ -289,6 +301,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
     let shared = Rc::new(RefCell::new(Shared {
         out,
         imports: HashMap::new(),
+        forms: HashMap::new(),
         variables: HashMap::new(),
         computed: HashMap::new(),
         values: HashMap::new(),
@@ -570,6 +583,7 @@ fn make_reader(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, source
 fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, msg: ToScript) {
     match msg {
         ToScript::Imports(list) => shared.borrow_mut().imports = list.into_iter().map(|i| (i.alias.clone(), i)).collect(),
+        ToScript::Forms(forms) => shared.borrow_mut().forms = forms,
         // the loop takes these itself, since they need the readers it keeps
         ToScript::Conditions(_) | ToScript::Judge | ToScript::Records(_) | ToScript::Sample(_) | ToScript::Computed(_) | ToScript::Compute | ToScript::Invert { .. } | ToScript::Try { .. } => {}
         ToScript::Pages(list) => shared.borrow_mut().pages = list,
@@ -744,6 +758,13 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         Ok(())
     };
     g.set("__send", Function::new(ctx.clone(), send)?)?;
+
+    let s = shared.clone();
+    let form = move |ctx: Ctx<'js>, alias: String| -> rquickjs::Result<rquickjs::Value<'js>> {
+        let Some(f) = s.borrow().forms.get(&alias).cloned() else { return Ok(rquickjs::Value::new_undefined(ctx)) };
+        to_js(&ctx, &Value::map([("name", f.name.into()), ("fields", Value::List(f.fields.into_iter().map(Value::from).collect()))]))
+    };
+    g.set("__form", Function::new(ctx.clone(), form)?)?;
 
     let s = shared.clone();
     let sleep = move |ctx: Ctx<'js>, ms: f64| -> rquickjs::Result<Promise<'js>> {
