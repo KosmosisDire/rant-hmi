@@ -314,14 +314,16 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">Drawing</div>
           <Field {...prop("viewbox")} label="View box" placeholder="its size" />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
-          <div class="section">Drawn by code</div>
+        </Show>
+        <Show when={p.element.tag === "markup"}>
+          <div class="section">SVG</div>
           <DraftInput
             multiline
             code
             class="editor code"
-            value={p.element.props.draw ?? ""}
-            placeholder={'Array.from({ length: 12 }, (_, i) => `<line x1="50" y1="4" x2="50" y2="12" stroke="#9aa0a6" transform="rotate(${i * 30} 50 50)"/>`).join("")'}
-            onCommit={(t) => setProps(p.page, p.element.id, { draw: t.trim() === "" ? null : t })}
+            value={p.element.props.markup ?? ""}
+            placeholder={'`<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="${Speed * 40}"/></svg>`'}
+            onCommit={(t) => setProps(p.page, p.element.id, { markup: t.trim() === "" ? null : t })}
             complete={(t, c) => complete(t, c, "expression", where().names, where().also)}
           />
         </Show>

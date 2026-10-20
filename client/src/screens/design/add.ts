@@ -9,7 +9,7 @@ import { childrenOf } from "./tree";
 
 /** What a new element starts as: visible, on the grid, and plainly named. A drawing starts
  *  empty, its shapes added from the inspector. */
-export const STARTS: Record<"div" | "span" | "input" | "img" | "video" | "svg", Record<string, string>> = {
+export const STARTS: Record<"div" | "span" | "input" | "img" | "video" | "svg" | "markup", Record<string, string>> = {
   div: { name: "Frame", w: "176", h: "88", background: "#2a2f35", "border-radius": "8" },
   span: { name: "Text", w: "176", h: "44", text: '"Text"', color: "#e4e6e8", "font-size": "18" },
   input: {
@@ -28,6 +28,7 @@ export const STARTS: Record<"div" | "span" | "input" | "img" | "video" | "svg", 
   img: { name: "Image", w: "352", h: "264", fit: '"meet"' },
   video: { name: "Video", w: "352", h: "264", fit: '"meet"' },
   svg: { name: "Drawing", w: "176", h: "176" },
+  markup: { name: "SVG", w: "176", h: "176", markup: '`<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#4a8fd6"/></svg>`' },
 };
 
 /** The kinds a person adds, in the order the layers bar and the menu offer them. */
@@ -38,6 +39,7 @@ export const KINDS: [keyof typeof STARTS, string][] = [
   ["img", "Image"],
   ["video", "Video"],
   ["svg", "Drawing"],
+  ["markup", "SVG"],
 ];
 
 /** Adds an element to `parent`, the page for null: at `at` in it, on the grid, else at the

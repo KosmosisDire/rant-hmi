@@ -147,6 +147,8 @@ pub enum Tag {
     Video,
     /// A drawing: placed like a frame, holding shapes drawn in its own units.
     Svg,
+    /// SVG markup an expression gives as text, drawn in the element's box.
+    Markup,
     Path,
     Circle,
     Ellipse,
@@ -163,13 +165,14 @@ pub enum Tag {
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-const WORDS: [(Tag, &str); 15] = [
+const WORDS: [(Tag, &str); 16] = [
     (Tag::Div, "div"),
     (Tag::Span, "span"),
     (Tag::Input, "input"),
     (Tag::Img, "img"),
     (Tag::Video, "video"),
     (Tag::Svg, "svg"),
+    (Tag::Markup, "markup"),
     (Tag::Path, "path"),
     (Tag::Circle, "circle"),
     (Tag::Ellipse, "ellipse"),

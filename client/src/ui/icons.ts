@@ -16,6 +16,7 @@ export { default as Braces } from "lucide-solid/icons/braces";
 export { default as BringToFront } from "lucide-solid/icons/bring-to-front";
 export { default as ChartSpline } from "lucide-solid/icons/chart-spline";
 export { default as ChevronDown } from "lucide-solid/icons/chevron-down";
+export { default as CodeXml } from "lucide-solid/icons/code-xml";
 export { default as ChevronRight } from "lucide-solid/icons/chevron-right";
 export { default as ChevronsUpDown } from "lucide-solid/icons/chevrons-up-down";
 export { default as Circle } from "lucide-solid/icons/circle";

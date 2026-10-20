@@ -109,16 +109,17 @@ component placed on a page is a tag named after it.
   `viewbox` units, by default its size in pixels. `fit` is `"meet"`, `"slice"` or
   `"stretch"`. Every property of a shape is an SVG attribute holding an expression:
   `<line x1="88" y1="88" x2="88" y2="22" transform="`rotate(${Speed * 90} 88 88)`"/>`.
-- A drawing may also draw by code: `<draw>` holds an expression giving SVG markup as text, or
-  a list of it, drawn under its shapes and redrawn as what it reads changes. Script, styles
+- `<markup>` is an SVG made by code: its body is an expression giving SVG markup as text, or
+  a list of it, redrawn as what it reads changes. Markup with an `<svg>` root fills the box
+  as that SVG does, so a file pastes in as it is. Other markup draws in pixels. Script, styles
   and `on` attributes in the markup are taken out.
   ```html
-  <svg viewbox='"0 0 100 100"'>
-    <draw>
-      Array.from({ length: 12 }, (_, i) =>
-        `<line x1="50" y1="4" x2="50" y2="12" stroke="#9aa0a6" transform="rotate(${i * 30} 50 50)"/>`).join("")
-    </draw>
-  </svg>
+  <markup id="e5" x="44" y="44" w="176" h="176">
+    `<svg viewBox="0 0 100 100">
+      ${Array.from({ length: 12 }, (_, i) =>
+        `<line x1="50" y1="4" x2="50" y2="12" stroke="#9aa0a6" transform="rotate(${i * 30} 50 50)"/>`).join("")}
+    </svg>`
+  </markup>
   ```
 - `<img src="Camera" fit='"meet"'/>` shows a picture: a mesh import of a Rant Image, or a URL
   in quotes. `fit` is `"meet"`, `"slice"` or `"stretch"`, as a drawing's is, so a drawing over
