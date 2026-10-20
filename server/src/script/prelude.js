@@ -59,8 +59,9 @@
   globalThis.log = (...values) => __log(values.map(text).join(" "));
   globalThis.sleep = (ms) => __sleep(Number(ms) || 0);
   globalThis.Pages = Object.freeze(Object.fromEntries(pages.map(({ key, id }) => [key, id])));
+  // open waits for what the page closes with, close answers it
   globalThis.open = (page, options) => __open(String(page), options?.replace === true);
-  globalThis.close = () => __close();
+  globalThis.close = (answer) => __close(JSON.stringify(answer ?? null));
 
   // How a run ended, in words for the person who wrote it. A call's failure comes from
   // another realm, so its message tells it apart, not its class.

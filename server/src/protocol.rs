@@ -41,9 +41,15 @@ pub enum ServerMsg {
     /// Something for the person at this screen: what a handler said, or why it stopped.
     Notice { text: String, level: Level },
     /// A handler started from this screen opens a page, in place of the top one when `replace`.
-    Open { page: String, replace: bool },
-    /// A handler started from this screen closes the top page.
-    Close,
+    /// `ask` names the handler's wait for what the page closes with.
+    Open {
+        page: String,
+        replace: bool,
+        #[ts(type = "number")]
+        ask: u64,
+    },
+    /// A handler started from this screen closes the top page with an answer, null for none.
+    Close { answer: Value },
 }
 
 #[derive(Serialize, TS, Clone, Copy, Debug)]
@@ -78,6 +84,12 @@ pub enum ClientMsg {
     Redo,
     /// Makes a page the one operators' screens open on.
     SetStart { page: String },
+    /// What a page opened with `ask` closed with, null for none.
+    Answer {
+        #[ts(type = "number")]
+        ask: u64,
+        value: Value,
+    },
     /// A pointer did `event` to an element of a running page.
     Fire { page: String, id: String, event: Event },
 }

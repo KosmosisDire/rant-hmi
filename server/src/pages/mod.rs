@@ -22,7 +22,20 @@ pub struct Page {
     pub name: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default)]
+    pub shows: Shows,
     pub children: Vec<Element>,
+}
+
+/// How an open page shows: covering what is beneath, or floating over it while the page
+/// beneath stays in sight and keeps running, as a dialog does.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Shows {
+    #[default]
+    Full,
+    Over,
 }
 
 /// One element. `props` holds its name, its placement (`x`, `y`, `w`, `h`), a span's `text`
@@ -103,6 +116,7 @@ pub enum Edit {
     AddPage { name: String },
     RenamePage { page: String, name: String },
     ResizePage { page: String, width: u32, height: u32 },
+    SetShows { page: String, shows: Shows },
     RemovePage { page: String },
     /// Puts a whole page back, ids and all, as undoing its removal does.
     PutPage { page: Page },
@@ -252,7 +266,7 @@ impl Pages {
             Edit::AddPage { name } => {
                 let name = named(&name)?;
                 let id = self.free_id(&slug(&name));
-                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, children: Vec::new() });
+                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, children: Vec::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
@@ -268,6 +282,10 @@ impl Pages {
                 let p = self.page_mut(&page)?;
                 let old = (std::mem::replace(&mut p.width, width), std::mem::replace(&mut p.height, height));
                 Edit::ResizePage { page: page.clone(), width: old.0, height: old.1 }
+            }
+            Edit::SetShows { page, shows } => {
+                let old = std::mem::replace(&mut self.page_mut(&page)?.shows, shows);
+                Edit::SetShows { page: page.clone(), shows: old }
             }
             Edit::RemovePage { page } => {
                 if self.list.len() == 1 {
@@ -364,7 +382,7 @@ impl Pages {
             Edit::Batch { .. } => unreachable!("taken above"),
         };
         let page = match &undo {
-            Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::RemoveElement { page, .. } => page,
+            Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::SetShows { page, .. } | Edit::RemoveElement { page, .. } => page,
             Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } | Edit::SetHandler { page, .. } => page,
             _ => unreachable!("page edits return early"),
         };
@@ -620,6 +638,7 @@ mod tests {
             Edit::AddPage { name: "Line two".into() },
             Edit::RenamePage { page: "line-two".into(), name: "Line 2".into() },
             Edit::ResizePage { page: "line-two".into(), width: 390, height: 844 },
+            Edit::SetShows { page: "line-two".into(), shows: Shows::Over },
             add(o(), None, Tag::Div, props(&[("x", "44"), ("background", "#222")])),
             add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"a\"")])),
             add(o(), None, Tag::Span, props(&[("text", "Speed")])),

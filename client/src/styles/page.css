@@ -66,9 +66,33 @@
   background: var(--ground);
 }
 
+.run-view {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
 .run-layer {
   position: absolute;
   inset: 0;
+}
+
+.run-page {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+/* A page over another floats above it, the one beneath dimmed but in sight. */
+.run-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.run-page.over .page {
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
 }
 
 /* The operator's screen owns the whole window. */

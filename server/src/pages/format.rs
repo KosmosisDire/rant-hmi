@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Event, Handler, Page, Tag};
+use super::{Element, Event, Handler, Page, Shows, Tag};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 5] = ["name", "x", "y", "w", "h"];
@@ -27,7 +27,8 @@ const TEXT: &str = "text";
 // ------------------------------------------------------------------------------ writing
 
 pub fn write(page: &Page) -> String {
-    let mut out = format!("<page name={} size=\"{}x{}\">\n", quote(&page.name), page.width, page.height);
+    let shows = if page.shows == Shows::Over { " shows=\"over\"" } else { "" };
+    let mut out = format!("<page name={} size=\"{}x{}\"{shows}>\n", quote(&page.name), page.width, page.height);
     for e in &page.children {
         element(&mut out, e, 1);
     }
@@ -114,7 +115,7 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     r.expect("<page")?;
     let attrs = r.attrs()?;
     r.expect(">")?;
-    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 1408, height: 792, children: Vec::new() };
+    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 1408, height: 792, shows: Shows::Full, children: Vec::new() };
     for (k, v) in attrs {
         match k.as_str() {
             "name" => page.name = v,
@@ -122,6 +123,13 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
                 let (w, h) = v.split_once('x').ok_or_else(|| r.error("size is written WxH, like 1408x792"))?;
                 page.width = w.trim().parse().map_err(|_| r.error("size is written WxH, like 1408x792"))?;
                 page.height = h.trim().parse().map_err(|_| r.error("size is written WxH, like 1408x792"))?;
+            }
+            "shows" => {
+                page.shows = match v.as_str() {
+                    "full" => Shows::Full,
+                    "over" => Shows::Over,
+                    _ => return Err(r.error("shows is full or over")),
+                }
             }
             other => return Err(r.error(&format!("<page> takes no attribute {other}"))),
         }

@@ -5,6 +5,7 @@ import { OWN } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Event } from "../../protocol/Event";
 import type { Page } from "../../protocol/Page";
+import type { Shows } from "../../protocol/Shows";
 import { isConstant, resolve } from "../../state/bind";
 import { complete } from "../../state/complete";
 import { DraftInput } from "../../ui/DraftInput";
@@ -41,6 +42,11 @@ export function ElementInspector(p: { page: Page | undefined; selected: string |
   );
 }
 
+const SHOWS: [Shows, string][] = [
+  ["full", "Full"],
+  ["over", "Over"],
+];
+
 /** A page side in pixels, as the backend allows. */
 const side = (t: string) => /^\d+$/.test(t.trim()) && Number(t) >= 1 && Number(t) <= 16384;
 
@@ -69,6 +75,19 @@ function PageInspector(p: { page: Page }) {
             <DraftInput value={String(p.page.height)} accept={side} onCommit={(t) => resize(p.page.width, Number(t))} />
           </div>
         </div>
+        <div class="field">
+          <label>Shows</label>
+          <div class="choice">
+            <For each={SHOWS}>
+              {([shows, label]) => (
+                <button classList={{ on: p.page.shows === shows }} onClick={() => p.page.shows !== shows && send({ type: "edit", edit: { kind: "set_shows", page: p.page.id, shows } })}>
+                  {label}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+        <div class="field-hint">{p.page.shows === "over" ? "Opened over another page, as a dialog: the page beneath stays in sight." : "Covers the screen when opened."}</div>
         <div class="section">Operators</div>
         <Show
           when={(state.project?.start ?? state.pages[0]?.id) === p.page.id}

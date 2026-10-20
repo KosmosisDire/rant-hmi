@@ -73,6 +73,8 @@ pub struct App {
     script: Script,
     runs: HashMap<u64, Running>,
     next_run: u64,
+    /// Pages opened to wait for an answer: the waiting call, and the screen that shows them.
+    asks: HashMap<u64, u32>,
     node: String,
     sessions: HashMap<u32, Session>,
     values: HashMap<String, Slot>,
@@ -97,6 +99,7 @@ impl App {
             script,
             runs: HashMap::new(),
             next_run: 0,
+            asks: HashMap::new(),
             node,
             sessions: HashMap::new(),
             values: HashMap::new(),
@@ -221,6 +224,12 @@ impl App {
                 }
             }
             ClientMsg::Fire { page, id, event } => self.fire(session, page, id, event),
+            ClientMsg::Answer { ask, value } => {
+                if self.asks.get(&ask) == Some(&session) {
+                    self.asks.remove(&ask);
+                    self.script.send(ToScript::Answer { call: ask, outcome: Ok(value) });
+                }
+            }
             ClientMsg::SetStart { page } => {
                 if self.pages.get(&page).is_none() {
                     return self.refuse(session, format!("there is no page {page}"), None);
@@ -340,14 +349,19 @@ impl App {
             }
             FromScript::Notify { run, text } => self.tell(run, Level::Info, text),
             FromScript::Log { run, text } => info!("{}: {text}", self.label(run)),
-            FromScript::Open { run, page, replace } => match (self.pages.get(&page), self.runs.get(&run)) {
-                (None, _) => self.tell(run, Level::Fault, format!("there is no page {page}")),
-                (Some(_), Some(r)) => self.send(r.session, &ServerMsg::Open { page, replace }),
-                (Some(_), None) => {}
+            FromScript::Open { run, page, replace, call } => match (self.pages.get(&page), self.runs.get(&run)) {
+                (Some(_), Some(r)) => {
+                    self.asks.insert(call, r.session);
+                    self.send(r.session, &ServerMsg::Open { page, replace, ask: call });
+                }
+                (found, _) => {
+                    let message = if found.is_none() { format!("there is no page {page}") } else { "this run has no screen to open it on".into() };
+                    self.script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "no_page".into(), message }) });
+                }
             },
-            FromScript::Close { run } => {
+            FromScript::Close { run, answer } => {
                 if let Some(r) = self.runs.get(&run) {
-                    self.send(r.session, &ServerMsg::Close);
+                    self.send(r.session, &ServerMsg::Close { answer });
                 }
             }
             FromScript::Done { run, end } => {
@@ -504,6 +518,12 @@ impl App {
         if self.sessions.remove(&session).is_some() {
             info!("screen {session} {why}");
             self.script.send(ToScript::Gone(session));
+            // a page the screen showed answers nothing, so no handler waits on it for ever
+            let asked: Vec<u64> = self.asks.iter().filter(|(_, s)| **s == session).map(|(ask, _)| *ask).collect();
+            for ask in asked {
+                self.asks.remove(&ask);
+                self.script.send(ToScript::Answer { call: ask, outcome: Ok(Value::Null) });
+            }
         }
     }
 

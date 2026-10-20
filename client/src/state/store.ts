@@ -11,7 +11,7 @@ import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import type { Variable } from "../protocol/Variable";
-import { back, push } from "./stack";
+import { closeWith, push } from "./stack";
 
 export interface Live {
   value: JsonValue | null;
@@ -128,10 +128,10 @@ export function receive(msg: ServerMsg) {
       notify(msg.text, msg.level);
       break;
     case "open":
-      push(msg.page, msg.replace);
+      push(msg.page, msg.replace, msg.ask);
       break;
     case "close":
-      back();
+      closeWith(msg.answer);
       break;
     case "pong":
       break;

@@ -154,17 +154,23 @@ fn sleep_waits_and_writes_go_out_at_each_await() {
 #[test]
 fn pages_open_and_close_by_name() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "open(Pages.RobotCell);\nopen(Pages.Overview, { replace: true });\nclose();".into() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "open(Pages.RobotCell);\nopen(Pages.Overview, { replace: true });\nclose();\nclose({ ok: true });".into() });
     let said = until_done(&mut rx, 1);
     let moves: Vec<String> = said
         .iter()
         .filter_map(|m| match m {
             FromScript::Open { page, replace, .. } => Some(format!("open {page} {replace}")),
-            FromScript::Close { .. } => Some("close".into()),
+            FromScript::Close { answer, .. } => Some(format!("close {answer}")),
             _ => None,
         })
         .collect();
-    assert_eq!(moves, ["open robot-cell false", "open overview true", "close"]);
+    assert_eq!(moves, ["open robot-cell false", "open overview true", "close null", "close {\"ok\":true}"]);
+
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "if (await open(Pages.RobotCell)) log(\"yes\");".into() });
+    let FromScript::Open { call, .. } = rx.blocking_recv().unwrap() else { panic!("no open") };
+    script.send(ToScript::Answer { call, outcome: Ok(json!(true)) });
+    let said = until_done(&mut rx, 2);
+    assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "yes")));
 }
 
 #[test]

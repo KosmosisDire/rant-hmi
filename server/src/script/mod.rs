@@ -55,9 +55,10 @@ pub enum FromScript {
     Notify { run: u64, text: String },
     Log { run: u64, text: String },
     /// Opens a page on the screen that started the run, in place of the top one when `replace`.
-    Open { run: u64, page: String, replace: bool },
-    /// Closes the top page on the screen that started the run.
-    Close { run: u64 },
+    /// `call` answers with what the page closes with.
+    Open { run: u64, page: String, replace: bool, call: u64 },
+    /// Closes the top page on the screen that started the run, with an answer.
+    Close { run: u64, answer: Value },
     Done { run: u64, end: End },
 }
 
@@ -383,9 +384,21 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>) -> rquic
     let s = shared.clone();
     g.set("__log", Function::new(ctx.clone(), move |text: String| s.borrow().send(FromScript::Log { run, text }))?)?;
     let s = shared.clone();
-    g.set("__open", Function::new(ctx.clone(), move |page: String, replace: bool| s.borrow().send(FromScript::Open { run, page, replace }))?)?;
+    let open = move |ctx: Ctx<'js>, page: String, replace: bool| -> rquickjs::Result<Promise<'js>> {
+        let (promise, resolve, reject) = ctx.promise()?;
+        let mut st = s.borrow_mut();
+        let call = st.wait(&ctx, resolve, reject);
+        st.send(FromScript::Open { run, page, replace, call });
+        Ok(promise)
+    };
+    g.set("__open", Function::new(ctx.clone(), open)?)?;
     let s = shared.clone();
-    g.set("__close", Function::new(ctx.clone(), move || s.borrow().send(FromScript::Close { run }))?)?;
+    let close = move |ctx: Ctx<'js>, json: String| -> rquickjs::Result<()> {
+        let answer = serde_json::from_str(&json).map_err(|e| Exception::throw_type(&ctx, &e.to_string()))?;
+        s.borrow().send(FromScript::Close { run, answer });
+        Ok(())
+    };
+    g.set("__close", Function::new(ctx.clone(), close)?)?;
     g.set("__budget", Function::new(ctx.clone(), || BUDGET.as_millis() as f64)?)?;
 
     let s = shared.clone();

@@ -1,7 +1,7 @@
 // A page drawn as HTML: each element an absolutely placed div, its properties resolved
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import type { Element } from "../protocol/Element";
 import type { Event } from "../protocol/Event";
 import type { Page } from "../protocol/Page";
@@ -110,31 +110,6 @@ function ElementView(p: { element: Element; overrides?: Overrides; design?: bool
       <Show when={p.element.tag === "div"} fallback={look().text}>
         <For each={p.element.children}>{(c) => <ElementView element={c} overrides={p.overrides} design={p.design} fire={p.fire} />}</For>
       </Show>
-    </div>
-  );
-}
-
-/** Scales its page to fit the space it is given, centred. */
-export function Fit(p: { width: number; height: number; children: JSX.Element }) {
-  let host: HTMLDivElement | undefined;
-  let inner: HTMLDivElement | undefined;
-  const place = () => {
-    const r = host?.getBoundingClientRect();
-    if (!r || !inner || r.width === 0 || r.height === 0) return;
-    const k = Math.min(r.width / p.width, r.height / p.height);
-    inner.style.transform = `translate(${(r.width - p.width * k) / 2}px, ${(r.height - p.height * k) / 2}px) scale(${k})`;
-  };
-  onMount(() => {
-    const watch = new ResizeObserver(place);
-    watch.observe(host!);
-    onCleanup(() => watch.disconnect());
-  });
-  createEffect(place);
-  return (
-    <div class="fit" ref={host}>
-      <div class="fit-inner" ref={inner}>
-        {p.children}
-      </div>
     </div>
   );
 }
