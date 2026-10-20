@@ -1,7 +1,7 @@
 // A page drawn as HTML: each element an absolutely placed div, its properties resolved
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
-import { createMemo, createSignal, For, Index, Match, onCleanup, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, Match, onCleanup, Show, Switch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
@@ -37,8 +37,14 @@ const FITS: Record<string, string> = { meet: "xMidYMid meet", slice: "xMidYMid s
 /** At most this many copies of a repeat, so a mistaken one never floods the page. */
 const COPIES = 500;
 
-/** What a pointer does to any element but an input. */
-export const POINTER = ["tap", "press", "release", "hold", "drag"];
+/** What a pointer does to any element but an input. `outside` is a press anywhere else. */
+export const POINTER = ["tap", "press", "release", "hold", "drag", "outside"];
+
+/** The events a press on the element itself starts, which make it look pressable. */
+const PRESSES = POINTER.filter((e) => e !== "outside");
+
+/** The instance pressed last, drawn above the others so what it opens is never hidden. */
+const [raised, setRaised] = createSignal<Element | null>(null);
 
 /** How long a hold waits when its handler says nothing, in ms. */
 const HOLD = 500;
@@ -147,7 +153,7 @@ function Placed(p: ElementProps) {
  *  and a tap needs the release over the element. */
 function usePress(p: ElementProps & { at?: At }) {
   const [pressed, setPressed] = createSignal(false);
-  const live = () => !!p.act && p.element.handlers.some((h) => POINTER.includes(h.event));
+  const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
   const fire = (event: string, payload: Pointer) => p.act?.fire(p.element, event, payload, p.at);
   // a hold handler's time, an expression read where the element sits
   const holdMs = () => {
@@ -196,7 +202,17 @@ function usePress(p: ElementProps & { at?: At }) {
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
   };
-  return { pressed, live, down };
+  // a press anywhere else is this element's outside, as closes what it opened
+  let self: globalThis.Element | undefined;
+  createEffect(() => {
+    if (!p.act || !p.element.handlers.some((h) => h.event === "outside")) return;
+    const away = (e: PointerEvent) => {
+      if (self && !self.contains(e.target as Node)) fire("outside", pointer(self, e, null));
+    };
+    window.addEventListener("pointerdown", away, true);
+    onCleanup(() => window.removeEventListener("pointerdown", away, true));
+  });
+  return { pressed, live, down, ref: (el: globalThis.Element) => (self = el) };
 }
 
 /** One element. `inside` marks one drawn as part of an instance: it is the component's, not
@@ -243,8 +259,12 @@ function ElementView(p: ElementProps & { at?: At }) {
       data-name={p.element.props.name}
       class="el"
       classList={{ text: p.element.tag === "span", unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), pressed: press.pressed() }}
-      style={look().style}
+      style={{ ...look().style, "z-index": raised() === p.element ? "1" : undefined }}
       title={p.design && look().faults.length > 0 ? look().faults.join("\n") : undefined}
+      ref={(el) => {
+        press.ref(el);
+        if (p.element.tag === "use") el.addEventListener("pointerdown", () => p.act && setRaised(p.element), true);
+      }}
       onPointerDown={press.down}
     >
       <Switch fallback={look().text}>
@@ -300,6 +320,7 @@ function ShapeView(p: ElementProps & { at?: At }) {
       data-name={p.element.props.name}
       class="el shape"
       classList={{ unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), pressed: press.pressed() }}
+      ref={press.ref}
       onPointerDown={press.down}
     >
       <Show when={p.element.tag === "text"} fallback={<For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>}>

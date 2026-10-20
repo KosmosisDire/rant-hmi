@@ -112,8 +112,9 @@ pub struct Handler {
 }
 
 /// What a pointer does to any element: goes down on it and comes up without straying, goes
-/// down, comes up, stays down a while, or moves while down, from the press on.
-pub const POINTER: [&str; 5] = ["tap", "press", "release", "hold", "drag"];
+/// down, comes up, stays down a while, moves while down, from the press on, or goes down
+/// anywhere else.
+pub const POINTER: [&str; 6] = ["tap", "press", "release", "hold", "drag", "outside"];
 
 /// Where a handler goes in an element's list: the pointer's events first, then by name.
 fn rank(event: &str) -> (usize, &str) {

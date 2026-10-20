@@ -469,7 +469,7 @@ function Events(p: { page: string; element: Element }) {
         <div class="field-hint">
           {p.element.tag === "input"
             ? "Add one to run code when an operator enters a value. The code reads it as p.value."
-            : "Add one to run code when this is tapped, pressed, let go, held or dragged. The code reads where as p.x and p.y."}
+            : "Add one to run code when this is tapped, pressed, let go, held or dragged, or a press lands outside it. The code reads where as p.x and p.y."}
         </div>
       </Show>
     </>
