@@ -182,6 +182,27 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
   });
 }
 
+/** The copy of a repeated element: its index from 0 and the item it shows. */
+export interface At {
+  index: number;
+  item: unknown;
+}
+
+/** A copy's scope: what holds it reads, and `index` and `item` too. */
+export function repeatScope(s: Scope, index: number, item: () => unknown): Scope {
+  const own = (name: string) => name === "index" || name === "item";
+  return {
+    has: (name) => own(name) || s.has(name),
+    get: (name) => (name === "index" ? index : name === "item" ? item() : s.get(name)),
+    set: (name, path, value) => {
+      if (own(name)) throw new TypeError(`${name} is the repeat's, so it cannot be set`);
+      s.set(name, path, value);
+    },
+    writes: (name) => !own(name) && s.writes(name),
+    missing: (name) => s.missing(name),
+  };
+}
+
 /** The scope a page or component is drawn and edited in. */
 export function docScope(doc: Page): Scope {
   return doc.interface ? componentScope(doc) : pageScope;

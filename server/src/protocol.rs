@@ -100,8 +100,20 @@ pub enum ClientMsg {
         value: Value,
     },
     /// `event` happened to an element of a running page: a pointer's, or one its component
-    /// sent with `payload`, which handler code reads as `p`.
-    Fire { page: String, id: String, event: String, payload: Value },
+    /// sent with `payload`, which handler code reads as `p`. On a repeated element, `index` and
+    /// `item` name the copy, which the code reads by those names.
+    Fire {
+        page: String,
+        id: String,
+        event: String,
+        payload: Value,
+        #[serde(default)]
+        #[ts(optional)]
+        index: Option<u32>,
+        #[serde(default)]
+        #[ts(optional)]
+        item: Option<Value>,
+    },
 }
 
 /// One entity on the mesh.

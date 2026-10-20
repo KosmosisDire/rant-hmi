@@ -1,12 +1,12 @@
 // A page drawn as HTML: each element an absolutely placed div, its properties resolved
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
-import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, Index, Match, onCleanup, Show, Switch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
-import { bareRef, componentScope, docScope, type Kept, number, pageScope, resolve, type Scope } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Kept, number, pageScope, repeatScope, resolve, type Scope } from "../state/bind";
 import { short } from "../state/format";
 import { component, notify } from "../state/store";
 import { componentAct, type Act } from "./act";
@@ -22,7 +22,10 @@ export interface Box {
 export type Overrides = (id: string) => Box | undefined;
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "x", "y", "w", "h", "text", "value"]);
+export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "text", "value"]);
+
+/** At most this many copies of a repeat, so a mistaken one never floods the page. */
+const COPIES = 500;
 
 /** What a pointer does to any element but an input. */
 export const POINTER = ["tap", "press", "release", "hold", "drag"];
@@ -72,7 +75,7 @@ export function PageView(p: { page: Page; overrides?: Overrides; size?: { width:
   const size = () => p.size ?? p.page;
   return (
     <div class="page" classList={{ design: p.design }} style={{ width: `${size().width}px`, height: `${size().height}px`, "--page-ground": pageGround(p.page) }}>
-      <For each={p.page.children}>{(e) => <ElementView element={e} scope={scope()} overrides={p.overrides} design={p.design} act={p.act} />}</For>
+      <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} overrides={p.overrides} design={p.design} act={p.act} />}</For>
     </div>
   );
 }
@@ -87,9 +90,51 @@ function words(v: unknown): string {
   return typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : short(v as JsonValue);
 }
 
+interface ElementProps {
+  element: Element;
+  scope: Scope;
+  overrides?: Overrides;
+  design?: boolean;
+  act?: Act;
+  inside?: boolean;
+}
+
+/** An element, or a copy of it per item when it repeats: a list, or a number of times. In
+ *  the editor a repeat with nothing to show still draws one copy, so there is one to pick. */
+function Placed(p: ElementProps) {
+  const copies = createMemo(() => {
+    const r = p.element.props.repeat;
+    if (!r?.trim()) return null;
+    const got = resolve(r, p.scope);
+    const v = got.ok ? got.value : undefined;
+    const items = typeof v === "number" ? Array.from({ length: Math.max(0, Math.min(COPIES, Math.floor(v))) }, (_, i) => i) : Array.isArray(v) ? v.slice(0, COPIES) : [];
+    return items.length === 0 && p.design ? [undefined] : items;
+  });
+  return (
+    <Show when={copies()} fallback={<ElementView {...p} />}>
+      {(items) => (
+        <Index each={items()}>
+          {(item, index) => (
+            <ElementView
+              {...p}
+              scope={repeatScope(p.scope, index, item)}
+              at={{
+                index,
+                get item() {
+                  return item();
+                },
+              }}
+            />
+          )}
+        </Index>
+      )}
+    </Show>
+  );
+}
+
 /** One element. `inside` marks one drawn as part of an instance: it is the component's, not
- *  the page's, so it carries no id to pick it by. */
-function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides; design?: boolean; act?: Act; inside?: boolean }) {
+ *  the page's, so it carries no id to pick it by. `at` is the copy of a repeat it is. */
+function ElementView(p: ElementProps & { at?: At }) {
   const look = createMemo(() => {
     const style: Record<string, string> = {};
     const faults: string[] = [];
@@ -125,7 +170,7 @@ function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides;
   // a press, and a tap needs the release over the element.
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => POINTER.includes(h.event));
-  const fire = (event: string, payload: Pointer) => p.act?.fire(p.element, event, payload);
+  const fire = (event: string, payload: Pointer) => p.act?.fire(p.element, event, payload, p.at);
   // a hold handler's time, an expression read where the element sits
   const holdMs = () => {
     const h = p.element.handlers.find((x) => x.event === "hold");
@@ -185,7 +230,7 @@ function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides;
     >
       <Switch fallback={look().text}>
         <Match when={p.element.tag === "div"}>
-          <For each={p.element.children}>{(c) => <ElementView element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>
+          <For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>
         </Match>
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} act={p.act} />
@@ -317,7 +362,7 @@ function Instance(p: { element: Element; scope: Scope; w: number; h: number; des
             onPointerOver={(e) => p.act && kept.over(e)}
             onPointerLeave={() => kept.leave()}
           >
-            <For each={c().children}>{(e) => <ElementView element={e} scope={scope} design={p.design} act={act} inside />}</For>
+            <For each={c().children}>{(e) => <Placed element={e} scope={scope} design={p.design} act={act} inside />}</For>
           </div>
         );
       }}

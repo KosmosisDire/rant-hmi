@@ -9,7 +9,7 @@ import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import { docScope, pageScope } from "../../state/bind";
-import { componentNames } from "../../state/complete";
+import { componentNames, REPEAT } from "../../state/complete";
 import { component, page as pageOf, setState, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
@@ -37,7 +37,7 @@ import {
 import { makeComponent } from "./component";
 import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, kindOf, type Where, WhereContext } from "./Field";
-import { type Align, align, find, sendEdits, setProps, showProps, spread, tops } from "./tree";
+import { type Align, align, chain, find, scopeOf, sendEdits, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
  *  the free CSS box. */
@@ -254,6 +254,13 @@ function PageInspector(p: { page: Page }) {
 }
 
 function Properties(p: { page: string; element: Element; typing: Typing | null }) {
+  // inside a repeat, every field and handler reads the copy's index and item too
+  const outer = useContext(WhereContext);
+  const repeats = () => chain(pageOf(p.page)?.children ?? [], p.element.id)?.some((e) => !!e.props.repeat?.trim());
+  const where = (): Where => {
+    const doc = pageOf(p.page);
+    return { ...outer(), scope: doc ? scopeOf(doc, p.element.id) : outer().scope, also: repeats() ? REPEAT : undefined };
+  };
   // a property's value and its write, as a field takes them
   const prop = (key: string) => ({
     get value() {
@@ -290,7 +297,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     setProps(p.page, p.element.id, props);
   };
   return (
-    <>
+    <WhereContext.Provider value={where}>
       <div class="pane-head">
         <span class="head-title">
           <Switch fallback={<Square size={14} />}>
@@ -311,6 +318,10 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
       <div class="pane-body pad">
         <div class="section">Element</div>
         <Field {...prop("name")} label="Name" plain focus={typed("name")} />
+        <Field {...prop("repeat")} label="Repeat" placeholder="a list, or a count" />
+        <Show when={p.element.props.repeat}>
+          <div class="field-hint">Drawn once for each item. It and all inside it read index, from 0, and item.</div>
+        </Show>
         <div class="section">Placement</div>
         <div class="placement">
           <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside min={k === "w" || k === "h" ? 0 : undefined} />}</For>
@@ -375,7 +386,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           Delete
         </button>
       </div>
-    </>
+    </WhereContext.Provider>
   );
 }
 
@@ -411,6 +422,7 @@ function Events(p: { page: string; element: Element }) {
                 removeTitle={`Remove the ${event} handler`}
                 place={where().place}
                 names={where().names}
+                also={where().also}
                 placeholder={where().place === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
               />
             )}

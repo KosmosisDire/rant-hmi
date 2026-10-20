@@ -16,6 +16,8 @@ export function EventCard(p: {
   place: Place;
   /** What completion offers in place of the mesh imports, as a component offers its own. */
   names?: Suggestion[];
+  /** Names it reads besides, as a repeat's `index` and `item`. */
+  also?: Suggestion[];
   placeholder?: string;
   /** A hold's time, an expression in ms, and its write. */
   after?: string;
@@ -42,7 +44,7 @@ export function EventCard(p: {
         <div class="event-when">
           <div class="field">
             <label>After ms</label>
-            <DraftInput value={p.after ?? ""} placeholder="500" onCommit={(t) => p.onAfter?.(t.trim())} complete={(t, c) => complete(t, c, "expression", p.names)} />
+            <DraftInput value={p.after ?? ""} placeholder="500" onCommit={(t) => p.onAfter?.(t.trim())} complete={(t, c) => complete(t, c, "expression", p.names, p.also)} />
           </div>
         </div>
       </Show>
@@ -54,7 +56,7 @@ export function EventCard(p: {
         value={p.code}
         placeholder={p.placeholder}
         onCommit={p.onCode}
-        complete={(t, c) => complete(t, c, p.place, p.names)}
+        complete={(t, c) => complete(t, c, p.place, p.names, p.also)}
       />
     </div>
   );

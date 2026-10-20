@@ -8,7 +8,7 @@ import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Rule } from "../../protocol/Rule";
 import type { When } from "../../protocol/When";
-import { complete, componentNames } from "../../state/complete";
+import { complete, componentNames, REPEAT } from "../../state/complete";
 import { putLocal, state } from "../../state/store";
 import { uses } from "../../state/uses";
 import { DraftInput } from "../../ui/DraftInput";
@@ -85,6 +85,11 @@ function setRule(id: string, rule: Rule | null) {
 
 function flat(elements: Element[]): Element[] {
   return elements.flatMap((e) => [e, ...flat(e.children)]);
+}
+
+/** True when the element `id`, or one holding it, repeats. */
+function repeats(elements: Element[], id: string): boolean {
+  return elements.some((e) => (e.id === id || flat(e.children).some((c) => c.id === id)) && (!!e.props.repeat?.trim() || repeats(e.children, id)));
 }
 
 /** A key per list entry that outlives edits: a rule's id, or an element's handler. */
@@ -232,6 +237,7 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
                     removeTitle={`Remove the ${h().h.event} handler`}
                     place={h().pg.interface ? "component" : "handler"}
                     names={namesOf(h().pg)}
+                    also={repeats(h().pg.children, h().e.id) ? REPEAT : undefined}
                   />
                 </div>
               </>

@@ -57,16 +57,28 @@ const API: Record<Place, Suggestion[]> = {
   ],
 };
 
+/** What a repeated element and all inside it read of their copy. */
+export const REPEAT: Suggestion[] = [
+  { label: "index", insert: "index", icon: "local", type: "the copy, from 0" },
+  { label: "item", insert: "item", icon: "local", type: "the copy's item" },
+];
+
 /** The completion at `caret`, or null where none fits, such as inside a string. `names` stand
- *  for the mesh imports where code reads something else, as a component reads its own. */
-export function complete(text: string, caret: number, place: Place, names?: Suggestion[]): Completion | null {
+ *  for the mesh imports where code reads something else, as a component reads its own, and
+ *  `also` adds to them, as a repeat adds `index` and `item`. */
+export function complete(text: string, caret: number, place: Place, names?: Suggestion[], also?: Suggestion[]): Completion | null {
   const before = text.slice(0, caret);
   if (inString(before)) return null;
   let from = caret;
   while (from > 0 && WORD.test(before[from - 1])) from--;
   const word = before.slice(from);
   if (/^\d/.test(word)) return null;
-  const items = before[from - 1] === "." ? (names ? given(names, chain(before.slice(0, from - 1))) : members(chain(before.slice(0, from - 1)), place)) : [...(names ?? top(place)), ...(place === "handler" ? [] : tokens()), ...API[place]];
+  const items =
+    before[from - 1] === "."
+      ? names
+        ? given(names, chain(before.slice(0, from - 1)))
+        : members(chain(before.slice(0, from - 1)), place)
+      : [...(names ?? top(place)), ...(also ?? []), ...(place === "handler" ? [] : tokens()), ...API[place]];
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
   const inside = items.filter((s) => !s.label.toLowerCase().startsWith(q) && s.label.toLowerCase().includes(q));

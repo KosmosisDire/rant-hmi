@@ -60,9 +60,14 @@ struct Running {
     session: Option<u32>,
     page: String,
     id: String,
+    /// The copy of a repeated element it runs for.
+    index: Option<u32>,
     event: String,
     label: String,
 }
+
+/// An element a screen holds pressed: the screen, page, element and copy of a repeat.
+type Pressed = (u32, String, String, Option<u32>);
 
 /// A rule's condition: true since when, and whether it has fired since it turned true.
 #[derive(Default)]
@@ -86,8 +91,8 @@ pub struct App {
     next_run: u64,
     /// Pages opened to wait for an answer: the waiting call, and the screen that shows them.
     asks: HashMap<u64, u32>,
-    /// Elements a screen holds pressed, as screen, page and element.
-    pressed: HashSet<(u32, String, String)>,
+    /// Elements a screen holds pressed, as screen, page, element and the copy of a repeat.
+    pressed: HashSet<Pressed>,
     /// When each timer rule is next due.
     timers: HashMap<String, Instant>,
     turned: HashMap<String, Turned>,
@@ -273,13 +278,14 @@ impl App {
                     self.edit(session, edit, Step::Redo);
                 }
             }
-            ClientMsg::Fire { page, id, event, payload } => {
+            ClientMsg::Fire { page, id, event, payload, index, item } => {
+                let key = (session, page.clone(), id.clone(), index);
                 match event.as_str() {
-                    "press" => self.pressed.insert((session, page.clone(), id.clone())),
-                    "release" => self.pressed.remove(&(session, page.clone(), id.clone())),
+                    "press" => self.pressed.insert(key),
+                    "release" => self.pressed.remove(&key),
                     _ => false,
                 };
-                self.fire(session, page, id, event, payload);
+                self.fire(session, page, id, event, payload, index.map(|i| (i, item.unwrap_or(Value::Null))));
             }
             ClientMsg::Answer { ask, value } => {
                 if self.asks.get(&ask) == Some(&session) {
@@ -385,17 +391,20 @@ impl App {
     }
 
     /// Starts the element's handler for `event`, unless it is still running from before.
-    fn fire(&mut self, session: u32, page: String, id: String, event: String, payload: Value) {
+    /// Runs an element's handler for `event`, unless it still runs from before. `at` is the
+    /// copy of a repeat it happened on, its index and item.
+    fn fire(&mut self, session: u32, page: String, id: String, event: String, payload: Value, at: Option<(u32, Value)>) {
         let Some(e) = self.pages.element(&page, &id) else { return };
         let Some(h) = e.handlers.iter().find(|h| h.event == event) else { return };
-        if self.runs.values().any(|r| r.page == page && r.id == id && r.event == event) {
+        let index = at.as_ref().map(|(i, _)| *i);
+        if self.runs.values().any(|r| r.page == page && r.id == id && r.index == index && r.event == event) {
             return;
         }
         let label = format!("{} {event}", e.props.get("name").unwrap_or(&id));
         let code = h.code.clone();
         self.next_run += 1;
-        self.runs.insert(self.next_run, Running { session: Some(session), page, id, event, label });
-        self.script.send(ToScript::Run { run: self.next_run, session: Some(session), code, p: payload });
+        self.runs.insert(self.next_run, Running { session: Some(session), page, id, index, event, label });
+        self.script.send(ToScript::Run { run: self.next_run, session: Some(session), code, p: payload, at });
     }
 
     /// Runs each rule that `fits`, unless it still runs from before.
@@ -406,8 +415,8 @@ impl App {
                 continue;
             }
             self.next_run += 1;
-            self.runs.insert(self.next_run, Running { session: None, page: String::new(), id: rule.id, event: "rule".into(), label: rule.name });
-            self.script.send(ToScript::Run { run: self.next_run, session: None, code: rule.code, p: p.clone() });
+            self.runs.insert(self.next_run, Running { session: None, page: String::new(), id: rule.id, index: None, event: "rule".into(), label: rule.name });
+            self.script.send(ToScript::Run { run: self.next_run, session: None, code: rule.code, p: p.clone(), at: None });
         }
     }
 
@@ -782,11 +791,12 @@ impl App {
                 self.script.send(ToScript::Answer { call: ask, outcome: Ok(Value::Null) });
             }
             // what the screen held pressed is let go, so a jog never outlives its screen
-            let held: Vec<(u32, String, String)> = self.pressed.iter().filter(|(s, _, _)| *s == session).cloned().collect();
-            for (s, page, id) in held {
-                self.pressed.remove(&(s, page.clone(), id.clone()));
+            let held: Vec<Pressed> = self.pressed.iter().filter(|(s, ..)| *s == session).cloned().collect();
+            for key in held {
+                self.pressed.remove(&key);
+                let (_, page, id, index) = key;
                 warn!("screen {session} was lost holding {id} on {page}, so its release runs");
-                self.fire(session, page, id, "release".into(), serde_json::json!({ "lost": true }));
+                self.fire(session, page, id, "release".into(), serde_json::json!({ "lost": true }), index.map(|i| (i, Value::Null)));
             }
             self.run_rules(|r| matches!(r.when, When::Leaves), serde_json::json!({ "screen": session }));
         }

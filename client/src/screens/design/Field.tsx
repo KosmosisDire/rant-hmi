@@ -20,6 +20,8 @@ export interface Where {
   names?: Suggestion[];
   /** Where a handler here runs. */
   place: Place;
+  /** Names it reads besides, as a repeat's `index` and `item`. */
+  also?: Suggestion[];
 }
 
 export const WhereContext = createContext<() => Where>((): Where => ({ scope: pageScope, place: "handler" }));
@@ -107,7 +109,7 @@ function ValueBox(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => 
         placeholder={p.placeholder}
         focus={p.focus}
         onCommit={p.onWrite}
-        complete={p.plain ? undefined : (t, c) => complete(t, c, "expression", where().names)}
+        complete={p.plain ? undefined : (t, c) => complete(t, c, "expression", where().names, where().also)}
       />
       <Show when={!p.plain}>
         <Lead {...p} field={field} />

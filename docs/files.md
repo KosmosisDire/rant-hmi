@@ -72,6 +72,9 @@ component placed on a page is a tag named after it.
   needs no escaping.
 - `<on>` holds a handler's code, first inside its element. A `hold` handler runs once a
   press lasts `after` ms, an expression, 500 when left out: `<on event="hold" after="600">`.
+- `repeat` draws an element once per item of a list, or a number of times:
+  `<div repeat="6" x="44 + index * 132">`. It and all inside it read `index`, from 0, and
+  `item`, and so do their handlers.
 - `<input value="Speed"/>` is a field an operator types into. A bare name as its value takes
   the entry, and its `change` handler reads it as `p.value`.
 - `shows="over"` on a page opens it over the page beneath, as a dialog.

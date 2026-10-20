@@ -38,8 +38,9 @@ pub enum ToScript {
     Judge,
     /// Every page as code names it, and its id, whole, after any change.
     Pages(Vec<(String, String)>),
-    /// Runs code for a screen, or for none. `p` is what its event brought.
-    Run { run: u64, session: Option<u32>, code: String, p: Value },
+    /// Runs code for a screen, or for none. `p` is what its event brought, `at` the copy of a
+    /// repeat it happened on, which the code reads as `index` and `item`.
+    Run { run: u64, session: Option<u32>, code: String, p: Value, at: Option<(u32, Value)> },
     /// How a call ended: its answer, or why it failed.
     Answer { call: u64, outcome: Result<Value, CallFailure> },
 }
@@ -278,7 +279,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
 fn make_judge(rt: &Runtime, shared: &Rc<RefCell<Shared>>, conditions: &[(String, String)]) -> (Context, Vec<(String, Persistent<Function<'static>>)>) {
     let ctx = Context::full(rt).expect("QuickJS makes a context");
     let fns = ctx.with(|ctx| {
-        if install(&ctx, 0, shared, &Value::Null).is_err() {
+        if install(&ctx, 0, shared, &Value::Null, None).is_err() {
             ctx.catch();
             return Vec::new();
         }
@@ -320,7 +321,7 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
                 };
             }
         }
-        ToScript::Run { run, session, code, p } => {
+        ToScript::Run { run, session, code, p, at } => {
             let mut s = shared.borrow_mut();
             s.live.insert(run);
             s.sessions.insert(run, session);
@@ -330,7 +331,7 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
                 Err(e) => return finish(shared, run, End::Fault(format!("could not start: {e}"))),
             };
             let failed = ctx.with(|ctx| {
-                if let Err(e) = install(&ctx, run, shared, &p) {
+                if let Err(e) = install(&ctx, run, shared, &p, at.as_ref()) {
                     return Some(format!("could not start: {e}"));
                 }
                 deadline.set(Some(Instant::now() + BUDGET));
@@ -392,9 +393,13 @@ fn settle(home: &Context, w: Waiter, outcome: Result<Value, CallFailure>) {
 }
 
 /// The host side of what `prelude.js` builds on, bound to one run, then the prelude itself.
-fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Value) -> rquickjs::Result<()> {
+fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Value, at: Option<&(u32, Value)>) -> rquickjs::Result<()> {
     let g = ctx.globals();
     g.set("p", ctx.json_parse(p.to_string())?)?;
+    if let Some((index, item)) = at {
+        g.set("index", *index)?;
+        g.set("item", ctx.json_parse(item.to_string())?)?;
+    }
     let s = shared.clone();
     g.set("__read", Function::new(ctx.clone(), move |alias: String| s.borrow().read(run, &alias).map(Value::to_string))?)?;
 

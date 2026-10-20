@@ -7,7 +7,7 @@ use super::js::{outside, split_outside};
 use super::{Element, Handler, Input, Interface, Local, Page, Shows, Tag, rank};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
-const ATTRS: [&str; 5] = ["name", "x", "y", "w", "h"];
+const ATTRS: [&str; 6] = ["name", "repeat", "x", "y", "w", "h"];
 const TEXT: &str = "text";
 /// An input's value, an attribute as HTML writes it.
 const VALUE: &str = "value";

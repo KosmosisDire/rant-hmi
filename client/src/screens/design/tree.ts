@@ -6,7 +6,7 @@ import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import { produce } from "solid-js/store";
-import { isNumber, number } from "../../state/bind";
+import { docScope, isNumber, number, pageScope, repeatScope, resolve, type Scope } from "../../state/bind";
 import { setState } from "../../state/store";
 
 /** The element and every frame around it, outermost first. */
@@ -48,19 +48,38 @@ export function childrenOf(page: Page, parent: string | null): Element[] {
   return parent ? (find(page.children, parent)?.children ?? []) : page.children;
 }
 
-export function boxOf(e: Element, overrides?: Overrides): Box {
-  return overrides?.(e.id) ?? { x: number(e.props.x), y: number(e.props.y), w: number(e.props.w), h: number(e.props.h) };
+export function boxOf(e: Element, overrides?: Overrides, scope: Scope = pageScope): Box {
+  return overrides?.(e.id) ?? { x: number(e.props.x, scope), y: number(e.props.y, scope), w: number(e.props.w, scope), h: number(e.props.h, scope) };
 }
 
-/** An element's box on the page, its frames' offsets added. */
+/** What each element along a path reads in the editor, outermost first: the page's or
+ *  component's names, and inside a repeat its first copy, as the editor draws it. */
+function scopes(page: Page, path: Element[]): Scope[] {
+  let scope = docScope(page);
+  return path.map((e) => {
+    if (e.props.repeat?.trim()) {
+      const r = resolve(e.props.repeat, scope);
+      const first = r.ok && Array.isArray(r.value) ? r.value[0] : 0;
+      scope = repeatScope(scope, 0, () => first);
+    }
+    return scope;
+  });
+}
+
+/** What an element's own values read in the editor. */
+export function scopeOf(page: Page, id: string): Scope {
+  const path = chain(page.children, id);
+  return path ? scopes(page, path).at(-1)! : docScope(page);
+}
+
+/** An element's box on the page, its frames' offsets added, each read where it is drawn. */
 export function absolute(page: Page, id: string, overrides?: Overrides): Box | undefined {
   const path = chain(page.children, id);
   if (!path) return undefined;
-  const own = boxOf(path[path.length - 1], overrides);
-  const offset = path.slice(0, -1).reduce((at, e) => {
-    const b = boxOf(e, overrides);
-    return { x: at.x + b.x, y: at.y + b.y };
-  }, { x: 0, y: 0 });
+  const reads = scopes(page, path);
+  const boxes = path.map((e, i) => boxOf(e, overrides, reads[i]));
+  const own = boxes[boxes.length - 1];
+  const offset = boxes.slice(0, -1).reduce((at, b) => ({ x: at.x + b.x, y: at.y + b.y }), { x: 0, y: 0 });
   return { x: own.x + offset.x, y: own.y + offset.y, w: own.w, h: own.h };
 }
 
