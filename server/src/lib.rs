@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod authorize;
+pub mod files;
 pub mod mesh;
 pub mod pages;
 pub mod project;

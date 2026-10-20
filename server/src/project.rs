@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::files;
+
 #[derive(Serialize, Deserialize, TS, Clone, Debug)]
 #[ts(export)]
 pub struct ProjectInfo {
@@ -158,11 +160,7 @@ impl Project {
                 }
             }
         }
-        let file = theme_file(&self.root);
-        let text = toml::to_string(&ThemeFile { tokens: self.tokens.clone() }).map_err(|e| e.to_string())?;
-        fs::create_dir_all(file.parent().unwrap_or(&self.root))
-            .and_then(|_| fs::write(&file, text))
-            .map_err(|e| format!("could not save {}: {e}", file.display()))
+        files::write_toml(&theme_file(&self.root), &ThemeFile { tokens: self.tokens.clone() })
     }
 
     pub fn variable(&self, name: &str) -> Option<&Variable> {
@@ -192,11 +190,7 @@ impl Project {
                 }
             }
         }
-        let file = variables_file(&self.root);
-        let text = toml::to_string(&VariablesFile { variables: self.variables.clone() }).map_err(|e| e.to_string())?;
-        fs::create_dir_all(file.parent().unwrap_or(&self.root))
-            .and_then(|_| fs::write(&file, text))
-            .map_err(|e| format!("could not save {}: {e}", file.display()))
+        files::write_toml(&variables_file(&self.root), &VariablesFile { variables: self.variables.clone() })
     }
 
     pub fn find(&self, alias: &str) -> Option<&Import> {
@@ -216,9 +210,7 @@ impl Project {
     /// Makes `page` the one operators' screens open on, and saves.
     pub fn set_start(&mut self, page: String) -> Result<(), String> {
         self.info.start = Some(page);
-        let file = self.root.join("hmi.toml");
-        let text = toml::to_string(&self.info).map_err(|e| e.to_string())?;
-        fs::write(&file, text).map_err(|e| format!("could not save {}: {e}", file.display()))
+        files::write_toml(&self.root.join("hmi.toml"), &self.info)
     }
 
     /// Changes an import's alias or intent and saves. Its entity and kind stay.
@@ -246,11 +238,7 @@ impl Project {
     }
 
     fn save(&self) -> Result<(), String> {
-        let file = imports_file(&self.root);
-        let text = toml::to_string(&ImportsFile { imports: self.imports.clone() }).map_err(|e| e.to_string())?;
-        fs::create_dir_all(file.parent().unwrap_or(&self.root))
-            .and_then(|_| fs::write(&file, text))
-            .map_err(|e| format!("could not save {}: {e}", file.display()))
+        files::write_toml(&imports_file(&self.root), &ImportsFile { imports: self.imports.clone() })
     }
 }
 

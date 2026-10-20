@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::files;
 use logic::Rule;
 
 /// A page: an artboard of `width` by `height` pixels holding elements. With an interface it
@@ -646,13 +647,7 @@ impl Pages {
     }
 
     fn save_rules(&self) -> Result<(), String> {
-        let dir = self.root.join("logic");
-        let file = dir.join("handlers.html");
-        let partial = dir.join("handlers.html.partial");
-        fs::create_dir_all(&dir)
-            .and_then(|_| fs::write(&partial, logic::write(&self.rules)))
-            .and_then(|_| fs::rename(&partial, &file))
-            .map_err(|e| format!("could not save {}: {e}", file.display()))
+        files::write(&self.root.join("logic").join("handlers.html"), &logic::write(&self.rules))
     }
 
     fn insert_page(&mut self, page: Page) {
@@ -675,8 +670,7 @@ impl Pages {
         id
     }
 
-    /// Writes beside the file and renames over it, so a crash never leaves half a page. A
-    /// page that is gone loses its file.
+    /// Saves a page or component, and takes away the file of one that is gone.
     fn save(&self, id: &str) -> Result<(), String> {
         let Some(page) = self.get(id) else {
             for folder in ["pages", "components"] {
@@ -688,13 +682,8 @@ impl Pages {
             }
             return Ok(());
         };
-        let dir = self.root.join(if page.interface.is_some() { "components" } else { "pages" });
-        let file = dir.join(format!("{id}.html"));
-        let partial = dir.join(format!("{id}.html.partial"));
-        fs::create_dir_all(&dir)
-            .and_then(|_| fs::write(&partial, format::write(page)))
-            .and_then(|_| fs::rename(&partial, &file))
-            .map_err(|e| format!("could not save {}: {e}", file.display()))
+        let folder = if page.interface.is_some() { "components" } else { "pages" };
+        files::write(&self.root.join(folder).join(format!("{id}.html")), &format::write(page))
     }
 }
 
