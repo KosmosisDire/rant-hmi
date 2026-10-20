@@ -34,7 +34,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addShape("line", { Name: "pointer", "From x": "66", "From y": "50", "To x": "66", "To y": "28", Stroke: "#e4e6e8", Thickness: "5", Transform: "`rotate(${-135 + (value - min) / (max - min) * 270} 66 66)`" });
 
   await d.addComponent("Readout", 220, 88);
-  await d.addInput("label", '"Speed"');
+  await d.addInput("label", '"Value"');
   await d.addInput("value", "0");
   await d.addInput("unit", '""');
   await d.addInput("digits", "1");

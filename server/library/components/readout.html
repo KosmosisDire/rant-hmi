@@ -1,0 +1,10 @@
+<component name="Readout" size="220x88">
+  <prop name="label" default='"Value"'/>
+  <prop name="value" default="0"/>
+  <prop name="unit" default='""'/>
+  <prop name="digits" default="1"/>
+  <div id="e1" name="card" x="0" y="0" w="220" h="88" style="background: #1e2125; border-radius: 8">
+    <span id="e2" name="caption" x="16" y="10" w="188" h="22" style="color: #9aa0a6; font-size: 14">label</span>
+    <span id="e3" name="reading" x="16" y="34" w="188" h="44" style="color: #e4e6e8; font-size: 28; font-weight: 600">value.toFixed(digits) + " " + unit</span>
+  </div>
+</component>

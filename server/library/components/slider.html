@@ -1,0 +1,16 @@
+<component name="Slider" size="300x44">
+  <prop name="value" default="0" bindable="true"/>
+  <prop name="min" default="0"/>
+  <prop name="max" default="100"/>
+  <prop name="step" default="1"/>
+  <event name="change"/>
+  <div id="e1" name="slider" x="0" y="0" w="300" h="44">
+    <on event="drag">
+      value = Math.round((min + p.x * (max - min)) / step) * step;
+      emit("change", value);
+    </on>
+    <div id="e2" name="track" x="0" y="18" w="300" h="8" style="background: #3a4046; border-radius: 4"/>
+    <div id="e3" name="fill" x="0" y="18" w="(value - min) / (max - min) * 300" h="8" style="background: #4a8fd6; border-radius: 4"/>
+    <div id="e4" name="thumb" x="(value - min) / (max - min) * 300 - 11" y="11" w="22" h="22" style='background: root.pressed ? "#ffffff" : "#e4e6e8"; border-radius: 11; box-shadow: "0 1px 4px #0008"'/>
+  </div>
+</component>

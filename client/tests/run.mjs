@@ -1,11 +1,11 @@
 // Runs the scenarios in tests/scenarios against one backend and the demo line, each on a fresh
 // page, as `docs/testing.md` says. A console error fails a scenario.
 
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { designer } from "./designer.mjs";
-import { startBrowser, startSystem } from "./harness.mjs";
+import { ROOT, startBrowser, startSystem } from "./harness.mjs";
 import { Hmi } from "./hmi.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -62,6 +62,18 @@ for (const file of files) {
   await context.close();
 }
 await browser.close();
+// with --library, the components the scenarios made by hand become those a new project starts with
+if (process.argv.includes("--library") && !failed) {
+  const [made, kept] = [join(sys.project, "components"), join(ROOT, "server", "library", "components")];
+  rmSync(kept, { recursive: true, force: true });
+  mkdirSync(kept, { recursive: true });
+  // each file named for its component, which is all an instance refers to it by
+  for (const file of readdirSync(made)) {
+    const text = readFileSync(join(made, file), "utf8");
+    writeFileSync(join(kept, `${/^<component name="(\w+)"/.exec(text)[1].toLowerCase()}.html`), text);
+  }
+  console.log(`kept ${readdirSync(kept).length} components in server/library/components`);
+}
 writeFileSync(join(out, "backend.log"), sys.backend.log);
 sys.stop();
 console.log(failed ? `${failed} of ${files.length} failed` : `all ${files.length} passed`);

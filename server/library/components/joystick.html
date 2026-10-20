@@ -1,0 +1,24 @@
+<component name="Joystick" size="220x220">
+  <prop name="travel" default="70"/>
+  <event name="move"/>
+  <var name="kx" start="0"/>
+  <var name="ky" start="0"/>
+  <svg id="e1" name="pad" x="0" y="0" w="220" h="220">
+    <on event="release">
+      kx = 0;
+      ky = 0;
+      emit("move", { x: 0, y: 0 });
+    </on>
+    <on event="drag">
+      // the knob goes where the finger is, as far as the ring
+      const dx = (p.x - 0.5) * 220, dy = (p.y - 0.5) * 220;
+      const k = Math.min(1, travel / Math.max(Math.hypot(dx, dy), 1));
+      kx = (dx * k) / travel;
+      ky = (dy * k) / travel;
+      emit("move", { x: kx, y: -ky });
+    </on>
+    <circle id="e2" name="base" cx="110" cy="110" fill="#1e2125" r="104" stroke="#3a4046" stroke-width="2"/>
+    <circle id="e3" name="ring" cx="110" cy="110" fill='"none"' r="travel" stroke="#2f3540" stroke-dasharray='"4 6"' stroke-width="2"/>
+    <circle id="e4" name="knob" cx="110 + kx * travel" cy="110 + ky * travel" fill='root.pressed ? "#4a8fd6" : "#3a4046"' r="34" stroke="#e4e6e8" stroke-width="2"/>
+  </svg>
+</component>

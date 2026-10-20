@@ -1,0 +1,12 @@
+<component name="Gauge" size="176x176">
+  <prop name="value" default="0"/>
+  <prop name="min" default="0"/>
+  <prop name="max" default="100"/>
+  <prop name="unit" default='""'/>
+  <svg id="e1" name="dial" x="0" y="0" w="176" h="176">
+    <circle id="e2" name="track" cx="88" cy="88" fill='"none"' pathlength="100" r="70" stroke="#3a4046" stroke-dasharray='"75 100"' stroke-linecap='"round"' stroke-width="12" transform='"rotate(135 88 88)"'/>
+    <circle id="e3" name="level" cx="88" cy="88" fill='"none"' pathlength="100" r="70" stroke='value > max * 0.8 ? "#c62828" : "#4a8fd6"' stroke-dasharray="`${Math.min(Math.max((value - min) / (max - min), 0), 1) * 75} 100`" stroke-linecap='"round"' stroke-width="12" transform='"rotate(135 88 88)"'/>
+    <text id="e4" name="reading" dominant-baseline='"middle"' fill="#e4e6e8" font-size="30" text-anchor='"middle"' x="88" y="92">value.toFixed(1)</text>
+    <text id="e5" name="units" dominant-baseline='"middle"' fill="#9aa0a6" font-size="14" text-anchor='"middle"' x="88" y="126">unit</text>
+  </svg>
+</component>

@@ -1,0 +1,14 @@
+<component name="ModeSwitch" size="264x44">
+  <prop name="value" default='"Auto"' bindable="true"/>
+  <prop name="options" default='["Auto", "Manual"]'/>
+  <event name="change"/>
+  <div id="e1" name="track" x="0" y="0" w="264" h="44" style="background: #1e2125; border-radius: 22">
+    <div id="e2" name="segment" repeat="options" x="index * 264 / options.length" y="0" w="264 / options.length" h="44" style='background: item === value ? "#4a8fd6" : "transparent"; border-radius: 22'>
+      <on event="tap">
+        value = item;
+        emit("change", item);
+      </on>
+      <span id="e3" name="segmentLabel" x="0" y="0" w="264 / options.length" h="44" style='color: #e4e6e8; font-size: 16; line-height: "44px"; text-align: "center"'>item</span>
+    </div>
+  </div>
+</component>

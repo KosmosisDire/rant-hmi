@@ -1,0 +1,11 @@
+<component name="Plot" size="440x176">
+  <prop name="values" default="[]"/>
+  <prop name="min" default="0"/>
+  <prop name="max" default="1"/>
+  <prop name="seconds" default="10"/>
+  <div id="e1" name="card" x="0" y="0" w="440" h="176" style="background: #1e2125; border-radius: 8">
+    <svg id="e2" name="chart" x="11" y="11" w="418" h="154" viewbox='"0 0 100 100"' fit='"stretch"'>
+      <polyline id="e3" name="line" fill='"none"' points='values.length ? values.map((s) => ((s.t - values[values.length - 1].t) / (seconds * 1000) + 1) * 100 + "," + (100 - ((s.v - min) / (max - min)) * 100)).join(" ") : ""' stroke="#4a8fd6" stroke-linecap='"round"' stroke-linejoin='"round"' stroke-width="2" vector-effect='"non-scaling-stroke"'/>
+    </svg>
+  </div>
+</component>

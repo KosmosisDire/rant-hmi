@@ -9,6 +9,15 @@ export function designer(page) {
     await field.fill(text);
     await field.press("Enter");
   };
+  // a page or component from its list's +, open once its row is the one selected: until then
+  // the inspector still shows the one open before, which a name typed now would rename
+  const fresh = async (button, named) => {
+    const rows = left().locator(".pages .list-row");
+    const before = await rows.count();
+    await left().locator(`button[title="${button}"]`).click();
+    const open = left().locator(".pages .list-row.selected .list-label");
+    await until(async () => (await rows.count()) > before && (await open.count()) === 1 && named.test((await open.textContent()) ?? ""), `the new one from ${button}`);
+  };
   // the element the editor has selected, by its layer row
   const selected = async () => (await left().locator(".list-row.selected[data-id]").count()) === 1 ? left().locator(".list-row.selected[data-id]").getAttribute("data-id") : null;
   const until = async (fn, what, ms = 4000) => {
@@ -97,8 +106,7 @@ export function designer(page) {
     /** Adds a component from the Components list, names and sizes it, and opens it. */
     async addComponent(name, w, h) {
       await d.tab("Design");
-      await left().locator('button[title="Add a component"]').click();
-      await right().locator(".tag", { hasText: /^component$/ }).waitFor();
+      await fresh("Add a component", /^Component\d*$/);
       await d.setField("Name", name);
       await left().locator(".list-row.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
       await d.set({ w: String(w), h: String(h) });
@@ -179,8 +187,7 @@ export function designer(page) {
     /** Adds a page from the Pages list and opens it. */
     async addPage(name) {
       await d.tab("Design");
-      await left().locator('button[title="Add a page"]').click();
-      await right().locator(".tag", { hasText: /^page$/ }).waitFor();
+      await fresh("Add a page", /^Page \d+$/);
       await d.setField("Name", name);
       await left().locator(".list-row.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
     },

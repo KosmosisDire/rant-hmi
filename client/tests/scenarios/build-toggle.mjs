@@ -40,4 +40,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Run");
   await inst(line).click();
   await page.locator(".notice.fault", { hasText: "Speed is no input, variable or part of Toggle" }).waitFor({ timeout: 4000 });
+
+  // and back, so the Toggle ends as a person would leave it
+  await d.tab("Design");
+  await d.openPage("Toggle");
+  await d.select("track");
+  await d.handler("tap", 'value = !value;\nemit("change", value);');
 }

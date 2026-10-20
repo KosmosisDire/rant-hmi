@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::value::Value;
 use ts_rs::TS;
 
-use crate::files;
+use crate::{files, library};
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
@@ -141,6 +141,7 @@ impl Project {
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
                 .unwrap_or_else(|| "HMI".to_owned());
             fs::write(&hmi, toml::to_string(&ProjectInfo { name, start: None })?).with_context(|| format!("writing {}", hmi.display()))?;
+            library::seed(root)?;
         }
         let info = toml::from_str(&read(&hmi)?).with_context(|| format!("reading {}", files::shown(root, &hmi)))?;
         let file = imports_file(root);
@@ -389,6 +390,21 @@ mod tests {
         let again = Project::open(&dir).unwrap();
         assert_eq!(again.imports, vec![speed()]);
         assert!(fs::read_to_string(dir.join("data/imports.toml")).unwrap().contains("[[import]]"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_project_starts_with_the_standard_components_once() {
+        let dir = scratch("library");
+        Project::open(&dir).unwrap();
+        let pages = crate::pages::Pages::open(&dir).unwrap();
+        let mut names: Vec<&str> = pages.list.iter().filter(|p| p.interface.is_some()).map(|p| p.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["Button", "Dropdown", "Gauge", "Joystick", "Knob", "ModeSwitch", "Plot", "Readout", "Slider", "Toggle"]);
+        // a project that has its own leaves them be
+        fs::remove_file(dir.join("components/button.html")).unwrap();
+        Project::open(&dir).unwrap();
+        assert!(!dir.join("components/button.html").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
