@@ -40,6 +40,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await hmi.set("Speed", 2);
   await page.locator(".notice", { hasText: "The line runs too fast" }).waitFor({ timeout: 4000 });
 
+  // the line runs before the rule is made, whatever scenarios before left it at
+  hmi.set("Running", true);
+  await eventually(() => hmi.state.values.Running?.value === true, "the line running");
   box = await add();
   await box.locator(".rule-kind").selectOption("changes");
   await commit(box.locator(".rule-field input"), "Running");
