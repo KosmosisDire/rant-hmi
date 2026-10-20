@@ -41,6 +41,8 @@ type Look = [string, string, Partial<FieldProps>];
 const LOOK: Look[] = [
   ["Fill", "background", { kind: "colour", placeholder: "#2a2f35" }],
   ["Opacity", "opacity", { kind: "number", min: 0, max: 1, step: 0.01, placeholder: "1" }],
+  // hidden clips what it holds to its box, as a card or a chart wants
+  ["Overflow", "overflow", { kind: "choice", options: ['"visible"', '"hidden"'], placeholder: '"visible"' }],
 ];
 const TEXT_LOOK: Look[] = [
   ["Colour", "color", { kind: "colour", placeholder: "#e4e6e8" }],
