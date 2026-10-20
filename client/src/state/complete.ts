@@ -1,6 +1,7 @@
 // What may be typed next at the caret: names, then after a dot the fields with their type and
 // live value. It reads only the text before the caret, so the code need not parse.
 
+import { kind, LIBRARY, METHODS_OF } from "../lang/math.js";
 import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Import } from "../protocol/Import";
 import type { Kind } from "../protocol/Kind";
@@ -57,6 +58,70 @@ const API: Record<Place, Suggestion[]> = {
   ],
 };
 
+/** What each of the math library's names does, in a few words. */
+const MATH_WORDS: Record<string, string> = {
+  sqrt: "square root",
+  abs: "without its sign",
+  sign: "-1, 0 or 1",
+  min: "the least",
+  max: "the most",
+  clamp: "x kept between low and high",
+  lerp: "from a toward b by t",
+  round: "the nearest whole number",
+  floor: "the whole number at or below",
+  ceil: "the whole number at or above",
+  trunc: "the whole part",
+  pow: "x to the power y",
+  exp: "e to the power x",
+  ln: "natural log",
+  sin: "of radians",
+  cos: "of radians",
+  tan: "of radians",
+  asin: "in radians",
+  acos: "in radians",
+  atan: "in radians",
+  atan2: "the angle of y and x, in radians",
+  hypot: "the length of its arguments",
+  degrees: "radians as degrees",
+  radians: "degrees as radians",
+  PI: "half a turn, in radians",
+  vec: "a 2D or 3D vector",
+  fromEuler: "a rotation from roll, pitch and yaw",
+};
+
+/** The math library's names, which every place reads, a function's typed with its bracket. */
+const MATH: Suggestion[] = Object.keys(LIBRARY)
+  .filter((name) => !name.startsWith("__"))
+  .map((name) => ({ label: name, insert: typeof LIBRARY[name] === "function" ? `${name}(` : name, icon: "api", type: MATH_WORDS[name] ?? "" }));
+
+/** How each math method is typed in, and what it gives. */
+const METHOD_WORDS: Record<string, [string, string]> = {
+  length: ["length()", "its length"],
+  normalized: ["normalized()", "the same way, of length 1"],
+  dot: ["dot(", "the dot product with another"],
+  cross: ["cross(", "the cross product with another"],
+  distance: ["distance(", "how far to another"],
+  lerp: ["lerp(", "toward another by t"],
+  equals: ["equals(", "the same, within a hair"],
+  rotate: ["rotate(", "a 3D vector turned by it"],
+  inverse: ["inverse()", "the way back"],
+  euler: ["euler()", "roll, pitch and yaw, in radians"],
+  apply: ["apply(", "a point moved by it"],
+};
+
+/** What a vector, quaternion or pose offers of the math library after a dot. One taking
+ *  nothing shows what it gives now. */
+function mathMethods(value: Value | null, known: boolean): Suggestion[] {
+  const k = kind(value);
+  if (!k) return [];
+  const call = LIBRARY.__method as (target: unknown, name: string) => unknown;
+  return METHODS_OF[k].map((m): Suggestion => {
+    const [insert, type] = METHOD_WORDS[m] ?? [`${m}(`, ""];
+    const now = insert.endsWith("()") ? (call(value, m) as Value) : null;
+    return { label: m, insert, icon: "member", type, value: now, known: known && now !== null };
+  });
+}
+
 /** What a repeated element and all inside it read of their copy. */
 export const REPEAT: Suggestion[] = [
   { label: "index", insert: "index", icon: "local", type: "the copy, from 0" },
@@ -78,7 +143,7 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
       ? names
         ? given(names, chain(before.slice(0, from - 1)))
         : members(chain(before.slice(0, from - 1)), place)
-      : [...(names ?? top(place)), ...(also ?? []), ...(place === "handler" ? [] : tokens()), ...API[place]];
+      : [...(names ?? top(place)), ...(also ?? []), ...(place === "handler" ? [] : tokens()), ...API[place], ...MATH];
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
   const inside = items.filter((s) => !s.label.toLowerCase().startsWith(q) && s.label.toLowerCase().includes(q));
@@ -206,12 +271,12 @@ function members(path: string[], place: Place): Suggestion[] {
         fields = field.kind === "struct" ? field.members : undefined;
       }
     }
-    if (fields) return fields.map((f) => ({ label: f.name, insert: f.name, icon: "member", type: typeLabel(f), value: at(value, f.name), known }));
+    if (fields) return [...fields.map((f): Suggestion => ({ label: f.name, insert: f.name, icon: "member", type: typeLabel(f), value: at(value, f.name), known })), ...mathMethods(value, known)];
     if (field?.kind === "array") return [{ label: "length", insert: "length", icon: "member", type: "number", value: Array.isArray(value) ? value.length : null, known }];
     return methods(value, known);
   }
   const named = fields(value);
-  if (named) return Object.keys(named).map((k) => ({ label: k, insert: k, icon: "member", value: at(value, k), known }));
+  if (named) return [...Object.keys(named).map((k): Suggestion => ({ label: k, insert: k, icon: "member", value: at(value, k), known })), ...mathMethods(value, known)];
   return methods(value, known);
 }
 

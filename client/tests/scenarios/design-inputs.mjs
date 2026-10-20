@@ -23,7 +23,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await text.click();
   await text.fill("");
   await page.keyboard.type("le");
-  check((await page.locator(".suggest .suggest-name").allTextContents()).join() === "level", "completion in a component offers more than its inputs");
+  // its inputs first, then the math every place has, and nothing of the page's imports
+  const offered = await page.locator(".suggest .suggest-name").allTextContents();
+  check(offered[0] === "level" && !offered.some((n) => hmi.state.imports.some((i) => i.alias === n)), `completion in a component offers ${offered}`);
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await page.keyboard.type(' + "%"');

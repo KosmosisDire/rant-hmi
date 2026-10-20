@@ -1,6 +1,7 @@
-// A designer does math on the robot's pose in a page: the standard functions by their plain
-// names, arithmetic between vectors and with numbers, vector, quaternion and pose methods, text
-// joined with a vector, a clear word on a 2D plus a 3D vector, and where code does not parse.
+// A designer does math on the robot's pose in a page, the list offering it: the standard functions
+// by their plain names, arithmetic between vectors and with numbers, vector, quaternion and pose
+// methods, text joined with a vector, a clear word on a 2D plus a 3D vector, and code that does
+// not parse.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   if (!hmi.state.imports.some((i) => i.alias === "Pose")) await hmi.import("Pose", "Robot/Pose");
@@ -32,6 +33,17 @@ export default async function ({ page, hmi, d, check, eventually }) {
   }
 
   await d.el(wrong).click();
+  // the list offers the math names, and a vector's methods after its dot
+  const names = () => page.locator(".suggest .suggest-name").allTextContents();
+  const text = d.field("Text");
+  await text.click();
+  await text.fill("");
+  await page.keyboard.type("sq");
+  await eventually(async () => (await names()).includes("sqrt"), "sqrt in the list");
+  await text.fill("");
+  await page.keyboard.type("Pose.position.");
+  await eventually(async () => (await names()).join().startsWith("x,y,z,length,normalized"), "a vector's fields and then its methods");
+  await page.keyboard.press("Escape");
   const note = page.locator(".screen:not([hidden]) .sidebar.right .field-note");
   await eventually(async () => (await note.textContent())?.includes("a 2D vector and a 3D vector cannot be added"), "the sum of a 2D and a 3D vector to say why it fails");
   await d.setField("Text", "Speed +");

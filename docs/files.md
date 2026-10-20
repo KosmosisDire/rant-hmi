@@ -98,7 +98,7 @@ component placed on a page is a tag named after it.
   on every element, shapes too: `rotate: Speed * 90; transform-origin: "50% 100%"`. A
   shape's point is on its own outline's box, as a frame's is.
 - Every value but the name is an expression, kept raw: text goes in quotes, and `a < b`
-  needs no escaping.
+  needs no escaping. Expressions and code share the math in [math.md](math.md).
 - `<on>` holds a handler's code, first inside its element. A `hold` handler runs once a
   press lasts `after` ms, an expression, 500 when left out: `<on event="hold" after="600">`.
 - `repeat` draws an element once per item of a list, or a number of times:

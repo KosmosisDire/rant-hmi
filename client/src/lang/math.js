@@ -4,7 +4,7 @@
 // so one from the mesh needs no wrapping, and what the math makes goes back to the mesh as is.
 
 /** What a value is by its own keys: "vec2", "vec3", "quat", "pose", or null for anything else. */
-function kind(v) {
+export function kind(v) {
   if (v === null || typeof v !== "object" || Array.isArray(v) || ArrayBuffer.isView(v)) return null;
   const keys = Object.keys(v);
   if (keys.length < 2 || keys.length > 4) return null;
@@ -131,6 +131,9 @@ const METHODS = { vec2: VECTOR, vec3: VECTOR, quat: QUATERNION, pose: POSE };
 
 /** Every method name, which arith.js routes through `__method`. */
 export const METHOD_NAMES = [...new Set(Object.values(METHODS).flatMap((m) => Object.keys(m)))];
+
+/** Each kind's method names, which completion offers after a dot. */
+export const METHODS_OF = Object.fromEntries(Object.entries(METHODS).map(([k, m]) => [k, Object.keys(m)]));
 
 // ------------------------------------------------------------------ the operators
 
