@@ -31,6 +31,7 @@ export class Hmi {
     const s = this.state;
     if (msg.type === "imports") s.imports = msg.imports;
     if (msg.type === "variables") s.variables = msg.variables;
+    if (msg.type === "records") s.records = msg.records;
     if (msg.type === "rules") s.rules = msg.rules;
     if (msg.type === "pages") s.pages = msg.pages;
     if (msg.type === "mesh") s.entities = msg.entities;

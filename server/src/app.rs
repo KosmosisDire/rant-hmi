@@ -1,8 +1,8 @@
 //! The backend's one loop. It owns the project, the mesh and every screen's session, so
 //! nothing is shared and nothing locks.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use serde_json::Value;
@@ -14,8 +14,8 @@ use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
-use crate::project::{Import, Intent, Kind, Per, Project, Variable};
-use crate::protocol::{ClientMsg, Level, ServerMsg, ValueUpdate};
+use crate::project::{Import, Intent, Kind, Per, Project, Record, Variable};
+use crate::protocol::{ClientMsg, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, FromScript, Script, ToScript};
 
 /// How often changed values go out and the mesh is checked.
@@ -115,6 +115,9 @@ pub struct App {
     changed: BTreeSet<String>,
     /// The values of the variables every screen shares.
     shared: HashMap<String, Value>,
+    /// Each record's samples, oldest first, and when it next samples.
+    history: HashMap<String, VecDeque<Sample>>,
+    sample_at: HashMap<String, Instant>,
     epoch: Option<u32>,
     health_at: Instant,
     /// When a project file last changed outside the HMI, until it is read.
@@ -128,6 +131,7 @@ impl App {
         script.send(ToScript::Variables(project.variables.clone()));
         let shared: HashMap<String, Value> = project.variables.iter().filter(|v| v.per == Per::Hmi).map(|v| (v.name.clone(), v.start.clone())).collect();
         script.send(ToScript::Values(shared.iter().map(|(k, v)| (k.clone(), Some(v.clone()))).collect()));
+        script.send(ToScript::Records(sources(&project.records)));
         App {
             project,
             pages,
@@ -147,6 +151,8 @@ impl App {
             values: HashMap::new(),
             changed: BTreeSet::new(),
             shared,
+            history: HashMap::new(),
+            sample_at: HashMap::new(),
             epoch: None,
             health_at: Instant::now(),
             edited: None,
@@ -226,6 +232,11 @@ impl App {
         self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
         self.send(session, &ServerMsg::Mesh { entities: self.mesh.entities() });
         self.send(session, &ServerMsg::Variables { variables: self.project.variables.clone() });
+        self.send(session, &ServerMsg::Records { records: self.project.records.clone() });
+        for r in &self.project.records {
+            let samples = self.history.get(&r.name).map(|h| h.iter().cloned().collect()).unwrap_or_default();
+            self.send(session, &ServerMsg::Samples { name: r.name.clone(), samples, whole: true });
+        }
         self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
         self.send(session, &ServerMsg::Theme { tokens: self.project.tokens.clone() });
         let mut values: Vec<ValueUpdate> = self.project.imports.iter().map(|i| self.update(&i.alias)).collect();
@@ -261,6 +272,7 @@ impl App {
             },
             ClientMsg::ChangeImport { alias, import } => self.change_import(session, alias, import),
             ClientMsg::SetVariable { name, variable } => self.set_variable(session, name, variable),
+            ClientMsg::SetRecord { name, record } => self.set_record(session, name, record),
             ClientMsg::SetToken { name, token } => {
                 let renamed = token.as_ref().filter(|t| t.name != name).map(|t| t.name.clone());
                 if let Err(text) = self.project.set_token(&name, token) {
@@ -337,6 +349,68 @@ impl App {
             self.follow_rename(session, &name, &v.name, false);
         }
         self.start_variable(&v, kept_shared, kept_own);
+    }
+
+    /// Adds, changes or removes a record. A rename carries its history and every use of its
+    /// name along, a new source starts the history over.
+    fn set_record(&mut self, session: u32, name: String, to: Option<Record>) {
+        let old = self.project.record(&name).cloned();
+        if let Err(text) = self.project.set_record(&name, to.clone()) {
+            self.send(session, &ServerMsg::Records { records: self.project.records.clone() });
+            return self.refuse(session, text, None);
+        }
+        let kept = self.history.remove(&name).filter(|_| old.as_ref().zip(to.as_ref()).is_some_and(|(o, n)| o.source == n.source));
+        self.sample_at.remove(&name);
+        self.records_changed();
+        let Some(r) = to else { return };
+        if r.name != name {
+            info!("renamed the record {name} to {}", r.name);
+            self.follow_rename(session, &name, &r.name, false);
+        }
+        let samples: VecDeque<Sample> = kept.unwrap_or_default();
+        self.broadcast(&ServerMsg::Samples { name: r.name.clone(), samples: samples.iter().cloned().collect(), whole: true });
+        self.history.insert(r.name, samples);
+    }
+
+    /// Tells the engine and every screen the records, whole.
+    fn records_changed(&mut self) {
+        self.script.send(ToScript::Records(sources(&self.project.records)));
+        self.broadcast(&ServerMsg::Records { records: self.project.records.clone() });
+    }
+
+    /// Asks the engine for each record that is due, and keeps when it is due next.
+    fn sample(&mut self) {
+        let now = Instant::now();
+        let mut due = Vec::new();
+        for r in &self.project.records {
+            let at = self.sample_at.entry(r.name.clone()).or_insert(now);
+            if *at <= now {
+                // one that fell behind starts again from now, rather than catching up
+                let every = Duration::from_millis(r.every_ms.into());
+                *at = if now.duration_since(*at) > every { now + every } else { *at + every };
+                due.push(r.name.clone());
+            }
+        }
+        if !due.is_empty() {
+            self.script.send(ToScript::Sample(due));
+        }
+    }
+
+    /// Keeps what the engine read for each record, drops samples past its keep, and sends the
+    /// new ones to every screen.
+    fn sampled(&mut self, read: Vec<(String, Option<Value>)>) {
+        let t = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
+        for (name, value) in read {
+            let (Some(v), Some(r)) = (value, self.project.record(&name)) else { continue };
+            let keep = f64::from(r.keep_s) * 1000.0;
+            let history = self.history.entry(name.clone()).or_default();
+            let sample = Sample { t, v };
+            history.push_back(sample.clone());
+            while history.front().is_some_and(|s| s.t < t - keep) {
+                history.pop_front();
+            }
+            self.broadcast(&ServerMsg::Samples { name, samples: vec![sample], whole: false });
+        }
     }
 
     /// Gives a variable its values: those kept, else its start.
@@ -525,6 +599,7 @@ impl App {
                 }
             }
             FromScript::Judged(truths) => self.judged(truths),
+            FromScript::Sampled(read) => self.sampled(read),
             FromScript::Done { run, end } => {
                 let text = match &end {
                     End::Ok => None,
@@ -701,6 +776,16 @@ impl App {
                 self.start_variable(v, None, HashMap::new());
             }
         }
+        if old.records != self.project.records {
+            for r in old.records.iter().filter(|r| !self.project.records.contains(r)) {
+                self.history.remove(&r.name);
+                self.sample_at.remove(&r.name);
+            }
+            self.records_changed();
+            for r in self.project.records.iter().filter(|r| !old.records.contains(r)) {
+                self.broadcast(&ServerMsg::Samples { name: r.name.clone(), samples: Vec::new(), whole: true });
+            }
+        }
         if old.tokens != self.project.tokens {
             self.broadcast(&ServerMsg::Theme { tokens: self.project.tokens.clone() });
         }
@@ -763,6 +848,7 @@ impl App {
             self.script.send(ToScript::Judge);
         }
         self.fire_turned();
+        self.sample();
         if self.health_at.elapsed() >= HEALTH_EVERY {
             self.health_at = Instant::now();
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
@@ -852,4 +938,9 @@ fn encode(msg: &ServerMsg) -> Bytes {
     let mut out = Vec::new();
     ciborium::into_writer(msg, &mut out).expect("every server message encodes");
     out.into()
+}
+
+/// Each record's source by name, as the engine reads them.
+fn sources(records: &[Record]) -> Vec<(String, String)> {
+    records.iter().map(|r| (r.name.clone(), r.source.clone())).collect()
 }

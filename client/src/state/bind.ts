@@ -66,9 +66,10 @@ function themed(s: Scope): Scope {
   };
 }
 
-/** A page reads its mesh imports and variables, live, and writes those it may on the backend. */
+/** A page reads its mesh imports, variables and records, live, and writes those it may on the
+ *  backend. */
 export const pageScope: Scope = themed({
-  has: (name) => state.imports.some((i) => i.alias === name) || state.variables.some((v) => v.name === name),
+  has: (name) => state.imports.some((i) => i.alias === name) || state.variables.some((v) => v.name === name) || state.records.some((r) => r.name === name),
   get: (name) => {
     const v = live(name);
     if (!v.known) throw new Unknown(name);
@@ -77,6 +78,7 @@ export const pageScope: Scope = themed({
   set: (name, path, value) => {
     const imp = state.imports.find((i) => i.alias === name);
     if (imp && (imp.kind !== "variable" || imp.intent !== "write")) throw new TypeError(`${name} cannot be set from here`);
+    if (state.records.some((r) => r.name === name)) throw new TypeError(`${name} is a record, which only its source fills`);
     if (!imp && !state.variables.some((v) => v.name === name)) throw new ReferenceError(pageScope.missing(name));
     send({ type: "set", alias: name, path, value: value as JsonValue });
   },
@@ -84,7 +86,7 @@ export const pageScope: Scope = themed({
     const imp = state.imports.find((i) => i.alias === name);
     return imp ? imp.kind === "variable" && imp.intent === "write" : state.variables.some((v) => v.name === name);
   },
-  missing: (name) => `${name} names no mesh import or variable`,
+  missing: (name) => `${name} names no mesh import, variable or record`,
 });
 
 /** A bare name and the fields after it, as a two way binding is written: `Settings.target`. */

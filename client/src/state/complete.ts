@@ -125,7 +125,13 @@ function top(place: Place): Suggestion[] {
     const v = live(x.name);
     return { label: x.name, insert: x.name, icon: "local", type: "variable", value: v.value, known: v.known };
   });
-  return [...imports, ...variables];
+  // a record shows its latest value, the list being too long to preview
+  const records = state.records.map((r): Suggestion => {
+    const list = live(r.name).value;
+    const last = Array.isArray(list) ? (list.at(-1) as { v?: JsonValue } | undefined)?.v : undefined;
+    return { label: r.name, insert: r.name, icon: "local", type: `record of ${r.source}`, value: last ?? null, known: last !== undefined };
+  });
+  return [...imports, ...variables, ...records];
 }
 
 function bareType(fields: FieldInfo[] | undefined): string | undefined {

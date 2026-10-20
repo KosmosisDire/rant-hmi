@@ -2,14 +2,17 @@ import { createSignal } from "solid-js";
 import { MeshImports } from "./MeshImports";
 import { Inspector } from "./Inspector";
 import { MeshTree } from "./MeshTree";
+import { RecordsTable } from "./Records";
 import { ThemeTable } from "./Theme";
 import { VariablesTable } from "./Variables";
 
-/** What the Data screen has picked: an entity on the mesh, an import, a variable or a token. */
+/** What the Data screen has picked: an entity on the mesh, an import, a variable, a record or
+ *  a token. */
 export type Selection =
   | { kind: "entity"; name: string }
   | { kind: "import"; alias: string }
   | { kind: "variable"; name: string }
+  | { kind: "record"; name: string }
   | { kind: "token"; name: string }
   | null;
 
@@ -34,6 +37,7 @@ export function DataScreen() {
       <section class="detail data-detail">
         <MeshImports {...picking} />
         <VariablesTable {...picking} />
+        <RecordsTable {...picking} />
         <ThemeTable {...picking} />
       </section>
       <aside class="sidebar right">

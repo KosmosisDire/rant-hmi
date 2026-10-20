@@ -34,7 +34,7 @@ function reading(name: string, names?: Suggestion[]): string | undefined {
   if (imp) return `${imp.kind}, ${imp.intent}`;
   const v = state.variables.find((x) => x.name === name);
   if (v) return v.per === "screen" ? "variable, per screen" : "variable, shared";
-  return undefined;
+  return state.records.some((r) => r.name === name) ? "record" : undefined;
 }
 
 /** What `code` uses, read with the names completion offers there. */

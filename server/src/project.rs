@@ -1,5 +1,5 @@
-//! The project folder: `hmi.toml`, and the imports, variables and theme under `data/`, as
-//! `docs/files.md` shows.
+//! The project folder: `hmi.toml`, and the imports, variables, records and theme under
+//! `data/`, as `docs/files.md` shows.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -83,6 +83,24 @@ struct VariablesFile {
     variables: Vec<Variable>,
 }
 
+/// A value's history, named in camelCase: `source` sampled every `every_ms`, each sample kept
+/// for `keep_s` seconds. Pages read it as a list of `{ t, v }`, oldest first.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Record {
+    pub name: String,
+    /// An expression over mesh imports and variables.
+    pub source: String,
+    pub every_ms: u32,
+    pub keep_s: u32,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct RecordsFile {
+    #[serde(default, rename = "record")]
+    records: Vec<Record>,
+}
+
 /// A design value with one value per mode, read as `$name` anywhere, components too.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
@@ -104,6 +122,7 @@ pub struct Project {
     pub info: ProjectInfo,
     pub imports: Vec<Import>,
     pub variables: Vec<Variable>,
+    pub records: Vec<Record>,
     pub tokens: Vec<Token>,
 }
 
@@ -134,12 +153,17 @@ impl Project {
             true => toml::from_str::<VariablesFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.variables,
             false => Vec::new(),
         };
+        let file = records_file(root);
+        let records = match file.exists() {
+            true => toml::from_str::<RecordsFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.records,
+            false => Vec::new(),
+        };
         let file = theme_file(root);
         let tokens = match file.exists() {
             true => toml::from_str::<ThemeFile>(&read(&file)?).with_context(|| format!("reading {}", files::shown(root, &file)))?.tokens,
             false => Vec::new(),
         };
-        Ok(Project { root: root.to_path_buf(), info, imports, variables, tokens })
+        Ok(Project { root: root.to_path_buf(), info, imports, variables, records, tokens })
     }
 
     /// Adds, changes or with None removes the token called `name`, and saves. A change may
@@ -187,6 +211,9 @@ impl Project {
                 if v.name != name && self.variable(&v.name).is_some() {
                     return Err(format!("{} is already a variable", v.name));
                 }
+                if self.record(&v.name).is_some() {
+                    return Err(format!("{} is already a record", v.name));
+                }
                 match at {
                     Some(at) => self.variables[at] = v,
                     None => self.variables.push(v),
@@ -194,6 +221,37 @@ impl Project {
             }
         }
         files::write_toml(&variables_file(&self.root), &VariablesFile { variables: self.variables.clone() })
+    }
+
+    pub fn record(&self, name: &str) -> Option<&Record> {
+        self.records.iter().find(|r| r.name == name)
+    }
+
+    /// Adds, changes or with None removes the record called `name`, and saves. A change may
+    /// rename it. The error is for the user.
+    pub fn set_record(&mut self, name: &str, to: Option<Record>) -> Result<(), String> {
+        let at = self.records.iter().position(|r| r.name == name);
+        match (to, at) {
+            (None, Some(at)) => drop(self.records.remove(at)),
+            (None, None) => return Err(format!("{name} is not a record")),
+            (Some(r), at) => {
+                check_local(&r.name)?;
+                if r.source.trim().is_empty() {
+                    return Err(format!("{} needs a value to record", r.name));
+                }
+                if !(MIN_EVERY_MS..=86_400_000).contains(&r.every_ms) || !(1..=86_400).contains(&r.keep_s) {
+                    return Err(format!("{} samples every {MIN_EVERY_MS} ms or more, and keeps from 1 s to a day", r.name));
+                }
+                if (r.name != name && self.record(&r.name).is_some()) || self.variable(&r.name).is_some() {
+                    return Err(format!("{} is already a record or a variable", r.name));
+                }
+                match at {
+                    Some(at) => self.records[at] = r,
+                    None => self.records.push(r),
+                }
+            }
+        }
+        files::write_toml(&records_file(&self.root), &RecordsFile { records: self.records.clone() })
     }
 
     pub fn find(&self, alias: &str) -> Option<&Import> {
@@ -252,6 +310,13 @@ fn imports_file(root: &Path) -> PathBuf {
 fn variables_file(root: &Path) -> PathBuf {
     root.join("data").join("variables.toml")
 }
+
+fn records_file(root: &Path) -> PathBuf {
+    root.join("data").join("records.toml")
+}
+
+/// The fastest a record samples, a little slower than the backend's tick.
+const MIN_EVERY_MS: u32 = 50;
 
 fn theme_file(root: &Path) -> PathBuf {
     root.join("data").join("theme.toml")
@@ -341,6 +406,22 @@ mod tests {
         p.set_variable("jogMode", Some(Variable { name: "mode".into(), ..mode })).unwrap();
         p.set_variable("limits", None).unwrap();
         assert_eq!(Project::open(&dir).unwrap().variables.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["mode"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn records_survive_a_reopen_and_share_names_with_variables() {
+        let dir = scratch("records");
+        let mut p = Project::open(&dir).unwrap();
+        let record = |name: &str, every_ms: u32| Record { name: name.into(), source: "Speed".into(), every_ms, keep_s: 60 };
+        p.set_record("speedHistory", Some(record("speedHistory", 100))).unwrap();
+        assert_eq!(Project::open(&dir).unwrap().records, [record("speedHistory", 100)]);
+        assert!(p.set_record("fast", Some(record("fast", 10))).unwrap_err().contains("50 ms or more"));
+        p.set_variable("mode", Some(Variable { name: "mode".into(), start: serde_json::json!("Auto"), per: Per::Hmi })).unwrap();
+        assert!(p.set_record("mode", Some(record("mode", 100))).unwrap_err().contains("already a record or a variable"));
+        assert!(p.set_variable("speedHistory", Some(Variable { name: "speedHistory".into(), start: serde_json::json!(0), per: Per::Hmi })).unwrap_err().contains("already a record"));
+        p.set_record("speedHistory", None).unwrap();
+        assert!(Project::open(&dir).unwrap().records.is_empty());
         fs::remove_dir_all(&dir).unwrap();
     }
 

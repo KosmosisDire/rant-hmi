@@ -45,7 +45,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const code = d.code("tap");
   await code.click();
   await page.keyboard.type("Sp");
-  await page.locator(".suggest-row", { hasText: "Speed" }).click();
+  await page.locator(".suggest-row", { has: page.locator(".suggest-name", { hasText: /^Speed$/ }) }).click();
   await page.keyboard.type(" = 1;");
   await page.keyboard.press("Control+Enter");
   await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code === "Speed = 1;", "the handler typed with a click on the list");

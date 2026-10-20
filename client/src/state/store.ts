@@ -9,6 +9,8 @@ import type { Level } from "../protocol/Level";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
+import type { Record as History } from "../protocol/Record";
+import type { Sample } from "../protocol/Sample";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import type { Rule } from "../protocol/Rule";
 import type { Token } from "../protocol/Token";
@@ -43,6 +45,8 @@ export interface State {
   version: string;
   imports: Import[];
   variables: Variable[];
+  /** Histories the backend samples, whose samples come as their values. */
+  records: History[];
   /** The HMI's own handlers. */
   rules: Rule[];
   tokens: Token[];
@@ -66,6 +70,7 @@ export const [state, setState] = createStore<State>({
   version: "",
   imports: [],
   variables: [],
+  records: [],
   rules: [],
   tokens: [],
   entities: [],
@@ -78,7 +83,7 @@ export const [state, setState] = createStore<State>({
 });
 
 /** The lists a screen changes a record of at a time, by the field that names a record. */
-const KEYS = { imports: "alias", variables: "name", tokens: "name", rules: "id" } as const;
+const KEYS = { imports: "alias", variables: "name", records: "name", tokens: "name", rules: "id" } as const;
 type Keyed = { [L in keyof typeof KEYS]: State[L][number] };
 
 /** Writes a record here at once, in place, or removes it, so a change right after builds on
@@ -142,6 +147,31 @@ export function receive(msg: ServerMsg) {
     case "variables":
       setState("variables", reconcile(msg.variables, { key: "name" }));
       break;
+    case "records":
+      setState("records", reconcile(msg.records, { key: "name" }));
+      break;
+    case "samples": {
+      // a record's value is its samples, appended and pruned here as the backend keeps them
+      const keep = (state.records.find((r) => r.name === msg.name)?.keep_s ?? 0) * 1000;
+      if (msg.whole || !Array.isArray(state.values[msg.name]?.value)) {
+        setState("values", msg.name, { value: msg.samples as unknown as JsonValue, known: true });
+        break;
+      }
+      setState(
+        "values",
+        msg.name,
+        "value",
+        produce((list) => {
+          const all = list as unknown as Sample[];
+          all.push(...msg.samples);
+          const last = all[all.length - 1]?.t ?? 0;
+          let old = 0;
+          while (old < all.length && all[old].t < last - keep) old++;
+          if (old > 0) all.splice(0, old);
+        }),
+      );
+      break;
+    }
     case "mesh":
       setState("entities", reconcile(msg.entities, { key: "name" }));
       break;

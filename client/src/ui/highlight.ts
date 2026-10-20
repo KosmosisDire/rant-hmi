@@ -20,7 +20,7 @@ function named(word: string): Paint {
   if (word.startsWith("$")) return state.tokens.some((t) => `$${t.name}` === word) ? "local" : null;
   const imp = state.imports.find((i) => i.alias === word);
   if (imp) return imp.kind;
-  return state.variables.some((v) => v.name === word) ? "local" : null;
+  return state.variables.some((v) => v.name === word) || state.records.some((r) => r.name === word) ? "local" : null;
 }
 
 /** The source as runs of text and how to colour each. */

@@ -13,6 +13,7 @@ import { KindIcon } from "../../ui/marks";
 import type { Picking } from "./DataScreen";
 import { ImportForm } from "./ImportForm";
 import { TokenView } from "./Theme";
+import { RecordView } from "./Records";
 import { VariableView } from "./Variables";
 import { ValueTree } from "./ValueTree";
 
@@ -33,6 +34,10 @@ export function Inspector(p: Picking) {
   const variable = createMemo(() => {
     const s = p.selection;
     return s?.kind === "variable" ? state.variables.find((v) => v.name === s.name) : undefined;
+  });
+  const record = createMemo(() => {
+    const s = p.selection;
+    return s?.kind === "record" ? state.records.find((r) => r.name === s.name) : undefined;
   });
 
   // An entity just imported shows as its import, and a removed import as its entity again.
@@ -58,6 +63,7 @@ export function Inspector(p: Picking) {
       </Match>
       <Match when={token()}>{(t) => <TokenView token={t()} onRenamed={(name) => p.onSelect({ kind: "token", name })} />}</Match>
       <Match when={variable()}>{(v) => <VariableView variable={v()} onRenamed={(name) => p.onSelect({ kind: "variable", name })} />}</Match>
+      <Match when={record()}>{(r) => <RecordView record={r()} onRenamed={(name) => p.onSelect({ kind: "record", name })} />}</Match>
     </Switch>
   );
 }

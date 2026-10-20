@@ -7,7 +7,7 @@ use ts_rs::TS;
 
 use crate::pages::logic::Rule;
 use crate::pages::{Edit, Page};
-use crate::project::{Import, Kind, ProjectInfo, Token, Variable};
+use crate::project::{Import, Kind, ProjectInfo, Record, Token, Variable};
 
 /// From the backend to a screen.
 #[derive(Serialize, TS, Clone, Debug)]
@@ -23,6 +23,10 @@ pub enum ServerMsg {
     Imports { imports: Vec<Import> },
     /// Every variable, whole, after any change. Their values come as values.
     Variables { variables: Vec<Variable> },
+    /// Every record, whole, after any change. Their samples come as samples.
+    Records { records: Vec<Record> },
+    /// A record's new samples, oldest first, or its whole history when `whole`.
+    Samples { name: String, samples: Vec<Sample>, whole: bool },
     /// The HMI's own handlers, whole, after any change.
     Rules { rules: Vec<Rule> },
     /// The theme's tokens, whole, after any change.
@@ -84,6 +88,9 @@ pub enum ClientMsg {
     /// Adds, changes or with null removes the theme token called `name`. A rename is followed
     /// everywhere it is used, components too.
     SetToken { name: String, token: Option<Token> },
+    /// Adds, changes or with null removes the record called `name`. A rename is followed
+    /// everywhere it is used, a new source starts its history over.
+    SetRecord { name: String, record: Option<Record> },
     /// Writes a mesh import or a variable, or one of its fields when `path` names one.
     Set { alias: String, path: String, value: Value },
     /// Changes the pages.
@@ -192,6 +199,14 @@ pub struct ValueUpdate {
     pub alias: String,
     pub value: Option<Value>,
     pub known: bool,
+}
+
+/// One sample of a record: when, in ms since 1970, and the value then.
+#[derive(Serialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Sample {
+    pub t: f64,
+    pub v: Value,
 }
 
 #[derive(Serialize, TS, Clone, Debug)]

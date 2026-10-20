@@ -8,6 +8,7 @@ mistake leaves the last good version in place.
 hmi.toml
 data/imports.toml
 data/variables.toml
+data/records.toml
 data/theme.toml
 pages/<id>.html
 components/<id>.html
@@ -39,6 +40,13 @@ name = "mode"
 start = "Auto"
 per = "hmi"
 
+# records.toml: a value's history, which pages read as a list of { t, v }
+[[record]]
+name = "speedHistory"
+source = "Speed"
+every_ms = 100
+keep_s = 600
+
 # theme.toml: design values code reads as $name
 [[token]]
 name = "accent"
@@ -48,6 +56,8 @@ light = "#0088ff"
 
 - `kind` is `topic`, `variable`, `function` or `task`. `intent` is `read` or `write`.
 - `per` is `hmi` for one value every screen shares, `screen` for one per screen.
+- A record samples `source`, an expression, every `every_ms` (50 or more) and keeps each
+  sample `keep_s` seconds, in memory, whether or not a screen watches.
 
 ## Pages and components
 

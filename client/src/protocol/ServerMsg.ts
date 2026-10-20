@@ -6,7 +6,9 @@ import type { Level } from "./Level";
 import type { Page } from "./Page";
 import type { PeerInfo } from "./PeerInfo";
 import type { ProjectInfo } from "./ProjectInfo";
+import type { Record } from "./Record";
 import type { Rule } from "./Rule";
+import type { Sample } from "./Sample";
 import type { Token } from "./Token";
 import type { ValueUpdate } from "./ValueUpdate";
 import type { Variable } from "./Variable";
@@ -14,4 +16,4 @@ import type { Variable } from "./Variable";
 /**
  * From the backend to a screen.
  */
-export type ServerMsg = { "type": "hello", session: number, project: ProjectInfo, version: string, node: string, build: string, } | { "type": "project", project: ProjectInfo, } | { "type": "imports", imports: Array<Import>, } | { "type": "variables", variables: Array<Variable>, } | { "type": "rules", rules: Array<Rule>, } | { "type": "theme", tokens: Array<Token>, } | { "type": "mesh", entities: Array<EntityInfo>, } | { "type": "values", values: Array<ValueUpdate>, } | { "type": "health", peers: Array<PeerInfo>, } | { "type": "pages", pages: Array<Page>, } | { "type": "page", page: Page, } | { "type": "made", page: string, id: string, } | { "type": "pong", t: number, } | { "type": "refused", text: string, alias: string | null, } | { "type": "notice", text: string, level: Level, } | { "type": "open", page: string, replace: boolean, ask: number, } | { "type": "close", answer: JsonValue, };
+export type ServerMsg = { "type": "hello", session: number, project: ProjectInfo, version: string, node: string, build: string, } | { "type": "project", project: ProjectInfo, } | { "type": "imports", imports: Array<Import>, } | { "type": "variables", variables: Array<Variable>, } | { "type": "records", records: Array<Record>, } | { "type": "samples", name: string, samples: Array<Sample>, whole: boolean, } | { "type": "rules", rules: Array<Rule>, } | { "type": "theme", tokens: Array<Token>, } | { "type": "mesh", entities: Array<EntityInfo>, } | { "type": "values", values: Array<ValueUpdate>, } | { "type": "health", peers: Array<PeerInfo>, } | { "type": "pages", pages: Array<Page>, } | { "type": "page", page: Page, } | { "type": "made", page: string, id: string, } | { "type": "pong", t: number, } | { "type": "refused", text: string, alias: string | null, } | { "type": "notice", text: string, level: Level, } | { "type": "open", page: string, replace: boolean, ask: number, } | { "type": "close", answer: JsonValue, };
