@@ -37,6 +37,9 @@ pub struct Page {
 #[ts(export)]
 pub struct Interface {
     pub inputs: Vec<Input>,
+    /// What the component sends out with `emit`, which an instance's handlers take.
+    #[serde(default)]
+    pub events: Vec<String>,
 }
 
 /// A value a component reads and each instance gives, camelCase like any local name.
@@ -79,34 +82,30 @@ pub struct Element {
     pub children: Vec<Element>,
 }
 
-/// Code the backend runs when its event happens on the element.
+/// Code that runs when its event happens on the element: a pointer's, or one an instance's
+/// component sends. On a page it runs on the backend, in a component on the screen.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct Handler {
-    pub event: Event,
+    pub event: String,
     pub code: String,
 }
 
-/// What a pointer does to an element: goes down on it, comes up, or both without straying.
-#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-#[ts(export)]
-pub enum Event {
-    Tap,
-    Press,
-    Release,
+/// What a pointer does to any element: goes down on it, comes up, or both without straying.
+pub const POINTER: [&str; 3] = ["tap", "press", "release"];
+
+/// Where a handler goes in an element's list: the pointer's events first, then by name.
+fn rank(event: &str) -> (usize, &str) {
+    (POINTER.iter().position(|e| *e == event).unwrap_or(POINTER.len()), event)
 }
 
-impl Event {
-    pub const ALL: [Event; 3] = [Event::Tap, Event::Press, Event::Release];
-
-    pub fn word(self) -> &'static str {
-        match self {
-            Event::Tap => "tap",
-            Event::Press => "press",
-            Event::Release => "release",
-        }
+/// An event is named in camelCase.
+fn check_event(event: &str) -> Result<(), String> {
+    let mut chars = event.chars();
+    if chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric()) {
+        return Ok(());
     }
+    Err(format!("\"{event}\" cannot name an event: start with a small letter, then use letters and digits"))
 }
 
 /// What an element renders as. A frame is a div, a text a span, and an instance of a
@@ -166,10 +165,13 @@ pub enum Edit {
     /// Sets each property to its value, or removes it where the value is null.
     SetProps { page: String, id: String, props: BTreeMap<String, Option<String>> },
     /// Sets the code the element runs on `event`, or removes its handler where it is null.
-    SetHandler { page: String, id: String, event: Event, code: Option<String> },
+    SetHandler { page: String, id: String, event: String, code: Option<String> },
     /// Adds, changes or with null removes a component's input called `name`. A rename is
     /// followed in the component and by its instances, a removal takes it off them.
     SetInput { page: String, name: String, input: Option<Input> },
+    /// Adds the event `to` to a component when `name` is not one yet, renames `name` to it, or
+    /// with null removes it. Instances' handlers follow a rename.
+    SetEvent { page: String, name: String, to: Option<String> },
     /// Several edits as one: all apply or none do, and one undo takes them all back.
     Batch { edits: Vec<Edit> },
 }
@@ -476,15 +478,16 @@ impl Pages {
                 Edit::SetProps { page: page.clone(), id, props: old }
             }
             Edit::SetHandler { page, id, event, code } => {
+                check_event(&event)?;
                 let p = self.page_mut(&page)?;
                 let e = find_mut(&mut p.children, &id).ok_or_else(|| format!("{id} is not on {page}"))?;
-                let at = e.handlers.partition_point(|h| h.event < event);
+                let at = e.handlers.partition_point(|h| rank(&h.event) < rank(&event));
                 let old = e.handlers.get(at).filter(|h| h.event == event).map(|h| h.code.clone());
                 if old.is_some() {
                     e.handlers.remove(at);
                 }
                 if let Some(code) = code {
-                    e.handlers.insert(at, Handler { event, code: format::dedent(&code) });
+                    e.handlers.insert(at, Handler { event: event.clone(), code: format::dedent(&code) });
                 }
                 Edit::SetHandler { page: page.clone(), id, event, code: old }
             }
@@ -528,12 +531,48 @@ impl Pages {
                 }
                 Edit::SetInput { page: page.clone(), name: to.unwrap_or(name), input: old }
             }
+            Edit::SetEvent { page, name, to } => {
+                let p = self.page_mut(&page)?;
+                let component = p.name.clone();
+                let events = &mut p.interface.as_mut().ok_or_else(|| format!("{component} is a page, and only a component sends events"))?.events;
+                let at = events.iter().position(|e| *e == name);
+                if let Some(to) = &to {
+                    check_event(to)?;
+                    if *to != name && events.contains(to) {
+                        return Err(format!("{component} already sends {to}"));
+                    }
+                }
+                let undo = match (at, &to) {
+                    (Some(at), Some(to)) => {
+                        events[at] = to.clone();
+                        Edit::SetEvent { page: page.clone(), name: to.clone(), to: Some(name.clone()) }
+                    }
+                    (Some(at), None) => {
+                        events.remove(at);
+                        Edit::SetEvent { page: page.clone(), name: name.clone(), to: Some(name.clone()) }
+                    }
+                    (None, Some(to)) if *to == name => {
+                        events.push(name.clone());
+                        Edit::SetEvent { page: page.clone(), name: name.clone(), to: None }
+                    }
+                    _ => return Err(format!("{component} sends no {name}")),
+                };
+                // instances' handlers for a renamed event follow it
+                if let (Some(_), Some(to)) = (at, &to) {
+                    for p in &mut self.list {
+                        if instance_events(&mut p.children, &component, &name, to) {
+                            touched.push(p.id.clone());
+                        }
+                    }
+                }
+                undo
+            }
             Edit::Batch { .. } => unreachable!("taken above"),
         };
         let page = match &undo {
             Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::SetShows { page, .. } | Edit::RemoveElement { page, .. } => page,
             Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } | Edit::SetHandler { page, .. } => page,
-            Edit::SetInput { page, .. } => page,
+            Edit::SetInput { page, .. } | Edit::SetEvent { page, .. } => page,
             _ => unreachable!("page edits return early"),
         };
         touched.push(page.clone());
@@ -650,6 +689,23 @@ fn instance_props(elements: &mut [Element], component: &str, from: &str, to: Opt
             }
         }
         changed |= instance_props(&mut e.children, component, from, to);
+    }
+    changed
+}
+
+/// Renames the handlers of `component`'s instances for the event `from` to `to`, keeping
+/// their order. True when any changed.
+fn instance_events(elements: &mut [Element], component: &str, from: &str, to: &str) -> bool {
+    let mut changed = false;
+    for e in elements {
+        if e.component.as_deref() == Some(component) {
+            for h in e.handlers.iter_mut().filter(|h| h.event == from) {
+                h.event = to.to_owned();
+                changed = true;
+            }
+            e.handlers.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
+        }
+        changed |= instance_events(&mut e.children, component, from, to);
     }
     changed
 }
@@ -840,7 +896,7 @@ mod tests {
         let o = || "overview".to_string();
         pages.apply(add(o(), None, Tag::Div, props(&[("name", "Speed"), ("x", "Speed * 2")]))).unwrap();
         pages.apply(add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"Speed \" + Speed")]))).unwrap();
-        pages.apply(Edit::SetHandler { page: o(), id: "e2".into(), event: Event::Tap, code: Some("Speed = 1;".into()) }).unwrap();
+        pages.apply(Edit::SetHandler { page: o(), id: "e2".into(), event: "tap".into(), code: Some("Speed = 1;".into()) }).unwrap();
         pages.apply(Edit::AddPage { name: "Other".into() }).unwrap();
         assert_eq!(pages.rename("Speed", "LineSpeed").unwrap(), ["overview"]);
         let again = Pages::open(&dir).unwrap();
@@ -880,9 +936,9 @@ mod tests {
             add(o(), None, Tag::Span, props(&[("text", "Speed")])),
             Edit::SetProps { page: o(), id: "e1".into(), props: [("x".to_string(), Some("88".to_string())), ("background".to_string(), None)].into() },
             Edit::MoveElement { page: o(), id: "e3".into(), parent: Some("e1".into()), index: 0 },
-            Edit::SetHandler { page: o(), id: "e3".into(), event: Event::Release, code: Some("  Speed = 1;\n  log(\"</on>\")".into()) },
-            Edit::SetHandler { page: o(), id: "e3".into(), event: Event::Tap, code: Some("Speed = 2;".into()) },
-            Edit::SetHandler { page: o(), id: "e3".into(), event: Event::Release, code: None },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), code: Some("  Speed = 1;\n  log(\"</on>\")".into()) },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: "tap".into(), code: Some("Speed = 2;".into()) },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), code: None },
             Edit::RemoveElement { page: o(), id: "e1".into() },
             Edit::Batch {
                 edits: vec![
@@ -984,6 +1040,27 @@ mod tests {
         assert!(pages.apply(Edit::SetInput { page: "overview".into(), name: "a".into(), input: input("a") }).unwrap_err().contains("only a component"));
         pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: None }).unwrap();
         assert!(!pages.get("overview").unwrap().children[0].props.contains_key("value"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn events_a_component_sends_rename_with_their_handlers() {
+        let dir = scratch("events");
+        let mut pages = Pages::open(&dir).unwrap();
+        let toggle = pages.apply(Edit::AddComponent { name: "Toggle".into() }).unwrap().made.unwrap().1;
+        let event = |name: &str, to: Option<&str>| Edit::SetEvent { page: toggle.clone(), name: name.into(), to: to.map(Into::into) };
+        pages.apply(event("change", Some("change"))).unwrap();
+        let id = pages.apply(Edit::AddElement { page: "overview".into(), parent: None, index: None, element: instance("Toggle") }).unwrap().made.unwrap().1;
+        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "change".into(), code: Some("Running = p;".into()) }).unwrap();
+        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "tap".into(), code: Some("log(1);".into()) }).unwrap();
+        let undo = pages.apply(event("change", Some("flip"))).unwrap().undo;
+        let events: Vec<_> = pages.get("overview").unwrap().children[0].handlers.iter().map(|h| h.event.as_str()).collect();
+        assert_eq!(events, ["tap", "flip"]);
+        assert!(fs::read_to_string(dir.join("components/toggle.html")).unwrap().contains("<event name=\"flip\"/>"));
+        pages.apply(undo).unwrap();
+        assert_eq!(pages.get(&toggle).unwrap().interface.as_ref().unwrap().events, ["change"]);
+        assert_eq!(pages.apply(event("nope", None)).err().unwrap(), "Toggle sends no nope");
+        assert!(pages.apply(Edit::SetHandler { page: "overview".into(), id, event: "On Off".into(), code: None }).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use crate::authorize::{Who, authorize};
 use crate::mesh::{Delivery, Mesh};
-use crate::pages::{Edit, Event, Pages};
+use crate::pages::{Edit, Pages};
 use crate::mesh::codec;
 use crate::project::{Import, Intent, Kind, Per, Project, Variable};
 use crate::protocol::{ClientMsg, Level, ServerMsg, ValueUpdate};
@@ -56,7 +56,7 @@ struct Running {
     session: u32,
     page: String,
     id: String,
-    event: Event,
+    event: String,
     label: String,
 }
 
@@ -223,7 +223,7 @@ impl App {
                     self.edit(session, edit, Step::Redo);
                 }
             }
-            ClientMsg::Fire { page, id, event } => self.fire(session, page, id, event),
+            ClientMsg::Fire { page, id, event, payload } => self.fire(session, page, id, event, payload),
             ClientMsg::Answer { ask, value } => {
                 if self.asks.get(&ask) == Some(&session) {
                     self.asks.remove(&ask);
@@ -314,17 +314,17 @@ impl App {
     }
 
     /// Starts the element's handler for `event`, unless it is still running from before.
-    fn fire(&mut self, session: u32, page: String, id: String, event: Event) {
+    fn fire(&mut self, session: u32, page: String, id: String, event: String, payload: Value) {
         let Some(e) = self.pages.element(&page, &id) else { return };
         let Some(h) = e.handlers.iter().find(|h| h.event == event) else { return };
         if self.runs.values().any(|r| r.page == page && r.id == id && r.event == event) {
             return;
         }
-        let label = format!("{} {}", e.props.get("name").unwrap_or(&id), event.word());
+        let label = format!("{} {event}", e.props.get("name").unwrap_or(&id));
         let code = h.code.clone();
         self.next_run += 1;
         self.runs.insert(self.next_run, Running { session, page, id, event, label });
-        self.script.send(ToScript::Run { run: self.next_run, session: Some(session), code });
+        self.script.send(ToScript::Run { run: self.next_run, session: Some(session), code, p: payload });
     }
 
     /// What a run did: every write and call is logged with the screen that started it.

@@ -241,6 +241,10 @@
   cursor: pointer;
 }
 
+.sends-row {
+  padding: 0 0 6px;
+}
+
 .input-default {
   padding: 0 6px 6px;
 }

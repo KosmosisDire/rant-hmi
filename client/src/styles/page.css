@@ -37,12 +37,15 @@
   filter: brightness(0.85);
 }
 
-/* An instance draws its component scaled into its box, as one piece. */
+/* An instance draws its component scaled into its box. The editor picks it as one piece. */
 .instance {
   position: absolute;
   left: 0;
   top: 0;
   transform-origin: 0 0;
+}
+
+.page.design .instance {
   pointer-events: none;
 }
 

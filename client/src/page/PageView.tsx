@@ -3,11 +3,11 @@
 
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import type { Element } from "../protocol/Element";
-import type { Event } from "../protocol/Event";
 import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
 import { componentScope, docScope, resolve, type Scope } from "../state/bind";
 import { component } from "../state/store";
+import { componentAct, type Act } from "./act";
 import { short } from "../state/format";
 
 export interface Box {
@@ -20,9 +20,6 @@ export interface Box {
 /** A box the editor shows in place of an element's own while a drag lands. */
 export type Overrides = (id: string) => Box | undefined;
 
-/** Sends a pointer event on an element to the backend, which runs its handler. */
-export type Fire = (id: string, event: Event) => void;
-
 /** Ours, never CSS: the rest of an element's properties are CSS. */
 export const OWN = new Set(["name", "x", "y", "w", "h", "text"]);
 
@@ -30,11 +27,11 @@ export const OWN = new Set(["name", "x", "y", "w", "h", "text"]);
 const LENGTHS = new Set(["font-size", "border-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
 
 /** A page, or a component drawn on its own with its inputs' defaults. */
-export function PageView(p: { page: Page; overrides?: Overrides; design?: boolean; fire?: Fire }) {
+export function PageView(p: { page: Page; overrides?: Overrides; design?: boolean; act?: Act }) {
   const scope = createMemo(() => docScope(p.page));
   return (
     <div class="page" classList={{ design: p.design }} style={{ width: `${p.page.width}px`, height: `${p.page.height}px` }}>
-      <For each={p.page.children}>{(e) => <ElementView element={e} scope={scope()} overrides={p.overrides} design={p.design} fire={p.fire} />}</For>
+      <For each={p.page.children}>{(e) => <ElementView element={e} scope={scope()} overrides={p.overrides} design={p.design} act={p.act} />}</For>
     </div>
   );
 }
@@ -51,7 +48,7 @@ function words(v: unknown): string {
 
 /** One element. `inside` marks one drawn as part of an instance: it is the component's, not
  *  the page's, so it carries no id to pick it by. */
-function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides; design?: boolean; fire?: Fire; inside?: boolean }) {
+function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides; design?: boolean; act?: Act; inside?: boolean }) {
   const look = createMemo(() => {
     const style: Record<string, string> = {};
     const faults: string[] = [];
@@ -85,8 +82,8 @@ function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides;
   // Pressed shows at once. Its release is heard on the window, so letting go anywhere ends
   // a press, and a tap needs the release over the element.
   const [pressed, setPressed] = createSignal(false);
-  const live = () => !!p.fire && p.element.handlers.length > 0;
-  const fire = (event: Event) => p.element.handlers.some((h) => h.event === event) && p.fire?.(p.element.id, event);
+  const live = () => !!p.act && p.element.handlers.length > 0;
+  const fire = (event: string) => p.act?.fire(p.element, event);
   const down = (e: PointerEvent & { currentTarget: HTMLDivElement }) => {
     if (!live() || e.button !== 0 || pressed()) return;
     const el = e.currentTarget;
@@ -115,10 +112,10 @@ function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides;
     >
       <Switch fallback={look().text}>
         <Match when={p.element.tag === "div"}>
-          <For each={p.element.children}>{(c) => <ElementView element={c} scope={p.scope} overrides={p.overrides} design={p.design} fire={p.fire} inside={p.inside} />}</For>
+          <For each={p.element.children}>{(c) => <ElementView element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>
         </Match>
         <Match when={p.element.tag === "use"}>
-          <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} />
+          <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} act={p.act} />
         </Match>
       </Switch>
     </div>
@@ -127,17 +124,18 @@ function ElementView(p: { element: Element; scope: Scope; overrides?: Overrides;
 
 /** A component drawn in an instance's box: its own size scaled to fit, centred, reading the
  *  inputs the instance gives. */
-function Instance(p: { element: Element; scope: Scope; w: number; h: number; design?: boolean }) {
+function Instance(p: { element: Element; scope: Scope; w: number; h: number; design?: boolean; act?: Act }) {
   const name = () => p.element.component ?? "";
   return (
     <Show when={component(name())} fallback={<div class="instance-missing">{name()} is missing</div>}>
       {(c) => {
         const scope = componentScope(c(), { props: p.element.props, outer: p.scope });
+        const act = p.act && componentAct(c(), scope, p.element, p.act);
         const k = () => Math.min(p.w / c().width, p.h / c().height);
         const place = () => `translate(${(p.w - c().width * k()) / 2}px, ${(p.h - c().height * k()) / 2}px) scale(${k()})`;
         return (
           <div class="instance" style={{ width: `${c().width}px`, height: `${c().height}px`, transform: place() }}>
-            <For each={c().children}>{(e) => <ElementView element={e} scope={scope} design={p.design} inside />}</For>
+            <For each={c().children}>{(e) => <ElementView element={e} scope={scope} design={p.design} act={act} inside />}</For>
           </div>
         );
       }}

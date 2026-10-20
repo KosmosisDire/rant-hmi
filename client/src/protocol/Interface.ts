@@ -4,4 +4,8 @@ import type { Input } from "./Input";
 /**
  * What an instance of a component fills in.
  */
-export type Interface = { inputs: Array<Input>, };
+export type Interface = { inputs: Array<Input>, 
+/**
+ * What the component sends out with `emit`, which an instance's handlers take.
+ */
+events: Array<string>, };

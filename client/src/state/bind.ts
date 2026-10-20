@@ -3,8 +3,10 @@
 // per text. Reading a value that is unknown stops it, and the caller shows the unknown look
 // instead of a wrong value.
 
+import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
-import { live, state } from "./store";
+import type { JsonValue } from "../protocol/serde_json/JsonValue";
+import { live, notify, state } from "./store";
 
 /** A plain number, which a drag may write over. */
 export function isNumber(value: string | undefined): boolean {
@@ -35,9 +37,11 @@ export interface Scope {
   has(name: string): boolean;
   /** The value now. It throws for one that is unknown. */
   get(name: string): unknown;
+  /** Writes a name, or a field of it along `path`, or throws why it cannot. */
+  set(name: string, path: string, value: unknown): void;
 }
 
-/** A page reads its imports and variables, live. */
+/** A page reads its imports and variables, live, and writes those it may on the backend. */
 export const pageScope: Scope = {
   has: (name) => state.imports.some((i) => i.alias === name) || state.variables.some((v) => v.name === name),
   get: (name) => {
@@ -45,9 +49,18 @@ export const pageScope: Scope = {
     if (!v.known) throw new Unknown(name);
     return v.value;
   },
+  set: (name, path, value) => {
+    const imp = state.imports.find((i) => i.alias === name);
+    if (imp && (imp.kind !== "variable" || imp.intent !== "write")) throw new TypeError(`${name} cannot be set from here`);
+    if (!imp && !state.variables.some((v) => v.name === name)) throw new ReferenceError(`${name} names no datapoint`);
+    send({ type: "set", alias: name, path, value: value as JsonValue });
+  },
 };
 
-const nothing: Scope = { has: () => false, get: () => undefined };
+/** A bare name and the fields after it, as a two way binding is written: `Settings.target`. */
+const BARE = /^\s*([A-Za-z_$][\w$]*)((?:\.[A-Za-z_$][\w$]*)*)\s*$/;
+
+const nothing: Scope = { has: () => false, get: () => undefined, set: () => {} };
 
 /** A component reads its inputs and nothing of the mesh. Each is what the instance gives,
  *  read where the instance sits, else the input's default. */
@@ -61,6 +74,15 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
       if (r.ok) return r.value;
       if (r.unknown) throw new Unknown(r.unknown);
       throw new Error(`${name}: ${r.error}`);
+    },
+    // a write goes through the instance's binding when that is a bare name, and is dropped
+    // otherwise, so a control bound one way reads as a display
+    set: (name, path, value) => {
+      if (!input(name)?.bindable) throw new TypeError(`${name} is not two way`);
+      const ref = BARE.exec(instance?.props[name] ?? "");
+      if (!ref || !instance) return;
+      const fields = [ref[2].slice(1), path].filter(Boolean).join(".");
+      instance.outer.set(ref[1], fields, value);
     },
   };
 }
@@ -80,6 +102,51 @@ function proxy(s: Scope): object {
     proxies.set(s, p);
   }
   return p;
+}
+
+const handlers = new Map<string, ((scope: object) => Promise<void>) | string>();
+
+/** Runs a component's handler here, in its instance's scope. It reads the inputs, `p` is
+ *  what its event brought, `emit` sends one out, and assigning a two way input writes it
+ *  back. Any other name is refused, so nothing leaks onto the page. */
+export function runHandler(code: string, scope: Scope, emit: (name: string, payload?: unknown) => void, p: unknown, label: string) {
+  let fn = handlers.get(code);
+  if (fn === undefined) {
+    try {
+      fn = new Function("scope", `return (async () => { with (scope) {\n${code}\n} })();`) as (scope: object) => Promise<void>;
+    } catch (e) {
+      fn = (e as Error).message;
+    }
+    handlers.set(code, fn);
+  }
+  if (typeof fn === "string") return notify(`${label}: ${fn}`, "fault");
+  const own: Record<string, unknown> = { p, emit };
+  // the run reads back what it wrote, as the backend's runs do, before the binding catches up
+  const written = new Map<string, unknown>();
+  const names = new Proxy(
+    {},
+    {
+      // every name but the browser's own stays here, so a stray one never becomes a global
+      has: (_, key) => typeof key === "string" && (key in own || scope.has(key) || !(key in globalThis)),
+      get: (_, key) => {
+        if (typeof key !== "string") return undefined;
+        if (key in own) return own[key];
+        if (written.has(key)) return written.get(key);
+        if (scope.has(key)) return scope.get(key);
+        throw new ReferenceError(`${key} names no input`);
+      },
+      set: (_, key, value) => {
+        if (typeof key !== "string" || !scope.has(key)) throw new ReferenceError(`${String(key)} names no input`);
+        scope.set(key, "", value);
+        written.set(key, value);
+        return true;
+      },
+    },
+  );
+  fn(names).catch((e: unknown) => {
+    if (e instanceof Unknown) notify(`${label}: stopped, since ${e.alias} is unknown`, "warn");
+    else notify(`${label}: ${(e as Error)?.message ?? String(e)}`, "fault");
+  });
 }
 
 const HEX = /^#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w$])/i;

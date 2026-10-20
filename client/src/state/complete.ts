@@ -24,19 +24,28 @@ export interface Completion {
   items: Suggestion[];
 }
 
-/** Where code runs: a property's expression reads, a handler also acts. */
-export type Place = "expression" | "handler";
+/** Where code runs: a property's expression reads, a page's handler also acts on the
+ *  backend, and a component's handler acts on its own inputs and sends events. */
+export type Place = "expression" | "handler" | "component";
 
 const MOST = 12;
 const WORD = /[A-Za-z0-9_$]/;
 
-const API: Suggestion[] = [
-  { label: "notify", insert: "notify(", icon: "api", type: "tell this screen" },
-  { label: "log", insert: "log(", icon: "api", type: "write to the log" },
-  { label: "sleep", insert: "await sleep(", icon: "api", type: "wait ms" },
-  { label: "open", insert: "open(", icon: "api", type: "open a page" },
-  { label: "close", insert: "close()", icon: "api", type: "close the top page" },
-];
+const API: Record<Place, Suggestion[]> = {
+  expression: [],
+  handler: [
+    { label: "notify", insert: "notify(", icon: "api", type: "tell this screen" },
+    { label: "log", insert: "log(", icon: "api", type: "write to the log" },
+    { label: "sleep", insert: "await sleep(", icon: "api", type: "wait ms" },
+    { label: "open", insert: "open(", icon: "api", type: "open a page" },
+    { label: "close", insert: "close()", icon: "api", type: "close the top page" },
+    { label: "p", insert: "p", icon: "api", type: "what the event brought" },
+  ],
+  component: [
+    { label: "emit", insert: "emit(", icon: "api", type: "send an event out" },
+    { label: "p", insert: "p", icon: "api", type: "what the event brought" },
+  ],
+};
 
 /** The completion at `caret`, or null where none fits, such as inside a string. `names` stand
  *  for the page's datapoints where code reads something else, as a component reads its inputs. */
@@ -47,7 +56,7 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   while (from > 0 && WORD.test(before[from - 1])) from--;
   const word = before.slice(from);
   if (/^\d/.test(word)) return null;
-  const items = before[from - 1] === "." ? (names ? [] : members(chain(before.slice(0, from - 1)))) : [...(names ?? top()), ...(place === "handler" ? API : [])];
+  const items = before[from - 1] === "." ? (names ? [] : members(chain(before.slice(0, from - 1)))) : [...(names ?? top()), ...API[place]];
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
   const inside = items.filter((s) => !s.label.toLowerCase().startsWith(q) && s.label.toLowerCase().includes(q));

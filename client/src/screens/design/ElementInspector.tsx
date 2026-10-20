@@ -4,11 +4,10 @@ import { component, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { OWN } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
-import type { Event } from "../../protocol/Event";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import { docScope, isConstant, pageScope, resolve, type Scope } from "../../state/bind";
-import { complete, type Suggestion } from "../../state/complete";
+import { complete, type Place, type Suggestion } from "../../state/complete";
 import type { Input } from "../../protocol/Input";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, Plus, Square, Trash, Type, X } from "../../ui/icons";
@@ -35,17 +34,20 @@ const NAMED = new Set([...LOOK, ...TEXT_LOOK].map(([, key]) => key));
 interface Where {
   scope: Scope;
   names?: Suggestion[];
+  /** Where a handler here runs. */
+  place: Place;
 }
 
-const WhereContext = createContext<() => Where>(() => ({ scope: pageScope }));
+const WhereContext = createContext<() => Where>((): Where => ({ scope: pageScope, place: "handler" }));
 
 /** The right sidebar: the selected element's properties, or the page's when none is. */
 export function ElementInspector(p: { page: Page | undefined; selected: string | null }) {
   const element = createMemo(() => (p.page && p.selected ? find(p.page.children, p.selected) : undefined));
   const where = createMemo((): Where => {
     const doc = p.page;
-    if (!doc?.interface) return { scope: pageScope };
-    return { scope: docScope(doc), names: doc.interface.inputs.map((i) => ({ label: i.name, insert: i.name, icon: "local", type: "input" })) };
+    if (!doc?.interface) return { scope: pageScope, place: "handler" };
+    const names: Suggestion[] = doc.interface.inputs.map((i) => ({ label: i.name, insert: i.name, icon: "local", type: i.bindable ? "two way input" : "input" }));
+    return { scope: docScope(doc), names, place: "component" };
   });
   return (
     <Show when={p.page}>
@@ -99,7 +101,14 @@ function PageInspector(p: { page: Page }) {
             <DraftInput value={String(p.page.height)} accept={side} onCommit={(t) => resize(p.page.width, Number(t))} />
           </div>
         </div>
-        <Show when={p.page.interface}>{(i) => <Inputs page={p.page.id} inputs={i().inputs} />}</Show>
+        <Show when={p.page.interface}>
+          {(i) => (
+            <>
+              <Inputs page={p.page.id} inputs={i().inputs} />
+              <Sends page={p.page.id} events={i().events} />
+            </>
+          )}
+        </Show>
         <Show
           when={!isComponent()}
           fallback={<div class="placeholder">Place it on a page with the component button over the layers. Every instance shows what is drawn here.</div>}
@@ -242,19 +251,23 @@ function Properties(p: { page: string; element: Element }) {
   );
 }
 
-const EVENTS: [Event, string][] = [
-  ["tap", "Tap"],
-  ["press", "Press"],
-  ["release", "Release"],
-];
+/** What a pointer does to any element. */
+const POINTER = ["tap", "press", "release"];
 
-/** The element's handlers, each a box: the event on top, the code the backend runs below.
- *  Every change names one event, so two quick changes never undo each other. */
+/** An event as a person reads it: Tap, or a component's own as it is spelled. */
+const label = (event: string) => (POINTER.includes(event) ? event[0].toUpperCase() + event.slice(1) : event);
+
+/** The element's handlers, each a box: the event on top, the code below. Every change names
+ *  one event, so two quick changes never undo each other. */
 function Events(p: { page: string; element: Element }) {
   const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
-  const write = (event: Event, code: string | null) => send({ type: "edit", edit: { kind: "set_handler", page: p.page, id: p.element.id, event, code } });
-  const unused = () => EVENTS.filter(([e]) => !p.element.handlers.some((h) => h.event === e));
+  const write = (event: string, code: string | null) => send({ type: "edit", edit: { kind: "set_handler", page: p.page, id: p.element.id, event, code } });
+  // what this element hears: the pointer's events, and an instance its component's own
+  const offered = () => [...POINTER, ...(p.element.tag === "use" ? (component(p.element.component ?? "")?.interface?.events ?? []) : [])];
+  // a handler for an event no longer offered still shows, so none hides
+  const events = () => [...new Set([...offered(), ...p.element.handlers.map((h) => h.event)])];
+  const unused = () => offered().filter((e) => !p.element.handlers.some((h) => h.event === e));
   return (
     <>
       <div class="section section-row">
@@ -268,7 +281,7 @@ function Events(p: { page: string; element: Element }) {
       <Show when={adding() && unused().length > 0}>
         <div class="event-menu">
           <For each={unused()}>
-            {([e, label]) => (
+            {(e) => (
               <button
                 class="button"
                 onClick={() => {
@@ -276,7 +289,7 @@ function Events(p: { page: string; element: Element }) {
                   write(e, "");
                 }}
               >
-                {label}
+                {label(e)}
               </button>
             )}
           </For>
@@ -286,13 +299,13 @@ function Events(p: { page: string; element: Element }) {
         <div class="field-hint">Add one to run code when this is tapped, pressed or let go.</div>
       </Show>
       {/* one box per event, so a box never turns into another event's under the pointer */}
-      <For each={EVENTS}>
-        {([event, label]) => (
+      <For each={events()}>
+        {(event) => (
           <Show when={p.element.handlers.find((h) => h.event === event)}>
             {(h) => (
               <div class="handler">
                 <div class="handler-head">
-                  <span class="handler-event">{label}</span>
+                  <span class="handler-event">{label(event)}</span>
                   <button class="icon-btn" title={`Remove the ${event} handler`} onClick={() => write(event, null)}>
                     <X size={13} />
                   </button>
@@ -301,9 +314,9 @@ function Events(p: { page: string; element: Element }) {
                   multiline
                   class="editor code"
                   value={h().code}
-                  placeholder="Speed = Speed + 0.1;"
+                  placeholder={where().place === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
                   onCommit={(code) => write(event, code)}
-                  complete={(t, c) => complete(t, c, "handler", where().names)}
+                  complete={(t, c) => complete(t, c, where().place, where().names)}
                 />
               </div>
             )}
@@ -387,6 +400,36 @@ function Inputs(p: { page: string; inputs: Input[] }) {
               <label>Default</label>
               <DraftInput value={i.default} onCommit={(d) => write(i.name, { ...i, default: d })} />
             </div>
+          </div>
+        )}
+      </For>
+    </>
+  );
+}
+
+/** The events a component sends with `emit`, which each instance may handle. */
+function Sends(p: { page: string; events: string[] }) {
+  const write = (name: string, to: string | null) => send({ type: "edit", edit: { kind: "set_event", page: p.page, name, to } });
+  const add = () => {
+    let name = "change";
+    for (let n = 2; p.events.includes(name); n++) name = `change${n}`;
+    write(name, name);
+  };
+  return (
+    <>
+      <div class="section section-row">
+        Sends
+        <button class="icon-btn" title="Add an event it sends" onClick={add}>
+          <Plus size={13} />
+        </button>
+      </div>
+      <For each={p.events} fallback={<div class="field-hint">Events its code sends with emit, for instances to handle.</div>}>
+        {(e) => (
+          <div class="handler-head sends-row">
+            <DraftInput class="editor input-name" value={e} accept={(t) => /^[a-z][A-Za-z0-9]*$/.test(t.trim())} onCommit={(to) => write(e, to.trim())} />
+            <button class="icon-btn" title={`Stop sending ${e}`} onClick={() => write(e, null)}>
+              <X size={13} />
+            </button>
           </div>
         )}
       </For>

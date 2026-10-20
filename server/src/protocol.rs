@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::pages::{Edit, Event, Page};
+use crate::pages::{Edit, Page};
 use crate::project::{Import, Kind, ProjectInfo, Variable};
 
 /// From the backend to a screen.
@@ -90,8 +90,9 @@ pub enum ClientMsg {
         ask: u64,
         value: Value,
     },
-    /// A pointer did `event` to an element of a running page.
-    Fire { page: String, id: String, event: Event },
+    /// `event` happened to an element of a running page: a pointer's, or one its component
+    /// sent with `payload`, which handler code reads as `p`.
+    Fire { page: String, id: String, event: String, payload: Value },
 }
 
 /// One entity on the mesh.

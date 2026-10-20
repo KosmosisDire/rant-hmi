@@ -36,8 +36,8 @@ pub enum ToScript {
     Gone(u32),
     /// Every page as code names it, and its id, whole, after any change.
     Pages(Vec<(String, String)>),
-    /// Runs code for a screen, or for none.
-    Run { run: u64, session: Option<u32>, code: String },
+    /// Runs code for a screen, or for none. `p` is what its event brought.
+    Run { run: u64, session: Option<u32>, code: String, p: Value },
     /// How a call ended: its answer, or why it failed.
     Answer { call: u64, outcome: Result<Value, CallFailure> },
 }
@@ -252,7 +252,7 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
                 };
             }
         }
-        ToScript::Run { run, session, code } => {
+        ToScript::Run { run, session, code, p } => {
             let mut s = shared.borrow_mut();
             s.live.insert(run);
             s.sessions.insert(run, session);
@@ -262,7 +262,7 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
                 Err(e) => return finish(shared, run, End::Fault(format!("could not start: {e}"))),
             };
             let failed = ctx.with(|ctx| {
-                if let Err(e) = install(&ctx, run, shared) {
+                if let Err(e) = install(&ctx, run, shared, &p) {
                     return Some(format!("could not start: {e}"));
                 }
                 deadline.set(Some(Instant::now() + BUDGET));
@@ -324,8 +324,9 @@ fn settle(home: &Context, w: Waiter, outcome: Result<Value, CallFailure>) {
 }
 
 /// The host side of what `prelude.js` builds on, bound to one run, then the prelude itself.
-fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>) -> rquickjs::Result<()> {
+fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Value) -> rquickjs::Result<()> {
     let g = ctx.globals();
+    g.set("p", ctx.json_parse(p.to_string())?)?;
     let s = shared.clone();
     g.set("__read", Function::new(ctx.clone(), move |alias: String| s.borrow().read(run, &alias).map(Value::to_string))?)?;
 

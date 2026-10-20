@@ -3,10 +3,10 @@
 // beneath stay as they were, so closing lands exactly where the screen was.
 
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
 import { back, stack } from "../state/stack";
 import { page } from "../state/store";
+import { pageAct } from "./act";
 import { PageView } from "./PageView";
 
 export function RunView(p: { active: boolean }) {
@@ -49,7 +49,7 @@ export function RunView(p: { active: boolean }) {
               <div class="run-backdrop" onPointerDown={() => n() === pages().length - 1 && back()} />
             </Show>
             <div class="run-page" classList={{ over: n() > base() }} style={{ transform: place(pg) }}>
-              <PageView page={pg} fire={(id, event) => send({ type: "fire", page: pg.id, id, event })} />
+              <PageView page={pg} act={pageAct(pg.id)} />
             </div>
           </div>
         )}

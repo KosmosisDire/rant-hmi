@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Event, Handler, Input, Interface, Page, Shows, Tag};
+use super::{Element, Handler, Input, Interface, Page, Shows, Tag, rank};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 5] = ["name", "x", "y", "w", "h"];
@@ -33,6 +33,9 @@ pub fn write(page: &Page) -> String {
     for i in page.interface.iter().flat_map(|i| &i.inputs) {
         let bindable = if i.bindable { " bindable=\"true\"" } else { "" };
         out.push_str(&format!("  <prop name={} default={}{bindable}/>\n", quote(&i.name), quote(&i.default)));
+    }
+    for e in page.interface.iter().flat_map(|i| &i.events) {
+        out.push_str(&format!("  <event name={}/>\n", quote(e)));
     }
     for e in &page.children {
         element(&mut out, e, 1);
@@ -70,7 +73,7 @@ fn element(out: &mut String, e: &Element, depth: usize) {
             out.push_str(">\n");
             let inner = "  ".repeat(depth + 1);
             for h in &e.handlers {
-                out.push_str(&format!("{inner}<on event=\"{}\">\n", h.event.word()));
+                out.push_str(&format!("{inner}<on event=\"{}\">\n", h.event));
                 for line in h.code.lines() {
                     if !line.trim().is_empty() {
                         out.push_str(&format!("{inner}  {line}"));
@@ -145,6 +148,7 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     }
     if let Some(interface) = &mut page.interface {
         interface.inputs = r.props()?;
+        interface.events = r.events()?;
     }
     page.children = r.children(root)?;
     r.gap();
@@ -256,6 +260,23 @@ impl Reader<'_> {
         }
     }
 
+    /// A component's `<event>` lines, what it sends.
+    fn events(&mut self) -> Result<Vec<String>, String> {
+        let mut out = Vec::new();
+        loop {
+            self.gap();
+            if !self.eat("<event") {
+                return Ok(out);
+            }
+            let attrs = self.attrs()?;
+            self.expect("/>")?;
+            match attrs.as_slice() {
+                [(k, v)] if k == "name" => out.push(v.clone()),
+                _ => return Err(self.error("<event> takes a name and nothing else")),
+            }
+        }
+    }
+
     /// The `<on>` blocks at the reading point.
     fn handlers(&mut self) -> Result<Vec<Handler>, String> {
         let mut out = Vec::new();
@@ -268,7 +289,7 @@ impl Reader<'_> {
             let mut event = None;
             for (k, v) in self.attrs()? {
                 match k.as_str() {
-                    "event" => event = Some(Event::ALL.into_iter().find(|e| e.word() == v).ok_or_else(|| self.error(&format!("{v} is not an event")))?),
+                    "event" => event = Some(v),
                     other => return Err(self.error(&format!("<on> takes no attribute {other}"))),
                 }
             }
@@ -276,12 +297,12 @@ impl Reader<'_> {
             self.expect(">")?;
             let n = outside(self.rest(), "</on>").ok_or_else(|| self.error("<on> never closes"))?;
             if out.iter().any(|h: &Handler| h.event == event) {
-                return Err(self.error(&format!("a second {} handler", event.word())));
+                return Err(self.error(&format!("a second {event} handler")));
             }
             out.push(Handler { event, code: dedent(&self.rest()[..n]) });
             self.at += n;
             self.expect("</on>")?;
-            out.sort_by_key(|h| h.event);
+            out.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
         }
     }
 
@@ -423,11 +444,11 @@ mod tests {
         let page = parse(text, "a").unwrap();
         let e1 = &page.children[0];
         assert_eq!(e1.handlers[0].code, "if (Running) {\n  Speed = Speed + 0.1; // never \"</on>\" here\n}\n\nlog(`done\n</on>`);");
-        assert_eq!(e1.handlers[1].event, Event::Release);
+        assert_eq!(e1.handlers[1].event, "release");
         assert_eq!(e1.children[0].handlers[0].code, "Jog = 1;");
         assert_eq!(e1.children[0].props["text"], "Speed.toFixed(1)");
         assert_eq!(write(&page), text);
-        assert_eq!(parse("<page><div id=\"a\"><on event=\"hover\"></on></div></page>", "a").unwrap_err(), "line 1: hover is not an event");
+        assert_eq!(parse("<page><div id=\"a\"><on event=\"tap\"></on><on event=\"tap\"></on></div></page>", "a").unwrap_err(), "line 1: a second tap handler");
     }
 
     #[test]
