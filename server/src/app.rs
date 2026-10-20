@@ -1,7 +1,7 @@
 //! The backend's one loop. It owns the project, the mesh and every screen's session, so
 //! nothing is shared and nothing locks.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
@@ -75,6 +75,8 @@ pub struct App {
     next_run: u64,
     /// Pages opened to wait for an answer: the waiting call, and the screen that shows them.
     asks: HashMap<u64, u32>,
+    /// Elements a screen holds pressed, as screen, page and element.
+    pressed: HashSet<(u32, String, String)>,
     node: String,
     sessions: HashMap<u32, Session>,
     values: HashMap<String, Slot>,
@@ -100,6 +102,7 @@ impl App {
             runs: HashMap::new(),
             next_run: 0,
             asks: HashMap::new(),
+            pressed: HashSet::new(),
             node,
             sessions: HashMap::new(),
             values: HashMap::new(),
@@ -223,7 +226,14 @@ impl App {
                     self.edit(session, edit, Step::Redo);
                 }
             }
-            ClientMsg::Fire { page, id, event, payload } => self.fire(session, page, id, event, payload),
+            ClientMsg::Fire { page, id, event, payload } => {
+                match event.as_str() {
+                    "press" => self.pressed.insert((session, page.clone(), id.clone())),
+                    "release" => self.pressed.remove(&(session, page.clone(), id.clone())),
+                    _ => false,
+                };
+                self.fire(session, page, id, event, payload);
+            }
             ClientMsg::Answer { ask, value } => {
                 if self.asks.get(&ask) == Some(&session) {
                     self.asks.remove(&ask);
@@ -523,6 +533,13 @@ impl App {
             for ask in asked {
                 self.asks.remove(&ask);
                 self.script.send(ToScript::Answer { call: ask, outcome: Ok(Value::Null) });
+            }
+            // what the screen held pressed is let go, so a jog never outlives its screen
+            let held: Vec<(u32, String, String)> = self.pressed.iter().filter(|(s, _, _)| *s == session).cloned().collect();
+            for (s, page, id) in held {
+                self.pressed.remove(&(s, page.clone(), id.clone()));
+                warn!("screen {session} was lost holding {id} on {page}, so its release runs");
+                self.fire(session, page, id, "release".into(), serde_json::json!({ "lost": true }));
             }
         }
     }
