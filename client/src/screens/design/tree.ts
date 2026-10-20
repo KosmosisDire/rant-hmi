@@ -1,13 +1,13 @@
 // Finding elements and their boxes in a page's tree.
 
 import { send } from "../../net/connection";
-import { type Box, type Overrides, SHAPES } from "../../page/PageView";
+import { type Box, type Overrides, type Room, SHAPES } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { produce } from "solid-js/store";
-import { docScope, isNumber, number, pageScope, repeatScope, resolve, type Scope } from "../../state/bind";
+import { docScope, isNumber, isPercent, pageScope, placement, repeatScope, resolve, type Scope } from "../../state/bind";
 import { setState } from "../../state/store";
 
 /** The element and every frame around it, outermost first. */
@@ -49,8 +49,23 @@ export function childrenOf(page: Page, parent: string | null): Element[] {
   return parent ? (find(page.children, parent)?.children ?? []) : page.children;
 }
 
-export function boxOf(e: Element, overrides?: Overrides, scope: Scope = pageScope): Box {
-  return overrides?.(e.id) ?? { x: number(e.props.x, scope), y: number(e.props.y, scope), w: number(e.props.w, scope), h: number(e.props.h, scope) };
+/** An element's box within what holds it, `room`, in pixels. */
+export function boxOf(e: Element, room: Room, overrides?: Overrides, scope: Scope = pageScope): Box {
+  const at = (k: keyof Box) => placement(e.props[k], k === "x" || k === "w" ? room.w : room.h, scope);
+  return overrides?.(e.id) ?? { x: at("x"), y: at("y"), w: at("w"), h: at("h") };
+}
+
+/** The room an element sits in: its frame's size, or the page's. */
+export function roomOf(page: Page, id: string): Room {
+  const parent = parentOf(page, id);
+  const b = parent ? absolute(page, parent) : undefined;
+  return b ? { w: b.w, h: b.h } : { w: page.width, h: page.height };
+}
+
+/** How to write `px` into a placement value that was `old`: a percent of `room` stays one. */
+export function placementText(old: string | undefined, key: keyof Box, px: number, room: Room): string {
+  const whole = key === "x" || key === "w" ? room.w : room.h;
+  return isPercent(old) && whole > 0 ? `${Number(((px / whole) * 100).toFixed(2))}%` : String(px);
 }
 
 /** What each element along a path reads in the editor, outermost first: the page's or
@@ -78,16 +93,21 @@ export function absolute(page: Page, id: string, overrides?: Overrides): Box | u
   const path = chain(page.children, id);
   if (!path) return undefined;
   const reads = scopes(page, path);
-  const boxes = path.map((e, i) => boxOf(e, overrides, reads[i]));
+  let room: Room = { w: page.width, h: page.height };
+  const boxes = path.map((e, i) => {
+    const b = boxOf(e, room, overrides, reads[i]);
+    room = { w: b.w, h: b.h };
+    return b;
+  });
   const own = boxes[boxes.length - 1];
   const offset = boxes.slice(0, -1).reduce((at, b) => ({ x: at.x + b.x, y: at.y + b.y }), { x: 0, y: 0 });
   return { x: own.x + offset.x, y: own.y + offset.y, w: own.w, h: own.h };
 }
 
-/** True when each of `keys` is a plain number or unset, so a drag may write them. A shape
- *  has no box of ours to drag: its attributes place it. */
+/** True when each of `keys` is a plain number, a plain percent or unset, so a drag may write
+ *  them. A shape has no box of ours to drag: its attributes place it. */
 export function literal(e: Element, keys: (keyof Box)[]): boolean {
-  return !SHAPES.has(e.tag) && keys.every((k) => e.props[k] === undefined || isNumber(e.props[k]));
+  return !SHAPES.has(e.tag) && keys.every((k) => e.props[k] === undefined || isNumber(e.props[k]) || isPercent(e.props[k]));
 }
 
 /** Whether `parent`, or the page for null, may hold a `child`: a frame holds elements, a
@@ -107,9 +127,11 @@ export function moveTo(page: Page, id: string, parent: string | null, index: num
   if (from === parent && childrenOf(page, from).findIndex((c) => c.id === id) === index) return;
   const edits: Edit[] = [{ kind: "move_element", page: page.id, id, parent, index }];
   if (from !== parent && literal(e, ["x", "y"])) {
-    const origin = (f: string | null) => (f ? absolute(page, f) : undefined) ?? { x: 0, y: 0 };
+    const origin = (f: string | null) => (f ? absolute(page, f) : undefined) ?? { x: 0, y: 0, w: page.width, h: page.height };
     const [a, b] = [origin(from), origin(parent)];
-    edits.push({ kind: "set_props", page: page.id, id, props: { x: String(number(e.props.x) + a.x - b.x), y: String(number(e.props.y) + a.y - b.y) } });
+    const own = boxOf(e, a);
+    const props = { x: placementText(e.props.x, "x", own.x + a.x - b.x, b), y: placementText(e.props.y, "y", own.y + a.y - b.y, b) };
+    edits.push({ kind: "set_props", page: page.id, id, props });
   }
   sendEdits(edits);
 }
@@ -124,8 +146,9 @@ function placed(page: Page, ids: string[]) {
     .filter((e) => literal(e, ["x", "y"]))
     .flatMap((e) => {
       const b = absolute(page, e.id);
-      const own = boxOf(e);
-      return b ? [{ e, b, origin: { x: b.x - own.x, y: b.y - own.y } }] : [];
+      const room = roomOf(page, e.id);
+      const own = boxOf(e, room);
+      return b ? [{ e, b, room, origin: { x: b.x - own.x, y: b.y - own.y } }] : [];
     });
 }
 
@@ -136,12 +159,12 @@ export function align(page: Page, ids: string[], how: Align) {
   const start = Math.min(...all.map(({ b }) => (across ? b.x : b.y)));
   const end = Math.max(...all.map(({ b }) => (across ? b.x + b.w : b.y + b.h)));
   sendEdits(
-    all.flatMap(({ e, b, origin }) => {
+    all.flatMap(({ e, b, room, origin }) => {
       const size = across ? b.w : b.h;
       const at = how === "left" || how === "top" ? start : how === "right" || how === "bottom" ? end - size : Math.round((start + end - size) / 2);
       const key = across ? "x" : "y";
       const local = at - (across ? origin.x : origin.y);
-      return local === number(e.props[key]) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: String(local) } } as Edit];
+      return local === (across ? b.x - origin.x : b.y - origin.y) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: placementText(e.props[key], key, local, room) } } as Edit];
     }),
   );
 }
@@ -157,11 +180,11 @@ export function spread(page: Page, ids: string[], across: boolean) {
   const gap = ((across ? last.b.x : last.b.y) + size(last.b) - first - all.reduce((n, { b }) => n + size(b), 0)) / (all.length - 1);
   let at = first;
   sendEdits(
-    all.flatMap(({ e, b, origin }) => {
+    all.flatMap(({ e, b, room, origin }) => {
       const key = across ? "x" : "y";
       const local = Math.round(at) - (across ? origin.x : origin.y);
       at += size(b) + gap;
-      return local === number(e.props[key]) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: String(local) } } as Edit];
+      return local === (across ? b.x - origin.x : b.y - origin.y) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: placementText(e.props[key], key, local, room) } } as Edit];
     }),
   );
 }

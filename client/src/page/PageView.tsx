@@ -7,7 +7,7 @@ import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Kept, number, pageScope, repeatScope, resolve, type Scope } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Kept, pageScope, percentOf, placement, repeatScope, resolve, type Scope } from "../state/bind";
 import { short } from "../state/format";
 import { play, stopPlaying } from "../net/video";
 import { component, notify, state } from "../state/store";
@@ -24,6 +24,12 @@ export interface Box {
 
 /** A box the editor shows in place of an element's own while a drag lands. */
 export type Overrides = (id: string) => Box | undefined;
+
+/** The size of what holds an element, which a percent in its placement is a share of. */
+export interface Room {
+  w: number;
+  h: number;
+}
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
 export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "text", "value", "viewbox", "src", "fit"]);
@@ -69,7 +75,8 @@ const GAP = 22;
 /** A page as a narrow screen shows it: its top level elements one under another in reading
  *  order, rows by how far down they start, left to right within a row. */
 export function stacked(page: Page): { width: number; height: number; at: Overrides } {
-  const boxes = page.children.map((e) => ({ id: e.id, b: { x: number(e.props.x), y: number(e.props.y), w: number(e.props.w), h: number(e.props.h) } }));
+  const at = (e: Element, k: keyof Box) => placement(e.props[k], k === "x" || k === "w" ? page.width : page.height);
+  const boxes = page.children.map((e) => ({ id: e.id, b: { x: at(e, "x"), y: at(e, "y"), w: at(e, "w"), h: at(e, "h") } }));
   boxes.sort((p, q) => p.b.y - q.b.y);
   const order: typeof boxes = [];
   for (let i = 0; i < boxes.length; ) {
@@ -95,7 +102,7 @@ export function PageView(p: { page: Page; overrides?: Overrides; size?: { width:
   const size = () => p.size ?? p.page;
   return (
     <div class="page" classList={{ design: p.design }} style={{ width: `${size().width}px`, height: `${size().height}px`, "--page-ground": pageGround(p.page) }}>
-      <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} overrides={p.overrides} design={p.design} act={p.act} />}</For>
+      <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={{ w: p.page.width, h: p.page.height }} overrides={p.overrides} design={p.design} act={p.act} />}</For>
     </div>
   );
 }
@@ -113,6 +120,7 @@ function words(v: unknown): string {
 interface ElementProps {
   element: Element;
   scope: Scope;
+  room: Room;
   overrides?: Overrides;
   design?: boolean;
   act?: Act;
@@ -227,8 +235,8 @@ function ElementView(p: ElementProps & { at?: At }) {
     const style: Record<string, string> = {};
     const faults: string[] = [];
     let unknown = false;
-    const take = (key: string): unknown => {
-      const r = resolve(p.element.props[key], p.scope);
+    const take = (key: string, text = p.element.props[key]): unknown => {
+      const r = resolve(text, p.scope);
       if (r.ok) return r.value;
       if (r.unknown) unknown = true;
       else faults.push(`${key}: ${r.error}`);
@@ -243,8 +251,10 @@ function ElementView(p: ElementProps & { at?: At }) {
     const o = p.overrides?.(p.element.id);
     const at = (k: keyof Box) => {
       if (o) return o[k];
-      const n = Number(take(k) ?? 0);
-      return Number.isFinite(n) ? n : 0;
+      const { expr, percent } = percentOf(p.element.props[k]);
+      const n = Number(take(k, expr) ?? 0);
+      const whole = k === "x" || k === "w" ? p.room.w : p.room.h;
+      return Number.isFinite(n) ? (percent ? (n * whole) / 100 : n) : 0;
     };
     style.left = `${at("x")}px`;
     style.top = `${at("y")}px`;
@@ -258,7 +268,7 @@ function ElementView(p: ElementProps & { at?: At }) {
     return { style, unknown, faults, text, value, drawing, image, video, w: at("w"), h: at("h") };
   });
   const press = usePress(p);
-  const inner = (c: Element) => <Placed element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
+  const inner = (c: Element) => <Placed element={c} scope={p.scope} room={{ w: look().w, h: look().h }} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
   return (
     <div
       data-id={p.inside ? undefined : p.element.id}
@@ -331,7 +341,7 @@ function ShapeView(p: ElementProps & { at?: At }) {
       ref={press.ref}
       onPointerDown={press.down}
     >
-      <Show when={p.element.tag === "text"} fallback={<For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>}>
+      <Show when={p.element.tag === "text"} fallback={<For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} room={p.room} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>}>
         {look().text}
       </Show>
       <Show when={p.design && look().faults.length > 0}>
@@ -518,7 +528,7 @@ function Instance(p: { element: Element; scope: Scope; w: number; h: number; des
             onPointerOver={(e) => p.act && !display() && kept.over(e)}
             onPointerLeave={() => kept.leave()}
           >
-            <For each={c().children}>{(e) => <Placed element={e} scope={scope} design={p.design} act={display() ? undefined : act} inside />}</For>
+            <For each={c().children}>{(e) => <Placed element={e} scope={scope} room={{ w: c().width, h: c().height }} design={p.design} act={display() ? undefined : act} inside />}</For>
           </div>
         );
       }}

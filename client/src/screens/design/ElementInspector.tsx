@@ -319,8 +319,9 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={!shape()}>
           <div class="section">Placement</div>
           <div class="placement">
-            <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside min={k === "w" || k === "h" ? 0 : undefined} />}</For>
+            <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} />}</For>
           </div>
+          <div class="field-hint">Pixels, or a share of what holds it: 50% of its width for x and w, of its height for y and h.</div>
         </Show>
         <Show when={p.element.tag === "img"}>
           <div class="section">Image</div>

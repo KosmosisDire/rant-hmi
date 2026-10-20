@@ -9,7 +9,7 @@ import type { Page } from "../../protocol/Page";
 import { number } from "../../state/bind";
 import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
-import { absolute, boxOf, find, literal, parentOf, sendEdits, tops } from "./tree";
+import { absolute, boxOf, find, literal, parentOf, placementText, roomOf, sendEdits, tops } from "./tree";
 
 export const GRID = 11;
 /** Grid lines every so many units and how strong each set is. A set fades out as its lines
@@ -193,7 +193,7 @@ export function Artboard(p: {
       const handle = target.closest("[data-handle]")?.getAttribute("data-handle") as Handle | null;
       const hit = target.closest(".el[data-id]")?.getAttribute("data-id") ?? null;
       const start = (kind: "move" | Handle, lead: string, group: Element[]) => {
-        const bases = Object.fromEntries(group.map((g) => [g.id, boxOf(g)]));
+        const bases = Object.fromEntries(group.map((g) => [g.id, boxOf(g, roomOf(p.page, g.id))]));
         drag = { kind, lead, ids: group.map((g) => g.id), sx: e.clientX, sy: e.clientY, bases, boxes: { ...bases }, n: ++drags };
       };
       if (handle && p.selected.length === 1) {
@@ -249,8 +249,9 @@ export function Artboard(p: {
     const edits: Edit[] = [];
     for (const id of d.ids) {
       const props: Record<string, string> = {};
+      const [e, room] = [find(p.page.children, id), roomOf(p.page, id)];
       for (const k of ["x", "y", "w", "h"] as (keyof Box)[]) {
-        if (d.boxes[id][k] !== d.bases[id][k]) props[k] = String(d.boxes[id][k]);
+        if (d.boxes[id][k] !== d.bases[id][k]) props[k] = placementText(e?.props[k], k, d.boxes[id][k], room);
       }
       if (Object.keys(props).length > 0) edits.push({ kind: "set_props", page: p.page.id, id, props });
       else release(id, d.n);
@@ -269,7 +270,7 @@ export function Artboard(p: {
     const [x0, y0] = [(b.left - v.x) / v.k, (b.top - v.y) / v.k];
     const [x1, y1] = [x0 + b.width / v.k, y0 + b.height / v.k];
     for (const e of p.page.children) {
-      const at = boxOf(e);
+      const at = boxOf(e, { w: p.page.width, h: p.page.height });
       if (at.x >= x0 && at.y >= y0 && at.x + at.w <= x1 && at.y + at.h <= y1 && !p.selected.includes(e.id)) p.onPick(e.id, true);
     }
   };

@@ -7,7 +7,7 @@ import { Artboard, GRID } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
-import { boxOf, childrenOf, find, literal, moveTo, parentOf, sendEdits, tops } from "./tree";
+import { boxOf, childrenOf, find, literal, moveTo, parentOf, placementText, roomOf, sendEdits, tops } from "./tree";
 
 /** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
 export type Pick = (id: string | null, add?: boolean) => void;
@@ -123,8 +123,9 @@ export function DesignScreen(p: { shown: boolean }) {
         const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
         sendEdits(
           movable.map((el) => {
-            const b = boxOf(el);
-            return { kind: "set_props", page: page.id, id: el.id, props: { x: String(b.x + dx), y: String(b.y + dy) } };
+            const room = roomOf(page, el.id);
+            const b = boxOf(el, room);
+            return { kind: "set_props", page: page.id, id: el.id, props: { x: placementText(el.props.x, "x", b.x + dx, room), y: placementText(el.props.y, "y", b.y + dy, room) } };
           }),
         );
       }

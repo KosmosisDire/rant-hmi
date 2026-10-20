@@ -12,6 +12,26 @@ export function isNumber(value: string | undefined): boolean {
   return value !== undefined && /^\s*-?\d+(\.\d+)?\s*$/.test(value);
 }
 
+/** True for a plain number of percent, which placement takes as a share of what holds it. */
+export function isPercent(value: string | undefined): boolean {
+  return value !== undefined && /^\s*-?\d+(\.\d+)?\s*%\s*$/.test(value);
+}
+
+/** Placement's x, y, w and h read a trailing % as a share of what holds the element, which no
+ *  expression can end in. Gives the expression without it, and whether it had one. */
+export function percentOf(value: string | undefined): { expr: string | undefined; percent: boolean } {
+  const v = value?.trim();
+  return v?.endsWith("%") ? { expr: v.slice(0, -1), percent: true } : { expr: value, percent: false };
+}
+
+/** A placement value in pixels. `whole` is the width of what holds the element for x and w,
+ *  its height for y and h. */
+export function placement(value: string | undefined, whole: number, scope: Scope = pageScope): number {
+  const { expr, percent } = percentOf(value);
+  const n = number(expr, scope);
+  return percent ? (n * whole) / 100 : n;
+}
+
 /** True when the value reads nothing live: a number, a quoted text, a colour or a word
  *  such as true. */
 export function isConstant(value: string | undefined): boolean {

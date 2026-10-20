@@ -5,9 +5,10 @@ import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Page } from "../../protocol/Page";
+import { isPercent } from "../../state/bind";
 import { notify, state } from "../../state/store";
 import { paint } from "../../ui/highlight";
-import { boxOf, childrenOf, literal, parentOf, sendEdits, tops } from "./tree";
+import { boxOf, childrenOf, literal, parentOf, roomOf, sendEdits, tops } from "./tree";
 
 /** A name's words joined, each after the first with a capital: "Start stop" gives startStop. */
 function joined(text: string, first: (w: string) => string): string {
@@ -38,16 +39,19 @@ export function makeComponent(page: Page, ids: string[]) {
   if (picked.length === 0) return;
   const parent = parentOf(page, picked[0].id);
   if (picked.some((e) => parentOf(page, e.id) !== parent)) return notify("Pick elements that sit in one frame to make a component of them.", "warn");
-  if (!picked.every((e) => literal(e, ["x", "y", "w", "h"]))) return notify("A component is made of elements placed by plain numbers.", "warn");
+  if (!picked.every((e) => literal(e, ["x", "y", "w", "h"]))) return notify("A component is made of elements placed by plain numbers or percents.", "warn");
 
-  const boxes = picked.map((e) => boxOf(e));
+  const boxes = picked.map((e) => boxOf(e, roomOf(page, e.id)));
   const [left, top] = [Math.min(...boxes.map((b) => b.x)), Math.min(...boxes.map((b) => b.y))];
   const [right, bottom] = [Math.max(...boxes.map((b) => b.x + b.w)), Math.max(...boxes.map((b) => b.y + b.h))];
   const parts: Element[] = JSON.parse(JSON.stringify(picked));
-  for (const e of parts) {
-    e.props.x = String(Number(e.props.x ?? 0) - left);
-    e.props.y = String(Number(e.props.y ?? 0) - top);
-  }
+  // in pixels, since a percent of the page would mean a share of the component instead
+  parts.forEach((e, i) => {
+    e.props.x = String(boxes[i].x - left);
+    e.props.y = String(boxes[i].y - top);
+    if (isPercent(e.props.w)) e.props.w = String(boxes[i].w);
+    if (isPercent(e.props.h)) e.props.h = String(boxes[i].h);
+  });
 
   // each page name a value reads becomes an input, two way when an input element takes it
   const inputs: Input[] = [];

@@ -4,7 +4,7 @@
 // is asked for and replaces it.
 
 import { createContext, createMemo, createSignal, For, Match, Show, Switch, useContext } from "solid-js";
-import { isConstant, isNumber, pageScope, resolve, type Scope } from "../../state/bind";
+import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope } from "../../state/bind";
 import { complete, type Place, type Suggestion } from "../../state/complete";
 import { mode } from "../../state/mode";
 import { state } from "../../state/store";
@@ -58,6 +58,8 @@ export interface FieldProps {
   plain?: boolean;
   /** The label sits in the box as its lead, as placement's x and y do. */
   inside?: boolean;
+  /** Placement: a trailing % is a share of what holds the element. */
+  percent?: boolean;
   focus?: number;
 }
 
@@ -68,13 +70,13 @@ export function Field(p: FieldProps) {
   const write = (t: string) => p.onWrite(t.trim() === "" ? null : t);
   const status = createMemo(() => {
     if (p.plain) return undefined;
-    const r = resolve(p.value, where().scope);
+    const r = resolve(p.percent ? percentOf(p.value).expr : p.value, where().scope);
     if (r.ok) return undefined;
     if (r.unknown) return { text: `${r.unknown} is unknown right now` };
     return { text: r.error, words: !/["'`]/.test(p.value) };
   });
   return (
-    <div class="field" classList={{ bound: !p.plain && !isConstant(p.value), inside: p.inside }}>
+    <div class="field" classList={{ bound: !p.plain && !isConstant(p.value) && !(p.percent && isPercent(p.value)), inside: p.inside }}>
       <Show when={!p.inside}>
         <label>{p.label}</label>
       </Show>
@@ -129,8 +131,9 @@ const word = (option: string) => option.replace(/^"(.*)"$/, "$1");
 function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void; field: () => HTMLInputElement }) {
   const where = useContext(WhereContext);
   const kind = () => p.kind ?? "any";
-  const literal = () => p.value.trim() === "" || isConstant(p.value);
-  const scrubs = () => kind() === "number" && (p.value.trim() === "" || isNumber(p.value));
+  const percent = () => !!p.percent && isPercent(p.value);
+  const literal = () => p.value.trim() === "" || isConstant(p.value) || percent();
+  const scrubs = () => kind() === "number" && (p.value.trim() === "" || isNumber(p.value) || percent());
   const [opened, setOpened] = createSignal(false);
   let lead!: HTMLButtonElement;
   // what the value draws now, for a swatch
@@ -154,7 +157,8 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
     if (e.button !== 0 || !scrubs()) return;
     e.preventDefault();
     lead.setPointerCapture(e.pointerId);
-    const from = Number(p.value.trim() || p.placeholder || 0) || 0;
+    const unit = percent() ? "%" : "";
+    const from = Number(percentOf(p.value).expr?.trim() || p.placeholder || 0) || 0;
     const original = p.value;
     const step = p.step ?? 1;
     let [travel, moved, last, at] = [0, false, e.clientX, from];
@@ -166,7 +170,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
       moved = true;
       const grain = m.shiftKey ? step / 10 : step;
       at = clamp(at + dx * grain, p.min, p.max);
-      p.onShow?.(String(Number(at.toFixed(decimals(grain)))));
+      p.onShow?.(String(Number(at.toFixed(decimals(grain)))) + unit);
     };
     const cancel = (k: KeyboardEvent) => {
       if (k.key !== "Escape") return;
@@ -180,7 +184,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
       lead.removeEventListener("pointermove", move);
       lead.removeEventListener("lostpointercapture", up);
       window.removeEventListener("keydown", cancel, true);
-      if (moved) p.onWrite(String(Number(at.toFixed(decimals(step) + 1))));
+      if (moved) p.onWrite(String(Number(at.toFixed(decimals(step) + 1))) + unit);
       else if (travel < 3) focusText();
     };
     lead.addEventListener("pointermove", move);
