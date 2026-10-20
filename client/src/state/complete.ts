@@ -4,7 +4,9 @@
 import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Import } from "../protocol/Import";
 import type { Kind } from "../protocol/Kind";
+import type { Page } from "../protocol/Page";
 import type { JsonValue } from "../protocol/serde_json/JsonValue";
+import { partNames } from "./bind";
 import { typeLabel } from "./format";
 import { mode } from "./mode";
 import { entity, live, state } from "./store";
@@ -17,6 +19,8 @@ export interface Suggestion {
   type?: string;
   value?: JsonValue | null;
   known?: boolean;
+  /** What a dot after it offers, for a name completion knows no schema for. */
+  members?: Suggestion[];
 }
 
 export interface Completion {
@@ -62,7 +66,7 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   while (from > 0 && WORD.test(before[from - 1])) from--;
   const word = before.slice(from);
   if (/^\d/.test(word)) return null;
-  const items = before[from - 1] === "." ? (names ? [] : members(chain(before.slice(0, from - 1)), place)) : [...(names ?? top(place)), ...(place === "handler" ? [] : tokens()), ...API[place]];
+  const items = before[from - 1] === "." ? (names ? given(names, chain(before.slice(0, from - 1))) : members(chain(before.slice(0, from - 1)), place)) : [...(names ?? top(place)), ...(place === "handler" ? [] : tokens()), ...API[place]];
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
   const inside = items.filter((s) => !s.label.toLowerCase().startsWith(q) && s.label.toLowerCase().includes(q));
@@ -70,6 +74,30 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   // a word typed out in full needs no list
   if (found.length === 0 || (found.length === 1 && found[0].label === word)) return null;
   return { from, items: found };
+}
+
+/** What a part's pointer state holds. */
+const POINTER_STATE: Suggestion[] = [
+  { label: "pressed", insert: "pressed", icon: "member", type: "true while pressed" },
+  { label: "hovered", insert: "hovered", icon: "member", type: "true while the pointer is over it" },
+  { label: "heldFor", insert: "heldFor", icon: "member", type: "ms pressed, 0 while not" },
+];
+
+/** What a component's code names: its inputs, its variables and its parts. */
+export function componentNames(c: Page): Suggestion[] {
+  const i = c.interface;
+  return [
+    ...(i?.inputs ?? []).map((x): Suggestion => ({ label: x.name, insert: x.name, icon: "local", type: x.bindable ? "two way input" : "input" })),
+    ...(i?.variables ?? []).map((x): Suggestion => ({ label: x.name, insert: x.name, icon: "local", type: "variable" })),
+    ...partNames(c)
+      .filter((n) => !i?.inputs.some((x) => x.name === n) && !i?.variables.some((x) => x.name === n))
+      .map((n): Suggestion => ({ label: n, insert: n, icon: "member", type: n === "root" ? "the whole, for the pointer" : "a part, for the pointer", members: POINTER_STATE })),
+  ];
+}
+
+/** After a dot on one of the given names, what that name offers. */
+function given(names: Suggestion[], path: string[]): Suggestion[] {
+  return path.length === 1 ? (names.find((n) => n.label === path[0])?.members ?? []) : [];
 }
 
 function top(place: Place): Suggestion[] {

@@ -101,23 +101,68 @@ export interface Own {
   set(input: string, value: unknown): void;
 }
 
-/** A component reads its inputs and nothing of the mesh. Each is what the instance gives,
- *  read where the instance sits, else the input's default, unless the instance shows its own. */
-export function componentScope(c: Page, instance?: { props: Record<string, string | undefined>; outer: Scope; own?: Own }): Scope {
+/** A part's pointer state, as a component's code reads `root.pressed` or `knob.heldFor`. */
+export interface PartState {
+  pressed: boolean;
+  hovered: boolean;
+  /** How long it has been pressed, in ms, 0 while it is not. */
+  heldFor: number;
+}
+
+const STILL: PartState = { pressed: false, hovered: false, heldFor: 0 };
+
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+
+/** The names a component's code reads its parts by: `root` for the whole, and each element
+ *  named as a name in code can be. */
+export function partNames(c: Page): string[] {
+  const out = new Set(["root"]);
+  const walk = (elements: Page["children"]) => {
+    for (const e of elements) {
+      if (IDENT.test(e.props.name ?? "")) out.add(e.props.name!);
+      walk(e.children);
+    }
+  };
+  walk(c.children);
+  return [...out];
+}
+
+/** What an instance keeps of its own on this screen: its variables, and its parts' pointer
+ *  state. A component drawn on its own keeps none, so it shows its variables' starts. */
+export interface Kept {
+  /** A variable set by its code, undefined while it is at its start. */
+  get(name: string): unknown;
+  set(name: string, path: string, value: unknown): void;
+  part(name: string): PartState;
+}
+
+/** A component reads its inputs, its variables and its parts' pointer state, and nothing of
+ *  the mesh. An input is what the instance gives, read where the instance sits, else its
+ *  default, unless the instance shows its own. */
+export function componentScope(c: Page, instance?: { props: Record<string, string | undefined>; outer: Scope; own?: Own; kept?: Kept }): Scope {
   const input = (name: string) => c.interface?.inputs.find((i) => i.name === name);
+  const variable = (name: string) => c.interface?.variables.find((v) => v.name === name);
+  const part = (name: string) => !input(name) && !variable(name) && partNames(c).includes(name);
+  const read = (r: Resolved, name: string) => {
+    if (r.ok) return r.value;
+    if (r.unknown) throw new Unknown(r.unknown);
+    throw new Error(`${name}: ${r.error}`);
+  };
   return themed({
-    has: (name) => input(name) !== undefined,
+    has: (name) => input(name) !== undefined || variable(name) !== undefined || part(name),
     get: (name) => {
+      const v = variable(name);
+      if (v) return instance?.kept?.get(name) ?? read(resolve(v.start, nothing), name);
+      if (!input(name)) return instance?.kept?.part(name) ?? STILL;
       if (instance?.own?.has(name)) return instance.own.get(name);
       const given = instance?.props[name];
-      const r = given !== undefined ? resolve(given, instance!.outer) : resolve(input(name)!.default, nothing);
-      if (r.ok) return r.value;
-      if (r.unknown) throw new Unknown(r.unknown);
-      throw new Error(`${name}: ${r.error}`);
+      return read(given !== undefined ? resolve(given, instance!.outer) : resolve(input(name)!.default, nothing), name);
     },
     // a write goes through the instance's binding when that is a bare name, and is dropped
     // otherwise, so a control bound one way reads as a display
     set: (name, path, value) => {
+      if (variable(name)) return instance?.kept?.set(name, path, value);
+      if (part(name)) throw new TypeError(`${name} is the pointer's, so it cannot be set`);
       if (!input(name)?.bindable) throw new TypeError(`${name} is not two way`);
       if (!path) instance?.own?.set(name, value);
       const ref = bareRef(instance?.props[name]);
@@ -125,6 +170,7 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
       instance.outer.set(ref.name, [ref.fields, path].filter(Boolean).join("."), value);
     },
     writes: (name) => {
+      if (variable(name)) return true;
       const ref = bareRef(instance?.props[name]);
       return !!input(name)?.bindable && !!ref && !!instance?.outer.writes(ref.name);
     },

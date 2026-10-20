@@ -3,6 +3,7 @@
 // and a handler's box sums them up.
 
 import { paint } from "../ui/highlight";
+import type { Suggestion } from "./complete";
 import { state } from "./store";
 
 export type Verb = "sets" | "calls" | "sends" | "opens" | "emits";
@@ -25,18 +26,19 @@ function bare(code: string): string {
     .join("");
 }
 
-/** What a name read here is, or undefined for one the HMI does not own. */
-function reading(name: string, inputs: string[]): string | undefined {
+/** What a name read here is, or undefined for one the HMI does not own. `names` stand for
+ *  the mesh imports and variables where code reads something else, as a component does. */
+function reading(name: string, names?: Suggestion[]): string | undefined {
+  if (names) return names.find((n) => n.label === name)?.type;
   const imp = state.imports.find((i) => i.alias === name);
   if (imp) return `${imp.kind}, ${imp.intent}`;
   const v = state.variables.find((x) => x.name === name);
   if (v) return v.per === "screen" ? "variable, per screen" : "variable, shared";
-  if (inputs.includes(name)) return "input";
   return undefined;
 }
 
-/** What `code` uses. `inputs` are a component's, which its code reads and sets by name. */
-export function uses(code: string, inputs: string[] = []): Uses {
+/** What `code` uses, read with the names completion offers there. */
+export function uses(code: string, names?: Suggestion[]): Uses {
   const src = bare(code);
   const writes = new Map<string, Verb>();
   const reads = new Map<string, string>();
@@ -45,7 +47,7 @@ export function uses(code: string, inputs: string[] = []): Uses {
     const [whole, root, rest] = m;
     const fields = rest.replace(/\s+/g, "");
     const after = src.slice(m.index! + whole.length);
-    const what = reading(root, inputs);
+    const what = reading(root, names);
     if (!what) continue;
     if (fields === ".send" && /^\s*\(/.test(after)) writes.set(root, "sends");
     else if (!fields && /^\s*\(/.test(after) && /^(function|task)/.test(what)) writes.set(root, "calls");

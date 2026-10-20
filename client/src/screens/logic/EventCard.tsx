@@ -14,15 +14,16 @@ export function EventCard(p: {
   onRemove?: () => void;
   removeTitle?: string;
   place: Place;
-  /** What completion offers in place of the datapoints, as a component offers its inputs. */
+  /** What completion offers in place of the mesh imports, as a component offers its own. */
   names?: Suggestion[];
-  /** A component's inputs, which its code reads and sets by name. */
-  inputs?: string[];
   placeholder?: string;
+  /** A hold's time, an expression in ms, and its write. */
+  after?: string;
+  onAfter?: (text: string) => void;
   /** The trigger's settings, between the head and the code. */
   children?: JSX.Element;
 }) {
-  const meta = () => summary(uses(p.code, p.inputs));
+  const meta = () => summary(uses(p.code, p.names));
   return (
     <div class="event">
       <div class="event-head">
@@ -37,6 +38,14 @@ export function EventCard(p: {
           </button>
         </Show>
       </div>
+      <Show when={p.onAfter}>
+        <div class="event-when">
+          <div class="field">
+            <label>After ms</label>
+            <DraftInput value={p.after ?? ""} placeholder="500" onCommit={(t) => p.onAfter?.(t.trim())} complete={(t, c) => complete(t, c, "expression", p.names)} />
+          </div>
+        </div>
+      </Show>
       {p.children}
       <DraftInput
         multiline

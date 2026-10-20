@@ -8,7 +8,7 @@ import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Rule } from "../../protocol/Rule";
 import type { When } from "../../protocol/When";
-import { complete, type Suggestion } from "../../state/complete";
+import { complete, componentNames } from "../../state/complete";
 import { putLocal, state } from "../../state/store";
 import { uses } from "../../state/uses";
 import { DraftInput } from "../../ui/DraftInput";
@@ -91,8 +91,8 @@ function flat(elements: Element[]): Element[] {
 const ruleKey = (r: Rule) => `rule:${r.id}`;
 const onKey = (pg: Page, e: Element, event: string) => `on:${pg.id}:${e.id}:${event}`;
 
-/** A component's inputs, as its code names them. */
-const inputsOf = (pg: Page) => pg.interface?.inputs.map((i) => i.name) ?? [];
+/** What a page's or component's handler code names in place of the mesh imports. */
+const namesOf = (pg: Page) => (pg.interface ? componentNames(pg) : undefined);
 
 export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void }) {
   const [filter, setFilter] = createSignal("");
@@ -144,7 +144,7 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
     const r = rule();
     if (r) return uses(r.code);
     const h = handler();
-    return h ? uses(h.h.code, inputsOf(h.pg)) : { reads: [], writes: [] };
+    return h ? uses(h.h.code, namesOf(h.pg)) : { reads: [], writes: [] };
   };
   const where = () => {
     if (rule()) return "On the system, whether or not a screen watches. It sees no screen's own variables.";
@@ -227,10 +227,11 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
                     code={h().h.code}
                     onCode={(code) => send({ type: "edit", edit: { kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code } })}
                     onRemove={() => send({ type: "edit", edit: { kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code: null } })}
+                    after={h().h.after}
+                    onAfter={h().h.event === "hold" ? (after) => send({ type: "edit", edit: { kind: "set_handler", page: h().pg.id, id: h().e.id, event: "hold", code: h().h.code, after } }) : undefined}
                     removeTitle={`Remove the ${h().h.event} handler`}
                     place={h().pg.interface ? "component" : "handler"}
-                    names={h().pg.interface?.inputs.map((i): Suggestion => ({ label: i.name, insert: i.name, icon: "local", type: i.bindable ? "two way input" : "input" }))}
-                    inputs={inputsOf(h().pg)}
+                    names={namesOf(h().pg)}
                   />
                 </div>
               </>

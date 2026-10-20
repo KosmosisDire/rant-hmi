@@ -81,14 +81,14 @@ export function makeComponent(page: Page, ids: string[]) {
     e.handlers = e.handlers.map((h) => {
       const event = free(joined(`${e.props.name ?? "part"} ${h.event}`, (w) => w.toLowerCase()), (n) => events.includes(n));
       events.push(event);
-      handlers.push({ event, code: h.code });
-      return { event: h.event, code: `emit("${event}", p);` };
+      handlers.push({ event, code: h.code, after: "" });
+      return { ...h, code: `emit("${event}", p);` };
     });
   }
 
   const name = free(joined(picked[0].props.name ?? "", (w) => w[0].toUpperCase() + w.slice(1)).replace(/^[^A-Z]+/, "") || "Part", (n) => state.pages.some((p) => p.interface !== null && p.name === n));
   const id = free(slug(name), (n) => state.pages.some((p) => p.id === n));
-  const component: Page = { id, name, width: right - left, height: bottom - top, shows: "full", fill: "", interface: { inputs, events }, children: parts };
+  const component: Page = { id, name, width: right - left, height: bottom - top, shows: "full", fill: "", interface: { inputs, events, variables: [] }, children: parts };
   const instance: Element = {
     id: "",
     tag: "use",

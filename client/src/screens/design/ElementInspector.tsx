@@ -5,10 +5,11 @@ import { OWN, POINTER } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Interface } from "../../protocol/Interface";
+import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import { docScope, pageScope } from "../../state/bind";
-import type { Suggestion } from "../../state/complete";
+import { componentNames } from "../../state/complete";
 import { component, page as pageOf, setState, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
@@ -61,8 +62,7 @@ export function ElementInspector(p: { page: Page | undefined; selected: string[]
   const where = createMemo((): Where => {
     const doc = p.page;
     if (!doc?.interface) return { scope: pageScope, place: "handler" };
-    const names: Suggestion[] = doc.interface.inputs.map((i) => ({ label: i.name, insert: i.name, icon: "local", type: i.bindable ? "two way input" : "input" }));
-    return { scope: docScope(doc), names, place: "component" };
+    return { scope: docScope(doc), names: componentNames(doc), place: "component" };
   });
   return (
     <Show when={p.page}>
@@ -186,6 +186,7 @@ function PageInspector(p: { page: Page }) {
           {(i) => (
             <>
               <Inputs page={p.page.id} inputs={i().inputs} />
+              <Variables page={p.page.id} variables={i().variables} />
               <Sends page={p.page.id} events={i().events} />
             </>
           )}
@@ -384,7 +385,7 @@ function Events(p: { page: string; element: Element }) {
   const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
   let ghost!: HTMLButtonElement;
-  const write = (event: string, code: string | null) => send({ type: "edit", edit: { kind: "set_handler", page: p.page, id: p.element.id, event, code } });
+  const write = (event: string, code: string | null, after?: string) => send({ type: "edit", edit: { kind: "set_handler", page: p.page, id: p.element.id, event, code, after } });
   // what this element hears: an input what is entered, others the pointer's events, and an
   // instance its component's own
   const offered = () =>
@@ -405,10 +406,11 @@ function Events(p: { page: string; element: Element }) {
                 code={h().code}
                 onCode={(code) => write(event, code)}
                 onRemove={() => write(event, null)}
+                after={h().after}
+                onAfter={event === "hold" ? (after) => write(event, h().code, after) : undefined}
                 removeTitle={`Remove the ${event} handler`}
                 place={where().place}
                 names={where().names}
-                inputs={where().names?.map((n) => n.label)}
                 placeholder={where().place === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
               />
             )}
@@ -444,7 +446,7 @@ function Events(p: { page: string; element: Element }) {
         <div class="field-hint">
           {p.element.tag === "input"
             ? "Add one to run code when an operator enters a value. The code reads it as p.value."
-            : "Add one to run code when this is tapped, pressed, let go or dragged. The code reads where as p.x and p.y."}
+            : "Add one to run code when this is tapped, pressed, let go, held or dragged. The code reads where as p.x and p.y."}
         </div>
       </Show>
     </>
@@ -501,6 +503,54 @@ function Inputs(p: { page: string; inputs: Input[] }) {
             <div class="field input-default">
               <label>Default</label>
               <DraftInput value={i.default} onCommit={(d) => write(i.name, { ...i, default: d })} />
+            </div>
+          </div>
+        )}
+      </For>
+    </>
+  );
+}
+
+/** A component's own variables, each a box: its name and what each instance starts it at. */
+function Variables(p: { page: string; variables: Local[] }) {
+  const write = (name: string, local: Local | null) => {
+    if (!send({ type: "edit", edit: { kind: "set_local", page: p.page, name, local } })) return;
+    putInterface(p.page, (i) => {
+      const at = i.variables.findIndex((x) => x.name === name);
+      if (at >= 0 && local) Object.assign(i.variables[at], local);
+      else if (at >= 0) i.variables.splice(at, 1);
+    });
+  };
+  const add = () => {
+    let name = "state";
+    for (let n = 2; p.variables.some((v) => v.name === name); n++) name = `state${n}`;
+    write(name, { name, start: "0" });
+  };
+  return (
+    <>
+      <div class="section section-row">
+        Variables
+        <button class="icon-btn" title="Add a variable" onClick={add}>
+          <Plus size={13} />
+        </button>
+      </div>
+      <For each={p.variables} fallback={<div class="field-hint">What each instance keeps of its own on each screen, read and set by name in its code.</div>}>
+        {(v) => (
+          <div class="handler">
+            <div class="handler-head">
+              <DraftInput
+                class="editor input-name"
+                value={v.name}
+                accept={(t) => /^[a-z][A-Za-z0-9]*$/.test(t.trim())}
+                onCommit={(name) => write(v.name, { ...v, name: name.trim() })}
+              />
+              <button class="icon-btn" title={`Remove the variable ${v.name}`} onClick={() => write(v.name, null)}>
+                <X size={13} />
+              </button>
+            </div>
+            <div class="field input-default">
+              <label>Start</label>
+              <DraftInput value={v.start} onCommit={(start) => write(v.name, { ...v, start })} />
             </div>
           </div>
         )}

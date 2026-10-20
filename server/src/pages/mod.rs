@@ -45,6 +45,18 @@ pub struct Interface {
     /// What the component sends out with `emit`, which an instance's handlers take.
     #[serde(default)]
     pub events: Vec<String>,
+    /// Its own state, which each instance keeps on each screen.
+    #[serde(default)]
+    pub variables: Vec<Local>,
+}
+
+/// A component's own variable, camelCase. Each instance starts it at `start`, an expression of
+/// constants, and its code sets it.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Local {
+    pub name: String,
+    pub start: String,
 }
 
 /// A value a component reads and each instance gives, camelCase like any local name.
@@ -94,11 +106,14 @@ pub struct Element {
 pub struct Handler {
     pub event: String,
     pub code: String,
+    /// For a hold, how long a press lasts before it runs, an expression in ms. Empty is 500.
+    #[serde(default)]
+    pub after: String,
 }
 
 /// What a pointer does to any element: goes down on it and comes up without straying, goes
-/// down, comes up, or moves while down, from the press on.
-pub const POINTER: [&str; 4] = ["tap", "press", "release", "drag"];
+/// down, comes up, stays down a while, or moves while down, from the press on.
+pub const POINTER: [&str; 5] = ["tap", "press", "release", "hold", "drag"];
 
 /// Where a handler goes in an element's list: the pointer's events first, then by name.
 fn rank(event: &str) -> (usize, &str) {
@@ -178,13 +193,25 @@ pub enum Edit {
     /// Sets each property to its value, or removes it where the value is null.
     SetProps { page: String, id: String, props: BTreeMap<String, Option<String>> },
     /// Sets the code the element runs on `event`, or removes its handler where it is null.
-    SetHandler { page: String, id: String, event: String, code: Option<String> },
+    /// `after` sets a hold's time, and keeps it when left out.
+    SetHandler {
+        page: String,
+        id: String,
+        event: String,
+        code: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        after: Option<String>,
+    },
     /// Adds, changes or with null removes a component's input called `name`. A rename is
     /// followed in the component and by its instances, a removal takes it off them.
     SetInput { page: String, name: String, input: Option<Input> },
     /// Adds the event `to` to a component when `name` is not one yet, renames `name` to it, or
     /// with null removes it. Instances' handlers follow a rename.
     SetEvent { page: String, name: String, to: Option<String> },
+    /// Adds, changes or with null removes a component's variable called `name`. The
+    /// component's code follows a rename.
+    SetLocal { page: String, name: String, local: Option<Local> },
     /// Sets the rule `id`, puts it back under that id when it is gone, gives it a new id when
     /// `id` is empty, or with null removes it.
     SetRule { id: String, rule: Option<Rule> },
@@ -531,19 +558,21 @@ impl Pages {
                 }
                 Edit::SetProps { page: page.clone(), id, props: old }
             }
-            Edit::SetHandler { page, id, event, code } => {
+            Edit::SetHandler { page, id, event, code, after } => {
                 check_event(&event)?;
                 let p = self.page_mut(&page)?;
                 let e = find_mut(&mut p.children, &id).ok_or_else(|| format!("{id} is not on {page}"))?;
                 let at = e.handlers.partition_point(|h| rank(&h.event) < rank(&event));
-                let old = e.handlers.get(at).filter(|h| h.event == event).map(|h| h.code.clone());
+                let old = e.handlers.get(at).filter(|h| h.event == event).cloned();
                 if old.is_some() {
                     e.handlers.remove(at);
                 }
                 if let Some(code) = code {
-                    e.handlers.insert(at, Handler { event: event.clone(), code: format::dedent(&code) });
+                    let after = after.or_else(|| old.as_ref().map(|h| h.after.clone())).unwrap_or_default().trim().to_owned();
+                    e.handlers.insert(at, Handler { event: event.clone(), code: format::dedent(&code), after });
                 }
-                Edit::SetHandler { page: page.clone(), id, event, code: old }
+                let after = old.as_ref().map(|h| h.after.clone());
+                Edit::SetHandler { page: page.clone(), id, event, code: old.map(|h| h.code), after }
             }
             Edit::SetInput { page, name, input } => {
                 let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
@@ -621,6 +650,41 @@ impl Pages {
                 }
                 undo
             }
+            Edit::SetLocal { page, name, local } => {
+                let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
+                let Some(i) = &p.interface else {
+                    return Err(format!("{} is a page, and only a component has variables of its own", p.name));
+                };
+                let component = p.name.clone();
+                let at = i.variables.iter().position(|v| v.name == name);
+                let old = at.map(|at| i.variables[at].clone());
+                if let Some(new) = &local {
+                    check_input_name(&new.name)?;
+                    let taken = (new.name != name && i.variables.iter().any(|v| v.name == new.name)) || i.inputs.iter().any(|x| x.name == new.name);
+                    if taken {
+                        return Err(format!("{component} already has {}", new.name));
+                    }
+                } else if old.is_none() {
+                    return Err(format!("{component} has no variable {name}"));
+                }
+                let to = local.as_ref().map(|v| v.name.clone());
+                let p = self.page_mut(&page)?;
+                let list = &mut p.interface.as_mut().expect("a component, checked above").variables;
+                match (at, local) {
+                    (Some(at), Some(new)) => list[at] = new,
+                    (Some(at), None) => drop(list.remove(at)),
+                    (None, Some(new)) => list.push(new),
+                    (None, None) => unreachable!("refused above"),
+                }
+                if let (Some(_), Some(to)) = (&old, &to) {
+                    if *to != name {
+                        for e in &mut p.children {
+                            rename_in(e, &name, to);
+                        }
+                    }
+                }
+                Edit::SetLocal { page: page.clone(), name: to.unwrap_or(name), local: old }
+            }
             Edit::SetRule { id, rule } => {
                 let at = self.rules.iter().position(|r| r.id == id);
                 let old = at.map(|at| self.rules[at].clone());
@@ -652,7 +716,7 @@ impl Pages {
             Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::SetShows { page, .. } | Edit::SetFill { page, .. } => page,
             Edit::RemoveElement { page, .. } => page,
             Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } | Edit::SetHandler { page, .. } => page,
-            Edit::SetInput { page, .. } | Edit::SetEvent { page, .. } => page,
+            Edit::SetInput { page, .. } | Edit::SetEvent { page, .. } | Edit::SetLocal { page, .. } => page,
             _ => unreachable!("page edits return early"),
         };
         touched.push(page.clone());
@@ -979,7 +1043,7 @@ mod tests {
         let o = || "overview".to_string();
         pages.apply(add(o(), None, Tag::Div, props(&[("name", "Speed"), ("x", "Speed * 2")]))).unwrap();
         pages.apply(add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"Speed \" + Speed")]))).unwrap();
-        pages.apply(Edit::SetHandler { page: o(), id: "e2".into(), event: "tap".into(), code: Some("Speed = 1;".into()) }).unwrap();
+        pages.apply(Edit::SetHandler { page: o(), id: "e2".into(), event: "tap".into(), code: Some("Speed = 1;".into()), after: None }).unwrap();
         pages.apply(Edit::AddPage { name: "Other".into() }).unwrap();
         assert_eq!(pages.rename("Speed", "LineSpeed", false).unwrap(), ["overview"]);
         let again = Pages::open(&dir).unwrap();
@@ -1033,9 +1097,9 @@ mod tests {
             add(o(), None, Tag::Span, props(&[("text", "Speed")])),
             Edit::SetProps { page: o(), id: "e1".into(), props: [("x".to_string(), Some("88".to_string())), ("background".to_string(), None)].into() },
             Edit::MoveElement { page: o(), id: "e3".into(), parent: Some("e1".into()), index: 0 },
-            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), code: Some("  Speed = 1;\n  log(\"</on>\")".into()) },
-            Edit::SetHandler { page: o(), id: "e3".into(), event: "tap".into(), code: Some("Speed = 2;".into()) },
-            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), code: None },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), code: Some("  Speed = 1;\n  log(\"</on>\")".into()), after: None },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: "tap".into(), code: Some("Speed = 2;".into()), after: None },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), code: None, after: None },
             Edit::RemoveElement { page: o(), id: "e1".into() },
             Edit::Batch {
                 edits: vec![
@@ -1141,6 +1205,48 @@ mod tests {
     }
 
     #[test]
+    fn a_components_variables_rename_in_its_code_and_undo() {
+        let dir = scratch("locals");
+        let mut pages = Pages::open(&dir).unwrap();
+        let menu = pages.apply(Edit::AddComponent { name: "Menu".into() }).unwrap().made.unwrap().1;
+        let local = |name: &str| Some(Local { name: name.into(), start: "false".into() });
+        pages.apply(Edit::SetLocal { page: menu.clone(), name: "open".into(), local: local("open") }).unwrap();
+        pages.apply(add(menu.clone(), None, Tag::Div, props(&[("opacity", "open ? 1 : 0")]))).unwrap();
+        let id = pages.get(&menu).unwrap().children[0].id.clone();
+        pages.apply(Edit::SetHandler { page: menu.clone(), id, event: "tap".into(), code: Some("open = !open;".into()), after: None }).unwrap();
+
+        let undo = pages.apply(Edit::SetLocal { page: menu.clone(), name: "open".into(), local: local("shown") }).unwrap().undo;
+        let e = &pages.get(&menu).unwrap().children[0];
+        assert_eq!((e.props["opacity"].as_str(), e.handlers[0].code.as_str()), ("shown ? 1 : 0", "shown = !shown;"));
+        assert_eq!(Pages::open(&dir).unwrap().get(&menu).unwrap().interface.as_ref().unwrap().variables, [local("shown").unwrap()]);
+        pages.apply(undo).unwrap();
+        assert_eq!(pages.get(&menu).unwrap().children[0].props["opacity"], "open ? 1 : 0");
+
+        let input = Some(Input { name: "size".into(), default: "1".into(), bindable: false });
+        pages.apply(Edit::SetInput { page: menu.clone(), name: "size".into(), input }).unwrap();
+        assert!(pages.apply(Edit::SetLocal { page: menu.clone(), name: "size".into(), local: local("size") }).unwrap_err().contains("already has size"));
+        assert!(pages.apply(Edit::SetLocal { page: "overview".into(), name: "a".into(), local: local("a") }).unwrap_err().contains("only a component"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_hold_keeps_its_time_through_code_changes_and_undo() {
+        let dir = scratch("hold");
+        let mut pages = Pages::open(&dir).unwrap();
+        pages.apply(add("overview".into(), None, Tag::Div, props(&[]))).unwrap();
+        let id = pages.get("overview").unwrap().children[0].id.clone();
+        let set = |code: &str, after: Option<&str>| Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "hold".into(), code: Some(code.into()), after: after.map(Into::into) };
+        pages.apply(set("log(1);", Some("800"))).unwrap();
+        let undo = pages.apply(set("log(2);", None)).unwrap().undo;
+        let h = || pages.get("overview").unwrap().children[0].handlers[0].clone();
+        assert_eq!((h().code.as_str(), h().after.as_str()), ("log(2);", "800"));
+        pages.apply(undo).unwrap();
+        let h = pages.get("overview").unwrap().children[0].handlers[0].clone();
+        assert_eq!((h.code.as_str(), h.after.as_str()), ("log(1);", "800"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn events_a_component_sends_rename_with_their_handlers() {
         let dir = scratch("events");
         let mut pages = Pages::open(&dir).unwrap();
@@ -1148,8 +1254,8 @@ mod tests {
         let event = |name: &str, to: Option<&str>| Edit::SetEvent { page: toggle.clone(), name: name.into(), to: to.map(Into::into) };
         pages.apply(event("change", Some("change"))).unwrap();
         let id = pages.apply(Edit::AddElement { page: "overview".into(), parent: None, index: None, element: instance("Toggle") }).unwrap().made.unwrap().1;
-        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "change".into(), code: Some("Running = p;".into()) }).unwrap();
-        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "tap".into(), code: Some("log(1);".into()) }).unwrap();
+        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "change".into(), code: Some("Running = p;".into()), after: None }).unwrap();
+        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "tap".into(), code: Some("log(1);".into()), after: None }).unwrap();
         let undo = pages.apply(event("change", Some("flip"))).unwrap().undo;
         let events: Vec<_> = pages.get("overview").unwrap().children[0].handlers.iter().map(|h| h.event.as_str()).collect();
         assert_eq!(events, ["tap", "flip"]);
@@ -1157,7 +1263,7 @@ mod tests {
         pages.apply(undo).unwrap();
         assert_eq!(pages.get(&toggle).unwrap().interface.as_ref().unwrap().events, ["change"]);
         assert_eq!(pages.apply(event("nope", None)).err().unwrap(), "Toggle sends no nope");
-        assert!(pages.apply(Edit::SetHandler { page: "overview".into(), id, event: "On Off".into(), code: None }).is_err());
+        assert!(pages.apply(Edit::SetHandler { page: "overview".into(), id, event: "On Off".into(), code: None, after: None }).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
 

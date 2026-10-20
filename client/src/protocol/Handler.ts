@@ -4,4 +4,8 @@
  * Code that runs when its event happens on the element: a pointer's, or one an instance's
  * component sends. On a page it runs on the backend, in a component on the screen.
  */
-export type Handler = { event: string, code: string, };
+export type Handler = { event: string, code: string, 
+/**
+ * For a hold, how long a press lasts before it runs, an expression in ms. Empty is 500.
+ */
+after: string, };

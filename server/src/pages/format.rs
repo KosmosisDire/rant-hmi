@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Handler, Input, Interface, Page, Shows, Tag, rank};
+use super::{Element, Handler, Input, Interface, Local, Page, Shows, Tag, rank};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 5] = ["name", "x", "y", "w", "h"];
@@ -25,6 +25,9 @@ pub fn write(page: &Page) -> String {
     }
     for e in page.interface.iter().flat_map(|i| &i.events) {
         out.push_str(&format!("  <event name={}/>\n", quote(e)));
+    }
+    for v in page.interface.iter().flat_map(|i| &i.variables) {
+        out.push_str(&format!("  <var name={} start={}/>\n", quote(&v.name), quote(&v.start)));
     }
     for e in &page.children {
         element(&mut out, e, 1);
@@ -66,7 +69,8 @@ fn element(out: &mut String, e: &Element, depth: usize) {
             out.push_str(">\n");
             let inner = "  ".repeat(depth + 1);
             for h in &e.handlers {
-                out.push_str(&format!("{inner}<on event=\"{}\">\n", h.event));
+                let after = if h.after.is_empty() { String::new() } else { format!(" after={}", quote(&h.after)) };
+                out.push_str(&format!("{inner}<on event=\"{}\"{after}>\n", h.event));
                 for line in h.code.lines() {
                     if !line.trim().is_empty() {
                         out.push_str(&format!("{inner}  {line}"));
@@ -142,6 +146,7 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     if let Some(interface) = &mut page.interface {
         interface.inputs = r.props()?;
         interface.events = r.events()?;
+        interface.variables = r.vars()?;
     }
     page.children = r.children(root)?;
     r.gap();
@@ -281,6 +286,30 @@ impl Reader<'_> {
         }
     }
 
+    /// A component's `<var>` lines, its own variables.
+    fn vars(&mut self) -> Result<Vec<Local>, String> {
+        let mut out = Vec::new();
+        loop {
+            self.gap();
+            if !self.eat("<var") {
+                return Ok(out);
+            }
+            let mut v = Local { name: String::new(), start: String::new() };
+            for (k, value) in self.attrs()? {
+                match k.as_str() {
+                    "name" => v.name = value,
+                    "start" => v.start = value,
+                    other => return Err(self.error(&format!("<var> takes no attribute {other}"))),
+                }
+            }
+            self.expect("/>")?;
+            if v.name.is_empty() {
+                return Err(self.error("<var> needs a name"));
+            }
+            out.push(v);
+        }
+    }
+
     /// The `<on>` blocks at the reading point.
     fn handlers(&mut self) -> Result<Vec<Handler>, String> {
         let mut out = Vec::new();
@@ -291,9 +320,11 @@ impl Reader<'_> {
             }
             self.expect("<on")?;
             let mut event = None;
+            let mut after = String::new();
             for (k, v) in self.attrs()? {
                 match k.as_str() {
                     "event" => event = Some(v),
+                    "after" => after = v,
                     other => return Err(self.error(&format!("<on> takes no attribute {other}"))),
                 }
             }
@@ -303,7 +334,7 @@ impl Reader<'_> {
             if out.iter().any(|h: &Handler| h.event == event) {
                 return Err(self.error(&format!("a second {event} handler")));
             }
-            out.push(Handler { event, code: dedent(&self.rest()[..n]) });
+            out.push(Handler { event, code: dedent(&self.rest()[..n]), after });
             self.at += n;
             self.expect("</on>")?;
             out.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
@@ -425,6 +456,16 @@ mod tests {
         let page = parse(text, "a").unwrap();
         assert_eq!(page.children[0].props["value"], "Settings.target");
         assert_eq!(page.children[1].handlers[0].event, "change");
+        assert_eq!(write(&page), text);
+    }
+
+    #[test]
+    fn a_component_keeps_its_variables_and_a_hold_its_time() {
+        let text = "<component name=\"Button\" size=\"176x66\">\n  <prop name=\"holdMs\" default=\"600\"/>\n  <var name=\"open\" start=\"false\"/>\n  <div id=\"e1\">\n    <on event=\"hold\" after=\"holdMs\">\n      emit(\"hold\");\n    </on>\n  </div>\n</component>\n";
+        let page = parse(text, "button").unwrap();
+        let i = page.interface.as_ref().unwrap();
+        assert_eq!(i.variables, [Local { name: "open".into(), start: "false".into() }]);
+        assert_eq!(page.children[0].handlers[0].after, "holdMs");
         assert_eq!(write(&page), text);
     }
 

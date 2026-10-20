@@ -70,23 +70,30 @@ component placed on a page is a tag named after it.
   property goes in `style`.
 - Every value but the name is an expression, kept raw: text goes in quotes, and `a < b`
   needs no escaping.
-- `<on>` holds a handler's code, first inside its element.
+- `<on>` holds a handler's code, first inside its element. A `hold` handler runs once a
+  press lasts `after` ms, an expression, 500 when left out: `<on event="hold" after="600">`.
 - `<input value="Speed"/>` is a field an operator types into. A bare name as its value takes
   the entry, and its `change` handler reads it as `p.value`.
 - `shows="over"` on a page opens it over the page beneath, as a dialog.
 - `fill` is a page's ground, an expression too, so `fill="$ground"` follows light and dark.
 
-A component has the same body, with its inputs and the events it sends first.
+A component has the same body, with its inputs, the events it sends and its own variables
+first.
 
 ```html
 <component name="Meter" size="264x176">
   <prop name="level" default="0" bindable="true"/>
   <event name="change"/>
+  <var name="peak" start="0"/>
   <span id="e1" x="11" y="11" w="242" h="44">level + "%"</span>
 </component>
 ```
 
 - `bindable` lets the component write the input back to what the instance binds it to.
+- Each instance keeps its own `<var>` on each screen, from `start`. Its code reads and sets
+  it by name.
+- Its code reads a part's pointer state by the part's name, `root` for the whole:
+  `knob.pressed`, `root.hovered`, `root.heldFor` in ms.
 
 ## logic/handlers.html
 
