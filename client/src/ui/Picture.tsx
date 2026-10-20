@@ -15,11 +15,13 @@ export interface Picture {
   data: Uint8Array;
 }
 
-/** A value as a picture when it is a Rant Image, else null. */
+/** A value as a picture when it is a Rant Image or an MJPEG VideoFrame, else null. */
 export function picture(v: Value | null | undefined): Picture | null {
   const f = fields(v);
-  if (!f || !(f.data instanceof Uint8Array) || typeof f.width !== "number" || typeof f.height !== "number" || typeof f.format !== "string") return null;
-  return { width: f.width, height: f.height, stride: typeof f.stride === "number" ? f.stride : 0, format: f.format, data: f.data };
+  // each MJPEG frame is a whole JPEG file, as an Image's Jpeg data is
+  const format = f?.codec === "Mjpeg" ? "Jpeg" : f?.format;
+  if (!f || !(f.data instanceof Uint8Array) || typeof f.width !== "number" || typeof f.height !== "number" || typeof format !== "string") return null;
+  return { width: f.width, height: f.height, stride: typeof f.stride === "number" ? f.stride : 0, format, data: f.data };
 }
 
 /** How a picture or a drawing fits its box, as CSS says it. */

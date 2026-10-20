@@ -31,3 +31,5 @@ ts-rs = "10"
 [dev-dependencies]
 # tests write values as JSON literals, which the value! macro makes ours
 serde_json = { version = "1", features = ["preserve_order"] }
+# the demo line's MJPEG camera
+jpeg-encoder = "0.6"

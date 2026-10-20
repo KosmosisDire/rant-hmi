@@ -1,12 +1,12 @@
 //! A small line to try the HMI on: a conveyor, a jog topic, a reset function, a moving robot,
-//! and a camera with the boxes a detector finds in its frames. `cargo run --example demo --
-//! --loopback` keeps it on this host.
+//! a camera with the boxes a detector finds in its frames, and the same view as MJPEG video.
+//! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use rant::types::{AlignedBox2D, Double2, Double3, Empty, Image, ImageFormat, JointState, Pose, Quaternion};
+use rant::types::{AlignedBox2D, Double2, Double3, Empty, Image, ImageFormat, JointState, Pose, Quaternion, Timestamp, VideoCodec, VideoFrame};
 use rant::{FunctionOptions, Node, NodeOptions, Qos, Request, VariableOptions};
 
 #[derive(rant::Message, Clone)]
@@ -55,6 +55,7 @@ fn main() -> Result<(), rant::Error> {
     let pose = node.publisher::<Pose>("Robot/Pose", Qos::new())?;
     let joints = node.publisher::<JointState>("Robot/Joints", Qos::new())?;
     let camera = node.publisher::<Image>("Cell/Camera", Qos::new())?;
+    let inspection = node.publisher::<VideoFrame>("Cell/Inspection", Qos::new())?;
     let detections = node.publisher::<Detections>("Cell/Detections", Qos::new())?;
     let jog = Arc::new(Mutex::new(None::<f64>));
     let heard = jog.clone();
@@ -93,6 +94,9 @@ fn main() -> Result<(), rant::Error> {
         frame += 1;
         if frame % 2 == 0 {
             let (image, found) = camera_frame(t);
+            let mut jpeg = Vec::new();
+            jpeg_encoder::Encoder::new(&mut jpeg, 80).encode(&image.data, image.width as u16, image.height as u16, jpeg_encoder::ColorType::Rgb).expect("a frame in memory encodes");
+            inspection.send(&VideoFrame { codec: VideoCodec::Mjpeg, width: image.width, height: image.height, keyframe: true, pts: Timestamp::now(), data: jpeg })?;
             camera.send(&image)?;
             detections.send(&Detections { boxes: vec![found] })?;
         }
