@@ -433,12 +433,10 @@ export function Artboard(p: {
       onPointerCancel={up}
       onContextMenu={(e) => {
         const hit = (e.target as HTMLElement).closest(".el[data-id]")?.getAttribute("data-id");
-        if (hit) elementMenu(e, p.page, p.selected, p.onPick, hit);
-        else {
-          const [r, v] = [host.getBoundingClientRect(), view()];
-          const at = { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
-          canvasMenu(e, p.page, at, p.onPick, () => p.page.children.forEach((c) => p.onPick(c.id, true)));
-        }
+        const [r, v] = [host.getBoundingClientRect(), view()];
+        const at = { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
+        if (hit) elementMenu(e, p.page, p.selected, p.onPick, hit, at);
+        else canvasMenu(e, p.page, at, p.onPick, () => p.page.children.forEach((c) => p.onPick(c.id, true)));
       }}
       onDblClick={(e) => {
         // the press captured the pointer, so the target is the artboard: look beneath it

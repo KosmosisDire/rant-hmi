@@ -3,41 +3,16 @@ import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
-import { number } from "../../state/bind";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
-import { Component, CopyPlus, File, Image, Plus, Shapes, Square, Star, TextCursorInput, Trash, Type, Video } from "../../ui/icons";
+import { Component, CopyPlus, File, Plus, Star, Trash } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
+import { adding, addElement, KINDS, STARTS } from "./add";
 import type { Pick } from "./DesignScreen";
 import { elementMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
 import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
-
-/** What a new element starts as: visible, on the grid, and plainly named. A drawing starts
- *  empty, its shapes added from the inspector. */
-const STARTS: Record<"div" | "span" | "input" | "img" | "video" | "svg", Record<string, string>> = {
-  div: { name: "Frame", x: "44", y: "44", w: "176", h: "88", background: "#2a2f35", "border-radius": "8" },
-  span: { name: "Text", x: "44", y: "44", w: "176", h: "44", text: '"Text"', color: "#e4e6e8", "font-size": "18" },
-  input: {
-    name: "Input",
-    x: "44",
-    y: "44",
-    w: "176",
-    h: "44",
-    background: "#1e2125",
-    "border-width": "1",
-    "border-style": '"solid"',
-    "border-color": "#3a4046",
-    "border-radius": "6",
-    padding: '"0 11px"',
-    color: "#e4e6e8",
-    "font-size": "18",
-  },
-  img: { name: "Image", x: "44", y: "44", w: "352", h: "264", fit: '"meet"' },
-  video: { name: "Video", x: "44", y: "44", w: "352", h: "264", fit: '"meet"' },
-  svg: { name: "Drawing", x: "44", y: "44", w: "176", h: "176" },
-};
 
 /** The left sidebar: the pages, and the open page's elements as layers. */
 export function Outline(p: { page: Page | undefined; selected: string[]; onPick: Pick; onEdit: (id: string, key: string) => void }) {
@@ -49,13 +24,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     if (!page) return;
     const last = p.selected.at(-1);
     const holder = last ? find(page.children, last) : undefined;
-    const inside = !!holder && holds(holder.tag, tag);
-    // step past what already sits there, so a new element never hides behind an old one
-    const siblings = inside ? holder.children : page.children;
-    let n = inside ? 11 : 44;
-    while (siblings.some((e) => number(e.props.x) === n && number(e.props.y) === n)) n += 22;
-    const at = { x: String(n), y: String(n) };
-    send({ type: "edit", edit: { kind: "add_element", page: page.id, parent: inside ? holder.id : null, index: null, element: { id: "", tag, component, props: { ...props, ...at }, handlers: [], children: [] } } });
+    addElement(page, holder && holds(holder.tag, tag) ? holder.id : null, tag, props, component);
   };
   const add = (tag: keyof typeof STARTS) => place(tag, STARTS[tag]);
   const addInstance = (c: Page) => {
@@ -140,24 +109,13 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
       </div>
       <div class="pane-head layers-head">
         <span class="head-title">Layers</span>
-        <button class="icon-btn" title="Add a frame" onClick={() => add("div")}>
-          <Square size={14} />
-        </button>
-        <button class="icon-btn" title="Add a text" onClick={() => add("span")}>
-          <Type size={14} />
-        </button>
-        <button class="icon-btn" title="Add an input" onClick={() => add("input")}>
-          <TextCursorInput size={14} />
-        </button>
-        <button class="icon-btn" title="Add an image" onClick={() => add("img")}>
-          <Image size={14} />
-        </button>
-        <button class="icon-btn" title="Add a video" onClick={() => add("video")}>
-          <Video size={14} />
-        </button>
-        <button class="icon-btn" title="Add a drawing" onClick={() => add("svg")}>
-          <Shapes size={14} />
-        </button>
+        <For each={KINDS}>
+          {([tag, word]) => (
+            <button class="icon-btn" title={adding(word)} onClick={() => add(tag)}>
+              <TagIcon tag={tag} size={14} />
+            </button>
+          )}
+        </For>
         <button ref={placer} class="icon-btn" classList={{ on: picking() }} title="Place a component" onClick={() => setPicking(!picking())}>
           <Component size={14} />
         </button>

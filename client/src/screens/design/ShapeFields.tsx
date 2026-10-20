@@ -52,8 +52,8 @@ export function shapeKeys(tag: Tag): Set<string> {
   return new Set([...(GEOMETRY[tag] ?? []), ...PAINT, ...TURN].map(([, key]) => key));
 }
 
-/** The shapes the inspector adds, in the order its menu lists them. */
-const KINDS: Tag[] = ["circle", "rect", "line", "path", "polyline", "polygon", "ellipse", "text", "g"];
+/** The shapes the inspector and the menu add, in the order they list them. */
+export const SHAPE_KINDS: Tag[] = ["circle", "rect", "line", "path", "polyline", "polygon", "ellipse", "text", "g"];
 
 /** The drawing's own units: its view box, else its box in pixels. */
 function units(drawing: Element): [number, number, number, number] {
@@ -91,23 +91,26 @@ function start(tag: Tag, [x, y, w, h]: [number, number, number, number]): Record
   }
 }
 
-/** Adds a shape into the drawing or group picked, or beside the shape picked. */
+/** Adds a shape into the drawing or group `at` is, or beside it when it is a shape, sized
+ *  to the drawing's units. */
+export function addShape(page: Page, at: Element, tag: Tag) {
+  const holder = at.tag === "svg" || at.tag === "g" ? at.id : parentOf(page, at.id);
+  let id = holder;
+  while (id && find(page.children, id)?.tag !== "svg") id = parentOf(page, id);
+  const drawing = id ? find(page.children, id) : undefined;
+  if (!drawing) return;
+  const element: Element = { id: "", tag, component: null, props: start(tag, units(drawing)), handlers: [], children: [] };
+  send({ type: "edit", edit: { kind: "add_element", page: page.id, parent: holder, index: null, element } });
+}
+
+/** The inspector's row that adds a shape into the drawing or group picked, or beside the
+ *  shape picked. */
 export function AddShape(p: { page: Page; element: Element }) {
   const [open, setOpen] = createSignal(false);
   let ghost!: HTMLButtonElement;
-  // the drawing or group a new shape goes in, and the drawing whose units size it
-  const holder = () => (p.element.tag === "svg" || p.element.tag === "g" ? p.element.id : parentOf(p.page, p.element.id));
-  const drawing = () => {
-    let id = holder();
-    while (id && find(p.page.children, id)?.tag !== "svg") id = parentOf(p.page, id);
-    return id ? find(p.page.children, id) : undefined;
-  };
   const add = (tag: Tag) => {
     setOpen(false);
-    const d = drawing();
-    if (!d) return;
-    const element: Element = { id: "", tag, component: null, props: start(tag, units(d)), handlers: [], children: [] };
-    send({ type: "edit", edit: { kind: "add_element", page: p.page.id, parent: holder(), index: null, element } });
+    addShape(p.page, p.element, tag);
   };
   return (
     <>
@@ -115,11 +118,11 @@ export function AddShape(p: { page: Page; element: Element }) {
       <button ref={ghost} class="ghost" classList={{ on: open() }} onClick={() => setOpen(!open())}>
         <Plus size={13} />
         Add shape
-        <span class="ghost-trail">{KINDS.slice(0, 5).join(", ")}</span>
+        <span class="ghost-trail">{SHAPE_KINDS.slice(0, 5).join(", ")}</span>
       </button>
       <Show when={open()}>
         <Popover anchor={ghost} onClose={() => setOpen(false)} class="choice-list">
-          <For each={KINDS}>
+          <For each={SHAPE_KINDS}>
             {(tag) => (
               <button class="menu-item" onClick={() => add(tag)}>
                 <TagIcon tag={tag} size={13} />
