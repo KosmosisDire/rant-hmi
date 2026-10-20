@@ -282,13 +282,8 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           </div>
           <Turn prop={prop} />
         </Show>
-        <Show when={p.element.tag === "img"}>
-          <div class="section">Image</div>
-          <Field {...prop("src")} label="Source" placeholder="Camera" />
-          <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
-        </Show>
-        <Show when={p.element.tag === "video"}>
-          <div class="section">Video</div>
+        <Show when={p.element.tag === "media"}>
+          <div class="section">Media</div>
           <Field {...prop("src")} label="Source" placeholder="Camera" />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
         </Show>

@@ -4,12 +4,13 @@
 export default async function ({ page, hmi, check, eventually }) {
   if (!hmi.state.imports.some((i) => i.alias === "Camera")) await hmi.import("Camera", "Cell/Camera");
   const pageId = await hmi.addPage("Snapshot");
-  const shot = await hmi.addElement(pageId, "img", { name: "camera", x: "44", y: "44", w: "320", h: "240", src: "Camera", fit: '"meet"' });
+  const shot = await hmi.addElement(pageId, "media", { name: "camera", x: "44", y: "44", w: "320", h: "240", src: "Camera", fit: '"meet"' });
   await page.locator(".tab", { hasText: "Design" }).click();
   await page.locator(".screen:not([hidden]) .pages .list-row", { hasText: "Snapshot" }).click();
   await page.locator(".tab", { hasText: "Run" }).click();
   const picture = page.locator(`.run-layer:not([hidden]) .el[data-id="${shot}"]`);
-  await eventually(async () => (await picture.locator("canvas").evaluate((c) => c.width)) === 160, "the camera's frame");
+  // the transcoder probes a new camera for 3 s, and the first frame waits for a keyframe
+  await eventually(async () => (await picture.locator("video").count()) === 1 && (await picture.locator("video").evaluate((v) => v.videoWidth)) === 160, "the camera's video", 20000);
 
   await picture.click({ button: "right" });
   const saved = page.waitForEvent("download");

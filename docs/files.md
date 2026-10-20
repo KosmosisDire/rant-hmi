@@ -121,13 +121,13 @@ component placed on a page is a tag named after it.
     </svg>`
   </markup>
   ```
-- `<img src="Camera" fit='"meet"'/>` shows a picture: a mesh import of a Rant Image, or a URL
-  in quotes. `fit` is `"meet"`, `"slice"` or `"stretch"`, as a drawing's is, so a drawing over
-  it with ``viewbox="`0 0 ${Camera.width} ${Camera.height}`"`` and the same fit draws in the
+- `<media src="Camera" fit='"meet"'/>` shows a camera, a picture or a URL in quotes. `src`
+  names a mesh import, bare or as text from an expression. An import with H264, its own or
+  the `Video` child rant-transcoder makes on the camera's host, plays over WebRTC. Any other
+  shows its pictures as they come: a Rant Image, or MJPEG frames. `fit` is `"meet"`,
+  `"slice"` or `"stretch"`, as a drawing's is, so a drawing over it with
+  ``viewbox="`0 0 ${Camera.width} ${Camera.height}`"`` and the same fit draws in the
   picture's pixels.
-- `<video src="Camera" fit='"meet"'/>` plays a mesh import's video over WebRTC. `src` names
-  the import, bare or as text from an expression. An H264 topic plays as it is, any other
-  camera through its `Video` child, which rant-transcoder makes on the camera's host.
 - `<input value="Speed"/>` is a field an operator types into. A bare name as its value takes
   the entry, and its `change` handler reads it as `p.value`.
 - `shows="over"` on a page opens it over the page beneath, as a dialog.

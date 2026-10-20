@@ -11,8 +11,8 @@ const ATTRS: [&str; 6] = ["name", "repeat", "x", "y", "w", "h"];
 const TEXT: &str = "text";
 /// An input's value, an attribute as HTML writes it.
 const VALUE: &str = "value";
-/// A drawing's view box, a picture's source, and how either fits its box, attributes as SVG
-/// and HTML write them.
+/// A drawing's view box, media's source, and how either fits its box, attributes as SVG and
+/// HTML write them.
 const VIEWBOX: &str = "viewbox";
 const SRC: &str = "src";
 const FIT: &str = "fit";
@@ -24,7 +24,7 @@ fn own_attrs(tag: Tag) -> &'static [&'static str] {
     match tag {
         Tag::Input => &[VALUE],
         Tag::Svg => &[VIEWBOX, FIT],
-        Tag::Img | Tag::Video => &[SRC, FIT],
+        Tag::Media => &[SRC, FIT],
         _ => &[],
     }
 }
@@ -558,23 +558,11 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_keeps_its_source_and_fit() {
-        let text = "<page name=\"A\" size=\"1408x792\">\n  <img id=\"e1\" name=\"Camera\" x=\"44\" src=\"Camera\" fit='\"meet\"' style=\"border-radius: 8\"/>\n</page>\n";
+    fn media_keeps_its_source_and_fit() {
+        let text = "<page name=\"A\" size=\"1408x792\">\n  <media id=\"e1\" name=\"Camera\" x=\"44\" src=\"Camera\" fit='\"slice\"' style=\"border-radius: 8\"/>\n</page>\n";
         let page = parse(text, "a").unwrap();
         let e = &page.children[0];
-        assert_eq!((e.tag, e.props["src"].as_str(), e.props["fit"].as_str()), (Tag::Img, "Camera", "\"meet\""));
-        assert_eq!(write(&page), text);
-    }
-
-    #[test]
-    fn a_video_keeps_its_source_and_fit() {
-        let text = "<page name=\"A\" size=\"1408x792\">
-  <video id=\"e1\" x=\"44\" src=\"Camera\" fit='\"slice\"'/>
-</page>
-";
-        let page = parse(text, "a").unwrap();
-        let e = &page.children[0];
-        assert_eq!((e.tag, e.props["src"].as_str(), e.props["fit"].as_str()), (Tag::Video, "Camera", "\"slice\""));
+        assert_eq!((e.tag, e.props["src"].as_str(), e.props["fit"].as_str()), (Tag::Media, "Camera", "\"slice\""));
         assert_eq!(write(&page), text);
     }
 

@@ -141,10 +141,9 @@ pub enum Tag {
     Use,
     /// A field an operator types a value into.
     Input,
-    /// A picture: a URL, or a mesh import's Image.
-    Img,
-    /// A mesh import's video, played over WebRTC.
-    Video,
+    /// A picture or a video: a URL, a mesh import's pictures as they come, or its H264 video
+    /// played over WebRTC.
+    Media,
     /// A drawing: placed like a frame, holding shapes drawn in its own units.
     Svg,
     /// SVG markup an expression gives as text, drawn in the element's box.
@@ -165,12 +164,11 @@ pub enum Tag {
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-const WORDS: [(Tag, &str); 16] = [
+const WORDS: [(Tag, &str); 15] = [
     (Tag::Div, "div"),
     (Tag::Span, "span"),
     (Tag::Input, "input"),
-    (Tag::Img, "img"),
-    (Tag::Video, "video"),
+    (Tag::Media, "media"),
     (Tag::Svg, "svg"),
     (Tag::Markup, "markup"),
     (Tag::Path, "path"),

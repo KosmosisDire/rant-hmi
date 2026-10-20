@@ -8,10 +8,10 @@ import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { type At, bareRef, componentScope, docScope, type Kept, pageScope, percentOf, placement, repeatScope, resolve, type Scope } from "../state/bind";
-import { short } from "../state/format";
+import { fields, short } from "../state/format";
 import { play, stopPlaying } from "../net/video";
-import { component, notify, state } from "../state/store";
-import { Image, Video } from "../ui/icons";
+import { component, entity, live, notify, state } from "../state/store";
+import { ImagePlay } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { componentAct, type Act } from "./act";
 import { svgOf } from "./markup";
@@ -270,9 +270,8 @@ function ElementView(p: ElementProps & { at?: At }) {
     const value = p.element.tag === "input" ? take("value") : undefined;
     const drawing = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
-    const image = p.element.tag === "img" ? { src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
-    const video = p.element.tag === "video" ? { alias: playable(p.element.props.src, () => take("src")), fit: String(take("fit") ?? "meet") } : undefined;
-    return { style, unknown, faults, text, value, drawing, markup, image, video, w: at("w"), h: at("h") };
+    const media = p.element.tag === "media" ? { alias: playable(p.element.props.src, () => take("src")), src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
+    return { style, unknown, faults, text, value, drawing, markup, media, w: at("w"), h: at("h") };
   });
   const press = usePress(p);
   const inner = (c: Element) => <Placed element={c} scope={p.scope} room={{ w: look().w, h: look().h }} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
@@ -303,8 +302,7 @@ function ElementView(p: ElementProps & { at?: At }) {
           )}
         </Match>
         <Match when={look().markup}>{(m) => <>{m()}</>}</Match>
-        <Match when={look().image}>{(i) => <ImageView src={i().src} fit={i().fit} design={p.design} />}</Match>
-        <Match when={look().video}>{(v) => <VideoView alias={v().alias} fit={v().fit} design={p.design} />}</Match>
+        <Match when={look().media}>{(m) => <MediaView alias={m().alias} src={m().src} fit={m().fit} design={p.design} />}</Match>
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} act={p.act} />
         </Match>
@@ -376,21 +374,30 @@ function ShapeView(p: ElementProps & { at?: At }) {
   );
 }
 
-/** A picture: a URL as an img, a mesh import's Image on a canvas. In the editor one with nothing
- *  to show yet says so, so it can still be picked and placed. */
-function ImageView(p: { src: unknown; fit: string; design?: boolean }) {
-  const url = () => (typeof p.src === "string" && p.src.trim() !== "" ? p.src : null);
-  const pic = () => picture(p.src as Value);
+/** What media shows: an import's H264 over WebRTC when it has some, else its pictures as they
+ *  come, a picture an expression gives, or a URL. In the editor one with nothing to show yet
+ *  says so, so it can still be picked and placed. */
+function MediaView(p: { alias: string | null; src: unknown; fit: string; design?: boolean }) {
+  const pic = () => picture((p.alias ? live(p.alias).value : p.src) as Value);
+  const url = () => (!p.alias && typeof p.src === "string" && p.src.trim() !== "" ? p.src : null);
   return (
-    <Switch fallback={<Show when={p.design}>{<div class="el-picture-none">{<Image size={20} />}</div>}</Show>}>
-      <Match when={url()}>{(u) => <img class="el-picture" src={u()} alt="" draggable={false} style={{ "object-fit": FIT[p.fit] ?? "contain" }} />}</Match>
+    <Switch fallback={<Show when={p.design}>{<div class="el-picture-none">{<ImagePlay size={20} />}</div>}</Show>}>
+      <Match when={p.alias && plays(p.alias) && p.alias}>{(a) => <VideoView alias={a()} fit={p.fit} design={p.design} />}</Match>
       <Match when={pic()}>{(x) => <PictureView picture={x()} fit={p.fit} />}</Match>
+      <Match when={url()}>{(u) => <img class="el-picture" src={u()} alt="" draggable={false} style={{ "object-fit": FIT[p.fit] ?? "contain" }} />}</Match>
     </Switch>
   );
 }
 
-/** The import a video plays: its source as a bare import name, or the name its expression
- *  gives as text, as a component's input passes it on. */
+/** Whether an import has H264 to play: the Video child rant-transcoder makes, or its own frames. */
+function plays(alias: string): boolean {
+  const imp = state.imports.find((i) => i.alias === alias);
+  if (imp && entity(`${imp.entity}/Video`)?.schema?.name === "VideoFrame") return true;
+  return fields(live(alias).value)?.codec === "H264";
+}
+
+/** The import media shows: its source as a bare import name, or the name its expression gives
+ *  as text, as a component's input passes it on. */
 function playable(src: string | undefined, value: () => unknown): string | null {
   const imported = (name: unknown): name is string => typeof name === "string" && state.imports.some((i) => i.alias === name);
   const raw = (src ?? "").trim();
@@ -423,7 +430,7 @@ function VideoView(p: { alias: string | null; fit: string; design?: boolean }) {
       <video ref={el} class="el-picture" style={{ "object-fit": FIT[p.fit] ?? "contain" }} autoplay muted playsinline onLoadedData={() => setShows(true)} />
       <Show when={p.design && !shows()}>
         <div class="el-picture-none over">
-          <Video size={20} />
+          <ImagePlay size={20} />
         </div>
       </Show>
     </>
