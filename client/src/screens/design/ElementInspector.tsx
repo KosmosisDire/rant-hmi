@@ -1,4 +1,4 @@
-import { createContext, createMemo, createSignal, For, Match, Show, Switch, useContext } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch, useContext } from "solid-js";
 import { produce } from "solid-js/store";
 import { send } from "../../net/connection";
 import { OWN, POINTER } from "../../page/PageView";
@@ -7,8 +7,8 @@ import type { Input } from "../../protocol/Input";
 import type { Interface } from "../../protocol/Interface";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
-import { docScope, isConstant, pageScope, resolve, type Scope } from "../../state/bind";
-import { complete, type Place, type Suggestion } from "../../state/complete";
+import { docScope, pageScope } from "../../state/bind";
+import { complete, type Suggestion } from "../../state/complete";
 import { component, page as pageOf, setState, startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
@@ -32,34 +32,24 @@ import {
 } from "../../ui/icons";
 import { makeComponent } from "./component";
 import type { Typing } from "./DesignScreen";
-import { type Align, align, find, sendEdits, setProps, spread, tops } from "./tree";
+import { BorderField, Field, type FieldProps, kindOf, type Where, WhereContext } from "./Field";
+import { type Align, align, find, sendEdits, setProps, showProps, spread, tops } from "./tree";
 
-/** The CSS a field offers by name, with an example of what it takes. Anything else lives
- *  in the free CSS box. */
-const LOOK: [string, string, string][] = [
-  ["Fill", "background", "#2a2f35"],
-  ["Border", "border", '"1px solid #3a4046"'],
-  ["Radius", "border-radius", "0"],
-  ["Opacity", "opacity", "1"],
+/** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
+ *  the free CSS box. */
+type Look = [string, string, Partial<FieldProps>];
+const LOOK: Look[] = [
+  ["Fill", "background", { kind: "colour", placeholder: "#2a2f35" }],
+  ["Radius", "border-radius", { kind: "number", min: 0, placeholder: "0" }],
+  ["Opacity", "opacity", { kind: "number", min: 0, max: 1, step: 0.01, placeholder: "1" }],
 ];
-const TEXT_LOOK: [string, string, string][] = [
-  ["Colour", "color", "#e4e6e8"],
-  ["Size", "font-size", "16"],
-  ["Weight", "font-weight", "400"],
-  ["Align", "text-align", '"left"'],
+const TEXT_LOOK: Look[] = [
+  ["Colour", "color", { kind: "colour", placeholder: "#e4e6e8" }],
+  ["Size", "font-size", { kind: "number", min: 1, placeholder: "16" }],
+  ["Weight", "font-weight", { kind: "choice", options: ["300", "400", "500", "600", "700"], placeholder: "400" }],
+  ["Align", "text-align", { kind: "choice", options: ['"left"', '"center"', '"right"'], placeholder: '"left"' }],
 ];
-const NAMED = new Set([...LOOK, ...TEXT_LOOK].map(([, key]) => key));
-
-/** Where the fields stand: the names their code reads, and what completion offers instead
- *  of the datapoints, as a component offers its inputs. */
-interface Where {
-  scope: Scope;
-  names?: Suggestion[];
-  /** Where a handler here runs. */
-  place: Place;
-}
-
-const WhereContext = createContext<() => Where>((): Where => ({ scope: pageScope, place: "handler" }));
+const NAMED = new Set([...[...LOOK, ...TEXT_LOOK].map(([, key]) => key), "border-width", "border-style", "border-color"]);
 
 /** The right sidebar: the selected element's properties, a word on several, or the page's
  *  when none is selected. */
@@ -204,9 +194,11 @@ function PageInspector(p: { page: Page }) {
           <div class="section">Look</div>
           <Field
             label="Fill"
+            kind="colour"
             value={p.page.fill}
             placeholder="#15171a"
             onWrite={(fill) => send({ type: "edit", edit: { kind: "set_fill", page: p.page.id, fill: fill ?? "" } })}
+            onShow={(fill) => setState("pages", (pg) => pg.id === p.page.id, { fill })}
           />
           <div class="field">
             <label>Shows</label>
@@ -264,6 +256,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
       return p.element.props[key] ?? "";
     },
     onWrite: (t: string | null) => setProps(p.page, p.element.id, { [key]: t }),
+    onShow: (t: string) => showProps(p.page, p.element.id, { [key]: t }),
   });
   const text = () => p.element.tag === "span";
   const instance = () => p.element.tag === "use";
@@ -316,7 +309,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Field {...prop("name")} label="Name" plain focus={typed("name")} />
         <div class="section">Placement</div>
         <div class="placement">
-          <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} />}</For>
+          <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside min={k === "w" || k === "h" ? 0 : undefined} />}</For>
         </div>
         <Show when={instance()}>
           <div class="section">Component</div>
@@ -339,14 +332,14 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             <>
               <div class="section">Inputs</div>
               <For each={c().interface?.inputs} fallback={<div class="field-hint">{c().name} takes no inputs yet. Add them on the component.</div>}>
-                {(i) => <Field {...prop(i.name)} label={i.name} placeholder={i.default} />}
+                {(i) => <Field {...prop(i.name)} label={i.name} kind={kindOf(i.default)} placeholder={i.default} />}
               </For>
             </>
           )}
         </Show>
         <Show when={text()}>
           <div class="section">Text</div>
-          <Field {...prop("text")} label="Text" focus={typed("text")} />
+          <Field {...prop("text")} label="Text" kind="text" focus={typed("text")} />
         </Show>
         <Show when={input()}>
           <div class="section">Input</div>
@@ -354,11 +347,13 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="field-hint">A name such as Speed takes what an operator enters. Anything else only shows.</div>
         </Show>
         <Show when={text() || input()}>
-          <For each={TEXT_LOOK}>{([label, key, hint]) => <Field {...prop(key)} label={label} placeholder={hint} />}</For>
+          <For each={TEXT_LOOK}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
         </Show>
         <Show when={!instance()}>
           <div class="section">Look</div>
-          <For each={LOOK}>{([label, key, hint]) => <Field {...prop(key)} label={label} placeholder={hint} />}</For>
+          <Field {...prop("background")} {...LOOK[0][2]} label="Fill" />
+          <BorderField props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
+          <For each={LOOK.slice(1)}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
           <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
         </Show>
@@ -456,47 +451,6 @@ function Events(p: { page: string; element: Element }) {
         )}
       </For>
     </>
-  );
-}
-
-/** One property, an expression unless `plain`. Under it, what stops it showing, and for
- *  words that fail for want of quotes, a way to make them text. */
-function Field(p: { label: string; value: string; onWrite: (text: string | null) => void; placeholder?: string; plain?: boolean; focus?: number }) {
-  const where = useContext(WhereContext);
-  const value = () => p.value;
-  const write = (t: string) => p.onWrite(t.trim() === "" ? null : t);
-  const status = createMemo(() => {
-    if (p.plain) return undefined;
-    const r = resolve(value(), where().scope);
-    if (r.ok) return undefined;
-    if (r.unknown) return { text: `${r.unknown} is unknown right now` };
-    return { text: r.error, words: !/["'`]/.test(value()) };
-  });
-  return (
-    <div class="field" classList={{ bound: !p.plain && !isConstant(value()) }}>
-      <label>{p.label}</label>
-      <DraftInput
-        value={value()}
-        placeholder={p.placeholder}
-        focus={p.focus}
-        onCommit={write}
-        complete={p.plain ? undefined : (t, c) => complete(t, c, "expression", where().names)}
-      />
-      <Show when={status()}>
-        {(s) => (
-          <span class="field-note">
-            {s().text}
-            <Show when={s().words}>
-              <br />
-              Text goes in quotes.{" "}
-              <button class="field-fix" onClick={() => write(JSON.stringify(value().trim()))}>
-                Make it text
-              </button>
-            </Show>
-          </span>
-        )}
-      </Show>
-    </div>
   );
 }
 

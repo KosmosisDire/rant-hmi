@@ -40,8 +40,10 @@ export function designer(page) {
       await d.gesture(b.x + b.width / 2, b.y + b.height / 2, dx, dy);
     },
 
+    /** A field by its label, or by the label inside its box as placement's x and y have. */
     field(label) {
-      return page.locator(".sidebar.right .field", { has: page.locator(`label`, { hasText: new RegExp(`^${label}$`) }) }).locator("input, textarea");
+      const named = page.locator("label, .lead.inside", { hasText: new RegExp(`^${label}$`) });
+      return page.locator(".sidebar.right .field, .popover .field", { has: named }).locator("input, textarea");
     },
 
     async setField(label, text) {

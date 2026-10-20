@@ -5,7 +5,9 @@ import type { Box, Overrides } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
+import { produce } from "solid-js/store";
 import { isNumber, number } from "../../state/bind";
+import { setState } from "../../state/store";
 
 /** The element and every frame around it, outermost first. */
 export function chain(elements: Element[], id: string): Element[] | undefined {
@@ -142,4 +144,21 @@ export function sendEdits(edits: Edit[]) {
 
 export function setProps(page: string, id: string, props: Record<string, string | null>) {
   send({ type: "edit", edit: { kind: "set_props", page, id, props } });
+}
+
+/** Shows props here only, as a gesture does before it lets go and keeps them with setProps.
+ *  An empty or null value takes the prop away. */
+export function showProps(page: string, id: string, props: Record<string, string | null>) {
+  setState(
+    "pages",
+    (pg) => pg.id === page,
+    produce((pg) => {
+      const e = find(pg.children, id);
+      for (const [k, v] of Object.entries(props)) {
+        if (!e) return;
+        if (!v) delete e.props[k];
+        else e.props[k] = v;
+      }
+    }),
+  );
 }

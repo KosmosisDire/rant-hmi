@@ -233,8 +233,114 @@
   gap: 0 12px;
 }
 
-.placement .field {
-  grid-template-columns: 14px 1fr;
+/* A field whose label is its lead, as placement's x and y are. */
+.field.inside {
+  grid-template-columns: 1fr;
+}
+
+.field.inside .field-note {
+  grid-column: 1;
+}
+
+/* The editor and its lead as one box: the lead sits over the editor's left padding. */
+.vbox {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.vbox.has-lead .editor {
+  padding-left: 24px;
+}
+
+.lead {
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  bottom: 1px;
+  width: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font: 600 11px var(--mono);
+  color: var(--faint);
+  background: none;
+  border: 0;
+  border-radius: 3px 0 0 3px;
+  cursor: pointer;
+}
+
+.lead:hover {
+  color: var(--text);
+  background: var(--cell-hover);
+}
+
+.lead.scrub {
+  cursor: ew-resize;
+}
+
+.lead.linked {
+  color: var(--blue);
+}
+
+.lead-swatch {
+  width: 12px;
+  height: 12px;
+  overflow: hidden;
+}
+
+.lead-swatch > i {
+  display: block;
+  height: 100%;
+}
+
+/* A colour no one can show yet: a hatch, as unknown values have. */
+.lead-swatch.none {
+  background: repeating-linear-gradient(45deg, var(--faint) 0 1px, transparent 1px 4px);
+}
+
+/* A border's parts in words, a button that opens a field per part. */
+.border-sum {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.border-sum .linked {
+  color: var(--blue);
+}
+
+.border-look {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+.border-look.none {
+  outline: 1px dashed var(--faint);
+  outline-offset: -1px;
+}
+
+.vbox .tail {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  opacity: 0;
+}
+
+.vbox:hover .tail {
+  opacity: 1;
+}
+
+.popover.parts {
+  width: 280px;
+  padding: 8px 10px;
 }
 
 .section-row {
