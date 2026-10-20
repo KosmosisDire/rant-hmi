@@ -9,7 +9,7 @@ import type { Page } from "../../protocol/Page";
 import { number } from "../../state/bind";
 import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
-import { absolute, boxOf, find, literal, sendEdits, tops } from "./tree";
+import { absolute, boxOf, find, literal, parentOf, sendEdits, tops } from "./tree";
 
 export const GRID = 11;
 /** Grid lines every so many units and how strong each set is. A set fades out as its lines
@@ -290,9 +290,11 @@ export function Artboard(p: {
   // a shape's attributes place it, so its ring is measured from the drawn page, each frame
   // while one is picked, as live values may move it
   const shape = (id: string) => SHAPES.has(find(p.page.children, id)?.tag ?? "");
+  // what holds the picked elements, outlined faintly so their bounds show
+  const parents = () => [...new Set(p.selected.map((id) => parentOf(p.page, id)))].filter((id): id is string => !!id && !p.selected.includes(id));
   const [measured, setMeasured] = createSignal<Record<string, DOMRect>>({});
   createEffect(() => {
-    const ids = p.selected.filter(shape);
+    const ids = [...p.selected, ...parents()].filter(shape);
     if (ids.length === 0) return;
     let frame = requestAnimationFrame(function measure() {
       const at: Record<string, DOMRect> = {};
@@ -343,6 +345,7 @@ export function Artboard(p: {
       </div>
       <div class="veil" style={sheet()} />
       <Show when={box()}>{(b) => <div class="marquee" style={{ left: `${b().left}px`, top: `${b().top}px`, width: `${b().width}px`, height: `${b().height}px` }} />}</Show>
+      <For each={parents()}>{(id) => <Show when={ring(id)}>{(r) => <div class="ring parent" style={r()} />}</Show>}</For>
       {/* a ring for each selected element, its grips only when it is the one */}
       <For each={p.selected}>
         {(id) => (
