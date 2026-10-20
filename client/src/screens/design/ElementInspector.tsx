@@ -513,7 +513,7 @@ function Inputs(p: { page: string; inputs: Input[] }) {
       </div>
       <For each={p.inputs} fallback={<div class="field-hint">What each instance fills in, read here by name.</div>}>
         {(i) => (
-          <div class="handler">
+          <div class="handler" data-input={i.name}>
             <div class="handler-head">
               <DraftInput
                 class="editor input-name"
@@ -566,7 +566,7 @@ function Variables(p: { page: string; variables: Local[] }) {
       </div>
       <For each={p.variables} fallback={<div class="field-hint">What each instance keeps of its own on each screen, read and set by name in its code.</div>}>
         {(v) => (
-          <div class="handler">
+          <div class="handler" data-var={v.name}>
             <div class="handler-head">
               <DraftInput
                 class="editor input-name"
@@ -615,7 +615,7 @@ function Sends(p: { page: string; events: string[] }) {
       </div>
       <For each={p.events} fallback={<div class="field-hint">Events its code sends with emit, for instances to handle.</div>}>
         {(e) => (
-          <div class="handler-head sends-row">
+          <div class="handler-head sends-row" data-sends={e}>
             <DraftInput class="editor input-name" value={e} accept={(t) => /^[a-z][A-Za-z0-9]*$/.test(t.trim())} onCommit={(to) => write(e, to.trim())} />
             <button class="icon-btn" title={`Stop sending ${e}`} onClick={() => write(e, null)}>
               <X size={13} />
