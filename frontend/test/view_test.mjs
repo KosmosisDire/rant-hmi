@@ -104,9 +104,9 @@ check(
   syncUrl({
     protocol: "http:",
     hostname: "localhost",
-    port: "7500",
-    host: "localhost:7500",
-  }) === "ws://127.0.0.1:7500/sync",
+    port: "6739",
+    host: "localhost:6739",
+  }) === "ws://127.0.0.1:6739/sync",
   "localhost sync uses the IPv4 listener",
 );
 check(

@@ -32,7 +32,7 @@ struct Inbound {
 };
 
 struct ServerOptions {
-    int port = 7500;
+    int port = 6739;
     std::string bind = "127.0.0.1";
     std::string statics;         /* directory served over HTTP; empty = none */
     size_t max_queued = 2048;    /* per-session inbound frames before disconnect */

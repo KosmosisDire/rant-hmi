@@ -17,7 +17,7 @@ void on_signal(int) { g_quit = true; }
 
 void usage() {
     std::printf(
-        "usage: hmi_designer [--port 7500] [--bind 127.0.0.1] [--doc hmi.json]\n"
+        "usage: hmi_designer [--port 6739] [--bind 127.0.0.1] [--doc hmi.json]\n"
         "                    [--statics DIR] [--no-save] [--verbose]\n"
         "                    [--no-mesh] [--mesh-name hmi] [--domain N]\n"
         "                    [--mesh-if IP] [--peer IP[:PORT]] [--mesh-topics N]\n"
