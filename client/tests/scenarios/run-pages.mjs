@@ -17,8 +17,8 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await add(other, "Here", null);
 
   await d.openPage("Home");
-  await page.locator(".screen:not([hidden]) .sidebar.right button", { hasText: "Start operators here" }).click();
-  await page.locator(".field-hint", { hasText: "Operators' screens open on this page." }).waitFor();
+  await d.menu(d.pageRow("Home"), "Make the start page");
+  await d.pageRow("Home").locator(".tag", { hasText: "start" }).waitFor();
 
   await page.goto(`${sys.url}/run`);
   // the page on top, and how many are open beneath it

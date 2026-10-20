@@ -10,7 +10,7 @@ import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import { docScope, pageScope } from "../../state/bind";
 import { complete, componentNames, REPEAT } from "../../state/complete";
-import { component, page as pageOf, setState, startPage, state } from "../../state/store";
+import { component, page as pageOf, setState, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
 import { Popover } from "../../ui/Popover";
@@ -175,10 +175,7 @@ function PageInspector(p: { page: Page }) {
             </>
           )}
         </Show>
-        <Show
-          when={!isComponent()}
-          fallback={<div class="placeholder">Place it on a page with the component button over the layers. Every instance shows what is drawn here.</div>}
-        >
+        <Show when={!isComponent()}>
           <div class="section">Look</div>
           <Field
             label="Fill"
@@ -199,21 +196,6 @@ function PageInspector(p: { page: Page }) {
                 )}
               </For>
             </div>
-          </div>
-          <div class="section">Operators</div>
-          <Show
-            when={startPage() === p.page.id}
-            fallback={
-              <button class="button" onClick={() => send({ type: "set_start", page: p.page.id })}>
-                Start operators here
-              </button>
-            }
-          >
-            <div class="field-hint">Operators' screens open on this page.</div>
-          </Show>
-          <div class="placeholder">
-            Select an element to change it. Every value is an expression: text goes in quotes, like <code>"Running"</code>, and <code>Speed.toFixed(1)</code> shows a live
-            value.
           </div>
         </Show>
       </div>
