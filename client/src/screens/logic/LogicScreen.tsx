@@ -14,7 +14,8 @@ import { uses } from "../../state/uses";
 import { DraftInput } from "../../ui/DraftInput";
 import { Edge } from "../../ui/Sidebars";
 import { painted } from "../../ui/highlight";
-import { Activity, Monitor, MonitorOff, Plus, Power, Search, Timer, X, Zap } from "../../ui/icons";
+import { Activity, CopyPlus, Monitor, MonitorOff, PenTool, Plus, Power, Search, Timer, Trash, X, Zap } from "../../ui/icons";
+import { openMenu } from "../../ui/Menu";
 import { setHandler } from "../design/tree";
 import { EventCard } from "./EventCard";
 
@@ -140,12 +141,31 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
       setWanted("");
     }
   });
-  const add = () => {
-    let n = state.rules.length + 1;
-    while (state.rules.some((r) => r.name === `Handler ${n}`)) n++;
+  // a new handler, or a copy of one, under a free name, chosen once it comes back
+  const add = (from?: Rule) => {
+    const base = from ? `${from.name} copy` : "Handler";
+    let n = from ? 1 : state.rules.length + 1;
+    const named = (k: number) => (from && k === 1 ? base : `${base} ${k}`);
+    while (state.rules.some((r) => r.name === named(n))) n++;
     setFilter("");
-    setWanted(`Handler ${n}`);
-    setRule("", { id: "", name: `Handler ${n}`, when: { kind: "every", ms: 1000 }, code: "" });
+    setWanted(named(n));
+    setRule("", { id: "", name: named(n), when: from?.when ?? { kind: "every", ms: 1000 }, code: from?.code ?? "" });
+  };
+  const ruleMenu = (e: MouseEvent, r: Rule) => {
+    setChosen(ruleKey(r));
+    openMenu(e, [
+      { label: "Duplicate", icon: <CopyPlus size={13} />, run: () => add(r) },
+      "-",
+      { label: "Delete", icon: <Trash size={13} />, run: () => setRule(r.id, null) },
+    ]);
+  };
+  const handlerMenu = (e: MouseEvent, pg: Page, el: Element, event: string) => {
+    setChosen(onKey(pg, el, event));
+    openMenu(e, [
+      { label: "Open in Design", icon: <PenTool size={13} />, run: () => p.onOpen(pg.id) },
+      "-",
+      { label: "Delete", icon: <Trash size={13} />, run: () => setHandler(pg.id, el.id, event, null) },
+    ]);
   };
   const shownUses = () => {
     const r = rule();
@@ -173,17 +193,17 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
               </button>
             </Show>
           </div>
-          <button class="icon-btn" title="Add a handler" onClick={add}>
+          <button class="icon-btn" title="Add a handler" onClick={() => add()}>
             <Plus size={14} />
           </button>
         </div>
-        <div class="pane-body handler-list">
+        <div class="pane-body handler-list" onContextMenu={(e) => openMenu(e, [{ label: "Add a handler", icon: <Plus size={13} />, run: () => add() }])}>
           <Show when={rules().length > 0}>
             <div class="list-group">Global</div>
           </Show>
           <For each={rules()}>
             {(r) => (
-              <button class="list-row" classList={{ selected: current() === ruleKey(r) }} onClick={() => setChosen(ruleKey(r))}>
+              <button class="list-row" classList={{ selected: current() === ruleKey(r) }} onClick={() => setChosen(ruleKey(r))} onContextMenu={(e) => ruleMenu(e, r)}>
                 <TriggerIcon kind={r.when.kind} />
                 <span class="list-label">{phrase(r.when)}</span>
                 <span class="list-trail">{r.name}</span>
@@ -196,7 +216,12 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
                 <div class="list-group">{d.pg.name}</div>
                 <For each={d.handlers}>
                   {({ e, event }) => (
-                    <button class="list-row" classList={{ selected: current() === onKey(d.pg, e, event) }} onClick={() => setChosen(onKey(d.pg, e, event))}>
+                    <button
+                      class="list-row"
+                      classList={{ selected: current() === onKey(d.pg, e, event) }}
+                      onClick={() => setChosen(onKey(d.pg, e, event))}
+                      onContextMenu={(ev) => handlerMenu(ev, d.pg, e, event)}
+                    >
                       <Zap size={14} />
                       <span class="list-label">{e.props.name ?? e.id}</span>
                       <span class="list-trail">{event}</span>
