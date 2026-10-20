@@ -580,7 +580,6 @@ impl App {
         if import.alias != alias {
             info!("renamed the import {alias} to {}", import.alias);
             self.mesh.detach(&alias);
-            self.mesh.attach(&import);
             if let Some(slot) = self.values.remove(&alias) {
                 self.values.insert(import.alias.clone(), slot);
             }
@@ -588,6 +587,7 @@ impl App {
             self.changed.insert(import.alias.clone());
             self.follow_rename(session, &alias, &import.alias, false);
         }
+        self.mesh.attach(&import);
         self.imports_changed();
     }
 

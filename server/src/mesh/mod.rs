@@ -42,6 +42,8 @@ pub struct Mesh {
 }
 
 struct Attached {
+    /// The import as it was attached, so a new intent remakes the handle.
+    import: Import,
     generation: u64,
     schema: Schema,
     shapes: Vec<Shape>,
@@ -105,14 +107,14 @@ impl Mesh {
         self.find(import).is_some_and(|e| e.providers > 0)
     }
 
-    /// Makes or remakes an import's handle to match the mesh, keeping it while nothing
-    /// changed. False while its entity, or its schema, is not on the mesh.
+    /// Makes or remakes an import's handle to match the import and the mesh, keeping it while
+    /// neither changed. False while its entity, or its schema, is not on the mesh.
     pub fn attach(&mut self, import: &Import) -> bool {
         let Some(entity) = self.find(import) else {
             self.attached.remove(&import.alias);
             return false;
         };
-        if self.attached.get(&import.alias).is_some_and(|a| a.generation == entity.generation) {
+        if self.attached.get(&import.alias).is_some_and(|a| a.generation == entity.generation && a.import == *import) {
             return true;
         }
         // the old handle goes first, so its name is free for the new one
@@ -172,7 +174,7 @@ impl Mesh {
             }
             Kind::Task => Handle::Task,
         };
-        Ok(Attached { generation: entity.generation, schema, shapes, handle })
+        Ok(Attached { import: import.clone(), generation: entity.generation, schema, shapes, handle })
     }
 
     /// Plays an import's video: the entity itself when it carries video frames, else its

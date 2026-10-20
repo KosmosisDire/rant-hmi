@@ -83,4 +83,10 @@ fn import_watch_and_set() {
         within("the owner to take the write", start);
     }
     assert_eq!(inbox.next("Speed", || {}), Value::Float(1.25));
+
+    // imported to read it cannot send, and once changed to write it can
+    let part = Value::map([("speed", 0.5.into()), ("running", false.into()), ("part", "B2".into())]);
+    assert!(mesh.send("Conveyor", &part).is_err());
+    assert!(mesh.attach(&import("Conveyor", "Line1/Conveyor", Kind::Topic, Intent::Write)));
+    mesh.send("Conveyor", &part).unwrap();
 }
