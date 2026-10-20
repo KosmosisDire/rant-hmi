@@ -1,5 +1,6 @@
 import { createMemo, For, Show } from "solid-js";
 import { send } from "../../net/connection";
+import { state } from "../../state/store";
 import { OWN } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
@@ -38,7 +39,11 @@ export function ElementInspector(p: { page: Page | undefined; selected: string |
   );
 }
 
+/** A page side in pixels, as the backend allows. */
+const side = (t: string) => /^\d+$/.test(t.trim()) && Number(t) >= 1 && Number(t) <= 16384;
+
 function PageInspector(p: { page: Page }) {
+  const resize = (width: number, height: number) => send({ type: "edit", edit: { kind: "resize_page", page: p.page.id, width, height } });
   return (
     <>
       <div class="pane-head">
@@ -51,16 +56,32 @@ function PageInspector(p: { page: Page }) {
           <label>Name</label>
           <DraftInput value={p.page.name} accept={(t) => t.trim() !== ""} onCommit={(name) => send({ type: "edit", edit: { kind: "rename_page", page: p.page.id, name } })} />
         </div>
-        <div class="field">
-          <label>Size</label>
-          <span class="value">
-            {p.page.width} x {p.page.height}
-          </span>
+        <div class="section">Size</div>
+        <div class="placement">
+          <div class="field">
+            <label>w</label>
+            <DraftInput value={String(p.page.width)} accept={side} onCommit={(t) => resize(Number(t), p.page.height)} />
+          </div>
+          <div class="field">
+            <label>h</label>
+            <DraftInput value={String(p.page.height)} accept={side} onCommit={(t) => resize(p.page.width, Number(t))} />
+          </div>
         </div>
         <div class="placeholder">
           Select an element to change it. Every value is an expression: text goes in quotes, like <code>"Running"</code>, and <code>Speed.toFixed(1)</code> shows a live
           value.
         </div>
+      </div>
+      <div class="pane-foot">
+        <button
+          class="button"
+          disabled={state.pages.length < 2}
+          title={state.pages.length < 2 ? "A project keeps at least one page" : undefined}
+          onClick={() => send({ type: "edit", edit: { kind: "remove_page", page: p.page.id } })}
+        >
+          <Trash size={12} />
+          Delete page
+        </button>
       </div>
     </>
   );

@@ -23,7 +23,7 @@ pub enum ServerMsg {
     Values { values: Vec<ValueUpdate> },
     /// The peers and how fast they answer, about once a second.
     Health { peers: Vec<PeerInfo> },
-    /// Every page, whole, on connecting.
+    /// Every page, whole, on connecting and when one is added or removed.
     Pages { pages: Vec<Page> },
     /// One page, whole, after an edit changed it.
     Page { page: Page },
@@ -47,8 +47,11 @@ pub enum ClientMsg {
     Unimport { alias: String },
     /// Writes a datapoint, or one of its fields when `path` names one.
     Set { alias: String, path: String, value: Value },
-    /// Changes a page.
+    /// Changes the pages.
     Edit { edit: Edit },
+    /// Takes back this screen's last edit, or puts back the last one it took back.
+    Undo,
+    Redo,
 }
 
 /// One entity on the mesh.

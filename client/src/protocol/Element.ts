@@ -3,6 +3,6 @@ import type { Tag } from "./Tag";
 
 /**
  * One element. `props` holds its name, its placement (`x`, `y`, `w`, `h`), a span's `text`
- * and any CSS property, each a literal or a `{expression}`.
+ * and any CSS property. Every one but the name is an expression.
  */
 export type Element = { id: string, tag: Tag, props: { [key in string]?: string }, children: Array<Element>, };

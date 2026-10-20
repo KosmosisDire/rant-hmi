@@ -114,6 +114,14 @@ export class Hmi {
     await this.next((m) => m.type === "page" && m.page.id === page);
   }
 
+  undo() {
+    this.send({ type: "undo" });
+  }
+
+  redo() {
+    this.send({ type: "redo" });
+  }
+
   page(id) {
     return this.state.pages.find((p) => p.id === id);
   }

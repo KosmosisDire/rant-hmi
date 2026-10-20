@@ -19,6 +19,8 @@ use crate::protocol::{ClientMsg, ServerMsg, ValueUpdate};
 const TICK: Duration = Duration::from_millis(33);
 /// A screen silent this long is lost.
 const SILENCE: Duration = Duration::from_millis(500);
+/// How many edits a screen can undo.
+const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
 
 /// What a screen's connection hands the loop.
@@ -32,6 +34,17 @@ pub enum Inbound {
 struct Session {
     out: UnboundedSender<Bytes>,
     heard: Instant,
+    /// The edits that undo this screen's own edits, newest last, and those that redo them.
+    undo: Vec<Edit>,
+    redo: Vec<Edit>,
+}
+
+/// Why an edit is applied, which says which stack its undo goes on.
+#[derive(Clone, Copy)]
+enum Step {
+    Do,
+    Undo,
+    Redo,
 }
 
 #[derive(Default)]
@@ -95,7 +108,7 @@ impl App {
     fn inbound(&mut self, i: Inbound) {
         match i {
             Inbound::Open { session, out } => {
-                self.sessions.insert(session, Session { out, heard: Instant::now() });
+                self.sessions.insert(session, Session { out, heard: Instant::now(), undo: Vec::new(), redo: Vec::new() });
                 info!("screen {session} connected");
                 self.welcome(session);
             }
@@ -159,23 +172,51 @@ impl App {
                     self.refuse(session, text, Some(alias));
                 }
             }
-            ClientMsg::Edit { edit } => self.edit(session, edit),
+            ClientMsg::Edit { edit } => self.edit(session, edit, Step::Do),
+            ClientMsg::Undo => {
+                if let Some(edit) = self.sessions.get_mut(&session).and_then(|s| s.undo.pop()) {
+                    self.edit(session, edit, Step::Undo);
+                }
+            }
+            ClientMsg::Redo => {
+                if let Some(edit) = self.sessions.get_mut(&session).and_then(|s| s.redo.pop()) {
+                    self.edit(session, edit, Step::Redo);
+                }
+            }
         }
     }
 
-    /// Applies an edit, saves its page and sends it to every screen. The screen that made
-    /// something hears what, so it can select it.
-    fn edit(&mut self, session: u32, edit: Edit) {
-        match self.pages.apply(edit) {
-            Ok(applied) => {
-                if let Some(page) = self.pages.get(&applied.page) {
-                    self.broadcast(&ServerMsg::Page { page: page.clone() });
+    /// Applies an edit, saves what it touched and sends that to every screen. The screen
+    /// that asked keeps its undo, and hears what it made, so it can select it.
+    fn edit(&mut self, session: u32, edit: Edit, step: Step) {
+        let applied = match self.pages.apply(edit) {
+            Ok(applied) => applied,
+            Err(text) => return self.refuse(session, text, None),
+        };
+        if let Some(s) = self.sessions.get_mut(&session) {
+            match step {
+                Step::Do => {
+                    s.undo.push(applied.undo);
+                    s.redo.clear();
                 }
-                if let Some(id) = applied.made {
-                    self.send(session, &ServerMsg::Made { page: applied.page, id });
-                }
+                Step::Undo => s.redo.push(applied.undo),
+                Step::Redo => s.undo.push(applied.undo),
             }
-            Err(text) => self.refuse(session, text, None),
+            if s.undo.len() > UNDO_DEPTH {
+                s.undo.remove(0);
+            }
+        }
+        // a page added or removed changes the list, otherwise each page goes out alone
+        let touched: Vec<_> = applied.pages.iter().map(|id| self.pages.get(id)).collect();
+        if touched.iter().any(Option::is_none) || applied.pages.iter().any(|id| matches!(&applied.made, Some((p, m)) if p == id && m == id)) {
+            self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() });
+        } else {
+            for page in touched.into_iter().flatten() {
+                self.broadcast(&ServerMsg::Page { page: page.clone() });
+            }
+        }
+        if let Some((page, id)) = applied.made {
+            self.send(session, &ServerMsg::Made { page, id });
         }
     }
 

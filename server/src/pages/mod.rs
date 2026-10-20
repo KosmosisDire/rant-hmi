@@ -4,7 +4,7 @@
 
 pub mod format;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,7 +25,7 @@ pub struct Page {
 }
 
 /// One element. `props` holds its name, its placement (`x`, `y`, `w`, `h`), a span's `text`
-/// and any CSS property, each a literal or a `{expression}`.
+/// and any CSS property. Every one but the name is an expression.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct Element {
@@ -61,33 +61,49 @@ impl Tag {
     }
 }
 
-/// A change to the pages, sent by a screen.
-#[derive(Deserialize, TS, Clone, Debug)]
+/// A change to the pages, sent by a screen. Each one applied gives back the edit that undoes
+/// it.
+#[derive(Deserialize, TS, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[ts(export)]
 pub enum Edit {
     AddPage { name: String },
     RenamePage { page: String, name: String },
-    /// Adds an element at the end of `parent`, a div, or of the page when there is none.
+    ResizePage { page: String, width: u32, height: u32 },
+    RemovePage { page: String },
+    /// Puts a whole page back, ids and all, as undoing its removal does.
+    PutPage { page: Page },
+    /// Adds an element at the end of `parent`, a frame, or of the page when there is none.
     AddElement { page: String, parent: Option<String>, tag: Tag, props: BTreeMap<String, String> },
     RemoveElement { page: String, id: String },
+    /// Puts an element and all it holds at `index` of `parent`, ids and all.
+    PutElement { page: String, parent: Option<String>, index: usize, element: Element },
+    /// Moves an element to `index` of `parent`, counted once the element is taken out.
+    MoveElement { page: String, id: String, parent: Option<String>, index: usize },
     /// Sets each property to its value, or removes it where the value is null.
     SetProps { page: String, id: String, props: BTreeMap<String, Option<String>> },
+    /// Several edits as one: all apply or none do, and one undo takes them all back.
+    Batch { edits: Vec<Edit> },
 }
 
-/// What an edit changed: the page to send out, and what it made, if anything.
+/// What an edit changed: the pages to send out, what it made, if anything, as a page and an
+/// id (a page's own for a page), and the edit that undoes it.
 pub struct Applied {
-    pub page: String,
-    pub made: Option<String>,
+    pub pages: Vec<String>,
+    pub made: Option<(String, String)>,
+    pub undo: Edit,
 }
 
 pub struct Pages {
     dir: PathBuf,
+    /// In id order, as the files list.
     pub list: Vec<Page>,
 }
 
 const WIDTH: u32 = 1408;
 const HEIGHT: u32 = 792;
+/// The largest side a page may have, in pixels.
+const LARGEST: u32 = 16384;
 
 impl Pages {
     /// Reads every page in `pages/`, starting one called Overview when there is none.
@@ -115,65 +131,148 @@ impl Pages {
         self.list.iter().find(|p| p.id == id)
     }
 
-    /// Applies an edit and saves the page. The error is for the user.
+    /// Applies an edit and saves what it touched. The error is for the user.
     pub fn apply(&mut self, edit: Edit) -> Result<Applied, String> {
-        let applied = match edit {
-            Edit::AddPage { name } => {
-                let name = name.trim().to_owned();
-                if name.is_empty() {
-                    return Err("a page needs a name".into());
+        let mut pages = Vec::new();
+        let mut made = None;
+        let undo = self.change(edit, &mut pages, &mut made)?;
+        pages.sort();
+        pages.dedup();
+        for page in &pages {
+            self.save(page)?;
+        }
+        Ok(Applied { pages, made, undo })
+    }
+
+    fn change(&mut self, edit: Edit, touched: &mut Vec<String>, made: &mut Option<(String, String)>) -> Result<Edit, String> {
+        if let Edit::Batch { edits } = edit {
+            let mut undos = Vec::new();
+            for e in edits {
+                match self.change(e, touched, made) {
+                    Ok(undo) => undos.push(undo),
+                    Err(text) => {
+                        for undo in undos.into_iter().rev() {
+                            let _ = self.change(undo, &mut Vec::new(), &mut None);
+                        }
+                        return Err(text);
+                    }
                 }
+            }
+            undos.reverse();
+            return Ok(Edit::Batch { edits: undos });
+        }
+        let undo = match edit {
+            Edit::AddPage { name } => {
+                let name = named(&name)?;
                 let id = self.free_id(&slug(&name));
-                self.list.push(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, children: Vec::new() });
-                Applied { page: id.clone(), made: Some(id) }
+                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, children: Vec::new() });
+                *made = Some((id.clone(), id.clone()));
+                touched.push(id.clone());
+                return Ok(Edit::RemovePage { page: id });
             }
             Edit::RenamePage { page, name } => {
-                let name = name.trim().to_owned();
-                if name.is_empty() {
-                    return Err("a page needs a name".into());
+                let old = std::mem::replace(&mut self.page_mut(&page)?.name, named(&name)?);
+                Edit::RenamePage { page: page.clone(), name: old }
+            }
+            Edit::ResizePage { page, width, height } => {
+                if !(1..=LARGEST).contains(&width) || !(1..=LARGEST).contains(&height) {
+                    return Err(format!("a page is 1 to {LARGEST} pixels a side"));
                 }
-                self.page_mut(&page)?.name = name;
-                Applied { page, made: None }
+                let p = self.page_mut(&page)?;
+                let old = (std::mem::replace(&mut p.width, width), std::mem::replace(&mut p.height, height));
+                Edit::ResizePage { page: page.clone(), width: old.0, height: old.1 }
+            }
+            Edit::RemovePage { page } => {
+                if self.list.len() == 1 {
+                    return Err("a project keeps at least one page".into());
+                }
+                let at = self.list.iter().position(|p| p.id == page).ok_or_else(|| format!("there is no page {page}"))?;
+                touched.push(page);
+                return Ok(Edit::PutPage { page: self.list.remove(at) });
+            }
+            Edit::PutPage { page } => {
+                if self.get(&page.id).is_some() || page.id.is_empty() || slug(&page.id) != page.id {
+                    return Err(format!("{} cannot be a new page's id", page.id));
+                }
+                let mut ids = HashSet::new();
+                for e in &page.children {
+                    check_tree(e, &mut ids)?;
+                }
+                let id = page.id.clone();
+                self.insert_page(page);
+                *made = Some((id.clone(), id.clone()));
+                touched.push(id.clone());
+                return Ok(Edit::RemovePage { page: id });
             }
             Edit::AddElement { page, parent, tag, props } => {
                 check_props(props.keys())?;
                 let p = self.page_mut(&page)?;
                 let id = next_id(&p.children);
-                let element = Element { id: id.clone(), tag, props, children: Vec::new() };
-                match parent {
-                    None => p.children.push(element),
-                    Some(parent) => {
-                        let holder = find_mut(&mut p.children, &parent).ok_or_else(|| format!("{parent} is not on {page}"))?;
-                        if holder.tag != Tag::Div {
-                            return Err("only a frame holds other elements".into());
-                        }
-                        holder.children.push(element);
-                    }
-                }
-                Applied { page, made: Some(id) }
+                let holder = holder(p, &parent)?;
+                holder.push(Element { id: id.clone(), tag, props, children: Vec::new() });
+                *made = Some((page.clone(), id.clone()));
+                Edit::RemoveElement { page: page.clone(), id }
             }
             Edit::RemoveElement { page, id } => {
                 let p = self.page_mut(&page)?;
-                if !remove(&mut p.children, &id) {
-                    return Err(format!("{id} is not on {page}"));
+                let (parent, index) = locate(&p.children, &id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
+                let element = holder(p, &parent)?.remove(index);
+                Edit::PutElement { page: page.clone(), parent, index, element }
+            }
+            Edit::PutElement { page, parent, index, element } => {
+                let p = self.page_mut(&page)?;
+                let mut ids = HashSet::new();
+                p.children.iter().for_each(|e| all_ids(e, &mut ids));
+                check_tree(&element, &mut ids)?;
+                let id = element.id.clone();
+                let holder = holder(p, &parent)?;
+                holder.insert(index.min(holder.len()), element);
+                *made = Some((page.clone(), id.clone()));
+                Edit::RemoveElement { page: page.clone(), id }
+            }
+            Edit::MoveElement { page, id, parent, index } => {
+                let p = self.page_mut(&page)?;
+                let (from, at) = locate(&p.children, &id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
+                if let Some(target) = &parent {
+                    let moved = find(&p.children, &id).expect("located above");
+                    if target == &id || find(&moved.children, target).is_some() {
+                        return Err("a frame cannot go inside itself".into());
+                    }
+                    holder(p, &parent)?;
                 }
-                Applied { page, made: None }
+                let element = holder(p, &from)?.remove(at);
+                let holder = holder(p, &parent)?;
+                holder.insert(index.min(holder.len()), element);
+                Edit::MoveElement { page: page.clone(), id, parent: from, index: at }
             }
             Edit::SetProps { page, id, props } => {
                 check_props(props.keys())?;
                 let p = self.page_mut(&page)?;
                 let e = find_mut(&mut p.children, &id).ok_or_else(|| format!("{id} is not on {page}"))?;
+                let mut old = BTreeMap::new();
                 for (key, value) in props {
-                    match value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()) {
-                        Some(v) => e.props.insert(key, v),
+                    let before = match value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty()) {
+                        Some(v) => e.props.insert(key.clone(), v),
                         None => e.props.remove(&key),
                     };
+                    old.insert(key, before);
                 }
-                Applied { page, made: None }
+                Edit::SetProps { page: page.clone(), id, props: old }
             }
+            Edit::Batch { .. } => unreachable!("taken above"),
         };
-        self.save(&applied.page)?;
-        Ok(applied)
+        let page = match &undo {
+            Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::RemoveElement { page, .. } => page,
+            Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } => page,
+            _ => unreachable!("page edits return early"),
+        };
+        touched.push(page.clone());
+        Ok(undo)
+    }
+
+    fn insert_page(&mut self, page: Page) {
+        let at = self.list.partition_point(|p| p.id < page.id);
+        self.list.insert(at, page);
     }
 
     fn page_mut(&mut self, id: &str) -> Result<&mut Page, String> {
@@ -191,16 +290,27 @@ impl Pages {
         id
     }
 
-    /// Writes beside the file and renames over it, so a crash never leaves half a page.
+    /// Writes beside the file and renames over it, so a crash never leaves half a page. A
+    /// page that is gone loses its file.
     fn save(&self, id: &str) -> Result<(), String> {
-        let page = self.get(id).ok_or_else(|| format!("there is no page {id}"))?;
         let file = self.dir.join(format!("{id}.html"));
+        let Some(page) = self.get(id) else {
+            return match fs::remove_file(&file) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("could not remove {}: {e}", file.display())),
+                _ => Ok(()),
+            };
+        };
         let partial = self.dir.join(format!("{id}.html.partial"));
         fs::create_dir_all(&self.dir)
             .and_then(|_| fs::write(&partial, format::write(page)))
             .and_then(|_| fs::rename(&partial, &file))
             .map_err(|e| format!("could not save {}: {e}", file.display()))
     }
+}
+
+fn named(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() { Err("a page needs a name".into()) } else { Ok(name.to_owned()) }
 }
 
 fn slug(name: &str) -> String {
@@ -235,6 +345,46 @@ fn next_id(elements: &[Element]) -> String {
     format!("e{}", highest(elements) + 1)
 }
 
+/// An element's tree from a screen: property names, no text holding elements, and ids new
+/// to `ids`, which gains them.
+fn check_tree(e: &Element, ids: &mut HashSet<String>) -> Result<(), String> {
+    check_props(e.props.keys())?;
+    if e.tag != Tag::Div && !e.children.is_empty() {
+        return Err("only a frame holds other elements".into());
+    }
+    if !ids.insert(e.id.clone()) {
+        return Err(format!("the id {} is already on the page", e.id));
+    }
+    e.children.iter().try_for_each(|c| check_tree(c, ids))
+}
+
+fn all_ids(e: &Element, ids: &mut HashSet<String>) {
+    ids.insert(e.id.clone());
+    e.children.iter().for_each(|c| all_ids(c, ids));
+}
+
+/// The list an element goes into: the page's own, or a frame's.
+fn holder<'a>(page: &'a mut Page, parent: &Option<String>) -> Result<&'a mut Vec<Element>, String> {
+    let Some(parent) = parent else { return Ok(&mut page.children) };
+    let e = find_mut(&mut page.children, parent).ok_or_else(|| format!("{parent} is not on {}", page.id))?;
+    if e.tag != Tag::Div {
+        return Err("only a frame holds other elements".into());
+    }
+    Ok(&mut e.children)
+}
+
+/// Where an element sits: its frame, None for the page, and its index there.
+fn locate(elements: &[Element], id: &str, parent: Option<&str>) -> Option<(Option<String>, usize)> {
+    if let Some(at) = elements.iter().position(|e| e.id == id) {
+        return Some((parent.map(str::to_owned), at));
+    }
+    elements.iter().find_map(|e| locate(&e.children, id, Some(&e.id)))
+}
+
+fn find<'a>(elements: &'a [Element], id: &str) -> Option<&'a Element> {
+    elements.iter().find_map(|e| if e.id == id { Some(e) } else { find(&e.children, id) })
+}
+
 fn find_mut<'a>(elements: &'a mut [Element], id: &str) -> Option<&'a mut Element> {
     for e in elements {
         if e.id == id {
@@ -245,14 +395,6 @@ fn find_mut<'a>(elements: &'a mut [Element], id: &str) -> Option<&'a mut Element
         }
     }
     None
-}
-
-fn remove(elements: &mut Vec<Element>, id: &str) -> bool {
-    if let Some(at) = elements.iter().position(|e| e.id == id) {
-        elements.remove(at);
-        return true;
-    }
-    elements.iter_mut().any(|e| remove(&mut e.children, id))
 }
 
 #[cfg(test)]
@@ -278,12 +420,14 @@ mod tests {
             .apply(Edit::AddElement { page: "overview".into(), parent: None, tag: Tag::Div, props: props(&[("x", "44"), ("background", "#222")]) })
             .unwrap()
             .made
-            .unwrap();
+            .unwrap()
+            .1;
         let text = pages
             .apply(Edit::AddElement { page: "overview".into(), parent: Some(frame.clone()), tag: Tag::Span, props: props(&[("text", "Speed")]) })
             .unwrap()
             .made
-            .unwrap();
+            .unwrap()
+            .1;
         assert_eq!((frame.as_str(), text.as_str()), ("e1", "e2"));
         let mut change = BTreeMap::new();
         change.insert("x".to_string(), Some("88".to_string()));
@@ -301,13 +445,90 @@ mod tests {
     fn edits_that_cannot_apply_say_why() {
         let dir = scratch("refuse");
         let mut pages = Pages::open(&dir).unwrap();
-        let span = pages.apply(Edit::AddElement { page: "overview".into(), parent: None, tag: Tag::Span, props: BTreeMap::new() }).unwrap().made.unwrap();
-        let into_span = Edit::AddElement { page: "overview".into(), parent: Some(span), tag: Tag::Div, props: BTreeMap::new() };
+        let o = || "overview".to_string();
+        let span = pages.apply(Edit::AddElement { page: o(), parent: None, tag: Tag::Span, props: BTreeMap::new() }).unwrap().made.unwrap().1;
+        let into_span = Edit::AddElement { page: o(), parent: Some(span.clone()), tag: Tag::Div, props: BTreeMap::new() };
         assert_eq!(pages.apply(into_span).err().unwrap(), "only a frame holds other elements");
-        let bad = Edit::AddElement { page: "overview".into(), parent: None, tag: Tag::Div, props: props(&[("Background", "red")]) };
+        let bad = Edit::AddElement { page: o(), parent: None, tag: Tag::Div, props: props(&[("Background", "red")]) };
         assert_eq!(pages.apply(bad).err().unwrap(), "\"Background\" is not a property name");
-        assert!(pages.apply(Edit::RemoveElement { page: "overview".into(), id: "e9".into() }).is_err());
-        assert_eq!(pages.apply(Edit::AddPage { name: "Overview".into() }).unwrap().made.unwrap(), "overview2");
+        assert!(pages.apply(Edit::RemoveElement { page: o(), id: "e9".into() }).is_err());
+
+        let frame = pages.apply(Edit::AddElement { page: o(), parent: None, tag: Tag::Div, props: BTreeMap::new() }).unwrap().made.unwrap().1;
+        pages.apply(Edit::MoveElement { page: o(), id: span, parent: Some(frame.clone()), index: 0 }).unwrap();
+        let into_itself = Edit::MoveElement { page: o(), id: frame.clone(), parent: Some(frame), index: 0 };
+        assert_eq!(pages.apply(into_itself).err().unwrap(), "a frame cannot go inside itself");
+
+        assert_eq!(pages.apply(Edit::AddPage { name: "Overview".into() }).unwrap().made.unwrap().1, "overview2");
+        assert_eq!(pages.apply(Edit::RemovePage { page: "overview2".into() }).unwrap().pages, ["overview2"]);
+        assert_eq!(pages.apply(Edit::RemovePage { page: o() }).err().unwrap(), "a project keeps at least one page");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Applies each edit, then undoes them all newest first, then redoes them all: the pages
+    /// must come back to each state exactly, files included.
+    #[test]
+    fn every_edit_undoes_and_redoes_exactly() {
+        let dir = scratch("undo");
+        let mut pages = Pages::open(&dir).unwrap();
+        let o = || "overview".to_string();
+        let edits = vec![
+            Edit::AddPage { name: "Line two".into() },
+            Edit::RenamePage { page: "line-two".into(), name: "Line 2".into() },
+            Edit::ResizePage { page: "line-two".into(), width: 390, height: 844 },
+            Edit::AddElement { page: o(), parent: None, tag: Tag::Div, props: props(&[("x", "44"), ("background", "#222")]) },
+            Edit::AddElement { page: o(), parent: Some("e1".into()), tag: Tag::Span, props: props(&[("text", "\"a\"")]) },
+            Edit::AddElement { page: o(), parent: None, tag: Tag::Span, props: props(&[("text", "Speed")]) },
+            Edit::SetProps { page: o(), id: "e1".into(), props: [("x".to_string(), Some("88".to_string())), ("background".to_string(), None)].into() },
+            Edit::MoveElement { page: o(), id: "e3".into(), parent: Some("e1".into()), index: 0 },
+            Edit::RemoveElement { page: o(), id: "e1".into() },
+            Edit::Batch {
+                edits: vec![
+                    Edit::AddElement { page: o(), parent: None, tag: Tag::Div, props: BTreeMap::new() },
+                    Edit::SetProps { page: o(), id: "e1".into(), props: [("y".to_string(), Some("11".to_string()))].into() },
+                ],
+            },
+            Edit::RemovePage { page: "line-two".into() },
+        ];
+        let mut states = vec![(pages.list.clone(), files(&dir))];
+        let mut undos = Vec::new();
+        for edit in edits.clone() {
+            undos.push(pages.apply(edit.clone()).unwrap_or_else(|e| panic!("{edit:?}: {e}")).undo);
+            states.push((pages.list.clone(), files(&dir)));
+        }
+        let mut redos = Vec::new();
+        for (n, undo) in undos.into_iter().enumerate().rev() {
+            redos.push(pages.apply(undo).unwrap().undo);
+            assert_eq!((pages.list.clone(), files(&dir)), states[n], "undoing {:?}", edits[n]);
+        }
+        for (n, redo) in redos.into_iter().rev().enumerate() {
+            pages.apply(redo).unwrap();
+            assert_eq!((pages.list.clone(), files(&dir)), states[n + 1], "redoing {:?}", edits[n]);
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_batch_that_fails_changes_nothing() {
+        let dir = scratch("batch");
+        let mut pages = Pages::open(&dir).unwrap();
+        let before = (pages.list.clone(), files(&dir));
+        let batch = Edit::Batch {
+            edits: vec![
+                Edit::AddElement { page: "overview".into(), parent: None, tag: Tag::Div, props: BTreeMap::new() },
+                Edit::RemoveElement { page: "overview".into(), id: "e9".into() },
+            ],
+        };
+        assert_eq!(pages.apply(batch).err().unwrap(), "e9 is not on overview");
+        assert_eq!((pages.list.clone(), files(&dir)), before);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Every file in the pages folder and its text.
+    fn files(dir: &Path) -> BTreeMap<String, String> {
+        fs::read_dir(dir.join("pages"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .map(|p| (p.file_name().unwrap().to_string_lossy().into_owned(), fs::read_to_string(&p).unwrap()))
+            .collect()
     }
 }
