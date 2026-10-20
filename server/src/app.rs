@@ -10,10 +10,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{info, warn};
 
 use crate::authorize::{Who, authorize};
+use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
-use crate::mesh::codec;
 use crate::project::{Import, Intent, Kind, Per, Project, Variable};
 use crate::protocol::{ClientMsg, Level, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, FromScript, Script, ToScript};
@@ -52,7 +52,6 @@ enum Step {
     Redo,
 }
 
-/// A handler run going on: who started it, and what it is called in the log.
 /// A run going on: the screen that started it, none for a rule's, what it belongs to, and
 /// what the log calls it.
 struct Running {
@@ -215,9 +214,7 @@ impl App {
                 Ok(()) => {
                     info!("imported {} as {}", import.entity, import.alias);
                     self.mesh.attach(&import);
-                    self.refresh_known();
-                    self.script.send(ToScript::Imports(self.project.imports.clone()));
-                    self.broadcast(&ServerMsg::Imports { imports: self.project.imports.clone() });
+                    self.imports_changed();
                 }
                 Err(text) => self.refuse(session, text, Some(import.alias)),
             },
@@ -227,8 +224,7 @@ impl App {
                     self.mesh.detach(&alias);
                     self.values.remove(&alias);
                     self.changed.remove(&alias);
-                    self.script.send(ToScript::Imports(self.project.imports.clone()));
-                    self.broadcast(&ServerMsg::Imports { imports: self.project.imports.clone() });
+                    self.imports_changed();
                 }
                 Err(text) => self.refuse(session, text, Some(alias)),
             },
@@ -241,11 +237,7 @@ impl App {
                 }
                 self.broadcast(&ServerMsg::Theme { tokens: self.project.tokens.clone() });
                 if let Some(to) = renamed {
-                    match self.pages.rename(&format!("${name}"), &format!("${to}"), true) {
-                        Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
-                        Ok(_) => {}
-                        Err(text) => self.refuse(session, text, None),
-                    }
+                    self.follow_rename(session, &format!("${name}"), &format!("${to}"), true);
                 }
             }
             ClientMsg::Set { alias, path, value } => {
@@ -308,11 +300,7 @@ impl App {
         let Some(v) = to else { return };
         if v.name != name {
             info!("renamed the variable {name} to {}", v.name);
-            match self.pages.rename(&name, &v.name, false) {
-                Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
-                Ok(_) => {}
-                Err(text) => self.refuse(session, text, None),
-            }
+            self.follow_rename(session, &name, &v.name, false);
         }
         match v.per {
             Per::Hmi => {
@@ -350,15 +338,26 @@ impl App {
             }
             self.changed.remove(&alias);
             self.changed.insert(import.alias.clone());
-            match self.pages.rename(&alias, &import.alias, false) {
-                Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
-                Ok(_) => {}
-                Err(text) => self.refuse(session, text, None),
-            }
+            self.follow_rename(session, &alias, &import.alias, false);
         }
+        self.imports_changed();
+    }
+
+    /// Tells the engine and every screen the imports, after they changed.
+    fn imports_changed(&mut self) {
         self.refresh_known();
         self.script.send(ToScript::Imports(self.project.imports.clone()));
         self.broadcast(&ServerMsg::Imports { imports: self.project.imports.clone() });
+    }
+
+    /// Writes every use of `from` as `to` in the pages, components too where they read it,
+    /// and sends the pages out when any changed.
+    fn follow_rename(&mut self, session: u32, from: &str, to: &str, components: bool) {
+        match self.pages.rename(from, to, components) {
+            Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
+            Ok(_) => {}
+            Err(text) => self.refuse(session, text, None),
+        }
     }
 
     /// Starts the element's handler for `event`, unless it is still running from before.
@@ -594,7 +593,7 @@ impl App {
             return Err(format!("{alias} is imported to read. Import it to write to change it."));
         }
         if import.kind != Kind::Variable {
-            return Err(format!("{alias} is a {:?}, and only variables can be set for now", import.kind).to_lowercase());
+            return Err(format!("{alias} is not a variable, so it cannot be set"));
         }
         let last = self.values.get(alias).and_then(|s| s.value.as_ref());
         self.mesh.set(alias, path, value, last)
@@ -670,8 +669,8 @@ impl App {
         }
     }
 
-    /// Ends a screen's session. Dropping its sender closes its socket. Holds and forces it
-    /// started will be let go here once handlers exist.
+    /// Ends a screen's session, which closes its socket. Its pages answer nothing, what it held
+    /// pressed is let go, and the rules for a lost screen run.
     fn end(&mut self, session: u32, why: &str) {
         if self.sessions.remove(&session).is_some() {
             info!("screen {session} {why}");

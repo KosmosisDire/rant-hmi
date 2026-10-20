@@ -170,10 +170,14 @@ impl Mesh {
         Ok(Attached { generation: entity.generation, schema, shapes, handle })
     }
 
+    fn attached(&self, alias: &str) -> Result<&Attached, String> {
+        self.attached.get(alias).ok_or_else(|| format!("{alias} is not on the mesh right now"))
+    }
+
     /// Sets a variable import, whole or one field of it. A field write starts from `last`,
     /// the value the HMI holds, else from the schema's defaults.
     pub fn set(&self, alias: &str, path: &str, value: Value, last: Option<&Value>) -> Result<(), String> {
-        let a = self.attached.get(alias).ok_or_else(|| format!("{alias} is not on the mesh right now"))?;
+        let a = self.attached(alias)?;
         let Handle::Variable(var) = &a.handle else {
             return Err(format!("{alias} is not a variable, so it cannot be set"));
         };
@@ -191,7 +195,7 @@ impl Mesh {
 
     /// Sends a message on a topic imported to write.
     pub fn send(&self, alias: &str, value: &Value) -> Result<(), String> {
-        let a = self.attached.get(alias).ok_or_else(|| format!("{alias} is not on the mesh right now"))?;
+        let a = self.attached(alias)?;
         let Handle::Topic { publisher: Some(publisher), .. } = &a.handle else {
             return Err(format!("{alias} is not a topic imported to write, so it cannot send"));
         };
@@ -201,7 +205,7 @@ impl Mesh {
 
     /// Calls a function import. The call leaves at once, the answer comes when awaited.
     pub fn call(&self, alias: &str, request: &Value) -> Result<impl Future<Output = Result<Value, CallFailure>> + Send + 'static, String> {
-        let a = self.attached.get(alias).ok_or_else(|| format!("{alias} is not on the mesh right now"))?;
+        let a = self.attached(alias)?;
         let Handle::Function { remote, answer } = &a.handle else {
             return Err(format!("{alias} is not a function, so it cannot be called"));
         };
