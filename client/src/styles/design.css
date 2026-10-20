@@ -80,6 +80,14 @@
   margin-bottom: 8px;
 }
 
+/* The box a Shift drag draws to select what lies inside it. */
+.marquee {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
+}
+
 /* The selection: a ring at screen size, so its grips stay the same size at any zoom. */
 .ring {
   position: absolute;

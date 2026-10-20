@@ -1,4 +1,4 @@
-// A user picks several elements with Shift and Ctrl: a drag moves them together as one undo,
+// A user picks several elements with a Shift box, Shift and Ctrl: a drag moves them as one undo,
 // the arrows nudge them, Ctrl A takes the page, they line up and spread, and Delete removes all.
 
 import { props } from "../designer.mjs";
@@ -14,8 +14,14 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const head = page.locator(".screen:not([hidden]) .sidebar.right .head-title");
   const row = (name) => page.locator(".screen:not([hidden]) .sidebar.left .list-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
 
-  await d.el(a).click();
-  await d.el(b).click({ modifiers: ["Shift"] });
+  // a box drawn with Shift around A and B takes both, and leaves C
+  const [ba, bb] = [await d.box(a), await d.box(b)];
+  await page.keyboard.down("Shift");
+  await page.mouse.move(ba.x - 6, ba.y - 6);
+  await page.mouse.down();
+  await page.mouse.move(bb.x + bb.width + 6, bb.y + bb.height + 6, { steps: 4 });
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
   await eventually(async () => (await head.textContent()) === "2 elements", "the inspector to count two");
   check((await page.locator(".artboard .ring").count()) === 2, "a selected element has no ring");
   check((await page.locator(".artboard .ring .handle").count()) === 0, "several show grips");

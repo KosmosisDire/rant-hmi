@@ -28,6 +28,7 @@ const KEYS: [string, string][] = [
   ["Drag on empty space", "pan, as the middle button does"],
   ["Click", "select"],
   ["Shift or Ctrl click", "add to the selection or take away"],
+  ["Shift drag on empty space", "add what lies wholly inside"],
   ["Ctrl A", "select everything on the page"],
   ["Drag", "move on the grid, Alt off it"],
   ["Arrows", "nudge a grid step, Shift four"],
@@ -40,9 +41,10 @@ const KEYS: [string, string][] = [
   ["Escape", "let go"],
 ];
 
-/** A pan, or a move or resize of `ids` led by the one under the pointer. */
+/** A pan, a box drawn to select, or a move or resize of `ids` led by the one under the pointer. */
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
+  | { kind: "box"; sx: number; sy: number }
   | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number };
 
 /** A box shown in place of an element's own until the page carries it. `n` names the drag
@@ -95,6 +97,8 @@ export function Artboard(p: {
   let grid!: HTMLCanvasElement;
   const [view, setView] = createSignal({ k: 0.5, x: 0, y: 0 });
   const [held, setHeld] = createSignal<Held>({});
+  /** The box a Shift drag draws, on screen. */
+  const [box, setBox] = createSignal<{ left: number; top: number; width: number; height: number } | null>(null);
   const overrides = (id: string) => held()[id]?.box;
   const release = (id: string, n?: number) =>
     setHeld((all) => (all[id] && (n === undefined || all[id].n === n) ? Object.fromEntries(Object.entries(all).filter(([k]) => k !== id)) : all));
@@ -171,7 +175,7 @@ export function Artboard(p: {
   createEffect(() => {
     const h = held();
     for (const id of Object.keys(h)) {
-      if (drag && drag.kind !== "pan" && drag.ids.includes(id)) continue;
+      if (drag && "ids" in drag && drag.ids.includes(id)) continue;
       const e = find(p.page.children, id);
       if (!e || ["x", "y", "w", "h"].every((k) => number(e.props[k]) === h[id].box[k as keyof Box])) release(id);
     }
@@ -202,6 +206,8 @@ export function Artboard(p: {
         if (!keep) p.onPick(hit);
         const group = (keep ? tops(p.page, p.selected) : [find(p.page.children, hit)!]).filter((g) => literal(g, ["x", "y"]));
         if (group.some((g) => g.id === hit)) start("move", hit, group);
+      } else if (e.shiftKey) {
+        drag = { kind: "box", sx: e.clientX, sy: e.clientY };
       } else {
         p.onPick(null);
         drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
@@ -215,6 +221,11 @@ export function Artboard(p: {
     const [dx, dy] = [e.clientX - drag.sx, e.clientY - drag.sy];
     if (drag.kind === "pan") {
       setView({ ...view(), x: drag.vx + dx, y: drag.vy + dy });
+      return;
+    }
+    if (drag.kind === "box") {
+      const r = host.getBoundingClientRect();
+      setBox({ left: Math.min(drag.sx, e.clientX) - r.left, top: Math.min(drag.sy, e.clientY) - r.top, width: Math.abs(dx), height: Math.abs(dy) });
       return;
     }
     const d = drag;
@@ -232,6 +243,7 @@ export function Artboard(p: {
   const up = () => {
     const d = drag;
     drag = null;
+    if (d?.kind === "box") return takeBox();
     if (!d || d.kind === "pan") return;
     const edits: Edit[] = [];
     for (const id of d.ids) {
@@ -245,6 +257,20 @@ export function Artboard(p: {
     sendEdits(edits);
     // a refused write must not hold its boxes forever
     window.setTimeout(() => d.ids.forEach((id) => release(id, d.n)), 3000);
+  };
+
+  // what lies wholly inside the drawn box joins the selection
+  const takeBox = () => {
+    const b = box();
+    setBox(null);
+    if (!b) return;
+    const v = view();
+    const [x0, y0] = [(b.left - v.x) / v.k, (b.top - v.y) / v.k];
+    const [x1, y1] = [x0 + b.width / v.k, y0 + b.height / v.k];
+    for (const e of p.page.children) {
+      const at = boxOf(e);
+      if (at.x >= x0 && at.y >= y0 && at.x + at.w <= x1 && at.y + at.h <= y1 && !p.selected.includes(e.id)) p.onPick(e.id, true);
+    }
   };
 
   // the page at its true size, about the middle of the view
@@ -289,6 +315,7 @@ export function Artboard(p: {
         <PageView page={p.page} overrides={overrides} design />
       </div>
       <div class="veil" style={sheet()} />
+      <Show when={box()}>{(b) => <div class="marquee" style={{ left: `${b().left}px`, top: `${b().top}px`, width: `${b().width}px`, height: `${b().height}px` }} />}</Show>
       {/* a ring for each selected element, its grips only when it is the one */}
       <For each={p.selected}>
         {(id) => (
