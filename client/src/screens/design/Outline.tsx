@@ -9,7 +9,7 @@ import { Component, CopyPlus, File, Plus, Star, Trash } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
 import { addElement } from "./add";
 import type { Pick } from "./DesignScreen";
-import { addMenu, elementMenu } from "./menus";
+import { addMenu, elementMenu, layersMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
 import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
 
@@ -111,7 +111,14 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
           <Plus size={14} />
         </button>
       </div>
-      <Show when={p.page && p.page.children.length > 0} fallback={<div class="pane-body placeholder">Add a frame or a text.</div>}>
+      <Show
+        when={p.page && p.page.children.length > 0}
+        fallback={
+          <div class="pane-body placeholder" onContextMenu={(e) => p.page && layersMenu(e, p.page, p.onPick, () => {})}>
+            Nothing here yet. Add with the + above, or a right click.
+          </div>
+        }
+      >
         <LayerList page={p.page!} selected={p.selected} onPick={p.onPick} onEdit={p.onEdit} />
       </Show>
     </>
@@ -185,7 +192,16 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
   };
 
   return (
-    <div class="pane-body" ref={host} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+    <div
+      class="pane-body"
+      ref={host}
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+      // a row has its own menu, so this is the space around them, the page's top level
+      onContextMenu={(e) => layersMenu(e, p.page, p.onPick, () => p.page.children.forEach((c) => p.onPick(c.id, true)))}
+    >
       <Layers
         elements={p.page.children}
         depth={0}

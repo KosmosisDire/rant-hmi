@@ -95,6 +95,17 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
   openMenu(e, entries);
 }
 
+/** The menu on the layers' empty space: what adds to the page itself, at its top level. */
+export function layersMenu(e: MouseEvent, page: Page, pick: Pick, selectAll: () => void) {
+  pick(null);
+  openMenu(e, [
+    ...adds(page, (tag, props, component) => addElement(page, null, tag, props, component ?? null)),
+    "-",
+    { label: "Paste", keys: "Ctrl V", icon: <ClipboardPaste size={13} />, run: () => void pasteHere(page, null) },
+    { label: "Select all", keys: "Ctrl A", run: selectAll },
+  ]);
+}
+
 /** The menu on the canvas around the elements, `at` the spot on the page it opened at. */
 export function canvasMenu(e: MouseEvent, page: Page, at: Spot, pick: Pick, selectAll: () => void) {
   pick(null);

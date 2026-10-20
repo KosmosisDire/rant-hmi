@@ -1,5 +1,5 @@
 // A user works an element from its right click menu, on the canvas and in the layers: adds a
-// text where the canvas was clicked, a frame inside the box and a component, copies the box
+// text where the canvas was clicked, a frame inside the box, a text from the layers' empty space and a component, copies the box
 // and pastes it on the canvas, duplicates it, brings it to the front, picks what holds a
 // child, deletes it, and walks the menu and a submenu with the keys.
 
@@ -65,6 +65,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const childId = child().id;
   await d.menu(page.locator(`.screen:not([hidden]) .sidebar.left .list-row[data-id="${childId}"]`), "Delete");
   await eventually(async () => (await d.el(childId).count()) === 0, "the text inside to go");
+
+  // the layers' empty space adds to the page itself, whatever is picked
+  await d.select("Box");
+  const layers = await row.locator("xpath=ancestor::div[contains(@class,'pane-body')][1]").boundingBox();
+  await page.mouse.click(layers.x + 20, layers.y + layers.height - 10, { button: "right" });
+  await sub("Add", "Text");
+  await eventually(() => top().some((e) => e.tag === "span"), "a text at the page's top level");
+  const rootText = top().find((e) => e.tag === "span").id;
+  await d.menu(page.locator(`.screen:not([hidden]) .sidebar.left .list-row[data-id="${rootText}"]`), "Delete");
+  await eventually(async () => (await d.el(rootText).count()) === 0, "the top level text to go");
 
   await hmi.addComponent("Beacon");
   // the menu offers what this screen knows of, so it must have heard of it
