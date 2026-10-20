@@ -36,7 +36,7 @@ import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, kindOf, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, PAINT, shapeKeys } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
-import { type Align, align, chain, find, scopeOf, sendEdits, setProps, showProps, spread, tops } from "./tree";
+import { type Align, align, chain, find, scopeOf, sendEdits, setHandler, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
  *  the free CSS box. */
@@ -419,7 +419,7 @@ function Events(p: { page: string; element: Element }) {
   const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
   let ghost!: HTMLButtonElement;
-  const write = (event: string, code: string | null, after?: string) => send({ type: "edit", edit: { kind: "set_handler", page: p.page, id: p.element.id, event, code, after } });
+  const write = (event: string, code: string | null, after?: string) => setHandler(p.page, p.element.id, event, code, after);
   // what this element hears: an input what is entered, others the pointer's events, and an
   // instance its component's own
   const offered = () =>

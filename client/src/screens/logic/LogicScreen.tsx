@@ -12,10 +12,11 @@ import { complete, componentNames, REPEAT } from "../../state/complete";
 import { putLocal, state } from "../../state/store";
 import { uses } from "../../state/uses";
 import { DraftInput } from "../../ui/DraftInput";
+import { Edge } from "../../ui/Edge";
 import { painted } from "../../ui/highlight";
 import { Activity, Monitor, MonitorOff, Plus, Power, Search, Timer, X, Zap } from "../../ui/icons";
+import { setHandler } from "../design/tree";
 import { EventCard } from "./EventCard";
-import { Edge } from "../../ui/Edge";
 
 /** Each kind of trigger, as the picker names it, and what it starts from. */
 const KINDS: [When["kind"], string, When][] = [
@@ -232,10 +233,10 @@ export function LogicScreen(p: { shown: boolean; onOpen: (page: string) => void 
                   <EventCard
                     name={h().h.event}
                     code={h().h.code}
-                    onCode={(code) => send({ type: "edit", edit: { kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code } })}
-                    onRemove={() => send({ type: "edit", edit: { kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code: null } })}
+                    onCode={(code) => setHandler(h().pg.id, h().e.id, h().h.event, code)}
+                    onRemove={() => setHandler(h().pg.id, h().e.id, h().h.event, null)}
                     after={h().h.after}
-                    onAfter={h().h.event === "hold" ? (after) => send({ type: "edit", edit: { kind: "set_handler", page: h().pg.id, id: h().e.id, event: "hold", code: h().h.code, after } }) : undefined}
+                    onAfter={h().h.event === "hold" ? (after) => setHandler(h().pg.id, h().e.id, "hold", h().h.code, after) : undefined}
                     removeTitle={`Remove the ${h().h.event} handler`}
                     place={h().pg.interface ? "component" : "handler"}
                     names={namesOf(h().pg)}

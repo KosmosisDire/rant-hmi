@@ -1,11 +1,11 @@
 import { createSignal } from "solid-js";
+import { Edge } from "../../ui/Edge";
 import { MeshImports } from "./MeshImports";
 import { Inspector } from "./Inspector";
 import { MeshTree } from "./MeshTree";
 import { RecordsTable } from "./Records";
 import { ThemeTable } from "./Theme";
 import { VariablesTable } from "./Variables";
-import { Edge } from "../../ui/Edge";
 
 /** What the Data screen has picked: an entity on the mesh, an import, a variable, a record or
  *  a token. */

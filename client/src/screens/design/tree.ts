@@ -176,6 +176,28 @@ export function setProps(page: string, id: string, props: Record<string, string 
   if (send({ type: "edit", edit: { kind: "set_props", page, id, props } })) showProps(page, id, props);
 }
 
+/** Sets one event's handler, here at once too, so a change right after builds on this one
+ *  and never sends back the code it replaced. A null code takes the handler away. */
+export function setHandler(page: string, id: string, event: string, code: string | null, after?: string) {
+  if (!send({ type: "edit", edit: { kind: "set_handler", page, id, event, code, after } })) return;
+  setState(
+    "pages",
+    (pg) => pg.id === page,
+    produce((pg) => {
+      const e = find(pg.children, id);
+      const at = e?.handlers.findIndex((h) => h.event === event) ?? -1;
+      if (!e) return;
+      if (code === null) {
+        if (at >= 0) e.handlers.splice(at, 1);
+      } else if (at >= 0) {
+        Object.assign(e.handlers[at], { code, after: after ?? e.handlers[at].after });
+      } else {
+        e.handlers.push({ event, code, after: after ?? "" });
+      }
+    }),
+  );
+}
+
 /** Shows props here only, as a gesture does before it lets go and keeps them with setProps.
  *  An empty or null value takes the prop away. */
 export function showProps(page: string, id: string, props: Record<string, string | null>) {

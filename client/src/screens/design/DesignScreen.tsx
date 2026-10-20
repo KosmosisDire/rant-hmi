@@ -2,12 +2,12 @@ import { batch, createEffect, createSignal, on, onCleanup, onMount, Show } from 
 import { send } from "../../net/connection";
 import { state } from "../../state/store";
 import { currentPage, openPage } from "../../state/view";
+import { Edge } from "../../ui/Edge";
 import { Artboard, GRID } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
 import { boxOf, childrenOf, find, literal, moveTo, parentOf, sendEdits, tops } from "./tree";
-import { Edge } from "../../ui/Edge";
 
 /** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
 export type Pick = (id: string | null, add?: boolean) => void;
