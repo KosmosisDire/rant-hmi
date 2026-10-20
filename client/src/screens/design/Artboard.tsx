@@ -199,6 +199,11 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
     window.setTimeout(() => release(d.id, d.n), 3000);
   };
 
+  const sheet = () => {
+    const v = view();
+    return { left: `${v.x}px`, top: `${v.y}px`, width: `${p.page.width * v.k}px`, height: `${p.page.height * v.k}px` };
+  };
+
   const ring = createMemo(() => {
     const b = p.selected ? absolute(p.page, p.selected, overrides) : undefined;
     if (!b) return undefined;
@@ -212,6 +217,7 @@ export function Artboard(p: { page: Page; selected: string | null; onSelect: (id
       <div class="page-layer" style={{ transform: `translate(${view().x}px, ${view().y}px) scale(${view().k})` }}>
         <PageView page={p.page} overrides={overrides} design />
       </div>
+      <div class="veil" style={sheet()} />
       <Show when={ring()}>
         {(r) => (
           <div class="ring" style={{ left: `${r().left}px`, top: `${r().top}px`, width: `${r().width}px`, height: `${r().height}px` }}>

@@ -20,7 +20,8 @@
   transform-origin: 0 0;
 }
 
-/* The page's ground and grid are drawn on the canvas beneath. */
+/* The page's ground and grid are drawn on the canvas beneath, and what lies off the page
+   still shows, to be grabbed back. */
 .grid {
   position: absolute;
   inset: 0;
@@ -30,6 +31,15 @@
 
 .page.design {
   background: transparent;
+  overflow: visible;
+}
+
+/* Dims what lies off the page, which never shows when it runs. */
+.veil {
+  position: absolute;
+  pointer-events: none;
+  outline: 1px solid var(--border2);
+  box-shadow: 0 0 0 100000px color-mix(in srgb, var(--ground) 60%, transparent);
 }
 
 .page.design .el {

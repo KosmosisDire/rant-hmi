@@ -11,11 +11,11 @@
   font-size: 16px;
 }
 
+/* A frame shows what spills past it, as HTML does. `overflow: hidden` clips it. */
 .el {
   position: absolute;
   box-sizing: border-box;
   border: 0 solid transparent;
-  overflow: hidden;
 }
 
 .el.text {
