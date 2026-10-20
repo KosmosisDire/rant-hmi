@@ -100,7 +100,7 @@ export class Hmi {
   }
 
   async addElement(page, tag, props, parent = null) {
-    this.send({ type: "edit", edit: { kind: "add_element", page, parent, tag, props } });
+    this.send({ type: "edit", edit: { kind: "add_element", page, parent, index: null, element: { id: "", tag, props, children: [] } } });
     return (await this.next((m) => m.type === "made")).id;
   }
 

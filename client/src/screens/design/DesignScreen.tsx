@@ -3,6 +3,7 @@ import { send } from "../../net/connection";
 import { state } from "../../state/store";
 import { currentPage, openPage } from "../../state/view";
 import { Artboard, GRID } from "./Artboard";
+import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
 import { boxOf, childrenOf, find, literal, moveTo, parentOf, setProps } from "./tree";
@@ -37,7 +38,7 @@ export function DesignScreen(p: { shown: boolean }) {
 
   // Ctrl Z undoes this screen's last edit, Ctrl Shift Z or Ctrl Y redoes it. Delete removes,
   // Escape lets go, the arrows nudge by the grid (Shift by four), Ctrl ] and Ctrl [ bring
-  // forward and send back (Shift all the way). A field keeps its own keys.
+  // forward and send back (Shift all the way), Ctrl D duplicates. A field keeps its own keys.
   onMount(() => {
     const key = (e: KeyboardEvent) => {
       if (!p.shown || (e.target as HTMLElement).closest("input, textarea, select")) return;
@@ -53,7 +54,10 @@ export function DesignScreen(p: { shown: boolean }) {
       if (!page || !id) return;
       const e2 = find(page.children, id);
       if (!e2) return;
-      if (mod && ["[", "]", "{", "}"].includes(e.key)) {
+      if (mod && letter === "d") {
+        e.preventDefault();
+        duplicate(page, id);
+      } else if (mod && ["[", "]", "{", "}"].includes(e.key)) {
         e.preventDefault();
         const siblings = childrenOf(page, parentOf(page, id));
         const at = siblings.findIndex((c) => c.id === id);
@@ -73,8 +77,23 @@ export function DesignScreen(p: { shown: boolean }) {
         setProps(page.id, id, { x: String(b.x + dx), y: String(b.y + dy) });
       }
     };
+    // copy and cut take the selected element, paste puts ours down, unless a field or some
+    // selected text has the clipboard
+    const clip = (e: ClipboardEvent) => {
+      const page = currentPage();
+      const id = selected();
+      if (!p.shown || !page || (e.target as HTMLElement).closest?.("input, textarea, select")) return;
+      if (e.type === "paste") return paste(e, page, id);
+      if (!id || !window.getSelection()?.isCollapsed) return;
+      copy(e, page, id);
+      if (e.type === "cut") send({ type: "edit", edit: { kind: "remove_element", page: page.id, id } });
+    };
     window.addEventListener("keydown", key);
-    onCleanup(() => window.removeEventListener("keydown", key));
+    for (const kind of ["copy", "cut", "paste"] as const) document.addEventListener(kind, clip);
+    onCleanup(() => {
+      window.removeEventListener("keydown", key);
+      for (const kind of ["copy", "cut", "paste"] as const) document.removeEventListener(kind, clip);
+    });
   });
 
   return (

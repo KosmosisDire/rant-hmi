@@ -73,8 +73,9 @@ pub enum Edit {
     RemovePage { page: String },
     /// Puts a whole page back, ids and all, as undoing its removal does.
     PutPage { page: Page },
-    /// Adds an element at the end of `parent`, a frame, or of the page when there is none.
-    AddElement { page: String, parent: Option<String>, tag: Tag, props: BTreeMap<String, String> },
+    /// Adds an element and all it holds at `index` of `parent` (the front when none), a frame
+    /// or the page. Every id in it is made new, whatever it held.
+    AddElement { page: String, parent: Option<String>, index: Option<usize>, element: Element },
     RemoveElement { page: String, id: String },
     /// Puts an element and all it holds at `index` of `parent`, ids and all.
     PutElement { page: String, parent: Option<String>, index: usize, element: Element },
@@ -204,12 +205,14 @@ impl Pages {
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
             }
-            Edit::AddElement { page, parent, tag, props } => {
-                check_props(props.keys())?;
+            Edit::AddElement { page, parent, index, mut element } => {
                 let p = self.page_mut(&page)?;
-                let id = next_id(&p.children);
-                let holder = holder(p, &parent)?;
-                holder.push(Element { id: id.clone(), tag, props, children: Vec::new() });
+                let mut next = highest(&p.children) + 1;
+                renumber(&mut element, &mut next);
+                check_tree(&element, &mut HashSet::new())?;
+                let id = element.id.clone();
+                let list = holder(p, &parent)?;
+                list.insert(index.unwrap_or(list.len()).min(list.len()), element);
                 *made = Some((page.clone(), id.clone()));
                 Edit::RemoveElement { page: page.clone(), id }
             }
@@ -225,8 +228,8 @@ impl Pages {
                 p.children.iter().for_each(|e| all_ids(e, &mut ids));
                 check_tree(&element, &mut ids)?;
                 let id = element.id.clone();
-                let holder = holder(p, &parent)?;
-                holder.insert(index.min(holder.len()), element);
+                let list = holder(p, &parent)?;
+                list.insert(index.min(list.len()), element);
                 *made = Some((page.clone(), id.clone()));
                 Edit::RemoveElement { page: page.clone(), id }
             }
@@ -241,8 +244,8 @@ impl Pages {
                     holder(p, &parent)?;
                 }
                 let element = holder(p, &from)?.remove(at);
-                let holder = holder(p, &parent)?;
-                holder.insert(index.min(holder.len()), element);
+                let list = holder(p, &parent)?;
+                list.insert(index.min(list.len()), element);
                 Edit::MoveElement { page: page.clone(), id, parent: from, index: at }
             }
             Edit::SetProps { page, id, props } => {
@@ -336,13 +339,17 @@ fn check_props<'a>(keys: impl Iterator<Item = &'a String>) -> Result<(), String>
     Ok(())
 }
 
-/// `e` and one more than the highest number any id on the page has, so ids are never reused
-/// while the page holds the higher one.
-fn next_id(elements: &[Element]) -> String {
-    fn highest(elements: &[Element]) -> u32 {
-        elements.iter().map(|e| e.id.strip_prefix('e').and_then(|n| n.parse().ok()).unwrap_or(0).max(highest(&e.children))).max().unwrap_or(0)
-    }
-    format!("e{}", highest(elements) + 1)
+/// The highest number in any id on the page. New ids count up from it, so none is reused
+/// while the page holds a higher one.
+fn highest(elements: &[Element]) -> u32 {
+    elements.iter().map(|e| e.id.strip_prefix('e').and_then(|n| n.parse().ok()).unwrap_or(0).max(highest(&e.children))).max().unwrap_or(0)
+}
+
+/// Gives an element and all it holds new ids, `e` and a number counting up from `next`.
+fn renumber(e: &mut Element, next: &mut u32) {
+    e.id = format!("e{next}");
+    *next += 1;
+    e.children.iter_mut().for_each(|c| renumber(c, next));
 }
 
 /// An element's tree from a screen: property names, no text holding elements, and ids new
@@ -411,19 +418,23 @@ mod tests {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
+    fn add(page: String, parent: Option<String>, tag: Tag, props: BTreeMap<String, String>) -> Edit {
+        Edit::AddElement { page, parent, index: None, element: Element { id: String::new(), tag, props, children: Vec::new() } }
+    }
+
     #[test]
     fn a_new_project_gets_an_overview_and_edits_survive_a_reopen() {
         let dir = scratch("reopen");
         let mut pages = Pages::open(&dir).unwrap();
         assert_eq!(pages.list[0].id, "overview");
         let frame = pages
-            .apply(Edit::AddElement { page: "overview".into(), parent: None, tag: Tag::Div, props: props(&[("x", "44"), ("background", "#222")]) })
+            .apply(add("overview".to_string(), None, Tag::Div, props(&[("x", "44"), ("background", "#222")])))
             .unwrap()
             .made
             .unwrap()
             .1;
         let text = pages
-            .apply(Edit::AddElement { page: "overview".into(), parent: Some(frame.clone()), tag: Tag::Span, props: props(&[("text", "Speed")]) })
+            .apply(add("overview".to_string(), Some(frame.clone()), Tag::Span, props(&[("text", "Speed")])))
             .unwrap()
             .made
             .unwrap()
@@ -446,14 +457,14 @@ mod tests {
         let dir = scratch("refuse");
         let mut pages = Pages::open(&dir).unwrap();
         let o = || "overview".to_string();
-        let span = pages.apply(Edit::AddElement { page: o(), parent: None, tag: Tag::Span, props: BTreeMap::new() }).unwrap().made.unwrap().1;
-        let into_span = Edit::AddElement { page: o(), parent: Some(span.clone()), tag: Tag::Div, props: BTreeMap::new() };
+        let span = pages.apply(add(o(), None, Tag::Span, BTreeMap::new())).unwrap().made.unwrap().1;
+        let into_span = add(o(), Some(span.clone()), Tag::Div, BTreeMap::new());
         assert_eq!(pages.apply(into_span).err().unwrap(), "only a frame holds other elements");
-        let bad = Edit::AddElement { page: o(), parent: None, tag: Tag::Div, props: props(&[("Background", "red")]) };
+        let bad = add(o(), None, Tag::Div, props(&[("Background", "red")]));
         assert_eq!(pages.apply(bad).err().unwrap(), "\"Background\" is not a property name");
         assert!(pages.apply(Edit::RemoveElement { page: o(), id: "e9".into() }).is_err());
 
-        let frame = pages.apply(Edit::AddElement { page: o(), parent: None, tag: Tag::Div, props: BTreeMap::new() }).unwrap().made.unwrap().1;
+        let frame = pages.apply(add(o(), None, Tag::Div, BTreeMap::new())).unwrap().made.unwrap().1;
         pages.apply(Edit::MoveElement { page: o(), id: span, parent: Some(frame.clone()), index: 0 }).unwrap();
         let into_itself = Edit::MoveElement { page: o(), id: frame.clone(), parent: Some(frame), index: 0 };
         assert_eq!(pages.apply(into_itself).err().unwrap(), "a frame cannot go inside itself");
@@ -475,15 +486,15 @@ mod tests {
             Edit::AddPage { name: "Line two".into() },
             Edit::RenamePage { page: "line-two".into(), name: "Line 2".into() },
             Edit::ResizePage { page: "line-two".into(), width: 390, height: 844 },
-            Edit::AddElement { page: o(), parent: None, tag: Tag::Div, props: props(&[("x", "44"), ("background", "#222")]) },
-            Edit::AddElement { page: o(), parent: Some("e1".into()), tag: Tag::Span, props: props(&[("text", "\"a\"")]) },
-            Edit::AddElement { page: o(), parent: None, tag: Tag::Span, props: props(&[("text", "Speed")]) },
+            add(o(), None, Tag::Div, props(&[("x", "44"), ("background", "#222")])),
+            add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"a\"")])),
+            add(o(), None, Tag::Span, props(&[("text", "Speed")])),
             Edit::SetProps { page: o(), id: "e1".into(), props: [("x".to_string(), Some("88".to_string())), ("background".to_string(), None)].into() },
             Edit::MoveElement { page: o(), id: "e3".into(), parent: Some("e1".into()), index: 0 },
             Edit::RemoveElement { page: o(), id: "e1".into() },
             Edit::Batch {
                 edits: vec![
-                    Edit::AddElement { page: o(), parent: None, tag: Tag::Div, props: BTreeMap::new() },
+                    add(o(), None, Tag::Div, BTreeMap::new()),
                     Edit::SetProps { page: o(), id: "e1".into(), props: [("y".to_string(), Some("11".to_string()))].into() },
                 ],
             },
@@ -508,13 +519,33 @@ mod tests {
     }
 
     #[test]
+    fn an_added_tree_gets_new_ids_and_goes_where_asked() {
+        let dir = scratch("tree");
+        let mut pages = Pages::open(&dir).unwrap();
+        let o = || "overview".to_string();
+        pages.apply(add(o(), None, Tag::Div, BTreeMap::new())).unwrap();
+        pages.apply(add(o(), None, Tag::Div, BTreeMap::new())).unwrap();
+        let leaf = |id: &str, tag| Element { id: id.into(), tag, props: BTreeMap::new(), children: Vec::new() };
+        let copy = Element { id: "e1".into(), tag: Tag::Div, props: props(&[("x", "11")]), children: vec![leaf("e2", Tag::Span), leaf("x", Tag::Div)] };
+        let made = pages.apply(Edit::AddElement { page: o(), parent: None, index: Some(1), element: copy }).unwrap().made.unwrap().1;
+        assert_eq!(made, "e3");
+        let ids: Vec<_> = pages.list[0].children.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["e1", "e3", "e2"]);
+        let kids: Vec<_> = pages.list[0].children[1].children.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(kids, ["e4", "e5"]);
+        let bad = Element { id: String::new(), tag: Tag::Span, props: BTreeMap::new(), children: vec![leaf("", Tag::Span)] };
+        assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame holds other elements");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_batch_that_fails_changes_nothing() {
         let dir = scratch("batch");
         let mut pages = Pages::open(&dir).unwrap();
         let before = (pages.list.clone(), files(&dir));
         let batch = Edit::Batch {
             edits: vec![
-                Edit::AddElement { page: "overview".into(), parent: None, tag: Tag::Div, props: BTreeMap::new() },
+                add("overview".to_string(), None, Tag::Div, BTreeMap::new()),
                 Edit::RemoveElement { page: "overview".into(), id: "e9".into() },
             ],
         };
