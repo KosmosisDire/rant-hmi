@@ -10,9 +10,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const list = page.locator(".screen:not([hidden]) .handler-list");
   const before = hmi.state.rules.length;
 
-  const empty = await list.boundingBox();
-  await page.mouse.click(empty.x + empty.width / 2, empty.y + empty.height - 20, { button: "right" });
-  await page.locator(".popover.menu .menu-item", { hasText: "Add a handler" }).click();
+  // a group's heading is the list's own, wherever the rows end
+  await d.menu(list.locator(".list-group").first(), "Add a handler");
   await eventually(() => hmi.state.rules.length === before + 1, "a new handler");
   const made = hmi.state.rules.at(-1);
   hmi.send({ type: "edit", edit: { kind: "set_rule", id: made.id, rule: { ...made, code: "ticks = 1;" } } });
