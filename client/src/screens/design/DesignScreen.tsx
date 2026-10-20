@@ -7,7 +7,7 @@ import { Artboard, GRID } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
-import { boxOf, childrenOf, find, literal, moveTo, parentOf, placementText, roomOf, sendEdits, tops } from "./tree";
+import { boxOf, find, literal, placementText, remove, restack, roomOf, sendEdits, tops } from "./tree";
 
 /** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
 export type Pick = (id: string | null, add?: boolean) => void;
@@ -104,14 +104,10 @@ export function DesignScreen(p: { shown: boolean }) {
         duplicate(page, picked);
       } else if (mod && ["[", "]", "{", "}"].includes(e.key) && picked.length === 1) {
         e.preventDefault();
-        const id = picked[0].id;
-        const siblings = childrenOf(page, parentOf(page, id));
-        const at = siblings.findIndex((c) => c.id === id);
         const forward = e.key === "]" || e.key === "}";
-        const last = siblings.length - 1;
-        moveTo(page, id, parentOf(page, id), e.shiftKey ? (forward ? last : 0) : Math.min(last, Math.max(0, at + (forward ? 1 : -1))));
+        restack(page, picked[0].id, e.shiftKey ? (forward ? "front" : "back") : forward ? "forward" : "backward");
       } else if (e.key === "Delete" || e.key === "Backspace") {
-        sendEdits(picked.map((el) => ({ kind: "remove_element", page: page.id, id: el.id })));
+        remove(page, picked);
       } else if (e.key === "Escape") {
         setSelection([]);
       } else if (e.key.startsWith("Arrow")) {
@@ -139,7 +135,7 @@ export function DesignScreen(p: { shown: boolean }) {
       const picked = tops(page, selection());
       if (picked.length === 0 || !window.getSelection()?.isCollapsed) return;
       copy(e, page, picked);
-      if (e.type === "cut") sendEdits(picked.map((el) => ({ kind: "remove_element", page: page.id, id: el.id })));
+      if (e.type === "cut") remove(page, picked);
     };
     window.addEventListener("keydown", key);
     for (const kind of ["copy", "cut", "paste"] as const) document.addEventListener(kind, clip);

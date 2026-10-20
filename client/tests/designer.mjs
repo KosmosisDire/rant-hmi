@@ -185,6 +185,17 @@ export function designer(page) {
       await left().locator(".list-row.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
     },
 
+    /** Right clicks `target` and picks the menu's row with these words. */
+    async menu(target, item) {
+      await target.click({ button: "right" });
+      await page.locator(".popover.menu .menu-item", { has: page.locator(".menu-label", { hasText: new RegExp(`^${item}$`) }) }).click();
+    },
+
+    /** A row of the pages or components list by its name. */
+    pageRow(name) {
+      return left().locator(".pages .list-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
+    },
+
     /** Selects an element by its name in the layers. */
     async select(name) {
       await left().locator(".list-row[data-id]", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) }).first().click();

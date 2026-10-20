@@ -10,6 +10,7 @@ import { number } from "../../state/bind";
 import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
 import { moving, type Reshape, reshape } from "./geometry";
+import { canvasMenu, elementMenu } from "./menus";
 import { absolute, boxOf, find, literal, parentOf, placementText, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 export const GRID = 11;
@@ -430,6 +431,15 @@ export function Artboard(p: {
       onPointerMove={move}
       onPointerUp={up}
       onPointerCancel={up}
+      onContextMenu={(e) => {
+        const hit = (e.target as HTMLElement).closest(".el[data-id]")?.getAttribute("data-id");
+        if (hit) elementMenu(e, p.page, p.selected, p.onPick, hit);
+        else {
+          const [r, v] = [host.getBoundingClientRect(), view()];
+          const at = { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
+          canvasMenu(e, p.page, at, p.onPick, () => p.page.children.forEach((c) => p.onPick(c.id, true)));
+        }
+      }}
       onDblClick={(e) => {
         // the press captured the pointer, so the target is the artboard: look beneath it
         const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest(".el[data-id]")?.getAttribute("data-id");

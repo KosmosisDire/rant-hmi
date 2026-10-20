@@ -24,19 +24,16 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
-  Component,
-  Copy,
   Plus,
   Trash,
   X,
   Zap,
 } from "../../ui/icons";
-import { makeComponent } from "./component";
 import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, kindOf, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, PAINT, shapeKeys, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
-import { type Align, align, chain, find, scopeOf, sendEdits, setHandler, setProps, showProps, spread, tops } from "./tree";
+import { type Align, align, chain, find, remove, scopeOf, setHandler, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
  *  the free CSS box. */
@@ -88,7 +85,6 @@ const LINE_UP: [Align, string, typeof AlignStartVertical][] = [
 
 /** Several selected elements: how many, lining them up, and removing them. */
 function Several(p: { page: Page; ids: string[] }) {
-  const remove = () => sendEdits(tops(p.page, p.ids).map((e) => ({ kind: "remove_element", page: p.page.id, id: e.id })));
   const few = () => tops(p.page, p.ids).length < 3;
   return (
     <>
@@ -119,11 +115,7 @@ function Several(p: { page: Page; ids: string[] }) {
         <div class="placeholder">Drag one to move them all, or nudge them with the arrows. Shift click adds an element or takes it away.</div>
       </div>
       <div class="pane-foot">
-        <button class="button" onClick={() => makeComponent(p.page, p.ids)}>
-          <Component size={12} />
-          Make a component
-        </button>
-        <button class="button" onClick={remove}>
+        <button class="button" onClick={() => remove(p.page, tops(p.page, p.ids))}>
           <Trash size={12} />
           Delete all
         </button>
@@ -147,13 +139,6 @@ function PageInspector(p: { page: Page }) {
   };
   const isComponent = () => p.page.interface !== null;
   const lastPage = () => !isComponent() && state.pages.filter((pg) => pg.interface === null).length < 2;
-  // a copy's name, free among the pages, spelled as a component's when it is one
-  const duplicate = () => {
-    const spell = (n: number) => (isComponent() ? `${p.page.name}Copy${n > 1 ? n : ""}` : `${p.page.name} copy${n > 1 ? ` ${n}` : ""}`);
-    let n = 1;
-    while (state.pages.some((pg) => pg.name === spell(n))) n++;
-    send({ type: "edit", edit: { kind: "copy_page", page: p.page.id, name: spell(n) } });
-  };
   return (
     <>
       <div class="pane-head">
@@ -234,10 +219,6 @@ function PageInspector(p: { page: Page }) {
         </Show>
       </div>
       <div class="pane-foot">
-        <button class="button" onClick={duplicate}>
-          <Copy size={12} />
-          Duplicate
-        </button>
         <button
           class="button"
           disabled={lastPage()}
@@ -401,12 +382,6 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Events page={p.page} element={p.element} />
       </div>
       <div class="pane-foot">
-        <Show when={p.element.tag === "div"}>
-          <button class="button" onClick={() => makeComponent(pageOf(p.page)!, [p.element.id])}>
-            <Component size={12} />
-            Make a component
-          </button>
-        </Show>
         <button class="button" onClick={() => send({ type: "edit", edit: { kind: "remove_element", page: p.page, id: p.element.id } })}>
           <Trash size={12} />
           Delete

@@ -846,6 +846,51 @@ table.grid td.name > span {
   min-width: 140px;
 }
 
+/* The right click menu: each row an icon, its words and the keys that do it too. */
+.popover.menu {
+  min-width: 220px;
+  padding: 4px;
+}
+
+.menu-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.menu .menu-item:focus,
+.menu .menu-item.open {
+  outline: none;
+  background: var(--panel3);
+}
+
+.menu .menu-item:disabled {
+  color: var(--faint);
+  background: none;
+  cursor: default;
+}
+
+.menu-icon {
+  display: inline-flex;
+  justify-content: center;
+  width: 14px;
+  color: var(--dim);
+}
+
+.menu-label {
+  flex: 1;
+}
+
+.menu-keys {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.menu-line {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
 /* The colour picker: saturation and brightness, hue, alpha, then its code and the tokens. */
 .colour-picker {
   display: flex;

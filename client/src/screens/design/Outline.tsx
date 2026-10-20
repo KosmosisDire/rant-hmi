@@ -6,9 +6,11 @@ import type { Tag } from "../../protocol/Tag";
 import { number } from "../../state/bind";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
-import { Component, File, Image, Plus, Shapes, Square, TextCursorInput, Type, Video } from "../../ui/icons";
+import { Component, CopyPlus, File, Image, Plus, Shapes, Square, Star, TextCursorInput, Trash, Type, Video } from "../../ui/icons";
+import { openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
 import type { Pick } from "./DesignScreen";
+import { elementMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
 import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
 
@@ -72,6 +74,24 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     for (let n = 2; components().some((c) => c.name === name); n++) name = `Component${n}`;
     send({ type: "edit", edit: { kind: "add_component", name } });
   };
+  // a copy's name, free among the pages, spelled as a component's when it is one
+  const copyPage = (pg: Page) => {
+    const spell = (n: number) => (pg.interface ? `${pg.name}Copy${n > 1 ? n : ""}` : `${pg.name} copy${n > 1 ? ` ${n}` : ""}`);
+    let n = 1;
+    while (state.pages.some((other) => other.name === spell(n))) n++;
+    send({ type: "edit", edit: { kind: "copy_page", page: pg.id, name: spell(n) } });
+  };
+  const pageMenu = (e: MouseEvent, pg: Page) => {
+    const component = pg.interface !== null;
+    const last = !component && pages().length < 2;
+    openMenu(e, [
+      { label: "Open", icon: component ? <Component size={13} /> : <File size={13} />, run: () => openPage(pg.id) },
+      { label: "Duplicate", icon: <CopyPlus size={13} />, run: () => copyPage(pg) },
+      ...(component ? [] : [{ label: "Make the start page", icon: <Star size={13} />, disabled: startPage() === pg.id, run: () => send({ type: "set_start", page: pg.id }) }]),
+      "-",
+      { label: component ? "Delete component" : "Delete page", icon: <Trash size={13} />, disabled: last, run: () => send({ type: "edit", edit: { kind: "remove_page", page: pg.id } }) },
+    ]);
+  };
 
   return (
     <>
@@ -84,7 +104,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
       <div class="pages">
         <For each={pages()}>
           {(pg) => (
-            <button class="list-row" classList={{ selected: pg.id === p.page?.id }} onClick={() => openPage(pg.id)}>
+            <button class="list-row" classList={{ selected: pg.id === p.page?.id }} onClick={() => openPage(pg.id)} onContextMenu={(e) => pageMenu(e, pg)}>
               <File size={14} />
               <span class="list-label">{pg.name}</span>
               <Show when={startPage() === pg.id}>
@@ -106,7 +126,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
       <div class="pages">
         <For each={components()} fallback={<div class="field-hint list-hint">Make a part once, place it on many pages.</div>}>
           {(c) => (
-            <button class="list-row" classList={{ selected: c.id === p.page?.id }} onClick={() => openPage(c.id)}>
+            <button class="list-row" classList={{ selected: c.id === p.page?.id }} onClick={() => openPage(c.id)} onContextMenu={(e) => pageMenu(e, c)}>
               <span class="kind kind-local">
                 <Component size={14} />
               </span>
@@ -231,7 +251,16 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
 
   return (
     <div class="pane-body" ref={host} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-      <Layers elements={p.page.children} depth={0} selected={p.selected} dragging={dragging()} spot={spot()} onPick={p.onPick} onEdit={p.onEdit} />
+      <Layers
+        elements={p.page.children}
+        depth={0}
+        selected={p.selected}
+        dragging={dragging()}
+        spot={spot()}
+        onPick={p.onPick}
+        onEdit={p.onEdit}
+        onMenu={(e, id) => elementMenu(e, p.page, p.selected, p.onPick, id)}
+      />
     </div>
   );
 }
@@ -244,6 +273,7 @@ function Layers(p: {
   spot: Spot | null;
   onPick: Pick;
   onEdit: (id: string, key: string) => void;
+  onMenu: (e: MouseEvent, id: string) => void;
 }) {
   const at = (id: string) => (p.spot?.id === id ? p.spot.where : undefined);
   return (
@@ -258,6 +288,7 @@ function Layers(p: {
             data-open={e.children.length > 0 ? "" : undefined}
             onClick={(ev) => p.onPick(e.id, ev.shiftKey || ev.ctrlKey || ev.metaKey)}
             onDblClick={() => p.onEdit(e.id, "name")}
+            onContextMenu={(ev) => p.onMenu(ev, e.id)}
           >
             <span style={{ width: `${p.depth * 14}px` }} />
             <span class="layer-icon">
@@ -267,7 +298,7 @@ function Layers(p: {
             <span class="list-trail mono faint">{e.id}</span>
           </button>
           <Show when={e.children.length > 0}>
-            <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} onPick={p.onPick} onEdit={p.onEdit} />
+            <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} onPick={p.onPick} onEdit={p.onEdit} onMenu={p.onMenu} />
           </Show>
         </>
       )}

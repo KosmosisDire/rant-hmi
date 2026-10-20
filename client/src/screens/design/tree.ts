@@ -136,6 +136,23 @@ export function moveTo(page: Page, id: string, parent: string | null, index: num
   sendEdits(edits);
 }
 
+/** Where an element goes among what shares its frame: one step or all the way, to the front
+ *  or the back. */
+export type Restack = "forward" | "backward" | "front" | "back";
+
+export function restack(page: Page, id: string, how: Restack) {
+  const parent = parentOf(page, id);
+  const siblings = childrenOf(page, parent);
+  const [at, last] = [siblings.findIndex((c) => c.id === id), siblings.length - 1];
+  const to = { forward: Math.min(last, at + 1), backward: Math.max(0, at - 1), front: last, back: 0 }[how];
+  moveTo(page, id, parent, to);
+}
+
+/** Removes elements as one undo. */
+export function remove(page: Page, elements: Element[]) {
+  sendEdits(elements.map((e) => ({ kind: "remove_element", page: page.id, id: e.id })));
+}
+
 /** An edge or centre several elements line up on. */
 export type Align = "left" | "centre" | "right" | "top" | "middle" | "bottom";
 

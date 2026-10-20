@@ -10,8 +10,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await hmi.setHandler(pageId, button, "tap", "Running = !Running;");
 
   await d.openPage("Card page");
-  await page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-row", { hasText: "Speed card" }).click();
-  await page.locator(".screen:not([hidden]) .sidebar.right button", { hasText: "Make a component" }).click();
+  await d.menu(page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-row", { hasText: "Speed card" }), "Make a component");
   const made = () => hmi.state.pages.find((p) => p.name === "SpeedCard");
   await eventually(made, "the component");
   const c = made();

@@ -1,12 +1,12 @@
-// A panel floating under the control that opened it. A press outside closes it and any opened
-// from it, Escape closes the top one.
+// A panel floating under the control that opened it, beside it for a submenu, or at a point
+// for a right click. A press outside closes it and any opened from it, Escape the top one.
 
 import { createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 
 interface Open {
   el: HTMLElement;
-  anchor: HTMLElement;
+  anchor: HTMLElement | null;
   close: () => void;
 }
 
@@ -17,7 +17,7 @@ function pressed(e: PointerEvent) {
   const target = e.target as Node;
   // a press on what opened one leaves it to that control, which toggles it
   let at = open.length - 1;
-  while (at >= 0 && !open[at].el.contains(target) && !open[at].anchor.contains(target)) at--;
+  while (at >= 0 && !open[at].el.contains(target) && !open[at].anchor?.contains(target)) at--;
   for (const p of open.slice(at + 1).reverse()) p.close();
 }
 
@@ -30,18 +30,26 @@ function key(e: KeyboardEvent) {
   open.at(-1)!.close();
 }
 
-export function Popover(p: { anchor: HTMLElement; onClose: () => void; class?: string; children: JSX.Element }) {
+export function Popover(p: { anchor: HTMLElement | { x: number; y: number }; onClose: () => void; class?: string; side?: boolean; children: JSX.Element }) {
   let el!: HTMLDivElement;
   const [at, setAt] = createSignal({ left: -9999, top: -9999 });
+  const element = p.anchor instanceof HTMLElement ? p.anchor : null;
   const place = () => {
-    const a = p.anchor.getBoundingClientRect();
+    const a = element?.getBoundingClientRect() ?? { left: (p.anchor as { x: number }).x, right: (p.anchor as { x: number }).x, top: (p.anchor as { y: number }).y, bottom: (p.anchor as { y: number }).y };
     const [w, h] = [el.offsetWidth, el.offsetHeight];
+    if (p.side) {
+      // a submenu's first row lines up with the row that opened it
+      const left = a.right + w + 4 > innerWidth ? a.left - w - 4 : a.right + 4;
+      setAt({ left: Math.max(8, left), top: Math.max(8, Math.min(a.top - 7, innerHeight - h - 8)) });
+      return;
+    }
     const left = Math.max(8, Math.min(a.left, innerWidth - w - 8));
-    const below = a.bottom + 4;
-    setAt({ left, top: below + h > innerHeight - 8 ? Math.max(8, a.top - h - 4) : below });
+    const gap = element ? 4 : 0;
+    const below = a.bottom + gap;
+    setAt({ left, top: below + h > innerHeight - 8 ? Math.max(8, a.top - h - gap) : below });
   };
   onMount(() => {
-    const entry = { el, anchor: p.anchor, close: p.onClose };
+    const entry = { el, anchor: element, close: p.onClose };
     open.push(entry);
     if (open.length === 1) {
       window.addEventListener("pointerdown", pressed, true);
