@@ -1,6 +1,6 @@
 // A designer makes a computed value from the Data screen: speed in percent, with a setter that
-// writes the speed back. It reads as Speed does, a write to it sets Speed, and a getter that
-// reads itself is refused.
+// writes the speed back. It reads as Speed does, a write to it sets Speed, a getter that reads
+// itself is refused, and a setter that does not undo the getter gets a warning.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Data");
@@ -35,4 +35,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await write("Is", "speedPercent + 1");
   await page.locator(".notice", { hasText: "reads itself" }).waitFor();
   check(percent().get === "Speed * 100", "a getter reading itself was kept");
+
+  await write("As", "v * 4");
+  await page.locator(".notice.warn", { hasText: "does not undo it" }).waitFor();
+  await write("As", "v / 100");
+  await eventually(() => percent()?.set?.value === "v / 100", "the setter put right");
 }

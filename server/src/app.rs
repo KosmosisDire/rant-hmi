@@ -463,11 +463,15 @@ impl App {
             self.values.remove(&name);
             self.changed.insert(name.clone());
         }
-        if let Some(c) = to.filter(|c| c.name != name) {
+        if let Some(c) = to.as_ref().filter(|c| c.name != name) {
             info!("renamed the computed value {name} to {}", c.name);
             self.follow_rename(session, &name, &c.name, false);
         }
         self.computed_changed();
+        // worked out first, so the trial starts from what it reads now
+        if let Some(c) = to.filter(|c| c.set.is_some()) {
+            self.script.send(ToScript::Try { session, name: c.name });
+        }
     }
 
     /// Asks the engine to judge the conditions and work the computed values out anew, by the
@@ -730,6 +734,7 @@ impl App {
             }
             FromScript::Judged(truths) => self.judged(truths),
             FromScript::Computed(list) => self.computed(list),
+            FromScript::Tried { session, warning } => self.send(session, &ServerMsg::Notice { text: warning, level: Level::Warn }),
             FromScript::Inverted { session, name, target, value } => {
                 let done = value.and_then(|v| {
                     info!("{name} sets {target} to {v}");

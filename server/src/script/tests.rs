@@ -326,3 +326,15 @@ fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
     let said = until_done(&mut rx, 1);
     assert!(matches!(end(&said), End::Fault(text) if text.contains("no setter")));
 }
+
+#[test]
+fn a_setter_that_does_not_undo_its_getter_is_caught_on_a_try() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Computed(vec![computed("good", "Speed * 100", Some(("Speed", "v / 100"))), computed("bad", "Speed * 100", Some(("Speed", "v * 4")))]));
+    script.send(ToScript::Compute);
+    // a good one says nothing, so the first warning is the bad one's
+    script.send(ToScript::Try { session: 7, name: "good".into() });
+    script.send(ToScript::Try { session: 7, name: "bad".into() });
+    let warning = next(&mut rx, |m| if let FromScript::Tried { warning, .. } = m { Some(warning) } else { None });
+    assert!(warning.starts_with("bad's setter does not undo it: writing 1 reads back as 400"), "{warning}");
+}

@@ -47,6 +47,9 @@ pub enum ToScript {
     /// What a write of `v` to a computed value gives its setter's target, answered with
     /// `Inverted`.
     Invert { session: Option<u32>, name: String, v: Value },
+    /// Tries a computed value's setter on a few values, answered with `Tried` when one does not
+    /// read back as written.
+    Try { session: u32, name: String },
     /// Every page as code names it, and its id, whole, after any change.
     Pages(Vec<(String, String)>),
     /// Runs code for a screen, or for none. `p` is what its event brought, `at` the copy of a
@@ -84,6 +87,8 @@ pub enum FromScript {
     Computed(Vec<(String, Option<Value>)>),
     /// What a write to the computed value `name` gives `target`, or why it gives nothing.
     Inverted { session: Option<u32>, name: String, target: String, value: Result<Value, String> },
+    /// Why a computed value's setter does not undo its getter.
+    Tried { session: u32, warning: String },
 }
 
 /// Expressions read together in a context of their own that reads but never writes, each a
@@ -247,7 +252,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
             Ok(ToScript::Judge) => {
                 if judge.is_none() {
                     let sources = conditions.iter().map(|(id, c)| (id.clone(), format!("() => !!({c}\n)"))).collect::<Vec<_>>();
-                    judge = Some(make_reader(&rt, &shared, &sources));
+                    judge = Some(make_reader(&rt, &shared, &sources, 0));
                 }
                 let (ctx, fns) = judge.as_ref().expect("made above");
                 let truths = ctx.with(|ctx| {
@@ -272,7 +277,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
             Ok(ToScript::Sample(names)) => {
                 if sampler.is_none() {
                     let sources = records.iter().map(|(name, s)| (name.clone(), format!("() => ({s}\n)"))).collect::<Vec<_>>();
-                    sampler = Some(make_reader(&rt, &shared, &sources));
+                    sampler = Some(make_reader(&rt, &shared, &sources, 0));
                 }
                 let (ctx, fns) = sampler.as_ref().expect("made above");
                 let read = ctx.with(|ctx| {
@@ -303,7 +308,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 (judge, sampler, computer, inverter) = (None, None, None, None);
             }
             Ok(ToScript::Compute) => {
-                let (ctx, fns) = computer.get_or_insert_with(|| make_reader(&rt, &shared, &getters));
+                let (ctx, fns) = computer.get_or_insert_with(|| make_reader(&rt, &shared, &getters, 0));
                 // in order, each seen by those after it, and again while any moves, since one
                 // may read one later in the list
                 let mut out = Vec::new();
@@ -341,7 +346,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
             }
             Ok(ToScript::Invert { session, name, v }) => {
                 let target = shared.borrow().computed.get(&name).and_then(|c| c.set.as_ref()).map(|s| s.target.clone());
-                let (ctx, fns) = inverter.get_or_insert_with(|| make_reader(&rt, &shared, &setters));
+                let (ctx, fns) = inverter.get_or_insert_with(|| make_reader(&rt, &shared, &setters, 0));
                 let f = fns.iter().find(|(n, _)| *n == name).map(|(_, f)| f.clone());
                 let value = match (&target, f) {
                     (Some(_), Some(f)) => ctx.with(|ctx| {
@@ -359,6 +364,11 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 };
                 deadline.set(None);
                 shared.borrow().send(FromScript::Inverted { session, name, target: target.unwrap_or_default(), value });
+            }
+            Ok(ToScript::Try { session, name }) => {
+                if let Some(warning) = try_setter(&rt, &shared, &deadline, &name) {
+                    shared.borrow().send(FromScript::Tried { session, warning });
+                }
             }
             Ok(msg @ (ToScript::Imports(_) | ToScript::Variables(_))) => {
                 (judge, sampler, computer, inverter) = (None, None, None, None);
@@ -399,12 +409,67 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
     shared.borrow_mut().waiters.clear();
 }
 
+/// The run a setter's trial reads as, whose own write of the target it reads first.
+const TRIAL: u64 = u64::MAX;
+
+/// Writes `v` through a computed value's setter and reads it back through its getter, for a
+/// few values like the one it has now. Why one does not come back, else None.
+fn try_setter(rt: &Runtime, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, name: &str) -> Option<String> {
+    let c = shared.borrow().computed.get(name).cloned()?;
+    let set = c.set.clone()?;
+    let samples: Vec<Value> = match shared.borrow().values.get(name) {
+        Some(Value::Bool(_)) => vec![Value::Bool(true), Value::Bool(false)],
+        Some(Value::Int(_) | Value::Float(_)) => [0.0, 1.0, 7.5, 50.0, -3.0].into_iter().map(Value::Float).collect(),
+        _ => Vec::new(),
+    };
+    let sources = [("get".to_owned(), format!("() => ({}\n)", c.get)), ("set".to_owned(), format!("(v) => ({}\n)", set.value))];
+    let (ctx, fns) = make_reader(rt, shared, &sources, TRIAL);
+    let [(_, get), (_, put)] = fns.as_slice() else { return None };
+    let wrong = ctx.with(|ctx| {
+        samples.into_iter().find_map(|v| {
+            deadline.set(Some(Instant::now() + BUDGET));
+            let t = to_js(&ctx, &v).and_then(|x| put.clone().restore(&ctx)?.call::<_, rquickjs::Value>((x,))).ok().and_then(|t| from_js(t).ok());
+            let Some(t) = t else {
+                ctx.catch();
+                return Some(format!("{name}'s setter fails for {v}"));
+            };
+            shared.borrow_mut().pending.insert(TRIAL, vec![(set.target.clone(), t)]);
+            let back = get.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).ok().and_then(|b| from_js(b).ok());
+            match back {
+                Some(b) if same(&b, &v) => None,
+                Some(b) => Some(format!("{name}'s setter does not undo it: writing {v} reads back as {b}")),
+                None => {
+                    ctx.catch();
+                    Some(format!("{name}'s setter gives {} what {name} cannot read back", set.target))
+                }
+            }
+        })
+    });
+    deadline.set(None);
+    shared.borrow_mut().pending.remove(&TRIAL);
+    wrong
+}
+
+/// Equal, numbers within a hair of each other, as a float's last digits wander.
+fn same(a: &Value, b: &Value) -> bool {
+    let number = |v: &Value| match v {
+        Value::Int(i) => Some(*i as f64),
+        Value::Float(f) => Some(*f),
+        _ => None,
+    };
+    match (number(a), number(b)) {
+        (Some(x), Some(y)) => (x - y).abs() <= 1e-9 * x.abs().max(1.0),
+        _ => a == b,
+    }
+}
+
 /// A reader of each `source`, a function's text, by name, in a context of its own that reads
-/// every name and refuses writes, calls and sends. One that does not compile is left out.
-fn make_reader(rt: &Runtime, shared: &Rc<RefCell<Shared>>, sources: &[(String, String)]) -> Reader {
+/// every name, as `run` when it is one, and refuses writes, calls and sends. One that does not
+/// compile is left out.
+fn make_reader(rt: &Runtime, shared: &Rc<RefCell<Shared>>, sources: &[(String, String)], run: u64) -> Reader {
     let ctx = Context::full(rt).expect("QuickJS makes a context");
     let fns = ctx.with(|ctx| {
-        if install(&ctx, 0, shared, &Value::Null, None).is_err() {
+        if install(&ctx, run, shared, &Value::Null, None).is_err() {
             ctx.catch();
             return Vec::new();
         }
@@ -432,7 +497,7 @@ fn handle(rt: &Runtime, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: 
     match msg {
         ToScript::Imports(list) => shared.borrow_mut().imports = list.into_iter().map(|i| (i.alias.clone(), i)).collect(),
         // the loop takes these itself, since they need the readers it keeps
-        ToScript::Conditions(_) | ToScript::Judge | ToScript::Records(_) | ToScript::Sample(_) | ToScript::Computed(_) | ToScript::Compute | ToScript::Invert { .. } => {}
+        ToScript::Conditions(_) | ToScript::Judge | ToScript::Records(_) | ToScript::Sample(_) | ToScript::Computed(_) | ToScript::Compute | ToScript::Invert { .. } | ToScript::Try { .. } => {}
         ToScript::Pages(list) => shared.borrow_mut().pages = list,
         ToScript::Variables(list) => shared.borrow_mut().variables = list.into_iter().map(|v| (v.name.clone(), v)).collect(),
         ToScript::Screen { session, values } => shared.borrow_mut().screens.entry(session).or_default().extend(values),
