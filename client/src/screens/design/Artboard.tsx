@@ -13,7 +13,7 @@ import { UNIT } from "../../state/bind";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
 import { leaves } from "../../page/PageView";
-import { absolute, boxOf, boxText, find, isGroup, laidOut, literal, originOf, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
+import { absolute, boxOf, boxText, chain, find, isGroup, laidOut, literal, originOf, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 /** Places snap to whole units. A finer one is typed as a fraction, or dragged with Alt, which
  *  lands on pixels, a tenth of a unit. */
@@ -525,7 +525,9 @@ export function Artboard(p: {
       onContextMenu={(e) => {
         cancel();
         const deepest = (e.target as HTMLElement).closest(".el[data-id]")?.getAttribute("data-id");
-        const hit = deepest && pickAt(p.page, deepest, p.selected);
+        // inside what is selected, as a selected group's part, the menu acts on the selection
+        const around = deepest ? p.selected.find((id) => chain(p.page.children, deepest)?.some((x) => x.id === id)) : undefined;
+        const hit = around ?? (deepest && pickAt(p.page, deepest, p.selected));
         const [r, v] = [host.getBoundingClientRect(), view()];
         const at = { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
         if (hit) elementMenu(e, p.page, p.selected, p.onPick, hit, at);
