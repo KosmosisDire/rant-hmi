@@ -214,6 +214,24 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     Ok(page)
 }
 
+/// Where a body of code ends. A block, its code on lines of its own as the writer puts it,
+/// ends at the first line holding only the closing tag, so code that does not parse yet, as
+/// an open quote, still reads back. A text on its opening line ends on that line.
+fn block_end(s: &str, closing: &str, block: bool) -> Option<usize> {
+    if block {
+        let mut at = 0;
+        for line in s.split_inclusive('\n') {
+            if line.trim() == closing {
+                return line.find(closing).map(|n| at + n);
+            }
+            at += line.len();
+        }
+        return outside(s, closing);
+    }
+    let first = &s[..s.find('\n').unwrap_or(s.len())];
+    outside(first, closing).or_else(|| first.rfind(closing)).or_else(|| outside(s, closing))
+}
+
 /// Reads an HTML like file from the start, saying the line of any mistake.
 pub(super) struct Reader<'a> {
     s: &'a str,
@@ -263,6 +281,11 @@ impl Reader<'_> {
             self.at += lit.len();
         }
         found
+    }
+
+    /// Whether what follows starts on a line of its own, as a block the writer puts there.
+    fn opens_block(&self) -> bool {
+        self.rest().trim_start_matches([' ', '\t']).starts_with(['\n', '\r'])
     }
 
     pub(super) fn expect(&mut self, lit: &str) -> Result<(), String> {
@@ -394,7 +417,7 @@ impl Reader<'_> {
                 None => String::new(),
             };
             self.expect(">")?;
-            let n = outside(self.rest(), "</on>").ok_or_else(|| self.error("<on> never closes"))?;
+            let n = block_end(self.rest(), "</on>", self.opens_block()).ok_or_else(|| self.error("<on> never closes"))?;
             if out.iter().any(|h: &Handler| h.event == event) {
                 return Err(self.error(&format!("a second {event} handler")));
             }
@@ -463,6 +486,7 @@ impl Reader<'_> {
         let mut handlers = Vec::new();
         if !self.eat("/>") {
             self.expect(">")?;
+            let block = self.opens_block();
             handlers = self.handlers()?;
             match tag {
                 Tag::Div | Tag::Group | Tag::Svg | Tag::G => children = self.children(&word)?,
@@ -472,7 +496,7 @@ impl Reader<'_> {
                         self.at = self.s[..self.at].trim_end_matches([' ', '\t']).len();
                     }
                     let closing = format!("</{word}>");
-                    let n = outside(self.rest(), &closing).ok_or_else(|| self.error(&format!("<{word}> never closes")))?;
+                    let n = block_end(self.rest(), &closing, block).ok_or_else(|| self.error(&format!("<{word}> never closes")))?;
                     let body = &self.rest()[..n];
                     // a text is kept on one line, markup as the block of code it may be
                     let (key, value) = if tag == Tag::Markup { (MARKUP, dedent(body)) } else { (TEXT, body.trim().to_owned()) };
@@ -610,6 +634,21 @@ mod tests {
         }
         page.children[1].props.insert("x".into(), "Mode == \"Auto\"".into());
         assert!(write(&page).contains("x='Mode == \"Auto\"'"));
+    }
+
+    #[test]
+    fn code_typed_halfway_reads_back() {
+        let page = parse("<page name=\"A\" size=\"128x72\">
+  <div id=\"e1\" x=\"0\"/>
+</page>
+", "a").unwrap();
+        let mut half = page.clone();
+        half.children[0].handlers.push(Handler { event: "tap".into(), code: "open(\"".into(), ms: String::new() });
+        half.children.push(Element { id: "e2".into(), tag: Tag::Span, component: None, props: [("text".to_string(), "\"Hi".to_string())].into(), handlers: vec![Handler { event: "tap".into(), code: "log(`".into(), ms: String::new() }], children: Vec::new() });
+        let again = parse(&write(&half), "a").unwrap();
+        assert_eq!(again.children[0].handlers[0].code, "open(\"");
+        assert_eq!(again.children[1].handlers[0].code, "log(`");
+        assert_eq!(again.children[1].props["text"], "\"Hi");
     }
 
     #[test]
