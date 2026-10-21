@@ -147,6 +147,10 @@ type Pressed = (u32, String, String, Option<u32>);
 /// An element's handler for an event: page, element, copy of a repeat and event.
 type HandlerKey = (String, String, Option<u32>, String);
 
+/// A stream event waiting for its handler's run to end: its screen, what it brought and the copy
+/// of a repeat it happened on.
+type Waiting = (u32, Value, Option<(u32, Value)>);
+
 /// A rule's condition: true since when, and whether it has fired since it turned true.
 #[derive(Default)]
 struct Turned {
@@ -184,9 +188,8 @@ pub struct App {
     asks: HashMap<u64, u32>,
     /// Elements a screen holds pressed, as screen, page, element and the copy of a repeat.
     pressed: HashSet<Pressed>,
-    /// The latest stream event that came while its handler still ran, with its screen, what it
-    /// brought and its copy. It runs when that run ends.
-    waiting: HashMap<HandlerKey, (u32, Value, Option<(u32, Value)>)>,
+    /// The latest stream event that came while its handler still ran. It runs when that run ends.
+    waiting: HashMap<HandlerKey, Waiting>,
     /// When each timer rule is next due.
     timers: HashMap<String, Instant>,
     turned: HashMap<String, Turned>,
@@ -279,7 +282,7 @@ impl App {
                 Some(i) = inbound.recv() => self.inbound(i),
                 Some(s) = heard.recv() => self.scripted(s),
                 Some(()) = changed.recv() => self.edited = Some(Instant::now()),
-                Some(r) = from_rtc.recv() => self.from_rtc(r),
+                Some(r) = from_rtc.recv() => self.connection(r),
                 _ = tick.tick() => self.tick(),
                 _ = &mut shutdown => break,
             }
@@ -862,10 +865,10 @@ impl App {
                 }
                 // what waited for this run goes now, if its screen is still here
                 let Some(r) = self.runs.remove(&run) else { return };
-                if let Some((session, payload, at)) = self.waiting.remove(&(r.page.clone(), r.id.clone(), r.index, r.event.clone())) {
-                    if self.sessions.contains_key(&session) {
-                        self.fire(session, r.page, r.id, r.event, payload, at);
-                    }
+                if let Some((session, payload, at)) = self.waiting.remove(&(r.page.clone(), r.id.clone(), r.index, r.event.clone()))
+                    && self.sessions.contains_key(&session)
+                {
+                    self.fire(session, r.page, r.id, r.event, payload, at);
                 }
             }
         }
@@ -1275,7 +1278,8 @@ impl App {
         }
     }
 
-    fn from_rtc(&mut self, r: FromRtc) {
+    /// What a screen's WebRTC connection brought.
+    fn connection(&mut self, r: FromRtc) {
         match r {
             FromRtc::Channels { session, sdp } => self.send(session, &ServerMsg::Channels { answer: sdp }),
             FromRtc::Linked { session, open: true } => {
@@ -1399,6 +1403,11 @@ fn sources(records: &[Record]) -> Vec<(String, String)> {
     records.iter().map(|r| (r.name.clone(), r.source.clone())).collect()
 }
 
+/// Now, as Unix time.
+fn since_epoch() -> Duration {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1420,9 +1429,4 @@ mod tests {
         out.put(Bytes::from_static(b"values"), true);
         assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"values"));
     }
-}
-
-/// Now, as Unix time.
-fn since_epoch() -> Duration {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default()
 }

@@ -107,7 +107,7 @@ fn main() -> Result<(), rant::Error> {
         })?;
         // the camera at 10 frames a second, a part wandering across it
         frame += 1;
-        if frame % 2 == 0 {
+        if frame.is_multiple_of(2) {
             let (image, found) = camera_frame(t);
             let mut jpeg = Vec::new();
             jpeg_encoder::Encoder::new(&mut jpeg, 80).encode(&image.data, image.width as u16, image.height as u16, jpeg_encoder::ColorType::Rgb).expect("a frame in memory encodes");

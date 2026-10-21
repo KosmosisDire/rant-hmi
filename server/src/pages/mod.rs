@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::files;
-use crate::list::{self, named};
+use crate::list::{self, by_name};
 use crate::rules;
 use logic::Rule;
 
@@ -86,7 +86,7 @@ pub struct Input {
     pub bindable: bool,
 }
 
-named!(Local, Input);
+by_name!(Local, Input);
 
 /// How an open page shows: covering what is beneath, or floating over it while the page
 /// beneath stays in sight and keeps running, as a dialog does.
@@ -704,10 +704,10 @@ impl Pages {
                 let (from, at) = locate(&p.children, &id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
                 let moved = find(&p.children, &id).expect("located above");
                 let tag = moved.tag;
-                if let Some(target) = &parent {
-                    if target == &id || find(&moved.children, target).is_some() {
-                        return Err("a frame cannot go inside itself".into());
-                    }
+                if let Some(target) = &parent
+                    && (target == &id || find(&moved.children, target).is_some())
+                {
+                    return Err("a frame cannot go inside itself".into());
                 }
                 holder(p, &parent, tag)?;
                 let element = holder(p, &from, tag)?.remove(at);
@@ -851,10 +851,10 @@ impl Pages {
                 let p = self.page_mut(&page)?;
                 let variables = &mut p.interface.as_mut().expect("a component, checked above").variables;
                 let old = list::put(variables, &name, local, || format!("{component} has no variable {name}"))?;
-                if let (Some(_), Some(to)) = (&old, &to) {
-                    if *to != name {
-                        each_mut(&mut p.children, &mut |e| rename_in(e, &name, to));
-                    }
+                if let (Some(_), Some(to)) = (&old, &to)
+                    && *to != name
+                {
+                    each_mut(&mut p.children, &mut |e| rename_in(e, &name, to));
                 }
                 Edit::SetLocal { page: page.clone(), name: to.unwrap_or(name), local: old }
             }
@@ -1066,9 +1066,12 @@ fn holder<'a>(page: &'a mut Page, parent: &Option<String>, tag: Tag) -> Result<&
     Ok(&mut e.children)
 }
 
+/// The holder elements share, None for the page, and where each sits in it.
+type Shared = (Option<String>, Vec<(usize, String)>);
+
 /// The holder elements share and where each sits in it, in the order given, each once. The
 /// error says to pick elements that share one, to `what` them.
-fn sharing(children: &[Element], page: &str, ids: &[String], what: &str) -> Result<(Option<String>, Vec<(usize, String)>), String> {
+fn sharing(children: &[Element], page: &str, ids: &[String], what: &str) -> Result<Shared, String> {
     let mut holder = None;
     let mut order: Vec<(usize, String)> = Vec::new();
     for id in ids {

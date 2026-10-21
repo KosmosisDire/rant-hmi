@@ -19,8 +19,8 @@ pub struct Rule {
 }
 
 /// A rule is held under its id, since its name is free text.
-impl crate::list::Named for Rule {
-    fn name(&self) -> &str {
+impl crate::list::Keyed for Rule {
+    fn key(&self) -> &str {
         &self.id
     }
 }

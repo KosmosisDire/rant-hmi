@@ -10,10 +10,11 @@ use tokio::sync::mpsc::UnboundedSender;
 /// stops when the watcher drops.
 pub fn watch(root: &Path, changed: UnboundedSender<()>) -> notify::Result<RecommendedWatcher> {
     let mut watcher = notify::recommended_watcher(move |e: notify::Result<Event>| {
-        if let Ok(e) = e {
-            if !e.kind.is_access() && e.paths.iter().any(|p| project_file(p)) {
-                let _ = changed.send(());
-            }
+        if let Ok(e) = e
+            && !e.kind.is_access()
+            && e.paths.iter().any(|p| project_file(p))
+        {
+            let _ = changed.send(());
         }
     })?;
     watcher.watch(root, RecursiveMode::Recursive)?;

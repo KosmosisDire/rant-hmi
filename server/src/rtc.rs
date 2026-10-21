@@ -181,11 +181,11 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
             Some((local, source, data)) = packets.recv() => {
                 let Ok(contents) = data.as_slice().try_into() else { continue };
                 let input = Input::Receive(Instant::now(), Receive { proto: Protocol::Udp, source, destination: local, contents });
-                if let Some(p) = peers.iter_mut().find(|p| p.rtc.accepts(&input)) {
-                    if let Err(e) = p.rtc.handle_input(input) {
-                        warn!("the connection of screen {} failed: {e}", p.session);
-                        p.rtc.disconnect();
-                    }
+                if let Some(p) = peers.iter_mut().find(|p| p.rtc.accepts(&input))
+                    && let Err(e) = p.rtc.handle_input(input)
+                {
+                    warn!("the connection of screen {} failed: {e}", p.session);
+                    p.rtc.disconnect();
                 }
             }
             _ = tokio::time::sleep_until(wake.into()) => {

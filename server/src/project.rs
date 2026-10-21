@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::value::Value;
 use ts_rs::TS;
 
-use crate::list::{self, Named, named};
+use crate::list::{self, Keyed, by_name};
 use crate::rules::{self, EVERY_MS, KEEP_S};
 use crate::pages::js;
 use crate::{files, library};
@@ -55,8 +55,8 @@ pub struct Import {
     pub intent: Intent,
 }
 
-impl Named for Import {
-    fn name(&self) -> &str {
+impl Keyed for Import {
+    fn key(&self) -> &str {
         &self.alias
     }
 }
@@ -164,7 +164,7 @@ struct ThemeFile {
     tokens: Vec<Token>,
 }
 
-named!(Variable, Record, Computed, Token);
+by_name!(Variable, Record, Computed, Token);
 
 pub struct Project {
     root: PathBuf,
