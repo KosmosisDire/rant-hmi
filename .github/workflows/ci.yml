@@ -1,0 +1,126 @@
+# Builds and tests the HMI on every platform it ships for, and packs the archive rant install
+# unpacks. A pushed tag v<version> also cuts a GitHub Release with the archives.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # The editor is the same page on every platform, so it is built once.
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Check and build
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: client
+          path: client/dist
+
+  # Linux builds in the manylinux_2_28 containers, as Rant's wheels do, so the backend runs on
+  # any glibc since 2.28.
+  build:
+    name: build ${{ matrix.platform }}
+    needs: client
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    platform: linux-x64,   container: 'quay.io/pypa/manylinux_2_28_x86_64' }
+          - { os: ubuntu-24.04-arm, platform: linux-arm64, container: 'quay.io/pypa/manylinux_2_28_aarch64' }
+          - { os: windows-latest,   platform: win-x64 }
+          - { os: macos-15,         platform: osx-arm64 }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The tag matches the crate's version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: test "v$(sed -n 's/^version = "\(.*\)"/\1/p' server/Cargo.toml | head -1)" = "$GITHUB_REF_NAME"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Lint
+        run: cargo clippy --locked --release --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --release
+
+      - name: Build
+        run: cargo build --locked --release --bins
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: client
+          path: client/dist
+
+      - name: Archive
+        shell: bash
+        run: sh ci/archive.sh ${{ matrix.platform }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rant-hmi-${{ matrix.platform }}
+          path: out/*
+
+  # The Linux backend must start on the oldest and newest distributions people run.
+  check-linux:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: rant-hmi-linux-x64
+          path: out
+
+      - name: The archive holds the package
+        run: |
+          mkdir pkg
+          tar -xzf out/rant-hmi-*-linux-x64.tar.gz -C pkg
+          test -f pkg/package.rant && test -f pkg/Hmi.run && test -f pkg/client/index.html
+
+      - name: It starts everywhere
+        run: |
+          for image in rockylinux:8 debian:10 ubuntu:20.04 ubuntu:22.04 ubuntu:24.04; do
+            echo "== $image"
+            docker run --rm -v "$PWD/pkg:/p" "$image" /p/bin/rant-hmi --version
+          done
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build, check-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rant-hmi-*
+          path: release
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: release/*
+          generate_release_notes: true

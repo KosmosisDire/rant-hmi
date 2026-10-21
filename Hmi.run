@@ -1,0 +1,21 @@
+description = "An HMI project, edited and run in a browser"
+restart     = "on-failure"
+
+param "project" {
+  description = "The project folder as a full path, started empty when it holds none"
+}
+
+param "port" {
+  type        = int
+  default     = 6739
+  description = "The port it serves on"
+}
+
+param "bind" {
+  default     = "0.0.0.0"
+  description = "The address it listens on, 127.0.0.1 for this computer only"
+}
+
+node "hmi/hmi" {
+  args = [param.project, "--port", "${param.port}", "--bind", param.bind]
+}

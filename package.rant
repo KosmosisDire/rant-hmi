@@ -1,0 +1,7 @@
+name        = "hmi"
+description = "A GUI for designing safe, fast and powerful HMIs and apps, edited in a browser while the logic runs in a native backend"
+archive     = "rant-hmi-${version}-${platform}.tar.gz"
+
+node "hmi" {
+  run = ["${path.package}/bin/rant-hmi", "--client", "${path.package}/client"]
+}
