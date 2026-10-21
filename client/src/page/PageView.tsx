@@ -244,7 +244,9 @@ function Placed(p: ElementProps) {
 
 /** What pressing an element does: it shows pressed at once and sends press, drag, hold,
  *  release and tap. The release is heard on the window, so letting go anywhere ends a press,
- *  and a tap needs the release over the element. */
+ *  and a tap needs the release over the element. Where a press lands is read as it goes down
+ *  the page, before any handler changes the page as it comes back up: Firefox before 125
+ *  drops the rest of a touch when its pressed shape restyles and is measured in pointerdown. */
 function usePress(p: ElementProps & { at?: At }) {
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
@@ -257,19 +259,28 @@ function usePress(p: ElementProps & { at?: At }) {
     const n = r.ok ? Number(r.value) : NaN;
     return Number.isFinite(n) ? n : TIMED[event].ms;
   };
-  const down = (e: PointerEvent & { currentTarget: Element | globalThis.Element }) => {
-    if (!live() || e.button !== 0 || pressed()) return;
-    const el = e.currentTarget as globalThis.Element;
+  let self: globalThis.Element | undefined;
+  let landed: { e: PointerEvent; at: Pointer } | undefined;
+  const read = (e: PointerEvent) => {
+    if (!self || !live() || e.button !== 0) return;
     const on = (e.target as globalThis.Element).closest<HTMLElement | SVGElement>(".el[data-name]")?.dataset.name ?? null;
+    landed = { e, at: pointer(self, e, on) };
+  };
+  const down = (e: PointerEvent & { currentTarget: Element | globalThis.Element }) => {
+    if (!live() || e.button !== 0 || pressed() || landed?.e !== e) return;
+    const el = e.currentTarget as globalThis.Element;
+    const at = landed.at;
+    const on = at.on;
+    landed = undefined;
     setPressed(true);
-    fire("press", pointer(el, e, on));
-    fire("drag", pointer(el, e, on));
+    fire("press", { ...at });
+    fire("drag", { ...at });
     let last: PointerEvent = e;
     const ms = msOf("hold");
     const held = ms === undefined ? undefined : setTimeout(() => fire("hold", pointer(el, last, on)), ms);
     // a repeat runs at once, then on each beat until the press ends
     const every = msOf("repeat");
-    if (every !== undefined) fire("repeat", pointer(el, e, on));
+    if (every !== undefined) fire("repeat", { ...at });
     const beat = every === undefined ? undefined : setInterval(() => fire("repeat", pointer(el, last, on)), Math.max(every, QUICKEST));
     // a drag goes out at most once a frame, with the latest place
     let next: PointerEvent | null = null;
@@ -296,16 +307,28 @@ function usePress(p: ElementProps & { at?: At }) {
     follow(e, { move, end });
   };
   // a press anywhere else is this element's outside, as closes what it opened
-  let self: globalThis.Element | undefined;
   createEffect(() => {
     if (!p.act || !p.element.handlers.some((h) => h.event === "outside")) return;
-    const away = (e: PointerEvent) => {
-      if (self && !self.contains(e.target as Node)) fire("outside", pointer(self, e, null));
+    let away: { e: PointerEvent; at: Pointer } | undefined;
+    const readAway = (e: PointerEvent) => {
+      if (self && !self.contains(e.target as Node)) away = { e, at: pointer(self, e, null) };
     };
-    window.addEventListener("pointerdown", away, true);
-    onCleanup(() => window.removeEventListener("pointerdown", away, true));
+    const actAway = (e: PointerEvent) => {
+      if (away?.e === e) fire("outside", away.at);
+      away = undefined;
+    };
+    window.addEventListener("pointerdown", readAway, true);
+    window.addEventListener("pointerdown", actAway);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", readAway, true);
+      window.removeEventListener("pointerdown", actAway);
+    });
   });
-  return { pressed, live, down, ref: (el: globalThis.Element) => (self = el) };
+  const ref = (el: globalThis.Element) => {
+    self = el;
+    el.addEventListener("pointerdown", read as EventListener, true);
+  };
+  return { pressed, live, down, ref };
 }
 
 /** One element. `inside` marks one drawn as part of an instance: it is the component's, not
@@ -412,7 +435,7 @@ function ElementView(p: ElementProps & { at?: At }) {
       title={p.design && look().faults.length > 0 ? look().faults.join("\n") : undefined}
       ref={(el) => {
         press.ref(el);
-        if (p.element.tag === "use") el.addEventListener("pointerdown", () => p.act && setRaised(p.element), true);
+        if (p.element.tag === "use") el.addEventListener("pointerdown", () => p.act && setRaised(p.element));
       }}
       onPointerDown={press.down}
     >
@@ -749,13 +772,14 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
         const [cw, ch] = [() => c().width * UNIT, () => c().height * UNIT];
         const place = () => (fills() ? "none" : fitIn(cw(), ch(), placed()).transform);
         return (
-          // held from the capture, before any part's handler writes, and a part's press heard
-          // after its own handlers, so a release handler still reads how long it was held
+          // held as the press comes back up, after the parts read where it landed and before
+          // their handlers write at the document, and a part's press heard after its own
+          // handlers, so a release handler still reads how long it was held
           <div
             class="instance"
             style={{ width: fills() ? "100%" : `${cw()}px`, height: fills() ? "100%" : `${ch()}px`, transform: place() }}
             ref={(el) => {
-              el.addEventListener("pointerdown", hold, true);
+              el.addEventListener("pointerdown", hold);
               // its element holds it only once the tree is built
               queueMicrotask(() => el.parentElement && placed.track(el.parentElement));
             }}

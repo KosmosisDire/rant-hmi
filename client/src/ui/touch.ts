@@ -4,7 +4,8 @@
 
 window.addEventListener("contextmenu", (e) => e.preventDefault(), true);
 
-window.addEventListener("pointerdown", (e) => (document.documentElement.dataset.pointer = e.pointerType), true);
+// marked as the press comes back up, after the page read where it landed
+window.addEventListener("pointerdown", (e) => (document.documentElement.dataset.pointer = e.pointerType));
 
 // a phone's keyboard shrinks the window, so the field it types into is scrolled back into sight
 window.addEventListener("resize", () => {
