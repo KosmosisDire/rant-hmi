@@ -1,5 +1,5 @@
-// Runs the scenarios in tests/scenarios against one backend, the demo line and the cage cell,
-// each on a fresh page, as `docs/testing.md` says. A console error fails a scenario.
+// Runs the scenarios in tests/scenarios, or those whose file name holds the argument, against one
+// backend, the demo line and the cage cell, each on a fresh page. A console error fails one.
 
 import { cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
