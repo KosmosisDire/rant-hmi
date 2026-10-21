@@ -4,13 +4,14 @@
 
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
-import { PageView } from "../../page/PageView";
+import { fitIn, PageView } from "../../page/PageView";
 import type { Page } from "../../protocol/Page";
 import { UNIT } from "../../state/bind";
 import { openPage } from "../../state/view";
 import { addElement } from "./add";
 import { follow } from "../../ui/press";
 import { closeDrawer } from "../../ui/Sidebars";
+import { createSize } from "../../ui/size";
 
 /** How far a press moves before it is a drag and no longer a click. */
 const SLOP = 6;
@@ -18,7 +19,7 @@ const SLOP = 6;
 /** A component drawn whole in a box of `w` by `h`, centred. */
 function Picture(p: { component: Page; w: number; h: number }) {
   const [w, h] = [() => p.component.width * UNIT, () => p.component.height * UNIT];
-  const k = () => Math.min(p.w / w(), p.h / h());
+  const k = () => fitIn(w(), h(), p).k;
   return (
     <div class="card-fit" style={{ width: `${w()}px`, height: `${h()}px`, transform: `translate(-50%, -50%) scale(${k()})` }}>
       <PageView page={p.component} />
@@ -28,12 +29,8 @@ function Picture(p: { component: Page; w: number; h: number }) {
 
 export function ComponentCard(p: { component: Page; open: boolean; page: Page | undefined; onMenu: (e: MouseEvent) => void }) {
   let thumb!: HTMLDivElement;
-  const [box, setBox] = createSignal({ w: 0, h: 0 });
-  onMount(() => {
-    const watch = new ResizeObserver(() => setBox({ w: thumb.clientWidth, h: thumb.clientHeight }));
-    watch.observe(thumb);
-    onCleanup(() => watch.disconnect());
-  });
+  const box = createSize();
+  onMount(() => box.track(thumb));
 
   const [ghost, setGhost] = createSignal<{ x: number; y: number } | null>(null);
   let press: { id: number; x: number; y: number } | null = null;

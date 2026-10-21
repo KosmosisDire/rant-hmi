@@ -3,7 +3,7 @@
 // ends.
 
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from "solid-js";
-import { type Box, PageView, pageGround, SHAPES } from "../../page/PageView";
+import { type Box, fitIn, leaves, PageView, pageGround, SHAPES } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
@@ -11,11 +11,11 @@ import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
+import { onResize } from "../../ui/size";
 import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
 import { chain, find } from "../../state/elements";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
-import { leaves } from "../../page/PageView";
 import { absolute, boxOf, boxText, childrenOf, flowed, isGroup, laidOut, literal, moveTo, originOf, parentOf, pickAt, roomOf, scopeOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 /** Places snap to whole units. A finer one is typed as a fraction, or dragged with Alt, which
@@ -181,8 +181,9 @@ export function Artboard(p: {
   const fit = () => {
     const r = host.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return;
-    const k = Math.min((r.width - 64) / p.page.width, (r.height - 64) / p.page.height);
-    setView({ k, x: (r.width - p.page.width * k) / 2, y: (r.height - p.page.height * k) / 2 });
+    // a 32 px margin all round
+    const f = fitIn(p.page.width, p.page.height, { w: r.width - 64, h: r.height - 64 });
+    setView({ k: f.k, x: f.x + 32, y: f.y + 32 });
     fittedFor = p.page.id;
   };
   // the page's ground and its grid, drawn at screen size so every line is one crisp pixel
@@ -221,12 +222,11 @@ export function Artboard(p: {
 
   onMount(() => {
     // fits once the artboard first has a size, and again for each page opened
-    const watch = new ResizeObserver(() => {
+    onResize(host, () => {
       if (fittedFor !== p.page.id) return fit();
       draw();
       keep();
     });
-    watch.observe(host);
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       const v = view();
@@ -238,10 +238,7 @@ export function Artboard(p: {
       setView({ k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k });
     };
     host.addEventListener("wheel", wheel, { passive: false });
-    onCleanup(() => {
-      watch.disconnect();
-      host.removeEventListener("wheel", wheel);
-    });
+    onCleanup(() => host.removeEventListener("wheel", wheel));
   });
   createEffect(() => {
     if (p.page.id !== fittedFor) fit();

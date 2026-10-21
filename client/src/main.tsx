@@ -15,10 +15,9 @@ import { render } from "solid-js/web";
 import { connect, send } from "./net/connection";
 import { App } from "./shell/App";
 import { Operator } from "./shell/Operator";
+import { operator } from "./state/mode";
 import { onAnswer } from "./state/stack";
 
-// /run is the operator's screen, every other path the editor
-const operator = location.pathname.replace(/\/+$/, "") === "/run";
 connect();
 onAnswer((ask, value) => send({ type: "answer", ask, value }));
 render(() => (operator ? <Operator /> : <App />), document.getElementById("root")!);

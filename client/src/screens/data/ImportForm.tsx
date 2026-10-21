@@ -2,8 +2,9 @@ import { createSignal, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { Intent } from "../../protocol/Intent";
-import { capital, choosesIntent, intentWords } from "../../state/format";
+import { choosesIntent, intents } from "../../state/format";
 import { setState, state } from "../../state/store";
+import { Choice } from "../../ui/Choice";
 
 /** The alias an entity gets unless the user types another: its last segment in
  *  PascalCase, with the one before it when that is taken. */
@@ -43,14 +44,13 @@ export function ImportForm(p: { entity: EntityInfo }) {
         <span class="dim" hidden={!choosesIntent(p.entity.kind)}>
           Intent
         </span>
-        <div class="choice" hidden={!choosesIntent(p.entity.kind)}>
-          <button type="button" classList={{ on: intent() === "read" }} onClick={() => setIntent("read")}>
-            {capital(intentWords(p.entity.kind, "read"))}
-          </button>
-          <button type="button" classList={{ on: intent() === "write" }} disabled={!canWrite()} title={canWrite() ? undefined : "Its owner takes no sets"} onClick={() => setIntent("write")}>
-            {capital(intentWords(p.entity.kind, "write"))}
-          </button>
-        </div>
+        <Choice
+          hidden={!choosesIntent(p.entity.kind)}
+          options={intents(p.entity.kind)}
+          value={intent()}
+          onPick={setIntent}
+          off={(i) => (i === "write" && !canWrite() ? "Its owner takes no sets" : undefined)}
+        />
         <button type="submit" class="button primary">
           Import
         </button>

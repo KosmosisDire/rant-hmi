@@ -1,8 +1,10 @@
-import { createEffect, createSignal, For, type JSX, on, onCleanup, onMount } from "solid-js";
+import { createEffect, createSignal, For, type JSX, on, onMount } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { phone } from "../../ui/phone";
 import { follow } from "../../ui/press";
 import { Edge, reveal, Sidebar } from "../../ui/Sidebars";
+import { Choice } from "../../ui/Choice";
+import { onResize } from "../../ui/size";
 import { ComputedTable } from "./Computed";
 import { MeshImports } from "./MeshImports";
 import { Inspector } from "./Inspector";
@@ -55,11 +57,7 @@ export function DataScreen(p: { onOpen: (page: string) => void }) {
   // a picked row is kept in sight, on a phone above the sheet as that rises and measures
   const keep = () => detail.querySelector("tr.row.selected")?.scrollIntoView({ block: "nearest" });
   createEffect(on(selection, () => requestAnimationFrame(keep), { defer: true }));
-  onMount(() => {
-    const watch = new ResizeObserver(keep);
-    watch.observe(detail);
-    onCleanup(() => watch.disconnect());
-  });
+  onMount(() => onResize(detail, keep));
 
   const [card, setCard] = createSignal(0);
   const [shift, setShift] = createSignal(0);
@@ -101,15 +99,7 @@ export function DataScreen(p: { onOpen: (page: string) => void }) {
       </Sidebar>
       <Edge side="left" />
       <section ref={detail} class="detail data-detail" data-enter={enter()} onPointerDown={swipe}>
-        <div class="choice data-cards">
-          <For each={CARDS}>
-            {(c, i) => (
-              <button classList={{ on: card() === i() }} onClick={() => show(i())}>
-                {c.name}
-              </button>
-            )}
-          </For>
-        </div>
+        <Choice class="data-cards" options={CARDS.map((c, i) => [i, c.name] as const)} value={card()} onPick={show} />
         <For each={CARDS}>
           {(c, i) => (
             <div

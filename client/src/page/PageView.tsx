@@ -11,6 +11,7 @@ import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kep
 import { fields, short } from "../state/format";
 import { play, stopPlaying } from "../net/connection";
 import { component, entity, live, notify, state } from "../state/store";
+import { createSize } from "../ui/size";
 import { ImagePlay } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { follow } from "../ui/press";
@@ -35,6 +36,14 @@ export function union(boxes: Box[]): Box {
   if (boxes.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
   const [x, y] = [Math.min(...boxes.map((b) => b.x)), Math.min(...boxes.map((b) => b.y))];
   return { x, y, w: Math.max(...boxes.map((b) => b.x + b.w)) - x, h: Math.max(...boxes.map((b) => b.y + b.h)) - y };
+}
+
+/** The scale that fits a `w` by `h` box whole in `room`, at most `most`, where it then sits
+ *  centred, and the transform that puts it there. */
+export function fitIn(w: number, h: number, room: { w: number; h: number }, most = Infinity) {
+  const k = Math.min(most, room.w / w, room.h / h);
+  const [x, y] = [(room.w - w * k) / 2, (room.h - h * k) / 2];
+  return { k, x, y, transform: `translate(${x}px, ${y}px) scale(${k})` };
 }
 
 /** A box the editor shows in place of an element's own while a drag lands. */
@@ -725,16 +734,7 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
   };
   const kept = keep();
   // the box it is placed at, as the page lays it out, which a scaled component fits
-  const [placed, setPlaced] = createSignal({ w: 0, h: 0 });
-  let watch: ResizeObserver | undefined;
-  onCleanup(() => watch?.disconnect());
-  const measure = (el: HTMLElement) => {
-    const host = el.parentElement;
-    if (!host) return;
-    watch?.disconnect();
-    watch = new ResizeObserver(() => setPlaced({ w: host.clientWidth, h: host.clientHeight }));
-    watch.observe(host);
-  };
+  const placed = createSize();
   return (
     <Show when={component(name())} fallback={<div class="instance-missing">{name()} is missing</div>}>
       {(c) => {
@@ -747,8 +747,7 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
         // scaled whole to fit and centred, or laid out in the box itself
         const fills = () => c().interface?.sizing === "fill";
         const [cw, ch] = [() => c().width * UNIT, () => c().height * UNIT];
-        const k = () => Math.min(placed().w / cw(), placed().h / ch());
-        const place = () => (fills() ? "none" : `translate(${(placed().w - cw() * k()) / 2}px, ${(placed().h - ch() * k()) / 2}px) scale(${k()})`);
+        const place = () => (fills() ? "none" : fitIn(cw(), ch(), placed()).transform);
         return (
           // held from the capture, before any part's handler writes, and a part's press heard
           // after its own handlers, so a release handler still reads how long it was held
@@ -758,7 +757,7 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
             ref={(el) => {
               el.addEventListener("pointerdown", hold, true);
               // its element holds it only once the tree is built
-              queueMicrotask(() => measure(el));
+              queueMicrotask(() => el.parentElement && placed.track(el.parentElement));
             }}
             onPointerDown={(e) => p.act && !display() && kept.press(e)}
             onPointerOver={(e) => p.act && !display() && kept.over(e)}

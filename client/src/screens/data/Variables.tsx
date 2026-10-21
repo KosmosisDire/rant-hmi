@@ -1,6 +1,5 @@
 // The HMI's own state on the Data screen: the variables table and a variable's inspector.
 
-import { For } from "solid-js";
 import { send } from "../../net/connection";
 import type { Per } from "../../protocol/Per";
 import type { Variable } from "../../protocol/Variable";
@@ -13,6 +12,7 @@ import { DraftInput } from "../../ui/DraftInput";
 import { RotateCcw } from "../../ui/icons";
 import { LocalIcon } from "../../ui/marks";
 import { Preview } from "../../ui/Preview";
+import { Choice } from "../../ui/Choice";
 import type { Picking } from "./DataScreen";
 import { changing, ItemPane, ItemTable, type Kind, NameField } from "./Items";
 import { UsedBy } from "./UsedBy";
@@ -78,15 +78,7 @@ export function VariableView(p: { variable: Variable; picking: Picking }) {
       <NameField value={p.variable.name} shape={LOCAL} onCommit={(name) => change({ name })} />
       <div class="field">
         <label>Kept</label>
-        <div class="choice">
-          <For each={PER}>
-            {([per, label]) => (
-              <button classList={{ on: p.variable.per === per }} onClick={() => p.variable.per !== per && change({ per })}>
-                {label}
-              </button>
-            )}
-          </For>
-        </div>
+        <Choice options={PER} value={p.variable.per} onPick={(per) => change({ per })} />
       </div>
       <div class="field">
         <label>Starts</label>

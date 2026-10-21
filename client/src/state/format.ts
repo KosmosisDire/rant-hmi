@@ -16,6 +16,9 @@ export const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 /** What an import's intent allows, in words: reading is always allowed, and write adds a set
  *  or a send. A function or a task is only ever called. */
+/** Read and write, as a choice of them says each for `kind`. */
+export const intents = (kind: Kind) => (["read", "write"] as const).map((i) => [i, capital(intentWords(kind, i))] as const);
+
 export function intentWords(kind: Kind, intent: Intent): string {
   if (kind === "function" || kind === "task") return "call";
   return intent === "read" ? "read only" : `read and ${kind === "topic" ? "send" : "set"}`;

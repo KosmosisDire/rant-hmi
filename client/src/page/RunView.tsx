@@ -1,7 +1,7 @@
 // A screen's open pages as an operator sees them: the top full page fits the screen, stacked
 // on a narrow one, and pages over it float at its scale above a dimmed backdrop.
 
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, For, onCleanup, onMount, Show } from "solid-js";
 import type { Page } from "../protocol/Page";
 import { back, prune, stack } from "../state/stack";
 import { page } from "../state/store";
@@ -10,11 +10,12 @@ import { openMenu } from "../ui/Menu";
 import { savePicture, showsPicture } from "../ui/Picture";
 import { pageAct } from "./act";
 import { UNIT } from "../state/bind";
-import { PageView, stacked } from "./PageView";
+import { createSize } from "../ui/size";
+import { fitIn, PageView, stacked } from "./PageView";
 
 export function RunView(p: { active: boolean }) {
   let host!: HTMLDivElement;
-  const [size, setSize] = createSignal({ w: 0, h: 0 });
+  const size = createSize();
   const pages = () => stack().flatMap((o) => page(o.id) ?? []);
   // a page removed while open closes
   createEffect(() => prune((id) => page(id) !== undefined));
@@ -27,13 +28,9 @@ export function RunView(p: { active: boolean }) {
   };
   const scale = () => {
     const b = pages()[base()];
-    return b ? Math.min(size().w / (b.width * UNIT), size().h / (b.height * UNIT)) : 1;
+    return b ? fitIn(b.width * UNIT, b.height * UNIT, size()).k : 1;
   };
-  const place = (pg: Page) => {
-    const [w, h] = [pg.width * UNIT, pg.height * UNIT];
-    const k = Math.min(scale(), size().w / w, size().h / h);
-    return `translate(${(size().w - w * k) / 2}px, ${(size().h - h * k) / 2}px) scale(${k})`;
-  };
+  const place = (pg: Page) => fitIn(pg.width * UNIT, pg.height * UNIT, size(), scale()).transform;
   // a portrait screen reads a landscape page as its blocks one under another, at one zoom
   const layout = (pg: Page, n: number) => {
     if (n !== base() || size().w >= size().h || pg.width <= pg.height) return { transform: place(pg) };
@@ -45,17 +42,12 @@ export function RunView(p: { active: boolean }) {
   };
 
   // measured at once when the tab shows, so its first frame is never drawn at no size
-  const measure = () => setSize({ w: host.clientWidth, h: host.clientHeight });
-  createEffect(() => p.active && measure());
+  createEffect(() => p.active && size.measure());
   onMount(() => {
-    const watch = new ResizeObserver(measure);
-    watch.observe(host);
+    size.track(host);
     const key = (e: KeyboardEvent) => p.active && e.key === "Escape" && back();
     window.addEventListener("keydown", key);
-    onCleanup(() => {
-      watch.disconnect();
-      window.removeEventListener("keydown", key);
-    });
+    onCleanup(() => window.removeEventListener("keydown", key));
   });
 
   return (

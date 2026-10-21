@@ -8,7 +8,8 @@ const media = window.matchMedia("(prefers-color-scheme: light)");
 const [device, setDevice] = createSignal<"dark" | "light">(media.matches ? "light" : "dark");
 media.addEventListener("change", (e) => setDevice(e.matches ? "light" : "dark"));
 
-const operator = location.pathname.replace(/\/+$/, "") === "/run";
+/** Whether this is the operator's screen, at /run. Every other path is the editor. */
+export const operator = location.pathname.replace(/\/+$/, "") === "/run";
 
 export function mode(): "dark" | "light" {
   return operator ? device() : theme();

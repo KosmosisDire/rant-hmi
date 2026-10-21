@@ -3,13 +3,13 @@ import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Import } from "../../protocol/Import";
-import type { Intent } from "../../protocol/Intent";
 import { ALIAS } from "../../protocol/rules";
 import type { Value } from "../../protocol/Value";
 import { change } from "../../state/change";
-import { capital, choosesIntent, intentWords, typeLabel } from "../../state/format";
+import { choosesIntent, intents, intentWords, typeLabel } from "../../state/format";
 import { entity, importOf, live, setState, state } from "../../state/store";
 import { KindIcon } from "../../ui/marks";
+import { Choice } from "../../ui/Choice";
 import { COMPUTED, ComputedView } from "./Computed";
 import type { Picking } from "./DataScreen";
 import { ImportForm } from "./ImportForm";
@@ -113,20 +113,12 @@ function ImportView(p: { imp: Import; picking: Picking }) {
       <NameField label="Alias" value={p.imp.alias} shape={ALIAS} onCommit={(alias) => change({ alias })} />
       <div class="field" hidden={!choosesIntent(p.imp.kind)}>
         <label>Intent</label>
-        <div class="choice">
-          <For each={["read", "write"] as Intent[]}>
-            {(intent) => (
-              <button
-                classList={{ on: p.imp.intent === intent }}
-                disabled={intent === "write" && !canWrite(p.imp)}
-                title={intent === "write" && !canWrite(p.imp) ? "Its owner takes no sets" : undefined}
-                onClick={() => p.imp.intent !== intent && change({ intent })}
-              >
-                {capital(intentWords(p.imp.kind, intent))}
-              </button>
-            )}
-          </For>
-        </div>
+        <Choice
+          options={intents(p.imp.kind)}
+          value={p.imp.intent}
+          onPick={(intent) => change({ intent })}
+          off={(i) => (i === "write" && !canWrite(p.imp) ? "Its owner takes no sets" : undefined)}
+        />
       </div>
       <About
         rows={[

@@ -1,8 +1,9 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onMount, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { Completion, Signature, Suggestion } from "../state/complete";
 import { type Paint, painted } from "./highlight";
 import { SignatureHint, type Spot, Suggestions } from "./Suggestions";
+import { onResize } from "./size";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
 
@@ -158,12 +159,7 @@ export function DraftInput(p: {
     p.value;
     queueMicrotask(grow);
   });
-  onMount(() => {
-    if (!colours) return;
-    const watch = new ResizeObserver(fit);
-    watch.observe(field);
-    onCleanup(() => watch.disconnect());
-  });
+  onMount(() => colours && onResize(field, fit));
   // A code box's list opens under the line typed in, from the word's start. The field's letters
   // are its font's, so the line's text before the word says how far in that is.
   let ruler: CanvasRenderingContext2D | null = null;

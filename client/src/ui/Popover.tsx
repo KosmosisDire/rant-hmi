@@ -6,6 +6,7 @@ import { createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { phone } from "./phone";
 import { Sheet } from "./Sheet";
+import { onResize } from "./size";
 
 interface Open {
   el: HTMLElement;
@@ -63,15 +64,13 @@ export function Popover(p: { anchor: HTMLElement | { x: number; y: number }; onC
       window.addEventListener("pointerdown", pressed, true);
       window.addEventListener("keydown", key, true);
     }
-    const follow = new ResizeObserver(place);
     if (!sheet) {
       place();
-      follow.observe(el);
+      onResize(el, place);
       window.addEventListener("scroll", place, true);
       window.addEventListener("resize", place);
     }
     onCleanup(() => {
-      follow.disconnect();
       window.removeEventListener("scroll", place, true);
       window.removeEventListener("resize", place);
       open.splice(open.indexOf(entry), 1);

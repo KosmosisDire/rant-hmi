@@ -15,6 +15,7 @@ import { copyText, openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
+import { Choice } from "../../ui/Choice";
 import { EASES, type Motion, motionOf, transitions, withMotion } from "./motion";
 
 /** Where the fields stand: the names their code reads, and what completion offers instead
@@ -173,15 +174,7 @@ export function Field(p: FieldProps) {
             </div>
             <div class="field">
               <label>Ease</label>
-              <div class="choice">
-                <For each={EASES}>
-                  {([ease, words]) => (
-                    <button classList={{ on: m().ease === ease }} onClick={() => animate({ ms: m().ms, ease })}>
-                      {words}
-                    </button>
-                  )}
-                </For>
-              </div>
+              <Choice options={EASES} value={m().ease} onPick={(ease) => animate({ ms: m().ms, ease })} />
             </div>
             <button
               class="ghost"

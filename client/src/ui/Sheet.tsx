@@ -7,6 +7,7 @@
 
 import { createEffect, createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { follow } from "./press";
+import { onResize } from "./size";
 
 /** A drag further than this rests the sheet at the next stop its way, else at the nearest. */
 const THROW = 24;
@@ -81,14 +82,12 @@ export function Sheet(p: {
 
   onMount(() => {
     measure();
-    const watch = new ResizeObserver(measure);
-    watch.observe(content);
+    onResize(content, measure);
     window.addEventListener("resize", resize);
     // drawn shut first, so it slides up to its stop
     const frame = requestAnimationFrame(() => setShown(true));
     onCleanup(() => {
       cancelAnimationFrame(frame);
-      watch.disconnect();
       window.removeEventListener("resize", resize);
     });
   });

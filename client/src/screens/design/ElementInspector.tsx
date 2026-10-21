@@ -19,6 +19,7 @@ import { chain, find } from "../../state/elements";
 import { DraftInput } from "../../ui/DraftInput";
 import { openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
+import { Choice } from "../../ui/Choice";
 import { EventCard, EventIcon } from "../logic/EventCard";
 import {
   AlignCenterHorizontal,
@@ -204,15 +205,7 @@ function PageInspector(p: { page: Page }) {
             <>
               <div class="field">
                 <label>Sizing</label>
-                <div class="choice">
-                  <For each={SIZINGS}>
-                    {([sizing, label, title]) => (
-                      <button classList={{ on: i().sizing === sizing }} title={title} onClick={() => i().sizing !== sizing && edit({ kind: "set_sizing", page: p.page.id, sizing })}>
-                        {label}
-                      </button>
-                    )}
-                  </For>
-                </div>
+                <Choice options={SIZINGS} value={i().sizing} onPick={(sizing) => edit({ kind: "set_sizing", page: p.page.id, sizing })} />
               </div>
               <Inputs page={p.page.id} inputs={i().inputs} />
               <Variables page={p.page.id} variables={i().variables} />
@@ -232,15 +225,7 @@ function PageInspector(p: { page: Page }) {
           />
           <div class="field">
             <label>Shows</label>
-            <div class="choice">
-              <For each={SHOWS}>
-                {([shows, label]) => (
-                  <button classList={{ on: p.page.shows === shows }} onClick={() => p.page.shows !== shows && edit({ kind: "set_shows", page: p.page.id, shows })}>
-                    {label}
-                  </button>
-                )}
-              </For>
-            </div>
+            <Choice options={SHOWS} value={p.page.shows} onPick={(shows) => edit({ kind: "set_shows", page: p.page.id, shows })} />
           </div>
         </Show>
       </div>
@@ -612,14 +597,14 @@ function AutoLayout(p: { page: string; element: Element; prop: (key: string) => 
         <Field {...p.prop("wrap")} label="Wrap" kind="flag" placeholder="false" />
         <div class="field">
           <label>Spacing</label>
-          <div class="choice">
-            <button classList={{ on: !spread() }} title="A gap between each" onClick={() => spread() && set({ gap: "$space" })}>
-              Packed
-            </button>
-            <button classList={{ on: spread() }} title="Spread over the frame's whole length" onClick={() => !spread() && set({ gap: '"auto"' })}>
-              Spread
-            </button>
-          </div>
+          <Choice
+            options={[
+              [false, "Packed", "A gap between each"],
+              [true, "Spread", "Spread over the frame's whole length"],
+            ]}
+            value={spread()}
+            onPick={(spread) => set({ gap: spread ? '"auto"' : "$space" })}
+          />
         </div>
         <Show when={!spread()}>
           <Field {...p.prop("gap")} label="Gap" kind="number" min={0} placeholder="0" />
@@ -632,14 +617,14 @@ function AutoLayout(p: { page: string; element: Element; prop: (key: string) => 
         {/* which part draws over the next where they overlap */}
         <div class="field">
           <label>On top</label>
-          <div class="choice">
-            <button classList={{ on: text("stack") !== '"first"' }} title="Each part over the one before it" onClick={() => set({ stack: null })}>
-              Last
-            </button>
-            <button classList={{ on: text("stack") === '"first"' }} title="Each part over the one after it" onClick={() => set({ stack: '"first"' })}>
-              First
-            </button>
-          </div>
+          <Choice
+            options={[
+              [false, "Last", "Each part over the one before it"],
+              [true, "First", "Each part over the one after it"],
+            ]}
+            value={text("stack") === '"first"'}
+            onPick={(first) => set({ stack: first ? '"first"' : null })}
+          />
         </div>
       </Show>
     </>
