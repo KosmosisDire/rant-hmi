@@ -22,7 +22,7 @@ use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Varia
 use crate::protocol::{ClientMsg, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
-use crate::video::{FromVideo, ToVideo};
+use crate::rtc::{FromRtc, ToRtc};
 
 /// How often changed values go out and the mesh is checked.
 const TICK: Duration = Duration::from_millis(33);
@@ -148,7 +148,7 @@ pub struct App {
     pages: Pages,
     mesh: Mesh,
     script: Script,
-    video: UnboundedSender<ToVideo>,
+    rtc: UnboundedSender<ToRtc>,
     /// The screens playing each import's video.
     playing: HashMap<String, HashSet<u32>>,
     runs: HashMap<u64, Running>,
@@ -187,7 +187,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, video: UnboundedSender<ToVideo>, node: String, build: String) -> App {
+    pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, rtc: UnboundedSender<ToRtc>, node: String, build: String) -> App {
         script.send(ToScript::Imports(project.imports.clone()));
         script.send(ToScript::Pages(pages.keys()));
         script.send(ToScript::Variables(project.variables.clone()));
@@ -200,7 +200,7 @@ impl App {
             pages,
             mesh,
             script,
-            video,
+            rtc,
             playing: HashMap::new(),
             runs: HashMap::new(),
             next_run: 0,
@@ -233,7 +233,7 @@ impl App {
         mut inbound: UnboundedReceiver<Inbound>,
         mut heard: UnboundedReceiver<FromScript>,
         mut changed: UnboundedReceiver<()>,
-        mut answered: UnboundedReceiver<FromVideo>,
+        mut from_rtc: UnboundedReceiver<FromRtc>,
     ) {
         let mut tick = tokio::time::interval(TICK);
         self.rules_changed();
@@ -246,7 +246,7 @@ impl App {
                 Some(i) = inbound.recv() => self.inbound(i),
                 Some(s) = heard.recv() => self.scripted(s),
                 Some(()) = changed.recv() => self.edited = Some(Instant::now()),
-                Some(v) = answered.recv() => self.answered(v),
+                Some(r) = from_rtc.recv() => self.from_rtc(r),
                 _ = tick.tick() => self.tick(),
                 _ = &mut shutdown => break,
             }
@@ -346,7 +346,7 @@ impl App {
                 let Some(local) = self.sessions.get(&session).map(|s| s.local) else { return };
                 self.playing.entry(alias.clone()).or_default().insert(session);
                 self.mesh.play(&import);
-                let _ = self.video.send(ToVideo::Offer { session, alias, sdp: offer, local });
+                let _ = self.rtc.send(ToRtc::Offer { session, alias, sdp: offer, local });
             }
             ClientMsg::StopPlaying { alias } => self.stop_playing(session, &alias),
             ClientMsg::Import { import } => match self.project.import(import.clone()) {
@@ -1125,7 +1125,7 @@ impl App {
             for alias in self.playing.keys().cloned().collect::<Vec<_>>() {
                 self.stop_playing(session, &alias);
             }
-            let _ = self.video.send(ToVideo::Gone { session });
+            let _ = self.rtc.send(ToRtc::Gone { session });
             // a page the screen showed answers nothing, so no handler waits on it for ever
             let asked: Vec<u64> = self.asks.iter().filter(|(_, s)| **s == session).map(|(ask, _)| *ask).collect();
             for ask in asked {
@@ -1154,17 +1154,17 @@ impl App {
         if !screens.remove(&session) {
             return;
         }
-        let _ = self.video.send(ToVideo::Stop { session, alias: alias.to_owned() });
+        let _ = self.rtc.send(ToRtc::Stop { session, alias: alias.to_owned() });
         if screens.is_empty() {
             self.playing.remove(alias);
             self.mesh.stop_playing(alias);
         }
     }
 
-    fn answered(&mut self, v: FromVideo) {
-        match v {
-            FromVideo::Answer { session, alias, sdp } => self.send(session, &ServerMsg::Play { alias, answer: sdp }),
-            FromVideo::Failed { session, alias, text } => {
+    fn from_rtc(&mut self, r: FromRtc) {
+        match r {
+            FromRtc::Answer { session, alias, sdp } => self.send(session, &ServerMsg::Play { alias, answer: sdp }),
+            FromRtc::Failed { session, alias, text } => {
                 self.stop_playing(session, &alias);
                 self.refuse(session, text, None);
             }

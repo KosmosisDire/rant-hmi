@@ -26,7 +26,7 @@ pub struct Frame {
     pub data: Vec<u8>,
 }
 
-pub enum ToVideo {
+pub enum ToRtc {
     /// A screen offers to play an import. `local` is the address the screen reached the HMI
     /// on, so its media comes from there too.
     Offer { session: u32, alias: String, sdp: String, local: IpAddr },
@@ -36,7 +36,7 @@ pub enum ToVideo {
     Frame(Frame),
 }
 
-pub enum FromVideo {
+pub enum FromRtc {
     Answer { session: u32, alias: String, sdp: String },
     Failed { session: u32, alias: String, text: String },
 }
@@ -59,14 +59,14 @@ type Packet = (SocketAddr, SocketAddr, Vec<u8>);
 
 /// Starts the task that owns every connection. Frames and the loop's requests go in through
 /// the sender, answers come back through `answers`.
-pub fn start(answers: UnboundedSender<FromVideo>) -> UnboundedSender<ToVideo> {
+pub fn start(answers: UnboundedSender<FromRtc>) -> UnboundedSender<ToRtc> {
     str0m::crypto::from_feature_flags().install_process_default();
     let (tx, rx) = unbounded_channel();
     tokio::spawn(run(rx, answers));
     tx
 }
 
-async fn run(mut requests: UnboundedReceiver<ToVideo>, answers: UnboundedSender<FromVideo>) {
+async fn run(mut requests: UnboundedReceiver<ToRtc>, answers: UnboundedSender<FromRtc>) {
     let (arrived, mut packets) = unbounded_channel::<Packet>();
     let mut sockets: HashMap<IpAddr, Arc<UdpSocket>> = HashMap::new();
     let mut peers: Vec<Peer> = Vec::new();
@@ -75,21 +75,21 @@ async fn run(mut requests: UnboundedReceiver<ToVideo>, answers: UnboundedSender<
         tokio::select! {
             r = requests.recv() => match r {
                 None => return,
-                Some(ToVideo::Offer { session, alias, sdp, local }) => {
+                Some(ToRtc::Offer { session, alias, sdp, local }) => {
                     peers.retain(|p| !(p.session == session && p.alias == alias));
                     match offer(&mut sockets, &arrived, session, &alias, &sdp, local).await {
                         Ok((peer, answer)) => {
                             peers.push(peer);
-                            let _ = answers.send(FromVideo::Answer { session, alias, sdp: answer });
+                            let _ = answers.send(FromRtc::Answer { session, alias, sdp: answer });
                         }
                         Err(text) => {
-                            let _ = answers.send(FromVideo::Failed { session, alias, text });
+                            let _ = answers.send(FromRtc::Failed { session, alias, text });
                         }
                     }
                 }
-                Some(ToVideo::Stop { session, alias }) => peers.retain(|p| !(p.session == session && p.alias == alias)),
-                Some(ToVideo::Gone { session }) => peers.retain(|p| p.session != session),
-                Some(ToVideo::Frame(f)) => {
+                Some(ToRtc::Stop { session, alias }) => peers.retain(|p| !(p.session == session && p.alias == alias)),
+                Some(ToRtc::Gone { session }) => peers.retain(|p| p.session != session),
+                Some(ToRtc::Frame(f)) => {
                     let data: Arc<[u8]> = f.data.into();
                     for p in peers.iter_mut().filter(|p| p.alias == f.alias) {
                         write(p, f.keyframe, f.pts, &data);
