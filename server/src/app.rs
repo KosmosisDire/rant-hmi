@@ -98,6 +98,9 @@ struct Session {
     jitter: f64,
     /// Whether its WebRTC data channels are open.
     channels: bool,
+    /// Whether it sends on its channels, and what they brought before it said so.
+    switched: bool,
+    early: Vec<ClientMsg>,
     heard: Instant,
     /// The edits that undo this screen's own edits, newest last, and those that redo them.
     undo: Vec<Edit>,
@@ -274,7 +277,7 @@ impl App {
             Inbound::Open { session, out, local, remote } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, local, remote, since: since_epoch().as_secs(), ping: None, jitter: 0.0, channels: false, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
+                self.sessions.insert(session, Session { out, local, remote, since: since_epoch().as_secs(), ping: None, jitter: 0.0, channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -347,6 +350,13 @@ impl App {
             ClientMsg::Channels { offer } => {
                 let Some(local) = self.sessions.get(&session).map(|s| s.local) else { return };
                 let _ = self.rtc.send(ToRtc::Channels { session, sdp: offer, local });
+            }
+            ClientMsg::OnChannels => {
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                s.switched = true;
+                for msg in std::mem::take(&mut s.early) {
+                    self.handle(session, msg);
+                }
             }
             ClientMsg::Play { alias, offer } => {
                 let Some(import) = self.project.find(&alias).cloned() else {
@@ -1175,11 +1185,26 @@ impl App {
         match r {
             FromRtc::Channels { session, sdp } => self.send(session, &ServerMsg::Channels { answer: sdp }),
             FromRtc::Linked { session, open } => {
-                if let Some(s) = self.sessions.get_mut(&session) {
-                    s.channels = open;
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                s.channels = open;
+                if !open {
+                    s.early.clear();
+                    // a release sent on channels that broke may never come
+                    if std::mem::take(&mut s.switched) {
+                        self.let_go(session, "lost its data channels");
+                    }
                 }
             }
-            FromRtc::Message { session, msg } => self.inbound(Inbound::Message { session, msg }),
+            FromRtc::Message { session, msg } => {
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                match s.switched {
+                    true => self.inbound(Inbound::Message { session, msg }),
+                    false => {
+                        s.heard = Instant::now();
+                        s.early.push(msg);
+                    }
+                }
+            }
             FromRtc::CaughtUp { session } => self.put_values(Some(session), self.all_values(session)),
             FromRtc::Answer { session, alias, sdp } => self.send(session, &ServerMsg::Play { alias, answer: sdp }),
             FromRtc::Failed { session, alias, text } => {

@@ -17,6 +17,9 @@ const CHANNELS_WAIT_MS = 10_000;
 const CHANNELS_RETRY_MS = 2000;
 const CHANNELS_RETRY_MAX_MS = 60_000;
 
+/** What a person does on a running page, which goes on the reliable channel while it is open. */
+const ON_CHANNEL: ReadonlySet<ClientMsg["type"]> = new Set(["fire", "set", "answer"]);
+
 // plain CBOR maps as objects, none of cbor-x's own record extension, so Rust reads it
 const cbor = { encoder: new Encoder({ useRecords: false }), decoder: new Decoder({ mapsAsObjects: true, useRecords: false }) };
 
@@ -75,6 +78,10 @@ function heard(data: ArrayBuffer) {
 /** Sends at once, true when it went. Without a link nothing can be done, so the person hears
  *  it was not. */
 export function send(msg: ClientMsg): boolean {
+  if (state.channels && channels?.reliable.readyState === "open" && ON_CHANNEL.has(msg.type)) {
+    channels.reliable.send(cbor.encoder.encode(msg));
+    return true;
+  }
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(cbor.encoder.encode(msg));
     return true;
@@ -100,6 +107,8 @@ async function openChannels() {
     ch.onopen = () => {
       if (channels === c && c.reliable.readyState === "open" && c.bestEffort.readyState === "open") {
         channelsTries = 0;
+        // the backend holds what the channel brings until this, so the socket's come first
+        send({ type: "on_channels" });
         setState("channels", true);
       }
     };

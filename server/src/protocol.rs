@@ -92,6 +92,10 @@ pub enum ClientMsg {
     Ping { t: f64 },
     /// Opens the screen's data channels: its WebRTC offer, which the backend answers.
     Channels { offer: String },
+    /// From here on the screen's events, sets and answers come on its reliable channel. The
+    /// backend holds what the channel brings until this comes, so nothing the screen sent on
+    /// its socket before comes after.
+    OnChannels,
     /// Plays an import's video: the screen's WebRTC offer, which the backend answers.
     Play { alias: String, offer: String },
     StopPlaying { alias: String },
