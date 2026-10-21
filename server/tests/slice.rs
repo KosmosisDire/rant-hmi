@@ -1,5 +1,6 @@
 //! The slice end to end in one process, on this host only: a line node offers a topic and a
-//! variable, the HMI's mesh imports both, sees their values and sets the variable.
+//! variable, the HMI's mesh imports both, sees their values and sets the variable, and the HMI
+//! publishes its own status.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -7,6 +8,7 @@ use std::time::{Duration, Instant};
 use rant::{Node, NodeOptions, Qos, VariableOptions};
 use rant_hmi::mesh::{Delivery, Mesh, MeshOptions};
 use rant_hmi::project::{Import, Intent, Kind};
+use rant_hmi::status::{self, Client, HmiStatus};
 use rant_hmi::value::Value;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
@@ -89,4 +91,39 @@ fn import_watch_and_set() {
     assert!(mesh.send("Conveyor", &part).is_err());
     assert!(mesh.attach(&import("Conveyor", "Line1/Conveyor", Kind::Topic, Intent::Write)));
     mesh.send("Conveyor", &part).unwrap();
+}
+
+#[test]
+fn publishes_its_own_status() {
+    // a domain of its own, since every HMI node defines the same two entities
+    let local = || NodeOptions::new().domain(DOMAIN + 2).multicast_interface("127.0.0.1").max_topics(16);
+    let (tx, rx) = unbounded_channel();
+    let mut inbox = Inbox { rx, kept: VecDeque::new() };
+    let (frames, _) = unbounded_channel();
+    let mut mesh = Mesh::open(&MeshOptions { name: "hmi_status".into(), domain: DOMAIN + 2, loopback: true }, tx, frames).unwrap();
+    let status = HmiStatus { version: "1.2.3".into(), project: "demo".into(), started_at: 1_700_000_000, clients: 1, missing: vec!["Line1/Gone".try_into().unwrap()] };
+    let clients = vec![Client { id: 4, address: "10.0.0.9".try_into().unwrap(), connected_at: 1_700_000_001, ping_ms: 2.5 }];
+    mesh.publish_status(status.clone());
+    mesh.publish_clients(clients.clone());
+
+    // the HMI's own import reads what it published, and the next change
+    let own = import("Status", status::STATUS, Kind::Variable, Intent::Read);
+    let start = Instant::now();
+    while !mesh.attach(&own) {
+        within("its own status to attach", start);
+    }
+    assert_eq!(inbox.next("Status", || {}), status::status_value(&status));
+    let later = HmiStatus { clients: 0, ..status.clone() };
+    mesh.publish_status(later.clone());
+    assert_eq!(inbox.next("Status", || {}), status::status_value(&later));
+    assert!(mesh.set("Status", "", Value::Null, None).unwrap_err().contains("only it sets"));
+
+    // another node reads both as the mesh carries them
+    let other = Node::new("status_reader", local()).unwrap();
+    let read = other.remote_variable::<HmiStatus>(status::STATUS, VariableOptions::new()).unwrap();
+    let list = other.remote_variable::<Vec<Client>>(status::CLIENTS, VariableOptions::new()).unwrap();
+    let start = Instant::now();
+    while !(read.get().unwrap() == Some(later.clone()) && list.get().unwrap() == Some(clients.clone())) {
+        within("another node to read the status", start);
+    }
 }

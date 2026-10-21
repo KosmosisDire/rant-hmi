@@ -21,6 +21,7 @@ use crate::pages::{Edit, Pages};
 use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Variable};
 use crate::protocol::{ClientMsg, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
+use crate::status::{Client, HmiStatus};
 use crate::video::{FromVideo, ToVideo};
 
 /// How often changed values go out and the mesh is checked.
@@ -44,11 +45,11 @@ const ONCE: [&str; 5] = ["tap", "press", "release", "hold", "outside"];
 
 /// What a screen's connection hands the loop.
 pub enum Inbound {
-    /// `local` is the address the screen reached the HMI on.
-    Open { session: u32, out: Outbox, local: IpAddr },
+    /// `local` is the address the screen reached the HMI on, `remote` the one it came from.
+    Open { session: u32, out: Outbox, local: IpAddr, remote: IpAddr },
     Message { session: u32, msg: ClientMsg },
-    /// The screen answered the socket's ping.
-    Heard { session: u32 },
+    /// The screen answered the socket's ping, which took `ping` there and back.
+    Heard { session: u32, ping: Option<Duration> },
     Close { session: u32 },
 }
 
@@ -89,6 +90,10 @@ impl Outbox {
 struct Session {
     out: Outbox,
     local: IpAddr,
+    remote: IpAddr,
+    /// When it connected, in Unix seconds.
+    since: u64,
+    ping: Option<Duration>,
     heard: Instant,
     /// The edits that undo this screen's own edits, newest last, and those that redo them.
     undo: Vec<Edit>,
@@ -170,6 +175,8 @@ pub struct App {
     history: HashMap<String, VecDeque<Sample>>,
     sample_at: HashMap<String, Instant>,
     epoch: Option<u32>,
+    /// When the HMI started, in Unix seconds.
+    started_at: u64,
     /// What the engine was last told each import's message is made of.
     forms: HashMap<String, Form>,
     health_at: Instant,
@@ -210,6 +217,7 @@ impl App {
             history: HashMap::new(),
             sample_at: HashMap::new(),
             epoch: None,
+            started_at: since_epoch().as_secs(),
             forms: HashMap::new(),
             health_at: Instant::now(),
             edited: None,
@@ -256,10 +264,10 @@ impl App {
 
     fn inbound(&mut self, i: Inbound) {
         match i {
-            Inbound::Open { session, out, local } => {
+            Inbound::Open { session, out, local, remote } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, local, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
+                self.sessions.insert(session, Session { out, local, remote, since: since_epoch().as_secs(), ping: None, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -269,9 +277,10 @@ impl App {
                 s.heard = Instant::now();
                 self.handle(session, msg);
             }
-            Inbound::Heard { session } => {
+            Inbound::Heard { session, ping } => {
                 if let Some(s) = self.sessions.get_mut(&session) {
                     s.heard = Instant::now();
+                    s.ping = ping.or(s.ping);
                 }
             }
             Inbound::Close { session } => {
@@ -536,7 +545,7 @@ impl App {
     /// Keeps what the engine read for each record, drops samples past its keep, and sends the
     /// new ones to every screen.
     fn sampled(&mut self, read: Vec<(String, Option<Value>)>) {
-        let t = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
+        let t = since_epoch().as_secs_f64() * 1000.0;
         for (name, value) in read {
             let (Some(v), Some(r)) = (value, self.project.record(&name)) else { continue };
             let keep = f64::from(r.keep_s) * 1000.0;
@@ -1028,6 +1037,7 @@ impl App {
         if self.health_at.elapsed() >= HEALTH_EVERY {
             self.health_at = Instant::now();
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
+            self.publish_status();
         }
         let caught: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.out.caught_up()).map(|(id, _)| *id).collect();
         for session in caught {
@@ -1055,6 +1065,25 @@ impl App {
                 self.changed.insert(import.alias.clone());
             }
         }
+    }
+
+    /// Publishes the screens connected and the HMI's own state on the mesh.
+    fn publish_status(&mut self) {
+        let mut clients: Vec<Client> = self
+            .sessions
+            .iter()
+            .map(|(id, s)| Client {
+                id: *id,
+                address: s.remote.to_string().as_str().try_into().unwrap_or_default(),
+                connected_at: s.since,
+                ping_ms: s.ping.map_or(0.0, |p| p.as_secs_f64() * 1000.0),
+            })
+            .collect();
+        clients.sort_by_key(|c| c.id);
+        let missing = self.project.imports.iter().filter(|i| !self.mesh.live(i)).filter_map(|i| i.entity.as_str().try_into().ok()).collect();
+        let status = HmiStatus { version: env!("CARGO_PKG_VERSION").into(), project: self.project.info.name.clone(), started_at: self.started_at, clients: clients.len() as u32, missing };
+        self.mesh.publish_clients(clients);
+        self.mesh.publish_status(status);
     }
 
     /// Tells the engine what each import's message is made of, once that changed.
@@ -1189,4 +1218,9 @@ mod tests {
         out.put(Bytes::from_static(b"values"), true);
         assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"values"));
     }
+}
+
+/// Now, as Unix time.
+fn since_epoch() -> Duration {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default()
 }

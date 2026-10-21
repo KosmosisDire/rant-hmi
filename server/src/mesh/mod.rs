@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::future::Future;
 
 use rant::types::{VideoCodec, VideoFrame};
-use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteVariable, Schema, Subscriber, VariableOptions};
+use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteVariable, Schema, Subscriber, VariableDefinition, VariableOptions};
 use crate::value::Value;
 use crate::video::{Frame, ToVideo};
 use tokio::sync::mpsc::UnboundedSender;
@@ -16,6 +16,7 @@ use tracing::warn;
 use crate::project::{Import, Intent, Kind};
 use crate::protocol::{EntityInfo, PeerInfo};
 use crate::script::{CallFailure, Form};
+use crate::status::{self, Client, HmiStatus};
 use codec::Shape;
 
 pub struct MeshOptions {
@@ -39,6 +40,15 @@ pub struct Mesh {
     frames: UnboundedSender<ToVideo>,
     /// The video each played import comes from, and its subscription.
     videos: HashMap<String, (String, Subscriber<VideoFrame>)>,
+    own: Own,
+}
+
+/// What the HMI publishes about itself, and the last value of each, which its own imports of
+/// them read, since a node cannot watch what it owns.
+struct Own {
+    clients: VariableDefinition<Vec<Client>>,
+    status: VariableDefinition<HmiStatus>,
+    values: HashMap<&'static str, Value>,
 }
 
 struct Attached {
@@ -58,6 +68,8 @@ enum Handle {
     Function { remote: RemoteFunction<Bytes, Bytes>, answer: Option<(Schema, Vec<Shape>)> },
     /// A task. Handlers will start it, nothing watches it.
     Task,
+    /// One of the HMI's own, read from what it last published.
+    Own,
 }
 
 impl Mesh {
@@ -67,7 +79,13 @@ impl Mesh {
         if options.loopback {
             o = o.multicast_interface("127.0.0.1");
         }
-        Ok(Mesh { node: Node::new(&options.name, o)?, deliveries, attached: HashMap::new(), frames, videos: HashMap::new() })
+        let node = Node::new(&options.name, o)?;
+        let own = Own {
+            clients: node.variable_definition(status::CLIENTS, VariableOptions::new().read_only(true))?,
+            status: node.variable_definition(status::STATUS, VariableOptions::new().read_only(true))?,
+            values: HashMap::new(),
+        };
+        Ok(Mesh { node, deliveries, attached: HashMap::new(), frames, videos: HashMap::new(), own })
     }
 
     /// Changes whenever anything on the mesh does.
@@ -123,6 +141,9 @@ impl Mesh {
         match self.handle(import, &entity, schema) {
             Ok(a) => {
                 self.attached.insert(import.alias.clone(), a);
+                if let Some(value) = self.own.values.get(import.entity.as_str()) {
+                    let _ = self.deliveries.send(Delivery { alias: import.alias.clone(), value: value.clone() });
+                }
                 true
             }
             Err(e) => {
@@ -130,6 +151,38 @@ impl Mesh {
                 false
             }
         }
+    }
+
+    /// Publishes the screens connected, once they changed.
+    pub fn publish_clients(&mut self, list: Vec<Client>) {
+        let value = status::clients_value(&list);
+        if self.own.values.get(status::CLIENTS) != Some(&value) {
+            if let Err(e) = self.own.clients.set(&list) {
+                warn!("could not publish {}: {e}", status::CLIENTS);
+            }
+            self.own_changed(status::CLIENTS, value);
+        }
+    }
+
+    /// Publishes the HMI's own state, once it changed.
+    pub fn publish_status(&mut self, s: HmiStatus) {
+        let value = status::status_value(&s);
+        if self.own.values.get(status::STATUS) != Some(&value) {
+            if let Err(e) = self.own.status.set(&s) {
+                warn!("could not publish {}: {e}", status::STATUS);
+            }
+            self.own_changed(status::STATUS, value);
+        }
+    }
+
+    /// Keeps an own entity's new value, and hands it to each import of it.
+    fn own_changed(&mut self, entity: &'static str, value: Value) {
+        for (alias, a) in &self.attached {
+            if matches!(a.handle, Handle::Own) && a.import.entity == entity {
+                let _ = self.deliveries.send(Delivery { alias: alias.clone(), value: value.clone() });
+            }
+        }
+        self.own.values.insert(entity, value);
     }
 
     /// What each attached topic's message and function's request is made of.
@@ -152,6 +205,7 @@ impl Mesh {
             let _ = tx.send(Delivery { alias: alias.clone(), value });
         };
         let handle = match import.kind {
+            Kind::Variable if [status::CLIENTS, status::STATUS].contains(&import.entity.as_str()) => Handle::Own,
             Kind::Topic => {
                 let qos = Qos::new().schema(&schema).reliable(entity.reliable);
                 let sub = self.node.subscriber::<Bytes>(&import.entity, qos.clone(), move |m| deliver(codec::decode(&m, &tree)));
@@ -227,8 +281,10 @@ impl Mesh {
     /// the value the HMI holds, else from the schema's defaults.
     pub fn set(&self, alias: &str, path: &str, value: Value, last: Option<&Value>) -> Result<(), String> {
         let a = self.attached(alias)?;
-        let Handle::Variable(var) = &a.handle else {
-            return Err(format!("{alias} is not a variable, so it cannot be set"));
+        let var = match &a.handle {
+            Handle::Variable(var) => var,
+            Handle::Own => return Err(format!("{alias} is the HMI's own, which only it sets")),
+            _ => return Err(format!("{alias} is not a variable, so it cannot be set")),
         };
         let whole = match path.is_empty() {
             true => value,

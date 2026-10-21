@@ -4,7 +4,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Bytes;
@@ -44,35 +44,43 @@ pub async fn serve(listener: TcpListener, client: PathBuf, inbound: UnboundedSen
         .route("/ws", get(upgrade))
         .fallback_service(pages)
         .with_state(Shared { inbound, next: Arc::new(AtomicU32::new(1)) });
-    if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<Local>()).await {
+    if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<Reached>()).await {
         error!("the web server stopped: {e}");
     }
 }
 
-/// The address a screen reached this host on, which it can reach again for video.
+/// The address a screen reached this host on, which it can reach again for video, and the
+/// address it came from.
 #[derive(Clone, Copy)]
-struct Local(IpAddr);
+struct Reached {
+    local: IpAddr,
+    remote: IpAddr,
+}
 
-impl Connected<IncomingStream<'_, TcpListener>> for Local {
-    fn connect_info(stream: IncomingStream<'_, TcpListener>) -> Local {
-        Local(stream.io().local_addr().map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |a| a.ip().to_canonical()))
+impl Connected<IncomingStream<'_, TcpListener>> for Reached {
+    fn connect_info(stream: IncomingStream<'_, TcpListener>) -> Reached {
+        let local = stream.io().local_addr().map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |a| a.ip().to_canonical());
+        Reached { local, remote: stream.remote_addr().ip().to_canonical() }
     }
 }
 
-async fn upgrade(ws: WebSocketUpgrade, State(shared): State<Shared>, ConnectInfo(Local(local)): ConnectInfo<Local>) -> Response {
-    ws.on_upgrade(move |socket| screen(socket, shared, local))
+async fn upgrade(ws: WebSocketUpgrade, State(shared): State<Shared>, ConnectInfo(reached): ConnectInfo<Reached>) -> Response {
+    ws.on_upgrade(move |socket| screen(socket, shared, reached))
 }
 
 /// One screen's socket: binary CBOR frames in become messages for the loop, and what the
 /// loop sends goes out. When the loop drops the screen, its sender ends and the socket closes.
-async fn screen(socket: WebSocket, shared: Shared, local: IpAddr) {
+async fn screen(socket: WebSocket, shared: Shared, reached: Reached) {
     let session = shared.next.fetch_add(1, Ordering::Relaxed);
     let (out, mut outgoing) = unbounded_channel::<Bytes>();
     let queued = Arc::new(AtomicUsize::new(0));
-    if shared.inbound.send(Inbound::Open { session, out: Outbox::new(out, queued.clone()), local }).is_err() {
+    let (local, remote) = (reached.local, reached.remote);
+    if shared.inbound.send(Inbound::Open { session, out: Outbox::new(out, queued.clone()), local, remote }).is_err() {
         return;
     }
     let (mut sink, mut stream) = socket.split();
+    // each ping carries when it left, in us since the socket opened, which its pong brings back
+    let born = Instant::now();
     let writer = tokio::spawn(async move {
         let mut ping = interval(PING_EVERY);
         ping.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -82,7 +90,7 @@ async fn screen(socket: WebSocket, shared: Shared, local: IpAddr) {
                     Some(frame) => Message::Binary(frame),
                     None => break,
                 },
-                _ = ping.tick() => Message::Ping(Bytes::new()),
+                _ = ping.tick() => Message::Ping(Bytes::copy_from_slice(&(born.elapsed().as_micros() as u64).to_le_bytes())),
             };
             let sent = if let Message::Binary(b) = &frame { b.len() } else { 0 };
             let failed = sink.send(frame).await.is_err();
@@ -101,8 +109,9 @@ async fn screen(socket: WebSocket, shared: Shared, local: IpAddr) {
                 }
                 Err(e) => warn!("screen {session} sent what this backend cannot read: {e}"),
             },
-            Message::Pong(_) => {
-                let _ = shared.inbound.send(Inbound::Heard { session });
+            Message::Pong(data) => {
+                let left = <[u8; 8]>::try_from(data.as_ref()).ok().map(|b| Duration::from_micros(u64::from_le_bytes(b)));
+                let _ = shared.inbound.send(Inbound::Heard { session, ping: left.map(|l| born.elapsed().saturating_sub(l)) });
             }
             Message::Close(_) => break,
             _ => {}

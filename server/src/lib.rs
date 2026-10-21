@@ -10,6 +10,7 @@ pub mod pages;
 pub mod project;
 pub mod protocol;
 pub mod script;
+pub mod status;
 pub mod value;
 pub mod video;
 pub mod watch;
