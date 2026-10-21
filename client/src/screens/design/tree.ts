@@ -153,6 +153,57 @@ export function boxText(e: Element, key: keyof Box, box: Box, room: Room): strin
   return placementText(e.props[key], key, px, room);
 }
 
+/** The edits that give an element a new origin and leave it where it is drawn: its x and y
+ *  follow the point, turned as the element turns, and what it holds, placed from that point,
+ *  moves back by as much. A value an expression gives stays as it is. */
+export function originEdits(page: Page, id: string, origin: string | null): Edit[] {
+  const e = find(page.children, id);
+  if (!e) return [];
+  const own: Record<string, string | null> = { origin };
+  const edits: Edit[] = [{ kind: "set_props", page: page.id, id, props: own }];
+  const [room, scope] = [roomOf(page, id), scopeOf(page, id)];
+  const b = boxOf(e, room, undefined, scope);
+  const props = { ...e.props };
+  if (origin === null) delete props.origin;
+  else props.origin = origin;
+  const [was, now] = [originOf(e, b.w, b.h, scope), originOf({ ...e, props }, b.w, b.h, scope)];
+  const [dx, dy] = [now.x - was.x, now.y - was.y];
+  if (!dx && !dy) return edits;
+  // a plain number or share moved by `by`, else nothing
+  const moved = (el: Element, k: "x" | "y", by: number, within: Room) => {
+    const old = el.props[k];
+    if (!(old === undefined || isNumber(old) || isPercent(old))) return undefined;
+    return placementText(old, k, placement(old, k === "x" ? within.w : within.h) + by, within);
+  };
+  // the box turns about the point, so the new point sits where the turn takes it
+  if (!room.flows) {
+    const r = resolve(e.props.rotate ?? "0", scope);
+    const turn = ((r.ok && Number(r.value)) || 0) * (Math.PI / 180);
+    const [c, s] = [Math.cos(turn), Math.sin(turn)];
+    const [x, y] = [moved(e, "x", dx * c - dy * s, room), moved(e, "y", dx * s + dy * c, room)];
+    if (x !== undefined) own.x = x;
+    if (y !== undefined) own.y = y;
+  }
+  if (e.tag !== "div" || flows(e, scope)) return edits;
+  const within: Room = { w: b.w, h: b.h };
+  const back = (kids: Element[]) => {
+    for (const k of kids) {
+      // a group passes on the frame around it
+      if (k.tag === "group") {
+        back(k.children);
+        continue;
+      }
+      const [x, y] = [moved(k, "x", -dx, within), moved(k, "y", -dy, within)];
+      const p: Record<string, string> = {};
+      if (x !== undefined) p.x = x;
+      if (y !== undefined) p.y = y;
+      if (x !== undefined || y !== undefined) edits.push({ kind: "set_props", page: page.id, id: k.id, props: p });
+    }
+  };
+  back(e.children);
+  return edits;
+}
+
 /** What each element along a path reads in the editor, outermost first: the page's or
  *  component's names, and inside a repeat its first copy, as the editor draws it. */
 function scopes(page: Page, path: Element[]): Scope[] {

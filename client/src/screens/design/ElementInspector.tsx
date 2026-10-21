@@ -38,7 +38,7 @@ import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, keysOf, kindOf, PADDING, PartsField, RADIUS, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, ORIGINS, PAINT, ROTATE, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
-import { absolute, type Align, align, chain, find, roomOf, scopeOf, setHandler, setProps, showProps, spread, tops } from "./tree";
+import { absolute, type Align, align, chain, find, originEdits, roomOf, scopeOf, sendEdits, setHandler, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
  *  the free CSS box. */
@@ -357,7 +357,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             </For>
           </Show>
           {/* the point x and y place, its children count from and it turns about */}
-          <Field {...prop("origin")} label="Origin" kind="choice" options={ORIGINS} placeholder='"0% 0%"' />
+          <Field {...prop("origin")} onWrite={(t) => sendEdits(originEdits(pageOf(p.page)!, p.element.id, t))} label="Origin" kind="choice" options={ORIGINS} placeholder='"0% 0%"' />
           <Turn prop={prop} specs={[ROTATE]} />
           <Show when={p.element.tag === "div"}>
             <AutoLayout page={p.page} element={p.element} prop={prop} />

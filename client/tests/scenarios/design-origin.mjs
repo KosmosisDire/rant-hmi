@@ -1,6 +1,7 @@
 // A designer sets a frame's origin to its middle: its x and y then place its middle, a frame
-// inside it at 0, 0 sits with its corner there, a nudge or a drag moves its x by the travel
-// alone, and the run draws it where the editor does.
+// inside it at 0, 0 sits with its corner there, the editor marks the point at its middle, a
+// nudge or a drag moves its x by the travel alone, and the run draws it where the editor does.
+// Turned, a new origin leaves it and what it holds where they are drawn.
 
 import { props } from "../designer.mjs";
 
@@ -22,6 +23,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // its middle holds the dot, so a press near its corner picks it
   await d.el(panel).click({ position: { x: 8, y: 8 } });
   check((await d.field("Origin").inputValue()) === '"50% 50%"', "the inspector does not show the origin under Placement");
+  const [mark, middle] = [await page.locator(".artboard .origin").boundingBox(), await d.el(panel).boundingBox()];
+  const off = [mark.x + mark.width / 2 - (middle.x + middle.width / 2), mark.y + mark.height / 2 - (middle.y + middle.height / 2)];
+  check(off.every((v) => Math.abs(v) < 0.6), `the origin's mark is ${off.map((v) => v.toFixed(1))} off the point`);
   await page.keyboard.press("ArrowRight");
   await eventually(() => props(hmi, pageId, panel).x === "61", () => `a nudge to move x by its step of 1, x is ${props(hmi, pageId, panel).x}`);
   check(props(hmi, pageId, panel).y === "20", "a nudge across moved y");
@@ -45,4 +49,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const ran = page.locator(`.run-layer:not([hidden]) [data-id="${dot}"]`);
   const [box, frame] = [await ran.boundingBox(), await page.locator(`.run-layer:not([hidden]) [data-id="${panel}"]`).boundingBox()];
   check(Math.abs(box.x - (frame.x + frame.width / 2)) < 1.5 && Math.abs(box.y - (frame.y + frame.height / 2)) < 1.5, "the run does not put the dot at the panel's middle");
+
+  // turned, a new origin leaves the panel and the dot it holds where they are drawn
+  await d.tab("Design");
+  await hmi.setProps(pageId, panel, { rotate: "30" });
+  await d.select("panel");
+  await page.waitForTimeout(300);
+  const boxes = async () => [await d.el(panel).boundingBox(), await d.el(dot).boundingBox()].flatMap((b) => [b.x, b.y, b.width, b.height]);
+  const before = await boxes();
+  await d.setField("Origin", '"100% 100%"');
+  await eventually(() => props(hmi, pageId, panel).origin === '"100% 100%"', "the new origin");
+  let after = [];
+  await eventually(async () => (after = await boxes()).every((v, i) => Math.abs(v - before[i]) < 1), () => `the panel and dot moved from ${before.map(Math.round)} to ${after.map(Math.round)}`);
 }
