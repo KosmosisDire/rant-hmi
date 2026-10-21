@@ -51,10 +51,8 @@ pub enum ServerMsg {
     Made { page: String, id: String },
     /// The answer to a ping, for the round trip.
     Pong { t: f64 },
-    /// The answer to a screen's offer to play an import's video.
-    Play { alias: String, answer: String },
-    /// The answer to a screen's offer of its data channels, none when the screen stays on its
-    /// socket.
+    /// The answer to a screen's offer of its WebRTC connection, first or again. None when the
+    /// backend cannot make it, so the screen stays on its socket.
     Channels { answer: Option<String> },
     /// The computed values, whole, after a change.
     Computed { computed: Vec<Computed> },
@@ -104,9 +102,9 @@ pub enum ClientMsg {
     OnChannels,
     /// The screen's channels broke, so what it sent on them may be lost.
     OffChannels,
-    /// Plays an import's video: the screen's WebRTC offer, which the backend answers.
-    Play { alias: String, offer: String },
-    StopPlaying { alias: String },
+    /// Offers the screen's data connection again with the videos it plays, each import's on the
+    /// transceiver named by its mid. A video left out stops.
+    Play { offer: String, videos: Vec<Played> },
     /// Adds, changes or with None removes the computed value called `name`.
     SetComputed { name: String, computed: Option<Computed> },
     Import { import: Import },
@@ -238,6 +236,14 @@ pub struct ValueUpdate {
 pub struct Sample {
     pub t: f64,
     pub v: Value,
+}
+
+/// A video a screen plays: the import, and the mid of the transceiver it comes on.
+#[derive(Deserialize, TS, Clone, Debug)]
+#[ts(export)]
+pub struct Played {
+    pub mid: String,
+    pub alias: String,
 }
 
 #[derive(Serialize, TS, Clone, Debug)]

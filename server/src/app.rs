@@ -357,8 +357,10 @@ impl App {
         }
         match msg {
             ClientMsg::Ping { t, .. } => self.send(session, &ServerMsg::Pong { t }),
+            // a new connection plays nothing until the screen offers its videos on it
             ClientMsg::Channels { offer } => {
                 let Some(local) = self.sessions.get(&session).map(|s| s.local) else { return };
+                self.play_only(session, HashSet::new());
                 let _ = self.rtc.send(ToRtc::Channels { session, sdp: offer, local });
             }
             ClientMsg::OffChannels => {
@@ -372,16 +374,14 @@ impl App {
                     self.handle(session, msg);
                 }
             }
-            ClientMsg::Play { alias, offer } => {
-                let Some(import) = self.project.find(&alias).cloned() else {
-                    return self.refuse(session, format!("{alias} is not a mesh import, so it has no video"), None);
-                };
-                let Some(local) = self.sessions.get(&session).map(|s| s.local) else { return };
-                self.playing.entry(alias.clone()).or_default().insert(session);
-                self.mesh.play(&import);
-                let _ = self.rtc.send(ToRtc::Offer { session, alias, sdp: offer, local });
+            ClientMsg::Play { offer, mut videos } => {
+                for v in videos.iter().filter(|v| self.project.find(&v.alias).is_none()) {
+                    self.refuse(session, format!("{} is not a mesh import, so it has no video", v.alias), None);
+                }
+                videos.retain(|v| self.project.find(&v.alias).is_some());
+                self.play_only(session, videos.iter().map(|v| v.alias.clone()).collect());
+                let _ = self.rtc.send(ToRtc::Play { session, sdp: offer, videos });
             }
-            ClientMsg::StopPlaying { alias } => self.stop_playing(session, &alias),
             ClientMsg::Import { import } => match self.project.import(import.clone()) {
                 Ok(()) => {
                     info!("imported {} as {}", import.entity, import.alias);
@@ -1156,10 +1156,8 @@ impl App {
         if self.sessions.remove(&session).is_some() {
             info!("screen {session} {why}");
             self.script.send(ToScript::Gone(session));
-            for alias in self.playing.keys().cloned().collect::<Vec<_>>() {
-                self.stop_playing(session, &alias);
-            }
-            let _ = self.rtc.send(ToRtc::Gone { session });
+            self.play_only(session, HashSet::new());
+            let _ = self.rtc.send(ToRtc::Unlink { session });
             // a page the screen showed answers nothing, so no handler waits on it for ever
             let asked: Vec<u64> = self.asks.iter().filter(|(_, s)| **s == session).map(|(ask, _)| *ask).collect();
             for ask in asked {
@@ -1172,7 +1170,7 @@ impl App {
     }
 
     /// A screen's channels broke. What it sent on them may be lost, a release too, and so may
-    /// what it was sent, so it gets every value again on its socket.
+    /// what it was sent, so it gets every value again on its socket. Its videos end with them.
     fn unlinked(&mut self, session: u32) {
         let Some(s) = self.sessions.get_mut(&session) else { return };
         let open = std::mem::take(&mut s.channels);
@@ -1183,6 +1181,7 @@ impl App {
         if open {
             self.put_values(Some(session), self.all_values(session));
         }
+        self.play_only(session, HashSet::new());
     }
 
     /// Runs the release of what a screen holds pressed, so a jog never outlives its link.
@@ -1196,16 +1195,24 @@ impl App {
         }
     }
 
-    /// The screen no longer plays the import's video, and nothing watches a source no screen plays.
-    fn stop_playing(&mut self, session: u32, alias: &str) {
-        let Some(screens) = self.playing.get_mut(alias) else { return };
-        if !screens.remove(&session) {
-            return;
-        }
-        let _ = self.rtc.send(ToRtc::Stop { session, alias: alias.to_owned() });
-        if screens.is_empty() {
-            self.playing.remove(alias);
-            self.mesh.stop_playing(alias);
+    /// Makes the imports whose video a screen plays the ones named. The mesh watches only the
+    /// sources some screen plays.
+    fn play_only(&mut self, session: u32, aliases: HashSet<String>) {
+        let mesh = &mut self.mesh;
+        self.playing.retain(|alias, screens| {
+            if !aliases.contains(alias) {
+                screens.remove(&session);
+            }
+            if screens.is_empty() {
+                mesh.stop_playing(alias);
+            }
+            !screens.is_empty()
+        });
+        for alias in aliases {
+            if let Some(import) = self.project.find(&alias).cloned() {
+                self.mesh.play(&import);
+                self.playing.entry(alias).or_default().insert(session);
+            }
         }
     }
 
@@ -1238,11 +1245,6 @@ impl App {
                 }
             }
             FromRtc::CaughtUp { session } => self.put_values(Some(session), self.all_values(session)),
-            FromRtc::Answer { session, alias, sdp } => self.send(session, &ServerMsg::Play { alias, answer: sdp }),
-            FromRtc::Failed { session, alias, text } => {
-                self.stop_playing(session, &alias);
-                self.refuse(session, text, None);
-            }
         }
     }
 

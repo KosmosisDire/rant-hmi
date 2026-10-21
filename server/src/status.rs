@@ -21,7 +21,8 @@ pub struct Client {
     /// How much the round trip wavers, in ms, smoothed as RTP does: each new one moves it a
     /// sixteenth of the way to how far that round trip was from the last.
     pub jitter_ms: f64,
-    /// Whether its WebRTC data channels are open. Without them all goes over its socket.
+    /// Whether its WebRTC data channels are open. Without them all goes over its socket, and
+    /// no video plays.
     pub data_channels: bool,
 }
 

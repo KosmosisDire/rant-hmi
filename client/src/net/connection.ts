@@ -1,9 +1,11 @@
 // The link to the backend: one socket, CBOR both ways, and a WebRTC data connection offered
-// over it, a reliable ordered channel and a best effort one. The socket carries everything the
-// channels do not, and reconnects by itself, at once when the page shows again. The round trip
-// for the status bar is timed the way a person's actions go.
+// over it: a reliable ordered channel, a best effort one, and the video of each import the
+// screen plays, which plays on a plain http page where WebCodecs cannot. The socket carries
+// everything the channels do not, and reconnects by itself, at once when the page shows again.
+// The round trip for the status bar is timed the way a person's actions go.
 
 import { Decoder, Encoder } from "cbor-x";
+import { type Accessor, createSignal, type Setter } from "solid-js";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import { notify, receive, setState, state } from "../state/store";
@@ -35,7 +37,22 @@ interface Channels {
   pc: RTCPeerConnection;
   reliable: RTCDataChannel;
   bestEffort: RTCDataChannel;
+  /** An offer is out, so a change to the videos waits for its answer. */
+  offering: boolean;
+  /** The videos changed while an offer was out. */
+  again: boolean;
 }
+
+interface Video {
+  users: number;
+  stream: Accessor<MediaStream | null>;
+  setStream: Setter<MediaStream | null>;
+  /** Where it comes in on the data connection, once offered there. */
+  transceiver: RTCRtpTransceiver | null;
+}
+
+/** The imports whose video this screen plays, each shared by every element showing it. */
+const videos = new Map<string, Video>();
 
 let channels: Channels | null = null;
 let channelsRetry: number | undefined;
@@ -116,6 +133,8 @@ async function openChannels() {
     pc,
     reliable: pc.createDataChannel("reliable"),
     bestEffort: pc.createDataChannel("best-effort", { ordered: false, maxRetransmits: 0 }),
+    offering: false,
+    again: videos.size > 0,
   };
   channels = c;
   for (const ch of [c.reliable, c.bestEffort]) {
@@ -139,26 +158,96 @@ async function openChannels() {
   window.setTimeout(() => {
     if (channels === c && !state.channels) channelsFailed();
   }, CHANNELS_WAIT_MS);
-  await pc.setLocalDescription(await pc.createOffer());
-  // a later offer or the socket's close replaced this one while it was made
-  if (channels === c && pc.localDescription) send({ type: "channels", offer: pc.localDescription.sdp });
+  await offer(c, (sdp) => ({ type: "channels", offer: sdp }));
 }
 
-/** The backend's answer completes the offer. Without one the backend cannot make channels, so
- *  the screen stays on its socket until it connects again. */
+/** Offers the data connection again with the videos this screen plays now. A new video gets
+ *  its transceiver here, and a stopped one's stopped with it. */
+async function offerVideos() {
+  const c = channels;
+  if (!c) return;
+  if (c.offering) {
+    c.again = true;
+    return;
+  }
+  c.again = false;
+  for (const v of videos.values()) {
+    if (v.transceiver) continue;
+    v.transceiver = c.pc.addTransceiver("video", { direction: "recvonly" });
+    v.setStream(new MediaStream([v.transceiver.receiver.track]));
+  }
+  // a transceiver has its mid once the offer is set
+  await offer(c, (sdp) => ({
+    type: "play",
+    offer: sdp,
+    videos: [...videos].flatMap(([alias, v]) => (v.transceiver?.mid ? [{ mid: v.transceiver.mid, alias }] : [])),
+  }));
+}
+
+/** Makes an offer on the connection and sends it, unless the connection closed while it was
+ *  made. The next offer waits for its answer. */
+async function offer(c: Channels, msg: (sdp: string) => ClientMsg) {
+  c.offering = true;
+  try {
+    await c.pc.setLocalDescription(await c.pc.createOffer());
+  } catch (e) {
+    if (channels === c) throw e;
+    return;
+  }
+  if (channels === c && c.pc.localDescription) send(msg(c.pc.localDescription.sdp));
+}
+
+/** The backend's answer completes the offer. Without one to the first the backend cannot make
+ *  channels, so the screen stays on its socket until it connects again. Without one to a later
+ *  offer the connection is gone, so it is made again. */
 function answered(answer: string | null) {
   const c = channels;
   if (!c) return;
-  if (answer === null) closeChannels();
-  else if (c.pc.signalingState === "have-local-offer") void c.pc.setRemoteDescription({ type: "answer", sdp: answer });
+  if (answer === null) return c.pc.remoteDescription ? channelsFailed() : closeChannels();
+  if (c.pc.signalingState !== "have-local-offer") return;
+  c.pc.setRemoteDescription({ type: "answer", sdp: answer }).then(
+    () => {
+      c.offering = false;
+      if (channels === c && c.again) void offerVideos();
+    },
+    () => channels === c && channelsFailed(),
+  );
 }
 
+/** Starts or joins playing an import's video, which comes once the data connection is open. */
+export function play(alias: string): Accessor<MediaStream | null> {
+  let v = videos.get(alias);
+  if (!v) {
+    const [stream, setStream] = createSignal<MediaStream | null>(null);
+    v = { users: 0, stream, setStream, transceiver: null };
+    videos.set(alias, v);
+    void offerVideos();
+  }
+  v.users++;
+  return v.stream;
+}
+
+/** Leaves playing an import's video, which ends once nothing on this screen shows it. */
+export function stopPlaying(alias: string) {
+  const v = videos.get(alias);
+  if (!v || --v.users > 0) return;
+  videos.delete(alias);
+  if (!v.transceiver) return;
+  v.transceiver.stop();
+  void offerVideos();
+}
+
+/** Ends the data connection, and with it every video this screen plays until it opens again. */
 function closeChannels() {
   clearTimeout(channelsRetry);
   const c = channels;
   channels = null;
   unanswered = null;
   c?.pc.close();
+  for (const v of videos.values()) {
+    v.transceiver = null;
+    v.setStream(null);
+  }
   setState("channels", false);
 }
 

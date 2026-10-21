@@ -159,9 +159,9 @@ component placed on a page is a tag named after it.
   ```
 - `<media src="Camera" fit='"meet"'/>` shows a camera, a picture or a URL in quotes. `src`
   names a mesh import, bare or as text from an expression. An import with H264, its own or
-  the `Video` child rant-transcoder makes on the camera's host, plays over WebRTC. Any other
-  shows its pictures as they come: a Rant Image, or MJPEG frames. `fit` is `"meet"`,
-  `"slice"` or `"stretch"`, as a drawing's is, so a drawing over it with
+  the `Video` child rant-transcoder makes on the camera's host, plays over the screen's WebRTC
+  data connection. Any other shows its pictures as they come: a Rant Image, or MJPEG frames.
+  `fit` is `"meet"`, `"slice"` or `"stretch"`, as a drawing's is, so a drawing over it with
   ``viewbox="`0 0 ${Camera.width} ${Camera.height}`"`` and the same fit draws in the
   picture's pixels.
 - `<input value="Speed"/>` is a field an operator types into. A bare name as its value takes

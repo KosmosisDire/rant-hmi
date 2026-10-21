@@ -2,6 +2,7 @@
 import type { Computed } from "./Computed";
 import type { Edit } from "./Edit";
 import type { Import } from "./Import";
+import type { Played } from "./Played";
 import type { Record } from "./Record";
 import type { Token } from "./Token";
 import type { Value } from "./Value";
@@ -10,4 +11,4 @@ import type { Variable } from "./Variable";
 /**
  * From a screen to the backend.
  */
-export type ClientMsg = { "type": "ping", t: number, rtt?: number, } | { "type": "channels", offer: string, } | { "type": "on_channels" } | { "type": "off_channels" } | { "type": "play", alias: string, offer: string, } | { "type": "stop_playing", alias: string, } | { "type": "set_computed", name: string, computed: Computed | null, } | { "type": "import", import: Import, } | { "type": "unimport", alias: string, } | { "type": "change_import", alias: string, import: Import, } | { "type": "set_variable", name: string, variable: Variable | null, } | { "type": "set_token", name: string, token: Token | null, } | { "type": "set_record", name: string, record: Record | null, } | { "type": "set", alias: string, path: string, value: Value, } | { "type": "edit", edit: Edit, } | { "type": "undo" } | { "type": "redo" } | { "type": "set_start", page: string, } | { "type": "answer", ask: number, value: Value, } | { "type": "fire", page: string, id: string, event: string, payload: Value, index?: number, item?: Value, };
+export type ClientMsg = { "type": "ping", t: number, rtt?: number, } | { "type": "channels", offer: string, } | { "type": "on_channels" } | { "type": "off_channels" } | { "type": "play", offer: string, videos: Array<Played>, } | { "type": "set_computed", name: string, computed: Computed | null, } | { "type": "import", import: Import, } | { "type": "unimport", alias: string, } | { "type": "change_import", alias: string, import: Import, } | { "type": "set_variable", name: string, variable: Variable | null, } | { "type": "set_token", name: string, token: Token | null, } | { "type": "set_record", name: string, record: Record | null, } | { "type": "set", alias: string, path: string, value: Value, } | { "type": "edit", edit: Edit, } | { "type": "undo" } | { "type": "redo" } | { "type": "set_start", page: string, } | { "type": "answer", ask: number, value: Value, } | { "type": "fire", page: string, id: string, event: string, payload: Value, index?: number, item?: Value, };

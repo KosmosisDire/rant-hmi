@@ -9,7 +9,7 @@ import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Scope, sizeWord, UNIT } from "../state/bind";
 import { fields, short } from "../state/format";
-import { play, stopPlaying } from "../net/video";
+import { play, stopPlaying } from "../net/connection";
 import { component, entity, live, notify, state } from "../state/store";
 import { ImagePlay } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
@@ -527,7 +527,7 @@ function playable(src: string | undefined, value: () => unknown): string | null 
 }
 
 /** A video: an import's stream over WebRTC, fitted as a picture is, marked until its first
- *  frame shows. */
+ *  frame shows, and again while the stream is gone. */
 function VideoView(p: { alias: string | null; fit: string }) {
   const [shows, setShows] = createSignal(false);
   let el!: HTMLVideoElement;
@@ -538,6 +538,7 @@ function VideoView(p: { alias: string | null; fit: string }) {
     const stream = play(alias);
     createEffect(() => {
       el.srcObject = stream();
+      setShows(false);
       void el.play().catch(() => {});
     });
     onCleanup(() => {
