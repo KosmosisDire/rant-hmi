@@ -1,4 +1,4 @@
-// A user adds an accent token, uses it on a page and inside a component, switches the editor
+// A user adds a signal colour token, uses it on a page and inside a component, switches the editor
 // to light and sees the light value, then renames the token: pages and components follow. A
 // token may be worked out from another, its light value left as the dark one, a number counts
 // in units, and tokens that read each other in a ring say they cannot be worked out.
@@ -13,16 +13,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   };
   await page.locator("button", { hasText: "Add a token" }).click();
   await right.locator(".head-title", { hasText: "$color" }).waitFor();
-  await set("Name", "accent");
-  await right.locator(".head-title", { hasText: "$accent" }).waitFor();
+  await set("Name", "signal");
+  await right.locator(".head-title", { hasText: "$signal" }).waitFor();
   await set("Dark", "#ff8800");
   await set("Light", "#0088ff");
-  await page.locator(".data-detail tr", { hasText: "$accent" }).waitFor();
+  await page.locator(".data-detail tr", { hasText: "$signal" }).waitFor();
 
   const pageId = await hmi.addPage("Themed");
-  const frame = await hmi.addElement(pageId, "div", { name: "Box", x: "44", y: "44", w: "176", h: "88", background: "$accent" });
+  const frame = await hmi.addElement(pageId, "div", { name: "Box", x: "44", y: "44", w: "176", h: "88", background: "$signal" });
   const badge = await hmi.addComponent("Badge");
-  await hmi.addElement(badge, "div", { name: "Dot", x: "0", y: "0", w: "88", h: "88", background: "$accent" });
+  await hmi.addElement(badge, "div", { name: "Dot", x: "0", y: "0", w: "88", h: "88", background: "$signal" });
   const inst = await hmi.addElement(pageId, "use", { name: "Badge", x: "264", y: "44", w: "88", h: "88" }, null, "Badge");
 
   await d.openPage("Themed");
@@ -38,13 +38,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.el(frame).click();
   const fill = d.field("Fill");
   await fill.click();
-  await fill.fill("$");
-  await eventually(async () => (await page.locator(".suggest .suggest-name").allTextContents()).includes("$accent"), "completion to offer the token");
+  await fill.fill("$sig");
+  await eventually(async () => (await page.locator(".suggest .suggest-name").allTextContents()).includes("$signal"), "completion to offer the token");
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
   await d.tab("Data");
-  await page.locator(".data-detail tr", { hasText: "$accent" }).click();
+  await page.locator(".data-detail tr", { hasText: "$signal" }).click();
   await set("Name", "brand");
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === frame)?.props.background === "$brand", "the page to follow the rename");
   await eventually(() => hmi.page(badge).children[0].props.background === "$brand", "the component to follow the rename");
@@ -73,14 +73,14 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // a page's fill reads the theme too, so the ground follows light and dark
   await page.locator("button", { hasText: "Add a token" }).click();
   await right.locator(".head-title", { hasText: "$color" }).waitFor();
-  await set("Name", "ground");
-  await right.locator(".head-title", { hasText: "$ground" }).waitFor();
+  await set("Name", "floor");
+  await right.locator(".head-title", { hasText: "$floor" }).waitFor();
   await set("Dark", "#101418");
   await set("Light", "#f4f4f4");
   await d.openPage("Themed");
   await page.keyboard.press("Escape");
-  await d.setField("Fill", "$ground");
-  await eventually(() => hmi.page(pageId).fill === "$ground", "the page's fill");
+  await d.setField("Fill", "$floor");
+  await eventually(() => hmi.page(pageId).fill === "$floor", "the page's fill");
   const ground = () =>
     page.evaluate(() => {
       const c = document.querySelector(".artboard-grid");
