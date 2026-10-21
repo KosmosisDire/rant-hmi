@@ -9,6 +9,7 @@ import type { Tag } from "../../protocol/Tag";
 import { produce } from "solid-js/store";
 import { docScope, flowOf, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope, sizeWord, UNIT } from "../../state/bind";
 import { notify, setState } from "../../state/store";
+import { moving, reshape } from "./geometry";
 
 /** The element and every frame around it, outermost first. */
 export function chain(elements: Element[], id: string): Element[] | undefined {
@@ -175,6 +176,10 @@ export function originEdits(page: Page, id: string, origin: string | null): Edit
   if (!e) return [];
   const own: Record<string, string | null> = { origin };
   const edits: Edit[] = [{ kind: "set_props", page: page.id, id, props: own }];
+  if (SHAPES.has(e.tag)) {
+    Object.assign(own, turnedOutline(e, origin, scopeOf(page, id)));
+    return edits;
+  }
   const [room, scope] = [roomOf(page, id), scopeOf(page, id)];
   const b = boxOf(e, room, undefined, scope);
   const props = { ...e.props };
@@ -216,6 +221,23 @@ export function originEdits(page: Page, id: string, origin: string | null): Edit
   };
   back(e.children);
   return edits;
+}
+
+/** A shape's outline moved so it stays where it is drawn while it turns about a new point of
+ *  its own box: by the turn of the point's move less the move. Empty when it does not turn or
+ *  an expression places it. */
+function turnedOutline(e: Element, origin: string | null, scope: Scope): Record<string, string> {
+  const el = document.querySelector(`.page-layer [data-id="${e.id}"]`);
+  const r = resolve(e.props.rotate ?? "0", scope);
+  const turn = ((r.ok && Number(r.value)) || 0) * (Math.PI / 180);
+  if (!(el instanceof SVGGraphicsElement) || !turn) return {};
+  const { width, height } = el.getBBox();
+  // a shape turns about its middle until it names a point
+  const point = (o: string | null | undefined) => (o === null || o === undefined ? { x: width / 2, y: height / 2 } : originOf({ ...e, props: { ...e.props, origin: o } }, width, height, scope));
+  const [was, now] = [point(e.props.origin), point(origin)];
+  const [dx, dy] = [now.x - was.x, now.y - was.y];
+  const [c, s] = [Math.cos(turn), Math.sin(turn)];
+  return reshape(e, moving((c - 1) * dx - s * dy, s * dx + (c - 1) * dy)) ?? {};
 }
 
 /** What each element along a path reads in the editor, outermost first: the page's or

@@ -249,6 +249,8 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     // a frame's own properties are CSS, which the browser may drop
     check: !shape() && !OWN.has(key) ? (v: unknown) => cssFault(key, v) : undefined,
   });
+  // a new origin leaves the element where it is drawn
+  const newOrigin = (t: string | null) => sendEdits(originEdits(pageOf(p.page)!, p.element.id, t));
   const text = () => p.element.tag === "span";
   const instance = () => p.element.tag === "use";
   const input = () => p.element.tag === "input";
@@ -397,7 +399,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             </Show>
           </Show>
           {/* the point x and y place, its children count from and it turns about */}
-          <Field {...prop("origin")} onWrite={(t) => sendEdits(originEdits(pageOf(p.page)!, p.element.id, t))} label="Origin" kind="point" options={ORIGINS} placeholder='"0% 0%"' />
+          <Field {...prop("origin")} onWrite={newOrigin} label="Origin" kind="point" options={ORIGINS} placeholder='"0% 0%"' />
           <Turn prop={prop} specs={[ROTATE]} />
           <Show when={p.element.tag === "div"}>
             <AutoLayout page={p.page} element={p.element} prop={prop} />
@@ -428,7 +430,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={shape()}>
           <div class="section">{TAG_WORDS[p.element.tag]}</div>
           <For each={GEOMETRY[p.element.tag] ?? []}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} focus={typed(key)} />}</For>
-          <Turn prop={prop} specs={TURN} />
+          <Turn prop={(key) => (key === "origin" ? { ...prop(key), onWrite: newOrigin } : prop(key))} specs={TURN} />
           <div class="section">Paint</div>
           <For each={PAINT.filter(([, key]) => !(p.element.tag === "g" && key === "transform"))}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More attributes</div>
