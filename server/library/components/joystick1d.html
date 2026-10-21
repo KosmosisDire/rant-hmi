@@ -1,26 +1,28 @@
-<component name="Joystick1D" size="24x6">
-  <prop name="travel" default="9"/>
+<component name="Joystick1D" size="24x6" sizing="fill">
+  <prop name="reach" default="0.75"/>
   <prop name="repeatMs" default="100"/>
+  <prop name="fill" default="$panel"/>
+  <prop name="colour" default="$accent"/>
+  <prop name="knobColour" default="$panel3"/>
+  <prop name="lineColour" default="$border2"/>
   <event name="move"/>
   <event name="held"/>
   <var name="kx" start="0"/>
-  <svg id="e1" name="pad" x="0" y="0" w="24" h="6">
-    <rect id="e2" name="track" fill="$panel" height="5.4" rx="2.7" stroke="$border2" stroke-width="0.2" width="23.4" x="0.3" y="0.3">
-      <on event="release">
-        kx = 0;
-        emit("move", { x: 0 });
-        emit("held", { x: 0 });
-      </on>
-      <on event="repeat" every="repeatMs">
-        emit("held", { x: kx });
-      </on>
-      <on event="drag">
-        // the knob goes where the finger is along a track 23.4 across, as far as the travel
-        kx = Math.max(-1, Math.min(1, ((p.x - 0.5) * 23.4) / travel));
-        emit("move", { x: kx });
-      </on>
-    </rect>
-    <line id="e3" name="span" fill='"none"' pointer-events='"none"' stroke="$border2" stroke-dasharray='"0.4 0.6"' stroke-linecap='"round"' stroke-width="0.2" x1="12 - travel" x2="12 + travel" y1="3" y2="3"/>
-    <circle id="e4" name="knob" cx="12 + kx * travel" cy="3" fill="track.pressed ? $accent : $panel3" pointer-events='"none"' r="2.2" stroke="$text" stroke-width="0.2"/>
-  </svg>
+  <div id="e1" name="track" x="0" y="0" w="100%" h="100%" style='background: fill; border-color: lineColour; border-radius: $radiusPill; border-style: "solid"; border-width: 0.2'>
+    <on event="release">
+      kx = 0;
+      emit("move", { x: 0 });
+      emit("held", { x: 0 });
+    </on>
+    <on event="repeat" every="repeatMs">
+      emit("held", { x: kx });
+    </on>
+    <on event="drag">
+      // the knob goes where the finger is along the track, as far as its reach
+      kx = Math.max(-1, Math.min(1, ((p.x - 0.5) * 2) / reach));
+      emit("move", { x: kx });
+    </on>
+    <div id="e2" name="span" x="(50 - reach * 50)%" y="50%" w="(reach * 100)%" h="0" origin='"0% 50%"' style='border-top-color: lineColour; border-top-style: "dashed"; border-top-width: 0.2; pointer-events: "none"'/>
+    <div id="e3" name="knob" x="(50 + kx * reach * 50)%" y="50%" w="hug" h="75%" origin='"50% 50%"' style='aspect-ratio: 1; background: track.pressed ? colour : knobColour; border-color: $text; border-radius: "50%"; border-style: "solid"; border-width: 0.2; pointer-events: "none"'/>
+  </div>
 </component>

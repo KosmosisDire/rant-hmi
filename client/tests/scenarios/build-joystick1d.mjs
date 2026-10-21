@@ -1,6 +1,7 @@
-// A designer builds a one axis Joystick1D: a track with a knob that follows the finger along it,
-// as far as its travel, and springs back to the middle on release. Only a press on the track
-// works it. It sends move with x from -1 to 1, right being positive, and held with the same on
+// A designer builds a one axis Joystick1D, laid out along whatever box it gets: a track with a
+// round knob that follows the finger along it, as far as its reach, a share of half its length,
+// and springs back to the middle on release, its look inputs that start at the theme's tokens.
+// Only a press on the track works it. It sends move with x from -1 to 1, right being positive, and held with the same on
 // each beat while held, and a last 0 when let go. Turned upright it works upright, up positive.
 
 export default async function ({ page, hmi, d, check, eventually }) {
@@ -8,21 +9,32 @@ export default async function ({ page, hmi, d, check, eventually }) {
   for (const name of ["leverBeats", "leverHeld"]) hmi.send({ type: "set_variable", name, variable: { name, start: 0, per: "hmi" } });
 
   await d.addComponent("Joystick1D", 24, 6);
-  await d.addInput("travel", "9");
+  await d.sizing("Fill");
+  await d.addInput("reach", "0.75");
   await d.addInput("repeatMs", "100");
+  await d.addInput("fill", "$panel");
+  await d.addInput("colour", "$accent");
+  await d.addInput("knobColour", "$panel3");
+  await d.addInput("lineColour", "$border2");
   await d.addVariable("kx", "0");
   await d.addSends("move");
   await d.addSends("held");
-  await d.add("diagram", { Name: "pad", x: "0", y: "0", w: "24", h: "6" });
-  // the track takes the presses, which the marks and the knob above it let through
-  await d.addShape("rect", { Name: "track", x: "0.3", y: "0.3", Width: "23.4", Height: "5.4", Round: "2.7", Fill: "$panel", Stroke: "$border2", Thickness: "0.2" });
-  await d.handler("drag", ["// the knob goes where the finger is along a track 23.4 across, as far as the travel", "kx = Math.max(-1, Math.min(1, ((p.x - 0.5) * 23.4) / travel));", 'emit("move", { x: kx });'].join("\n"));
+  // the track takes the presses, which the marks and the knob on it let through
+  await d.add("frame", { Name: "track", x: "0", y: "0", w: "100%", h: "100%", Fill: "fill", Radius: "$radiusPill" });
+  await page.locator('button[title="Edit the border"]').click();
+  await d.set({ Width: "0.2", Colour: "lineColour" });
+  await page.keyboard.press("Escape");
+  await d.handler("drag", ["// the knob goes where the finger is along the track, as far as its reach", "kx = Math.max(-1, Math.min(1, ((p.x - 0.5) * 2) / reach));", 'emit("move", { x: kx });'].join("\n"));
   await d.handler("release", 'kx = 0;\nemit("move", { x: 0 });\nemit("held", { x: 0 });');
   await d.handler("repeat", 'emit("held", { x: kx });', "repeatMs");
-  await d.addShape("line", { Name: "span", "From x": "12 - travel", "From y": "3", "To x": "12 + travel", "To y": "3", Stroke: "$border2", Thickness: "0.2", Dashes: '"0.4 0.6"' });
-  await d.css('pointer-events: "none"');
-  await d.addShape("circle", { Name: "knob", "Centre x": "12 + kx * travel", "Centre y": "3", Radius: "2.2", Fill: "track.pressed ? $accent : $panel3", Stroke: "$text", Thickness: "0.2" });
-  await d.css('pointer-events: "none"');
+  await d.add("frame", { Name: "span", Origin: '"0% 50%"', x: "(50 - reach * 50)%", y: "50%", w: "(reach * 100)%", h: "0", Fill: "", Radius: "" });
+  await d.css('border-top-width: 0.2\nborder-top-style: "dashed"\nborder-top-color: lineColour\npointer-events: "none"');
+  await d.select("track");
+  await d.add("frame", { Name: "knob", Origin: '"50% 50%"', x: "(50 + kx * reach * 50)%", y: "50%", w: "hug", h: "75%", Fill: "track.pressed ? colour : knobColour", Radius: '"50%"' });
+  await page.locator('button[title="Edit the border"]').click();
+  await d.set({ Width: "0.2", Colour: "$text" });
+  await page.keyboard.press("Escape");
+  await d.css('aspect-ratio: 1\npointer-events: "none"');
 
   await d.addPage("Lever");
   const lying = await d.place("Joystick1D", { x: "4", y: "4", w: "24", h: "6" });
