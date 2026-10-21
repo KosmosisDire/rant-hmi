@@ -567,7 +567,7 @@ mod tests {
         let pages = crate::pages::Pages::open(&dir).unwrap();
         let mut names: Vec<&str> = pages.list.iter().filter(|p| p.interface.is_some()).map(|p| p.name.as_str()).collect();
         names.sort();
-        assert_eq!(names, ["Button", "Dropdown", "Gauge", "Joystick", "Knob", "ModeSwitch", "Plot", "Readout", "Slider", "Toggle"]);
+        assert_eq!(names, ["Button", "Dropdown", "Gauge", "Joystick", "Joystick1D", "Knob", "ModeSwitch", "Plot", "Readout", "Slider", "Toggle"]);
         // a project that has its own leaves them be
         fs::remove_file(dir.join("components/button.html")).unwrap();
         Project::open(&dir).unwrap();
