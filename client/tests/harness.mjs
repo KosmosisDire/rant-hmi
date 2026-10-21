@@ -1,10 +1,11 @@
-// Starts what a test needs: the demo line, the transcoder and a backend on their own loopback
-// domain and port, with a fresh copy of the demo project, and a headless Chrome to drive.
+// Starts what a test needs: the demo line, the cage cell, the transcoder and a backend on their
+// own loopback domain and port, with a fresh copy of the demo project, and a headless Chrome to
+// drive.
 
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
@@ -52,10 +53,14 @@ function demoProject(into) {
   }
 }
 
-export async function startSystem() {
-  const project = mkdtempSync(join(tmpdir(), "rant-hmi-test-"));
-  demoProject(project);
+/** With `empty` named, the backend starts a new project in a folder of that name, as it would
+ *  anywhere, in place of the demo's copy. */
+export async function startSystem({ empty } = {}) {
+  const temp = mkdtempSync(join(tmpdir(), "rant-hmi-test-"));
+  const project = empty ? join(temp, basename(empty)) : temp;
+  if (!empty) demoProject(project);
   const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
+  const cage = run(join(BUILD, "examples", `cage${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
   const transcoding = transcoder();
   const video = transcoding && run(transcoding, ["--domain", String(DOMAIN), "--interface", "127.0.0.1"]);
   await new Promise((r) => setTimeout(r, 300));
@@ -87,7 +92,8 @@ export async function startSystem() {
       backend.kill();
       video?.kill();
       line.kill();
-      rmSync(project, { recursive: true, force: true });
+      cage.kill();
+      rmSync(temp, { recursive: true, force: true });
     },
   };
 }

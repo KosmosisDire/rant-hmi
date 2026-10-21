@@ -1,8 +1,8 @@
-// Runs the scenarios in tests/scenarios against one backend and the demo line, each on a fresh
-// page, as `docs/testing.md` says. A console error fails a scenario.
+// Runs the scenarios in tests/scenarios against one backend, the demo line and the cage cell,
+// each on a fresh page, as `docs/testing.md` says. A console error fails a scenario.
 
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { designer } from "./designer.mjs";
 import { ROOT, startBrowser, startSystem } from "./harness.mjs";
@@ -29,7 +29,9 @@ export async function eventually(fn, what, timeoutMs = 4000) {
 
 const only = process.argv[2] ?? "";
 const files = readdirSync(join(here, "scenarios")).filter((f) => f.endsWith(".mjs") && f.includes(only)).sort();
-const sys = await startSystem();
+// with --into a folder, the scenarios start on a new project and it becomes that folder
+const into = process.argv.includes("--into") ? join(ROOT, process.argv[process.argv.indexOf("--into") + 1]) : null;
+const sys = await startSystem({ empty: into });
 const browser = await startBrowser();
 let failed = 0;
 for (const file of files) {
@@ -64,17 +66,27 @@ for (const file of files) {
   await context.close();
 }
 await browser.close();
-// with --library, the components the scenarios made by hand become those a new project starts with
-if (process.argv.includes("--library") && !failed) {
-  const [made, kept] = [join(sys.project, "components"), join(ROOT, "server", "library", "components")];
-  rmSync(kept, { recursive: true, force: true });
-  mkdirSync(kept, { recursive: true });
-  // each file named for its component, which is all an instance refers to it by
+/** Puts the components the scenarios made in `to`, in place of what it held, each file named
+ *  for its component, which is all an instance refers to it by. */
+function keepComponents(to) {
+  const made = join(sys.project, "components");
+  rmSync(to, { recursive: true, force: true });
+  mkdirSync(to, { recursive: true });
   for (const file of readdirSync(made)) {
     const text = readFileSync(join(made, file), "utf8");
-    writeFileSync(join(kept, `${/^<component name="(\w+)"/.exec(text)[1].toLowerCase()}.html`), text);
+    writeFileSync(join(to, `${/^<component name="(\w+)"/.exec(text)[1].toLowerCase()}.html`), text);
   }
-  console.log(`kept ${readdirSync(kept).length} components in server/library/components`);
+}
+// with --library, the components the scenarios made by hand become those a new project starts with
+if (process.argv.includes("--library") && !failed) {
+  keepComponents(join(ROOT, "server", "library", "components"));
+  console.log(`kept ${readdirSync(join(ROOT, "server", "library", "components")).length} components in server/library/components`);
+}
+if (into && !failed) {
+  rmSync(into, { recursive: true, force: true });
+  cpSync(sys.project, into, { recursive: true });
+  keepComponents(join(into, "components"));
+  console.log(`kept the project in ${relative(ROOT, into)}`);
 }
 writeFileSync(join(out, "backend.log"), sys.backend.log);
 sys.stop();
