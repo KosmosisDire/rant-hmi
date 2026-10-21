@@ -1,6 +1,6 @@
 // A designer sets a frame's origin to its middle: its x and y then place its middle, a frame
-// inside it at 0, 0 sits with its corner there, a nudge moves its x by the step alone, and
-// the run draws it where the editor does.
+// inside it at 0, 0 sits with its corner there, a nudge or a drag moves its x by the travel
+// alone, and the run draws it where the editor does.
 
 import { props } from "../designer.mjs";
 
@@ -19,6 +19,20 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("ArrowRight");
   await eventually(() => props(hmi, pageId, panel).x === "611", () => `a nudge to move x by its step of 11, x is ${props(hmi, pageId, panel).x}`);
   check(props(hmi, pageId, panel).y === "200", "a nudge across moved y");
+
+  // a drag moves x and y by the pointer's travel, and the page's own numbers take over after
+  const k = (await d.el(panel).boundingBox()).width / 200;
+  const at = await d.el(panel).boundingBox();
+  await page.mouse.move(at.x + 8, at.y + 8);
+  await page.mouse.down();
+  // Alt, so it lands where the pointer goes and not on the grid
+  await page.keyboard.down("Alt");
+  await page.mouse.move(at.x + 8 + 44 * k, at.y + 8 + 22 * k, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up("Alt");
+  await eventually(() => props(hmi, pageId, panel).x === "655" && props(hmi, pageId, panel).y === "222", () => `the drag to land at 655, 222, not ${props(hmi, pageId, panel).x}, ${props(hmi, pageId, panel).y}`);
+  await hmi.setProps(pageId, panel, { x: "700" });
+  await eventually(async () => (await left(panel))[0] === 600, async () => `a later x to move it, it stays at ${await left(panel)}`);
 
   await d.tab("Run");
   const ran = page.locator(`.run-layer:not([hidden]) [data-id="${dot}"]`);

@@ -6,7 +6,6 @@ import { type Box, PageView, pageGround, SHAPES } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
-import { number } from "../../state/bind";
 import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
 import { moving, type Reshape, reshape } from "./geometry";
@@ -194,7 +193,8 @@ export function Artboard(p: {
     const h = held();
     for (const id of Object.keys(h)) {
       const e = find(p.page.children, id);
-      const carried = !e || ["x", "y", "w", "h"].every((k) => number(e.props[k]) === h[id].box[k as keyof Box]);
+      const now = e && boxOf(e, roomOf(p.page, id));
+      const carried = !now || (["x", "y", "w", "h"] as const).every((k) => Math.abs(now[k] - h[id].box[k]) < 0.01);
       if (carried && !(drag && "ids" in drag && drag.ids.includes(id))) release(id);
     }
   });
