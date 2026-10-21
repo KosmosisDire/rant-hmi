@@ -576,6 +576,10 @@
   width: 200px;
 }
 
+.popover.parts.in-sheet {
+  width: 100%;
+}
+
 .turned {
   display: inline-flex;
 }

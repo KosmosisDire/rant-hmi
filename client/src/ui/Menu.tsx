@@ -3,6 +3,7 @@
 
 import { createSignal, For, type JSX, onMount, Show } from "solid-js";
 import { ChevronRight } from "./icons";
+import { phone } from "./phone";
 import { Popover } from "./Popover";
 
 export interface MenuItem {
@@ -96,7 +97,8 @@ function List(p: { anchor: HTMLElement | { x: number; y: number }; entries: Menu
     closeMenu();
     m.run?.();
   };
-  onMount(() => rows()[0]?.focus());
+  // keys walk it from its first row, though a phone's sheet shows none picked
+  onMount(() => !phone() && rows()[0]?.focus());
   const key = (e: KeyboardEvent) => {
     const all = rows();
     const at = all.indexOf(document.activeElement as HTMLButtonElement);

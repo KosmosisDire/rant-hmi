@@ -1,8 +1,11 @@
 // A panel floating under the control that opened it, beside it for a submenu, or at a point
-// for a right click. A press outside closes it and any opened from it, Escape the top one.
+// for a right click, and on a phone a sheet along the bottom. A press outside closes it and any
+// opened from it, Escape the top one.
 
 import { createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
+import { phone } from "./phone";
+import { Sheet } from "./Sheet";
 
 interface Open {
   el: HTMLElement;
@@ -35,6 +38,9 @@ function key(e: KeyboardEvent) {
 export function Popover(p: { anchor: HTMLElement | { x: number; y: number }; onClose: () => void; class?: string; side?: boolean; children: JSX.Element }) {
   let el!: HTMLDivElement;
   const [at, setAt] = createSignal({ left: -9999, top: -9999 });
+  // the first sheet open dims the screen, and one opened from it stacks over it
+  const sheet = phone();
+  const first = open.length === 0;
   const element = p.anchor instanceof HTMLElement ? p.anchor : null;
   const place = () => {
     const a = element?.getBoundingClientRect() ?? { left: (p.anchor as { x: number }).x, right: (p.anchor as { x: number }).x, top: (p.anchor as { y: number }).y, bottom: (p.anchor as { y: number }).y };
@@ -57,11 +63,13 @@ export function Popover(p: { anchor: HTMLElement | { x: number; y: number }; onC
       window.addEventListener("pointerdown", pressed, true);
       window.addEventListener("keydown", key, true);
     }
-    place();
     const follow = new ResizeObserver(place);
-    follow.observe(el);
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
+    if (!sheet) {
+      place();
+      follow.observe(el);
+      window.addEventListener("scroll", place, true);
+      window.addEventListener("resize", place);
+    }
     onCleanup(() => {
       follow.disconnect();
       window.removeEventListener("scroll", place, true);
@@ -75,9 +83,15 @@ export function Popover(p: { anchor: HTMLElement | { x: number; y: number }; onC
   });
   return (
     <Portal>
-      <div ref={el} class={`popover ${p.class ?? ""}`} style={{ left: `${at().left}px`, top: `${at().top}px` }}>
-        {p.children}
-      </div>
+      {sheet ? (
+        <Sheet ref={(e) => (el = e)} modal scrim={first} onClose={p.onClose}>
+          <div class={`popover in-sheet ${p.class ?? ""}`}>{p.children}</div>
+        </Sheet>
+      ) : (
+        <div ref={el} class={`popover ${p.class ?? ""}`} style={{ left: `${at().left}px`, top: `${at().top}px` }}>
+          {p.children}
+        </div>
+      )}
     </Portal>
   );
 }

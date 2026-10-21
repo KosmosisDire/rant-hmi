@@ -891,6 +891,78 @@ table.grid td.name > span {
   min-width: 140px;
 }
 
+/* On a phone a popover is a sheet along the bottom, over a dimmed screen. */
+.sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel);
+  border-top: 1px solid var(--border2);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -8px 24px var(--shadow);
+  transition: height 0.22s ease-out;
+}
+
+.sheet.dragging {
+  transition: none;
+}
+
+.sheet-grip {
+  flex: 0 0 auto;
+  height: 28px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.sheet-grip::after {
+  content: "";
+  display: block;
+  width: 40px;
+  height: 5px;
+  margin: 11px auto 0;
+  border-radius: 3px;
+  background: var(--border2);
+}
+
+.sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sheet-content {
+  padding: 0 8px calc(8px + env(safe-area-inset-bottom));
+}
+
+.popover.in-sheet {
+  position: static;
+  width: 100%;
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+
+.in-sheet .menu-keys {
+  display: none;
+}
+
+.in-sheet .colour-picker {
+  width: 100%;
+}
+
 /* A group's name among the choices, as the add event list sets a component's own apart. */
 .menu-head {
   padding: 7px 8px 3px;
