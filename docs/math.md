@@ -20,6 +20,21 @@ backend runs the same file.
 
 A project's own name hides one of these, so no import or variable may take one.
 
+## Time
+
+`time.now` is the clock in ms since 1970, as `Date.now()` gives it. What a screen shows with it
+moves each frame, and only while something shows it:
+
+```js
+Math.floor(time.now / 500) % 2 ? $red : $panel     // on and off each half second
+(time.now / 1000 * Belt.speed) % 4                // a slat moving along the belt
+new Date(time.now).toLocaleTimeString()            // the screen's clock
+```
+
+- Every value drawn in one frame reads the same time, so things move together.
+- Code on the system reads the time when it runs. A computed value or a condition there is
+  worked out as its other values change, never by the clock alone.
+
 ## Vectors, quaternions and poses
 
 A value is one by its fields, so values from the mesh need nothing done to them:

@@ -1,8 +1,9 @@
 // A property's value is a JS expression over its scope's names, compiled once per text, a bare
 // #hex reading as text. Reading an unknown value stops it, so the unknown look shows instead.
 
+import { createSignal, getListener, onCleanup } from "solid-js";
 import { arith } from "../lang/arith.js";
-import { LIBRARY } from "../lang/math.js";
+import { LIBRARY, setClock } from "../lang/math.js";
 import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
 import type { Token } from "../protocol/Token";
@@ -338,6 +339,23 @@ function proxy(s: Scope): object {
   }
   return p;
 }
+
+// `time.now` as drawn: one stamp a frame for every value that shows it, moving only while one
+// does. Code that runs once, as a handler, reads the clock itself.
+const [frameTime, setFrameTime] = createSignal(Date.now());
+let readers = 0;
+let frame = 0;
+function tick() {
+  setFrameTime(Date.now());
+  frame = readers > 0 ? requestAnimationFrame(tick) : 0;
+}
+setClock(() => {
+  if (!getListener()) return Date.now();
+  readers++;
+  onCleanup(() => readers--);
+  if (!frame) frame = requestAnimationFrame(tick);
+  return frameTime();
+});
 
 // The math library's names come in as the compiled function's parameters, under the scope's own
 const MATH_NAMES = Object.keys(LIBRARY);

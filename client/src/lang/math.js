@@ -287,6 +287,20 @@ function lerp(a, b, t) {
   return __add(a, __mul(__sub(b, a), t));
 }
 
+let clock = () => Date.now();
+
+/** Sets how `time.now` reads the clock, as a screen does so what shows it moves. */
+export function setClock(read) {
+  clock = read;
+}
+
+/** The clock: `time.now` is ms since 1970, as `Date.now()` gives it. */
+const time = Object.freeze({
+  get now() {
+    return clock();
+  },
+});
+
 /** Every name pages and code read besides their own. `log` stays a handler's logging, so the
  *  natural log is `ln`. */
 export const LIBRARY = {
@@ -318,6 +332,7 @@ export const LIBRARY = {
   vec,
   fromEuler,
   mix,
+  time,
   __add,
   __sub,
   __mul,

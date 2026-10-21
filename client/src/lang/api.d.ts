@@ -9,6 +9,7 @@ export interface Name {
   places?: Place[];
   insert?: string;
   standard?: boolean;
+  fields?: { name: string; words: string }[];
 }
 
 export declare const PLACES: Place[];

@@ -6,3 +6,4 @@ export declare function kind(v: unknown): MathKind | null;
 export declare const METHOD_NAMES: string[];
 export declare const METHODS_OF: Record<MathKind, string[]>;
 export declare const LIBRARY: Record<string, unknown>;
+export declare function setClock(read: () => number): void;

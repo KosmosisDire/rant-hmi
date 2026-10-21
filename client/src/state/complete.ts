@@ -306,6 +306,8 @@ function members(path: string[], place: Place): Suggestion[] {
   const kind = state.enums.find((e) => e.name === root);
   if (kind) return rest.length === 0 ? [options(kind.options)] : rest.join() === "options" ? methods([...kind.options], true) : [];
   const imp = state.imports.find((i) => i.alias === root);
+  const holds = apiIn(place).find((a) => a.name === root && a.fields);
+  if (holds && !imp) return rest.length === 0 ? holds.fields!.map((f): Suggestion => ({ label: f.name, insert: f.name, icon: "member", type: f.words })) : [];
   const standard = apiIn(place).find((a) => a.name === root && a.standard);
   if (standard && !imp && rest.length === 0) return held((globalThis as Record<string, unknown>)[root]);
   if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && rest.length === 0) return [SEND, ...members(path, "expression")];

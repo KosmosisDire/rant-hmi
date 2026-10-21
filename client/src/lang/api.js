@@ -7,8 +7,8 @@
 export const PLACES = ["expression", "handler", "component"];
 
 /** One name. `takes` lists a function's parameters in order, `?` marking one that may be left
- *  out and `...` the rest; a name without it is a value. `standard` marks JavaScript's own,
- *  which every place has without the HMI. */
+ *  out and `...` the rest; a name without it is a value, and `fields` what it holds. `standard`
+ *  marks JavaScript's own, which every place has without the HMI. */
 export const API = [
   { name: "sqrt", takes: ["x"], words: "square root" },
   { name: "abs", takes: ["x"], words: "without its sign" },
@@ -38,6 +38,7 @@ export const API = [
   { name: "vec", takes: ["x", "y", "z?"], words: "a 2D or 3D vector" },
   { name: "fromEuler", takes: ["roll", "pitch", "yaw"], words: "a rotation from roll, pitch and yaw" },
   { name: "mix", takes: ["a", "b", "t"], words: "a colour from a toward b by t" },
+  { name: "time", words: "the clock", fields: [{ name: "now", words: "ms since 1970, moving where it shows" }] },
 
   { name: "notify", takes: ["text"], words: "tell this screen", places: ["handler"] },
   { name: "log", takes: ["...values"], words: "write to the log", places: ["handler"] },
