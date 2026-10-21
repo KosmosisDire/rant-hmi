@@ -15,7 +15,8 @@ pub struct Client {
     pub address: rant::String<48>,
     /// When it connected, in Unix seconds.
     pub connected_at: u64,
-    /// The last round trip to it and back, in ms, 0 until one is measured.
+    /// The last round trip to it and back, in ms, 0 until one is measured. Timed on its data
+    /// channels while it has them.
     pub ping_ms: f64,
     /// How much the round trip wavers, in ms, smoothed as RTP does: each new one moves it a
     /// sixteenth of the way to how far that round trip was from the last.

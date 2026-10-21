@@ -88,14 +88,22 @@ pub enum Level {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum ClientMsg {
-    /// Asks for a pong, to time the round trip.
-    Ping { t: f64 },
+    /// Asks for a pong, which goes back the way the ping came, to time the round trip. On the
+    /// channels `rtt` is the last round trip the screen timed there, in ms, once.
+    Ping {
+        t: f64,
+        #[serde(default)]
+        #[ts(optional)]
+        rtt: Option<f64>,
+    },
     /// Opens the screen's data channels: its WebRTC offer, which the backend answers.
     Channels { offer: String },
     /// From here on the screen's events, sets and answers come on its reliable channel. The
     /// backend holds what the channel brings until this comes, so nothing the screen sent on
     /// its socket before comes after.
     OnChannels,
+    /// The screen's channels broke, so what it sent on them may be lost.
+    OffChannels,
     /// Plays an import's video: the screen's WebRTC offer, which the backend answers.
     Play { alias: String, offer: String },
     StopPlaying { alias: String },

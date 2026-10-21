@@ -109,6 +109,16 @@ struct Session {
     vars: HashMap<String, Value>,
 }
 
+impl Session {
+    /// A new round trip, and how far it was from the last.
+    fn timed(&mut self, rtt: Duration) {
+        if let Some(last) = self.ping {
+            self.jitter += ((rtt.as_secs_f64() - last.as_secs_f64()).abs() * 1000.0 - self.jitter) / 16.0;
+        }
+        self.ping = Some(rtt);
+    }
+}
+
 /// Why an edit is applied, which says which stack its undo goes on.
 #[derive(Clone, Copy)]
 enum Step {
@@ -290,10 +300,10 @@ impl App {
             Inbound::Heard { session, ping } => {
                 if let Some(s) = self.sessions.get_mut(&session) {
                     s.heard = Instant::now();
-                    if let (Some(last), Some(now)) = (s.ping, ping) {
-                        s.jitter += ((now.as_secs_f64() - last.as_secs_f64()).abs() * 1000.0 - s.jitter) / 16.0;
+                    // the screen times its channels while it has them
+                    if let Some(ping) = ping.filter(|_| !s.channels) {
+                        s.timed(ping);
                     }
-                    s.ping = ping.or(s.ping);
                 }
             }
             Inbound::Close { session } => {
@@ -346,10 +356,14 @@ impl App {
             return self.refuse(session, text, None);
         }
         match msg {
-            ClientMsg::Ping { t } => self.send(session, &ServerMsg::Pong { t }),
+            ClientMsg::Ping { t, .. } => self.send(session, &ServerMsg::Pong { t }),
             ClientMsg::Channels { offer } => {
                 let Some(local) = self.sessions.get(&session).map(|s| s.local) else { return };
                 let _ = self.rtc.send(ToRtc::Channels { session, sdp: offer, local });
+            }
+            ClientMsg::OffChannels => {
+                let _ = self.rtc.send(ToRtc::Unlink { session });
+                self.unlinked(session);
             }
             ClientMsg::OnChannels => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
@@ -1157,6 +1171,20 @@ impl App {
         }
     }
 
+    /// A screen's channels broke. What it sent on them may be lost, a release too, and so may
+    /// what it was sent, so it gets every value again on its socket.
+    fn unlinked(&mut self, session: u32) {
+        let Some(s) = self.sessions.get_mut(&session) else { return };
+        let open = std::mem::take(&mut s.channels);
+        s.early.clear();
+        if std::mem::take(&mut s.switched) {
+            self.let_go(session, "lost its data channels");
+        }
+        if open {
+            self.put_values(Some(session), self.all_values(session));
+        }
+    }
+
     /// Runs the release of what a screen holds pressed, so a jog never outlives its link.
     fn let_go(&mut self, session: u32, why: &str) {
         let held: Vec<Pressed> = self.pressed.iter().filter(|(s, ..)| *s == session).cloned().collect();
@@ -1184,16 +1212,20 @@ impl App {
     fn from_rtc(&mut self, r: FromRtc) {
         match r {
             FromRtc::Channels { session, sdp } => self.send(session, &ServerMsg::Channels { answer: sdp }),
-            FromRtc::Linked { session, open } => {
-                let Some(s) = self.sessions.get_mut(&session) else { return };
-                s.channels = open;
-                if !open {
-                    s.early.clear();
-                    // a release sent on channels that broke may never come
-                    if std::mem::take(&mut s.switched) {
-                        self.let_go(session, "lost its data channels");
-                    }
+            FromRtc::Linked { session, open: true } => {
+                if let Some(s) = self.sessions.get_mut(&session) {
+                    s.channels = true;
                 }
+            }
+            FromRtc::Linked { session, open: false } => self.unlinked(session),
+            // a ping holds no order, so it is answered at once, the way it came
+            FromRtc::Message { session, msg: ClientMsg::Ping { t, rtt } } => {
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                s.heard = Instant::now();
+                if let Some(rtt) = rtt.filter(|r| r.is_finite() && *r >= 0.0) {
+                    s.timed(Duration::from_secs_f64(rtt / 1000.0));
+                }
+                let _ = self.rtc.send(ToRtc::Send { session, reliable: true, bytes: encode(&ServerMsg::Pong { t }) });
             }
             FromRtc::Message { session, msg } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };

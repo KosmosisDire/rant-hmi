@@ -52,6 +52,8 @@ pub enum ToRtc {
     Stop { session: u32, alias: String },
     /// The screen is gone, and so is all it played.
     Gone { session: u32 },
+    /// The screen's channels broke, so its data connection ends.
+    Unlink { session: u32 },
     Frame(Frame),
     /// A message for a screen, on its reliable channel or its best effort one. It is left out
     /// while the channels are full.
@@ -173,6 +175,7 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, said: UnboundedSender<FromR
                 }
                 Some(ToRtc::Stop { session, alias }) => peers.retain(|p| !(p.session == session && p.plays(&alias))),
                 Some(ToRtc::Gone { session }) => peers.retain(|p| p.session != session),
+                Some(ToRtc::Unlink { session }) => close(&mut peers, &said, |p| p.session == session && matches!(p.carries, Carries::Messages(_))),
                 Some(ToRtc::Frame(f)) => {
                     let data: Arc<[u8]> = f.data.into();
                     for p in peers.iter_mut().filter(|p| p.plays(&f.alias)) {

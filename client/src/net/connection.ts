@@ -1,7 +1,7 @@
 // The link to the backend: one socket, CBOR both ways, and a WebRTC data connection offered
 // over it, a reliable ordered channel and a best effort one. The socket carries everything the
-// channels do not, times the round trip for the status bar, and reconnects by itself, at once
-// when the page shows again.
+// channels do not, and reconnects by itself, at once when the page shows again. The round trip
+// for the status bar is timed the way a person's actions go.
 
 import { Decoder, Encoder } from "cbor-x";
 import type { ClientMsg } from "../protocol/ClientMsg";
@@ -16,9 +16,12 @@ const CHANNELS_WAIT_MS = 10_000;
 /** Failed channels are offered again after this, doubling each time up to a minute. */
 const CHANNELS_RETRY_MS = 2000;
 const CHANNELS_RETRY_MAX_MS = 60_000;
+/** A ping on the channels unanswered this long means they broke, so the socket takes over. */
+const CHANNELS_SILENT_MS = 1000;
 
-/** What a person does on a running page, which goes on the reliable channel while it is open. */
-const ON_CHANNEL: ReadonlySet<ClientMsg["type"]> = new Set(["fire", "set", "answer"]);
+/** What a person does on a running page, which goes on the reliable channel while it is open,
+ *  and the ping that times it. */
+const ON_CHANNEL: ReadonlySet<ClientMsg["type"]> = new Set(["fire", "set", "answer", "ping"]);
 
 // plain CBOR maps as objects, none of cbor-x's own record extension, so Rust reads it
 const cbor = { encoder: new Encoder({ useRecords: false }), decoder: new Decoder({ mapsAsObjects: true, useRecords: false }) };
@@ -37,6 +40,10 @@ interface Channels {
 let channels: Channels | null = null;
 let channelsRetry: number | undefined;
 let channelsTries = 0;
+/** When the oldest ping on the channels still unanswered went. */
+let unanswered: number | null = null;
+/** The last round trip timed, which the next ping tells the backend. */
+let timed: number | undefined;
 
 export function connect() {
   if (socket) return;
@@ -49,7 +56,7 @@ export function connect() {
   ws.onopen = () => {
     tries = 0;
     setState("link", "open");
-    beat = window.setInterval(() => send({ type: "ping", t: performance.now() }), ROUND_TRIP_EVERY_MS);
+    beat = window.setInterval(ping, ROUND_TRIP_EVERY_MS);
     channelsTries = 0;
     void openChannels();
   };
@@ -67,12 +74,22 @@ function heard(data: ArrayBuffer) {
   const msg = cbor.decoder.decode(new Uint8Array(data)) as ServerMsg;
   if (msg.type === "pong") {
     const rtt = performance.now() - msg.t;
+    timed = rtt;
+    if (unanswered !== null && msg.t >= unanswered) unanswered = null;
     setState("rttMs", state.rttMs === null ? rtt : state.rttMs * 0.8 + rtt * 0.2);
   } else if (msg.type === "channels") {
     answered(msg.answer);
   } else {
     receive(msg);
   }
+}
+
+function ping() {
+  const t = performance.now();
+  if (state.channels && unanswered !== null && t - unanswered > CHANNELS_SILENT_MS) channelsFailed();
+  if (state.channels) unanswered ??= t;
+  send({ type: "ping", t, rtt: timed });
+  timed = undefined;
 }
 
 /** Sends at once, true when it went. Without a link nothing can be done, so the person hears
@@ -140,14 +157,18 @@ function closeChannels() {
   clearTimeout(channelsRetry);
   const c = channels;
   channels = null;
+  unanswered = null;
   c?.pc.close();
   setState("channels", false);
 }
 
-/** The channels closed while the socket stays, so they are offered again a while later. */
+/** The channels broke while the socket stays, so the backend hears it there at once, and they
+ *  are offered again a while later. */
 function channelsFailed() {
+  const used = state.channels;
   closeChannels();
   if (state.link !== "open") return;
+  if (used) send({ type: "off_channels" });
   channelsRetry = window.setTimeout(() => void openChannels(), Math.min(CHANNELS_RETRY_MAX_MS, CHANNELS_RETRY_MS * 2 ** channelsTries++));
 }
 

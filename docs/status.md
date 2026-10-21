@@ -11,7 +11,8 @@ The screens connected, a list. Each holds:
 - `id`: its number, as the log and `p.screen` give it
 - `address`: where it connects from
 - `connected_at`: when it connected, in Unix seconds
-- `ping_ms`: the last round trip to it and back, 0 until one is measured
+- `ping_ms`: the last round trip to it and back, 0 until one is measured. While it has its
+  data channels it is timed there, the way its values and actions go, else on its socket.
 - `jitter_ms`: how much the round trip wavers, smoothed as RTP does: each new round trip
   moves it a sixteenth of the way to how far that one was from the last
 - `data_channels`: whether its WebRTC data channels are open. Without them it gets
