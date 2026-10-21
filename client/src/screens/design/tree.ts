@@ -55,6 +55,19 @@ function flows(e: Element, scope: Scope): boolean {
   return r.ok && flowOf(r.value) !== undefined;
 }
 
+/** Whether `e` is placed freely by `position: "absolute"`, which takes it out of its frame's
+ *  flow as CSS does. */
+function free(e: Element, scope: Scope): boolean {
+  if (e.props.position === undefined) return false;
+  const r = resolve(e.props.position, scope);
+  return r.ok && r.value === "absolute";
+}
+
+/** Whether `room`'s flow places `e`: its frame lays out what it holds, and `e` is not free. */
+export function flowed(e: Element, room: Room, scope: Scope = pageScope): boolean {
+  return !!room.flows && !free(e, scope);
+}
+
 /** The box the editor drew an element at, from its frame's inner corner, for one the page
  *  lays out itself. A repeat's first copy stands for it, as everywhere in the editor. */
 function drawn(id: string): Box | undefined {
@@ -70,7 +83,7 @@ export function laidOut(page: Page, id: string): boolean {
   // what holds each, a group passing on the frame around it
   let holder: number | null = null;
   return path.some((e, i) => {
-    const laid = !!sizeWord(e.props.w) || !!sizeWord(e.props.h) || (holder !== null && flows(path[holder], reads[holder]));
+    const laid = !!sizeWord(e.props.w) || !!sizeWord(e.props.h) || (holder !== null && flows(path[holder], reads[holder]) && !free(e, reads[i]));
     if (e.tag !== "group") holder = i;
     return laid;
   });
@@ -113,8 +126,9 @@ export function boxOf(e: Element, room: Room, overrides?: Overrides, scope: Scop
   // a group's box is the one around what it holds, which shares its room
   if (e.tag === "group") return union(e.children.map((c) => boxOf(c, room, overrides, scope)));
   // what the page lays out itself is measured as it drew it
-  const laid = room.flows || sizeWord(e.props.w) || sizeWord(e.props.h) ? drawn(e.id) : undefined;
-  if (room.flows) return laid ?? { x: 0, y: 0, w: 0, h: 0 };
+  const placed = flowed(e, room, scope);
+  const laid = placed || sizeWord(e.props.w) || sizeWord(e.props.h) ? drawn(e.id) : undefined;
+  if (placed) return laid ?? { x: 0, y: 0, w: 0, h: 0 };
   const at = (k: keyof Box) => placement(e.props[k], k === "x" || k === "w" ? room.w : room.h, scope);
   const w = sizeWord(e.props.w) ? (laid?.w ?? 0) : at("w");
   const h = sizeWord(e.props.h) ? (laid?.h ?? 0) : at("h");
@@ -176,7 +190,7 @@ export function originEdits(page: Page, id: string, origin: string | null): Edit
     return placementText(old, k, placement(old, k === "x" ? within.w : within.h) + by, within);
   };
   // the box turns about the point, so the new point sits where the turn takes it
-  if (!room.flows) {
+  if (!flowed(e, room, scope)) {
     const r = resolve(e.props.rotate ?? "0", scope);
     const turn = ((r.ok && Number(r.value)) || 0) * (Math.PI / 180);
     const [c, s] = [Math.cos(turn), Math.sin(turn)];
@@ -261,7 +275,7 @@ function shifted(e: Element, room: Room, dx: number, dy: number): { x: string; y
 export function shiftBy(page: Page, e: Element, dx: number, dy: number): Edit[] {
   const room = roomOf(page, e.id);
   // a frame that lays it out places it, never its x and y
-  if (room.flows) return [];
+  if (flowed(e, room)) return [];
   return leaves(e)
     .filter((l) => literal(l, ["x", "y"]))
     .map((l): Edit => ({ kind: "set_props", page: page.id, id: l.id, props: shifted(l, room, dx, dy) }));
@@ -312,7 +326,7 @@ export function moveAll(page: Page, ids: string[], parent: string | null, index:
     const a = inside(page, from);
     // into or out of a group, the room stays and so does every place
     const same = a.at.x === b.at.x && a.at.y === b.at.y && a.room.ox === b.room.ox && a.room.oy === b.room.oy;
-    if (from === parent || same || b.room.flows || !literal(e, ["x", "y"])) continue;
+    if (from === parent || same || flowed(e, b.room) || !literal(e, ["x", "y"])) continue;
     for (const l of leaves(e)) {
       const own = boxOf(l, a.room);
       const there = { ...own, x: own.x + a.at.x - b.at.x, y: own.y + a.at.y - b.at.y };
@@ -360,7 +374,7 @@ export type Align = "left" | "centre" | "right" | "top" | "middle" | "bottom";
 /** The selected elements that can move, each with its box on the page. */
 function placed(page: Page, ids: string[]) {
   return tops(page, ids)
-    .filter((e) => literal(e, ["x", "y"]) && !roomOf(page, e.id).flows)
+    .filter((e) => literal(e, ["x", "y"]) && !flowed(e, roomOf(page, e.id)))
     .flatMap((e) => {
       const b = absolute(page, e.id);
       return b ? [{ e, b }] : [];

@@ -32,6 +32,8 @@ import {
   ArrowRight,
   ArrowUp,
   Check,
+  Pin,
+  PinOff,
   Plus,
   X,
 } from "../../ui/icons";
@@ -39,7 +41,7 @@ import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, keysOf, kindOf, PADDING, PartsField, Points, POINTS, RADIUS, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, ORIGINS, PAINT, ROTATE, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
-import { absolute, type Align, align, chain, find, originEdits, roomOf, scopeOf, sendEdits, setHandler, setProps, showProps, spread, tops } from "./tree";
+import { absolute, type Align, align, boxOf, boxText, chain, find, flowed, originEdits, roomOf, scopeOf, sendEdits, setHandler, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
  *  the free CSS box. */
@@ -57,7 +59,7 @@ const TEXT_LOOK: Spec[] = [
   // a text's lines within its box, as CSS aligns a block's content
   ["Vertical", "align-content", { kind: "choice", options: ['"start"', '"center"', '"end"'], placeholder: '"start"' }],
 ];
-const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...keysOf(RADIUS), ...keysOf(PADDING), "gap"]);
+const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...keysOf(RADIUS), ...keysOf(PADDING), "gap", "position"]);
 
 /** The right sidebar: the selected element's properties, a word on several, or the page's
  *  when none is selected. */
@@ -246,10 +248,21 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const diagram = () => p.element.tag === "svg";
   const shape = () => SHAPES.has(p.element.tag);
   const grouped = () => p.element.tag === "group";
-  // a frame that lays it out places it, so its x and y wait
-  const flowing = () => {
+  // a frame that lays it out places it, so its x and y wait, unless it is placed freely
+  const room = () => {
     const doc = pageOf(p.page);
-    return !!doc && !!roomOf(doc, p.element.id).flows;
+    return doc ? roomOf(doc, p.element.id) : undefined;
+  };
+  const flowing = () => {
+    const r = room();
+    return !!r && flowed(p.element, r, where().scope);
+  };
+  // out of the flow it stays where it was drawn, and back in it its x and y wait again
+  const placeFreely = () => {
+    const [doc, r] = [pageOf(p.page), room()];
+    if (!doc || !r) return;
+    const b = boxOf(p.element, r, undefined, where().scope);
+    setProps(p.page, p.element.id, { position: '"absolute"', x: boxText(p.element, "x", b, r), y: boxText(p.element, "y", b, r) });
   };
   // hug fits what it holds or shows, fill takes the room its frame's flow leaves
   const sizing = () => ({ hug: p.element.props.layout !== undefined || text() || instance(), fill: flowing() });
@@ -350,6 +363,22 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
               {(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} lead={k === "w" || k === "h" ? sizes(k) : undefined} />}
             </For>
           </div>
+          <Show when={room()?.flows}>
+            <Show
+              when={flowing()}
+              fallback={
+                <button class="ghost" title="Its frame lays it out again, after what comes before it" onClick={() => setProps(p.page, p.element.id, { position: null })}>
+                  <PinOff size={13} />
+                  Put it back in the layout
+                </button>
+              }
+            >
+              <button class="ghost" title="Its x and y place it over the layout, which leaves it out" onClick={placeFreely}>
+                <Pin size={13} />
+                Place it freely
+              </button>
+            </Show>
+          </Show>
           {/* the point x and y place, its children count from and it turns about */}
           <Field {...prop("origin")} onWrite={(t) => sendEdits(originEdits(pageOf(p.page)!, p.element.id, t))} label="Origin" kind="point" options={ORIGINS} placeholder='"0% 0%"' />
           <Turn prop={prop} specs={[ROTATE]} />

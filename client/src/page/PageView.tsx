@@ -336,16 +336,18 @@ function ElementView(p: ElementProps & { at?: At }) {
     const origin = take("origin");
     const [ox, oy] = originCss(origin) ?? ["0px", "0px"];
     const o = p.overrides?.(p.element.id);
-    if (p.room.flow) {
-      // its frame lays it out: x and y wait, and a fill takes the room left along the flow
+    // its frame lays it out unless it is placed freely, out of the flow as CSS takes it
+    if (p.room.flow && take("position") !== "absolute") {
+      // x and y wait, and a fill takes the room left along the flow
       style.position = "relative";
       const along = p.room.flow === "right" || p.room.flow === "left" ? "w" : "h";
       for (const k of ["w", "h"] as const) {
         const side = k === "w" ? "width" : "height";
-        if (word(k) === "fill" && k === along) Object.assign(style, { flex: "1 1 0", [`min-${side}`]: "0" });
-        else if (word(k) === "fill") style["align-self"] = "stretch";
+        // a size a grip holds is a number until the page carries it
+        if (word(k) === "fill" && k === along && !o) Object.assign(style, { flex: "1 1 0", [`min-${side}`]: "0" });
+        else if (word(k) === "fill" && !o) style["align-self"] = "stretch";
         else {
-          const s = size(k);
+          const s = o ? `${(k === "w" ? o.w : o.h) * UNIT}px` : size(k);
           if (s) style[side] = s;
           if (k === along) style["flex-shrink"] = "0";
         }

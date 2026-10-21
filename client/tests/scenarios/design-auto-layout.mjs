@@ -1,7 +1,8 @@
 // A frame lays out what it holds: in a row with a gap and padding, hugging them; reversed;
 // down a column centred; spread over its length with an auto gap; with one part filling the
-// room left; and wrapped. A part it lays out shows its ring where it is drawn, offers no grips,
-// and a drag leaves its x be. The inspector lays a frame out from its Auto layout section, and
+// room left; and wrapped. A part it lays out shows its ring where it is drawn, its grips make a
+// size that fills a number, and a drag takes it to another place in the row, its x left be,
+// a line showing where it goes. The inspector lays a frame out from its Auto layout section, and
 // a part it lays out offers its size, not its x and y, its w and h labels offering Fixed, Hug or
 // Fill where they may.
 
@@ -51,14 +52,30 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await set(row, { w: "15", wrap: "true" });
   await shows("the parts to wrap", async () => (await at(parts[2])).join() === "1,6,6,4");
 
-  // a part the row lays out: its ring where it is drawn, no grips, and a drag moves nothing
+  // a part the row lays out: its ring where it is drawn, and grips that size a fill as a number
+  await set(parts[2], { w: "fill" });
+  await shows("the last part to fill its line", async () => (await at(parts[2])).join() === "1,6,13,4");
   await d.el(parts[2]).click();
   const [ring, drawn] = [await page.locator(".artboard .ring").boundingBox(), await d.box(parts[2])];
   check(Math.abs(ring.x - drawn.x) < 2 && Math.abs(ring.y - drawn.y) < 2 && Math.abs(ring.width - drawn.width) < 2, "the ring is not where the part is drawn");
-  check((await page.locator(".artboard .ring .handle").count()) === 0, "a part the row lays out shows grips");
-  await d.drag(parts[2], 60, 60);
-  await page.waitForTimeout(300);
+  check((await page.locator(".artboard .ring .handle").count()) === 8, "a part the row lays out offers no grips");
+  await d.resize("e", -5 * (await k()), 0);
+  await eventually(() => props(hmi, pageId, parts[2]).w === "8", () => `the fill to become 8 wide, it is ${props(hmi, pageId, parts[2]).w}`);
+  await shows("the part drawn 8 wide", async () => (await at(parts[2])).join() === "1,6,8,4");
+
+  // a drag along the row puts it before the first, and its x stays
+  const [from, first] = [await d.box(parts[2]), await d.box(parts[0])];
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  for (let i = 1; i <= 4; i++) await page.mouse.move(from.x + from.width / 2 + ((first.x + 2 - from.x - from.width / 2) * i) / 4, from.y + from.height / 2 + ((first.y + first.height / 2 - from.y - from.height / 2) * i) / 4);
+  const slot = await page.locator(".artboard .slot").boundingBox();
+  check(slot && Math.abs(slot.x + slot.width / 2 - first.x) < 2 && Math.abs(slot.y - first.y) < 2, `the line shows at ${JSON.stringify(slot)}, not at the first part's ${JSON.stringify(first)}`);
+  await page.mouse.up();
+  const order = () => hmi.page(pageId).children.find((e) => e.id === row).children.map((c) => c.id).join();
+  await eventually(() => order() === [parts[2], parts[0], parts[1]].join(), () => `the part to go first, the row holds ${order()}`);
   check(props(hmi, pageId, parts[2]).x === "52", `a drag moved a part the row lays out to ${props(hmi, pageId, parts[2]).x}`);
+  check((await page.locator(".artboard .slot").count()) === 0, "the line stays after the drag");
+  await set(parts[2], { w: "6" });
 
   const box = await hmi.addElement(pageId, "div", { name: "Box", x: "4", y: "40", w: "30", h: "20", background: "#2a2f35" });
   for (const name of ["A", "B"]) await hmi.addElement(pageId, "div", { name, x: "0", y: "0", w: "5", h: "5", background: "#4a8fd6" }, box);

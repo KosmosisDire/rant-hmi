@@ -112,6 +112,13 @@
   pointer-events: none;
 }
 
+/* Where a part dragged along its frame's flow goes if let go now. */
+.slot {
+  position: absolute;
+  background: var(--accent);
+  pointer-events: none;
+}
+
 /* What holds the picked element, faintly, so its bounds show while placing inside it. */
 .holder {
   position: absolute;

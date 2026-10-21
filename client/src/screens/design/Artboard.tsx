@@ -9,11 +9,11 @@ import type { Page } from "../../protocol/Page";
 import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
 import { follow } from "../../ui/press";
-import { UNIT } from "../../state/bind";
+import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
 import { leaves } from "../../page/PageView";
-import { absolute, boxOf, boxText, chain, find, isGroup, laidOut, literal, originOf, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
+import { absolute, boxOf, boxText, chain, childrenOf, find, flowed, isGroup, laidOut, literal, moveTo, originOf, parentOf, pickAt, roomOf, scopeOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 /** Places snap to whole units. A finer one is typed as a fraction, or dragged with Alt, which
  *  lands on pixels, a tenth of a unit. */
@@ -61,11 +61,13 @@ const KEYS: [string, string][] = [
   ["Escape", "let go"],
 ];
 
-/** A pan, a box drawn to select, or a move or resize of `ids` led by the one under the pointer.
- *  `enter` is what a press inside a selected group picks when it lets go unmoved. */
+/** A pan, a box drawn to select, a part dragged along its frame's flow to `slot`, or a move or
+ *  resize of `ids` led by the one under the pointer. `enter` is what a press inside a selected
+ *  group picks when it lets go unmoved. */
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "box"; sx: number; sy: number }
+  | { kind: "reorder"; id: string; parent: string; flow: Flow; sx: number; sy: number; slot: number | null }
   | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string; turn: Turns }
   | { kind: "shape"; how: "move" | Handle; id: string; sx: number; sy: number; base: Element; screen: DOMMatrix; outline: DOMRect; props: Record<string, string> | null; enter?: string };
 
@@ -153,6 +155,8 @@ export function Artboard(p: {
   const [held, setHeld] = createSignal<Held>({});
   /** The box a Shift drag draws, on screen. */
   const [box, setBox] = createSignal<{ left: number; top: number; width: number; height: number } | null>(null);
+  /** The line where a part dragged along a flow would go, on the page. */
+  const [slotLine, setSlotLine] = createSignal<Box | null>(null);
   const overrides = (id: string) => held()[id]?.box;
   const release = (id: string, n?: number) =>
     setHeld((all) => (all[id] && (n === undefined || all[id].n === n) ? Object.fromEntries(Object.entries(all).filter(([k]) => k !== id)) : all));
@@ -231,8 +235,11 @@ export function Artboard(p: {
     const h = held();
     for (const id of Object.keys(h)) {
       const e = find(p.page.children, id);
-      const now = e && boxOf(e, roomOf(p.page, id));
-      const carried = !now || (["x", "y", "w", "h"] as const).every((k) => Math.abs(now[k] - h[id].box[k]) < 0.01);
+      const room = roomOf(p.page, id);
+      const now = e && boxOf(e, room);
+      // a part its frame lays out is placed by the frame, so only its size is carried
+      const keys = e && flowed(e, room) ? (["w", "h"] as const) : (["x", "y", "w", "h"] as const);
+      const carried = !now || keys.every((k) => Math.abs(now[k] - h[id].box[k]) < 0.01);
       if (carried && !(drag && "ids" in drag && drag.ids.includes(id))) release(id);
     }
   });
@@ -269,7 +276,7 @@ export function Artboard(p: {
         startShape(handle, p.selected[0]);
       } else if (handle && p.selected.length === 1) {
         const one = find(p.page.children, p.selected[0]);
-        if (one && movable(one, keysFor(handle))) start(handle, one.id, [one]);
+        if (one && resizable(one, handle)) start(handle, one.id, [one]);
       } else if (hit && (e.shiftKey || e.ctrlKey || e.metaKey)) {
         return p.onPick(hit, true);
       } else if (holder && hit && shape(holder)) {
@@ -287,7 +294,9 @@ export function Artboard(p: {
         const keep = p.selected.length > 1 && p.selected.includes(hit);
         if (!keep) p.onPick(hit);
         const group = (keep ? tops(p.page, p.selected) : [find(p.page.children, hit)!]).filter((g) => movable(g, ["x", "y"]));
+        const flow = keep ? undefined : flowAround(hit);
         if (group.some((g) => g.id === hit)) start("move", hit, group);
+        else if (flow) drag = { kind: "reorder", id: hit, parent: parentOf(p.page, hit)!, flow, sx: e.clientX, sy: e.clientY, slot: null };
       } else if (e.shiftKey) {
         drag = { kind: "box", sx: e.clientX, sy: e.clientY };
       } else {
@@ -310,6 +319,16 @@ export function Artboard(p: {
     if (drag.kind === "box") {
       const r = host.getBoundingClientRect();
       setBox({ left: Math.min(drag.sx, e.clientX) - r.left, top: Math.min(drag.sy, e.clientY) - r.top, width: Math.abs(dx), height: Math.abs(dy) });
+      return;
+    }
+    if (drag.kind === "reorder") {
+      if (Math.hypot(dx, dy) < 4) return;
+      const r = host.getBoundingClientRect();
+      const v = view();
+      const at = { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
+      const { slot, line } = slotAt(drag, at);
+      drag.slot = slot;
+      setSlotLine(line);
       return;
     }
     if (drag.kind === "shape") {
@@ -346,6 +365,7 @@ export function Artboard(p: {
     drag = null;
     if (!d || d.kind === "pan") return;
     if (d.kind === "box") setBox(null);
+    else if (d.kind === "reorder") setSlotLine(null);
     else if (d.kind === "shape") d.props && showProps(p.page.id, d.id, Object.fromEntries(Object.keys(d.props).map((k) => [k, d.base.props[k] ?? null])));
     else d.ids.forEach((id) => release(id, d.n));
   };
@@ -354,6 +374,11 @@ export function Artboard(p: {
     const d = drag;
     drag = null;
     if (d?.kind === "box") return takeBox();
+    if (d?.kind === "reorder") {
+      setSlotLine(null);
+      const at = childrenOf(p.page, d.parent).findIndex((c) => c.id === d.id);
+      return d.slot !== null && d.slot !== at && moveTo(p.page, d.id, d.parent, d.slot);
+    }
     if (d?.kind === "shape") {
       const moved = !!d.props && Object.entries(d.props).some(([k, v]) => d.base.props[k] !== v);
       if (!moved && d.enter) p.onPick(d.enter);
@@ -369,7 +394,8 @@ export function Artboard(p: {
         release(id, d.n);
         continue;
       }
-      for (const k of ["x", "y", "w", "h"] as (keyof Box)[]) {
+      // a part its frame lays out keeps only its new size, a number now whatever it was
+      for (const k of (e && flowed(e, room) ? ["w", "h"] : ["x", "y", "w", "h"]) as (keyof Box)[]) {
         // a new size moves the origin, so x and y follow w and h
         const changed = (key: keyof Box) => d.boxes[id][key] !== d.bases[id][key];
         if (e && (changed(k) || (k === "x" && changed("w")) || (k === "y" && changed("h")))) props[k] = boxText(e, k, d.boxes[id], room);
@@ -381,6 +407,39 @@ export function Artboard(p: {
     if (edits.length === 0 && d.enter) p.onPick(d.enter);
     // a refused write must not hold its boxes forever
     window.setTimeout(() => d.ids.forEach((id) => release(id, d.n)), 3000);
+  };
+
+  // the way a part's frame lays it out, when it does
+  const flowAround = (id: string): Flow | undefined => {
+    const [e, parent] = [find(p.page.children, id), parentOf(p.page, id)];
+    const frame = parent ? find(p.page.children, parent) : undefined;
+    if (!e || !frame || !flowed(e, roomOf(p.page, id))) return undefined;
+    const r = resolve(frame.props.layout, scopeOf(p.page, parent!));
+    return r.ok ? flowOf(r.value) : undefined;
+  };
+
+  // where among what its frame lays out a dragged part goes, counted without it, and the line
+  // that shows it: before the first part the pointer is ahead of along the flow, on its line
+  const slotAt = (d: { id: string; parent: string; flow: Flow }, at: { x: number; y: number }): { slot: number; line: Box | null } => {
+    const others = childrenOf(p.page, d.parent).filter((c) => c.id !== d.id);
+    const across = d.flow === "right" || d.flow === "left";
+    const back = d.flow === "left" || d.flow === "up";
+    const [along, side] = across ? [at.x, at.y] : [at.y, at.x];
+    let last: Box | null = null;
+    for (const [i, c] of others.entries()) {
+      const b = flowed(c, roomOf(p.page, c.id)) ? absolute(p.page, c.id) : undefined;
+      if (!b) continue;
+      last = b;
+      const [start, size, from, length] = across ? [b.x, b.w, b.y, b.h] : [b.y, b.h, b.x, b.w];
+      const ahead = back ? along > start + size / 2 : along < start + size / 2;
+      if (side < from || (side <= from + length && ahead)) return { slot: i, line: edge(b, across, back) };
+    }
+    return { slot: others.length, line: last && edge(last, across, !back) };
+  };
+  // a part's leading side along the flow, or its trailing one with `back`, as a thin line
+  const edge = (b: Box, across: boolean, back: boolean): Box => {
+    const t = 2 / view().k;
+    return across ? { x: (back ? b.x + b.w : b.x) - t / 2, y: b.y, w: t, h: b.h } : { x: b.x, y: (back ? b.y + b.h : b.y) - t / 2, w: b.w, h: t };
   };
 
   // what lies wholly inside the drawn box joins the selection
@@ -414,8 +473,16 @@ export function Artboard(p: {
   // are measured from the drawn page, each frame while one is picked, as live values may move it
   const shape = (id: string) => SHAPES.has(find(p.page.children, id)?.tag ?? "");
   const measuredOne = (id: string) => shape(id) || laidOut(p.page, id);
-  // what a drag may move or size: numbers it can write, and a place no frame's flow sets
-  const movable = (e: Element, keys: (keyof Box)[]) => literal(e, keys) && !roomOf(p.page, e.id).flows;
+  // what a drag may move: numbers it can write, and a place no frame's flow sets
+  const movable = (e: Element, keys: (keyof Box)[]) => literal(e, keys) && !flowed(e, roomOf(p.page, e.id));
+  // what a grip may size: a size the page works out, as a hug's or a fill's, becomes a number,
+  // and the place it moves, for a grip on the left or the top, is one it can write
+  const resizable = (e: Element, h: Handle) => {
+    const keys = keysFor(h);
+    const sizes = keys.filter((k) => k === "w" || k === "h");
+    const places = flowed(e, roomOf(p.page, e.id)) ? [] : keys.filter((k) => k === "x" || k === "y");
+    return literal(e, places) && sizes.every((k) => literal(e, [k]) || !!sizeWord(e.props[k]));
+  };
   // what holds the picked elements, outlined faintly so their bounds show
   const parents = () => [...new Set(p.selected.map((id) => parentOf(p.page, id)))].filter((id): id is string => !!id && !p.selected.includes(id));
   const [measured, setMeasured] = createSignal<Record<string, DOMRect>>({});
@@ -485,11 +552,10 @@ export function Artboard(p: {
   };
   // a flat side, as a level line's, has nothing to scale, and its grips would cover the
   // middle a press moves it by
-  // and a size the page sets, as a hug's, has none to pull
   const grips = (id: string) => {
     const m = shape(id) ? measured()[id] : undefined;
     const e = find(p.page.children, id);
-    return HANDLES.filter((h) => !(m && m.height < 2 && /^[ns]$/.test(h)) && !(m && m.width < 2 && /^[ew]$/.test(h)) && (shape(id) || (!!e && literal(e, keysFor(h)))));
+    return HANDLES.filter((h) => !(m && m.height < 2 && /^[ns]$/.test(h)) && !(m && m.width < 2 && /^[ew]$/.test(h)) && (shape(id) || (!!e && resizable(e, h))));
   };
   // the point shows once the element says how it turns
   const turns = (id: string) => {
@@ -547,6 +613,9 @@ export function Artboard(p: {
       </div>
       <div class="veil" style={sheet()} />
       <Show when={box()}>{(b) => <div class="marquee" style={{ left: `${b().left}px`, top: `${b().top}px`, width: `${b().width}px`, height: `${b().height}px` }} />}</Show>
+      <Show when={slotLine()}>
+        {(b) => <div class="slot" style={{ left: `${view().x + b().x * view().k}px`, top: `${view().y + b().y * view().k}px`, width: `${b().w * view().k}px`, height: `${b().h * view().k}px` }} />}
+      </Show>
       <For each={parents()}>{(id) => <Show when={ring(id)}>{(r) => <div class="holder" style={r()} />}</Show>}</For>
       {/* a ring for each selected element, its grips only when it is the one */}
       <For each={p.selected}>
@@ -554,7 +623,7 @@ export function Artboard(p: {
           <Show when={ring(id)}>
             {(r) => (
               <div class="ring" style={r()}>
-                <Show when={p.selected.length === 1 && (!shape(id) || scales(id)) && find(p.page.children, id)?.tag !== "group" && !roomOf(p.page, id).flows}>
+                <Show when={p.selected.length === 1 && (!shape(id) || scales(id)) && find(p.page.children, id)?.tag !== "group"}>
                   <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} style={{ cursor: cursorOf(h, turn()?.id === id ? turn()!.angle + turn()!.room : 0) }} />}</For>
                 </Show>
               </div>

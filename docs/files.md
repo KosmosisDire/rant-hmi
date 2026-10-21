@@ -123,7 +123,8 @@ component placed on a page is a tag named after it.
   or `"up"`, and their `x` and `y` wait. `gap` is the space between them, `"auto"` spreading
   them over the frame's length, `padding` insets them, `wrap: true` wraps them, and `align`
   is where they sit, as `"top left"`, `"center"` or `"bottom right"`:
-  `style='layout: "down"; gap: 1; padding: 1; align: "center"'`.
+  `style='layout: "down"; gap: 1; padding: 1; align: "center"'`. `position: "absolute"` takes
+  a part out of its frame's flow, placed by its x and y over the others.
 - `origin` is a point of the element's box, a pair of percents of it or units such as
   `origin='"50% 100%"'`, the top left when unset. `x` and `y` place it, counted from the
   origin of what holds the element, and the element turns about it. A shape's origin is a
