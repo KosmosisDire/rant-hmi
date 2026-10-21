@@ -15,13 +15,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addSends("held");
   await d.add("drawing", { Name: "pad", x: "0", y: "0", w: "24", h: "6" });
   // the track takes the presses, which the marks and the knob above it let through
-  await d.addShape("rect", { Name: "track", x: "0.3", y: "0.3", Width: "23.4", Height: "5.4", Round: "2.7", Fill: "#1e2125", Stroke: "#3a4046", Thickness: "0.2" });
+  await d.addShape("rect", { Name: "track", x: "0.3", y: "0.3", Width: "23.4", Height: "5.4", Round: "2.7", Fill: "$panel", Stroke: "$border2", Thickness: "0.2" });
   await d.handler("drag", ["// the knob goes where the finger is along a track 23.4 across, as far as the travel", "kx = Math.max(-1, Math.min(1, ((p.x - 0.5) * 23.4) / travel));", 'emit("move", { x: kx });'].join("\n"));
   await d.handler("release", 'kx = 0;\nemit("move", { x: 0 });\nemit("held", { x: 0 });');
   await d.handler("repeat", 'emit("held", { x: kx });', "repeatMs");
-  await d.addShape("line", { Name: "span", "From x": "12 - travel", "From y": "3", "To x": "12 + travel", "To y": "3", Stroke: "#2f3540", Thickness: "0.2", Dashes: '"0.4 0.6"' });
+  await d.addShape("line", { Name: "span", "From x": "12 - travel", "From y": "3", "To x": "12 + travel", "To y": "3", Stroke: "$border2", Thickness: "0.2", Dashes: '"0.4 0.6"' });
   await d.css('pointer-events: "none"');
-  await d.addShape("circle", { Name: "knob", "Centre x": "12 + kx * travel", "Centre y": "3", Radius: "2.2", Fill: 'track.pressed ? "#4a8fd6" : "#3a4046"', Stroke: "#e4e6e8", Thickness: "0.2" });
+  await d.addShape("circle", { Name: "knob", "Centre x": "12 + kx * travel", "Centre y": "3", Radius: "2.2", Fill: "track.pressed ? $accent : $panel3", Stroke: "$text", Thickness: "0.2" });
   await d.css('pointer-events: "none"');
 
   await d.addPage("Lever");
@@ -30,7 +30,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.handler("held", "leverBeats = leverBeats + 1;\nleverHeld = p.x;");
   const upright = await d.place("Joystick1D", { x: "16", y: "30", w: "24", h: "6", Origin: '"50% 50%"', Rotate: "-90" });
   await d.handler("move", "lever = p.x;");
-  await d.add("text", { Name: "readout", x: "32", y: "5", w: "20", h: "4", Text: '"x " + lever.toFixed(2)', Colour: "#e4e6e8", Size: "2" });
+  await d.add("text", { Name: "readout", x: "32", y: "5", w: "20", h: "4", Text: '"x " + lever.toFixed(2)', Colour: "$text", Size: "2" });
 
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);

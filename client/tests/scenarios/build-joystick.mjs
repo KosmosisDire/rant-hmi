@@ -18,7 +18,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addSends("held");
   await d.add("drawing", { Name: "pad", x: "0", y: "0", w: "20", h: "20" });
   // the base takes the presses, which the ring and the knob above it let through
-  await d.addShape("circle", { Name: "base", "Centre x": "10", "Centre y": "10", Radius: "9.5", Fill: "#1e2125", Stroke: "#3a4046", Thickness: "0.2" });
+  await d.addShape("circle", { Name: "base", "Centre x": "10", "Centre y": "10", Radius: "9.5", Fill: "$panel", Stroke: "$border2", Thickness: "0.2" });
   await d.handler("drag", [
     "// the knob goes where the finger is, as far as the ring, on a base 19 across",
     "const dx = (p.x - 0.5) * 19, dy = (p.y - 0.5) * 19;",
@@ -29,16 +29,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   ].join("\n"));
   await d.handler("release", 'kx = 0;\nky = 0;\nemit("move", { x: 0, y: 0 });\nemit("held", { x: 0, y: 0 });');
   await d.handler("repeat", 'emit("held", { x: kx, y: -ky });', "repeatMs");
-  await d.addShape("circle", { Name: "ring", "Centre x": "10", "Centre y": "10", Radius: "travel", Fill: '"none"', Stroke: "#2f3540", Thickness: "0.2", Dashes: '"0.4 0.6"' });
+  await d.addShape("circle", { Name: "ring", "Centre x": "10", "Centre y": "10", Radius: "travel", Fill: '"none"', Stroke: "$border2", Thickness: "0.2", Dashes: '"0.4 0.6"' });
   await d.css('pointer-events: "none"');
-  await d.addShape("circle", { Name: "knob", "Centre x": "10 + kx * travel", "Centre y": "10 + ky * travel", Radius: "3", Fill: 'base.pressed ? "#4a8fd6" : "#3a4046"', Stroke: "#e4e6e8", Thickness: "0.2" });
+  await d.addShape("circle", { Name: "knob", "Centre x": "10 + kx * travel", "Centre y": "10 + ky * travel", Radius: "3", Fill: "base.pressed ? $accent : $panel3", Stroke: "$text", Thickness: "0.2" });
   await d.css('pointer-events: "none"');
 
   await d.addPage("Joystick");
   const stick = await d.place("Joystick", { x: "4", y: "4", w: "20", h: "20" });
   await d.handler("move", "jogX = p.x;\njogY = p.y;");
   await d.handler("held", "beats = beats + 1;\nheldX = p.x;");
-  await d.add("text", { Name: "readout", x: "28", y: "12", w: "24", h: "4", Text: '"x " + jogX.toFixed(2) + "  y " + jogY.toFixed(2)', Colour: "#e4e6e8", Size: "2" });
+  await d.add("text", { Name: "readout", x: "28", y: "12", w: "24", h: "4", Text: '"x " + jogX.toFixed(2) + "  y " + jogY.toFixed(2)', Colour: "$text", Size: "2" });
 
   await d.tab("Run");
   const inst = page.locator(`.run-layer:not([hidden]) .el[data-id="${stick}"]`);

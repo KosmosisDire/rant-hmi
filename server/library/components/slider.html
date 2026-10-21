@@ -9,8 +9,8 @@
       value = Math.round((min + p.x * (max - min)) / step) * step;
       emit("change", value);
     </on>
-    <div id="e2" name="track" x="0" y="1.6" w="27" h="0.8" style="background: #3a4046; border-radius: 0.4"/>
-    <div id="e3" name="fill" x="0" y="1.6" w="(value - min) / (max - min) * 27" h="0.8" style="background: #4a8fd6; border-radius: 0.4"/>
-    <div id="e4" name="thumb" x="(value - min) / (max - min) * 27 - 1" y="1" w="2" h="2" style='background: root.pressed ? "#ffffff" : "#e4e6e8"; border-radius: 1; box-shadow: "0 1px 4px #0008"'/>
+    <div id="e2" name="track" x="0" y="1.6" w="27" h="0.8" style="background: $panel3; border-radius: 0.4"/>
+    <div id="e3" name="fill" x="0" y="1.6" w="(value - min) / (max - min) * 27" h="0.8" style="background: $accent; border-radius: 0.4"/>
+    <div id="e4" name="thumb" x="(value - min) / (max - min) * 27 - 1" y="1" w="2" h="2" style='background: root.pressed ? $onFill : $text; border-radius: 1; box-shadow: "0 1px 4px #0008"'/>
   </div>
 </component>

@@ -15,12 +15,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("min", "0");
   await d.addInput("max", "1");
   await d.addInput("seconds", "10");
-  await d.add("frame", { Name: "card", x: "0", y: "0", w: "40", h: "16", Fill: "#1e2125", Radius: "0.8" });
+  await d.add("frame", { Name: "card", x: "0", y: "0", w: "40", h: "16", Fill: "$panel", Radius: "$radius" });
   await d.add("drawing", { Name: "chart", x: "1", y: "1", w: "38", h: "14", "View box": '"0 0 100 100"', Fit: '"stretch"', Overflow: '"hidden"' });
   await d.addShape("polyline", {
     Name: "line",
     Points: 'values.length ? values.map((s) => ((s.t - values[values.length - 1].t) / (seconds * 1000) + 1) * 100 + "," + (100 - ((s.v - min) / (max - min)) * 100)).join(" ") : ""',
-    Stroke: "#4a8fd6",
+    Stroke: "$accent",
     Thickness: "2",
   });
   await d.css('vector-effect: "non-scaling-stroke"\nstroke-linejoin: "round"');

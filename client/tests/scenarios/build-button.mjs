@@ -7,13 +7,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("text", '"Start"');
   await d.addInput("holdMs", "0");
   await d.addSends("confirm");
-  await d.add("frame", { Name: "face", x: "0", y: "0", w: "20", h: "6", Fill: 'root.pressed ? "#1f5a24" : "#2e7d32"', Radius: "0.8" });
+  await d.add("frame", { Name: "face", x: "0", y: "0", w: "20", h: "6", Fill: "root.pressed ? $panel2 : $panel3", Radius: "$radius" });
   await d.handler("tap", 'if (!holdMs) emit("confirm");');
   await d.handler("hold", 'if (holdMs) emit("confirm");', "holdMs || 1e9");
-  await d.add("text", { Name: "label", x: "0", y: "0", w: "20", h: "6", Text: "text", Colour: "#ffffff", Size: "2", Weight: "600", Align: '"center"' });
+  await d.add("text", { Name: "label", x: "0", y: "0", w: "20", h: "6", Text: "text", Colour: "$text", Size: "2", Weight: "600", Align: '"center"' });
   await d.css('line-height: "60px"');
   await d.select("face");
-  await d.add("frame", { Name: "bar", x: "0", y: "5.5", w: "holdMs ? 20 * Math.min(root.heldFor / holdMs, 1) : 0", h: "0.5", Fill: "#ffffffaa" });
+  await d.add("frame", { Name: "bar", x: "0", y: "5.5", w: "holdMs ? 20 * Math.min(root.heldFor / holdMs, 1) : 0", h: "0.5", Fill: "$accent" });
 
   await d.addPage("Hold buttons");
   const start = await d.place("Button", { x: "4", y: "4", w: "20", h: "6", text: '"Start"' });
@@ -35,7 +35,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.mouse.down();
   await page.waitForTimeout(200);
   const face = await inst(stop).locator('.el[data-name="face"]').evaluate((e) => getComputedStyle(e).backgroundColor);
-  check(face === "rgb(31, 90, 36)", `the face does not darken while pressed: ${face}`);
+  check(face === "rgb(33, 33, 33)", `the face does not darken while pressed: ${face}`);
   await page.mouse.up();
   await page.waitForTimeout(500);
   check(hmi.state.values.Running?.value === true, "a short press confirmed");

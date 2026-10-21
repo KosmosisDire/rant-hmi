@@ -6,7 +6,7 @@
   <var name="kx" start="0"/>
   <var name="ky" start="0"/>
   <svg id="e1" name="pad" x="0" y="0" w="20" h="20">
-    <circle id="e2" name="base" cx="10" cy="10" fill="#1e2125" r="9.5" stroke="#3a4046" stroke-width="0.2">
+    <circle id="e2" name="base" cx="10" cy="10" fill="$panel" r="9.5" stroke="$border2" stroke-width="0.2">
       <on event="release">
         kx = 0;
         ky = 0;
@@ -25,7 +25,7 @@
         emit("move", { x: kx, y: -ky });
       </on>
     </circle>
-    <circle id="e3" name="ring" cx="10" cy="10" fill='"none"' pointer-events='"none"' r="travel" stroke="#2f3540" stroke-dasharray='"0.4 0.6"' stroke-width="0.2"/>
-    <circle id="e4" name="knob" cx="10 + kx * travel" cy="10 + ky * travel" fill='base.pressed ? "#4a8fd6" : "#3a4046"' pointer-events='"none"' r="3" stroke="#e4e6e8" stroke-width="0.2"/>
+    <circle id="e3" name="ring" cx="10" cy="10" fill='"none"' pointer-events='"none"' r="travel" stroke="$border2" stroke-dasharray='"0.4 0.6"' stroke-width="0.2"/>
+    <circle id="e4" name="knob" cx="10 + kx * travel" cy="10 + ky * travel" fill="base.pressed ? $accent : $panel3" pointer-events='"none"' r="3" stroke="$text" stroke-width="0.2"/>
   </svg>
 </component>

@@ -11,12 +11,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("max", "100");
   await d.addInput("unit", '""');
   await d.add("drawing", { Name: "dial", x: "0", y: "0", w: "16", h: "16" });
-  await d.addShape("circle", { Name: "track", ...arc(6.4, "#3a4046", 1.1) });
+  await d.addShape("circle", { Name: "track", ...arc(6.4, "$panel3", 1.1) });
   await d.css('pathlength: 100\nstroke-dasharray: "75 100"');
-  await d.addShape("circle", { Name: "level", ...arc(6.4, 'value > max * 0.8 ? "#c62828" : "#4a8fd6"', 1.1) });
+  await d.addShape("circle", { Name: "level", ...arc(6.4, "value > max * 0.8 ? $red : $accent", 1.1) });
   await d.css('pathlength: 100\nstroke-dasharray: `${Math.min(Math.max((value - min) / (max - min), 0), 1) * 75} 100`');
-  await d.addShape("text", { Name: "reading", Text: "value.toFixed(1)", x: "8", y: "8.4", Size: "2.7", Fill: "#e4e6e8" });
-  await d.addShape("text", { Name: "units", Text: "unit", x: "8", y: "11.5", Size: "1.3", Fill: "#9aa0a6" });
+  await d.addShape("text", { Name: "reading", Text: "value.toFixed(1)", x: "8", y: "8.4", Size: "2.7", Fill: "$text" });
+  await d.addShape("text", { Name: "units", Text: "unit", x: "8", y: "11.5", Size: "1.3", Fill: "$dim" });
 
   await d.addComponent("Knob", 12, 12);
   await d.addInput("value", "0", true);
@@ -26,22 +26,22 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.add("drawing", { Name: "dial", x: "0", y: "0", w: "12", h: "12" });
   await d.handler("drag", "const k = Math.min(Math.max((p.angle + 135) / 270, 0), 1);\nvalue = min + k * (max - min);\nemit(\"change\", value);");
   const ring = { "Centre x": "6", "Centre y": "6", Radius: "5.3", Fill: '"none"', Thickness: "0.5", Ends: '"round"', Transform: '"rotate(135 6 6)"' };
-  await d.addShape("circle", { Name: "track", ...ring, Stroke: "#3a4046" });
+  await d.addShape("circle", { Name: "track", ...ring, Stroke: "$panel3" });
   await d.css('pathlength: 100\nstroke-dasharray: "75 100"');
-  await d.addShape("circle", { Name: "level", ...ring, Stroke: "#4a8fd6" });
+  await d.addShape("circle", { Name: "level", ...ring, Stroke: "$accent" });
   await d.css('pathlength: 100\nstroke-dasharray: `${(value - min) / (max - min) * 75} 100`');
-  await d.addShape("circle", { Name: "face", "Centre x": "6", "Centre y": "6", Radius: "4.2", Fill: 'root.pressed ? "#2f3540" : "#2a2f35"', Stroke: "#3a4046", Thickness: "0.2" });
-  await d.addShape("line", { Name: "pointer", "From x": "6", "From y": "4.5", "To x": "6", "To y": "2.5", Stroke: "#e4e6e8", Thickness: "0.5", Transform: "`rotate(${-135 + (value - min) / (max - min) * 270} 6 6)`" });
+  await d.addShape("circle", { Name: "face", "Centre x": "6", "Centre y": "6", Radius: "4.2", Fill: "root.pressed ? $panel3 : $panel2", Stroke: "$border2", Thickness: "0.2" });
+  await d.addShape("line", { Name: "pointer", "From x": "6", "From y": "4.5", "To x": "6", "To y": "2.5", Stroke: "$text", Thickness: "0.5", Transform: "`rotate(${-135 + (value - min) / (max - min) * 270} 6 6)`" });
 
   await d.addComponent("Readout", 20, 8);
   await d.addInput("label", '"Value"');
   await d.addInput("value", "0");
   await d.addInput("unit", '""');
   await d.addInput("digits", "1");
-  await d.add("frame", { Name: "card", x: "0", y: "0", w: "20", h: "8", Fill: "#1e2125", Radius: "0.8" });
-  await d.add("text", { Name: "caption", x: "1.5", y: "0.9", w: "17.1", h: "2", Text: "label", Colour: "#9aa0a6", Size: "1.3" });
+  await d.add("frame", { Name: "card", x: "0", y: "0", w: "20", h: "8", Fill: "$panel", Radius: "$radius" });
+  await d.add("text", { Name: "caption", x: "1.5", y: "0.9", w: "17.1", h: "2", Text: "label", Colour: "$dim", Size: "1.3" });
   await d.select("card");
-  await d.add("text", { Name: "reading", x: "1.5", y: "3.1", w: "17.1", h: "4", Text: 'value.toFixed(digits) + " " + unit', Colour: "#e4e6e8", Size: "2.5", Weight: "600" });
+  await d.add("text", { Name: "reading", x: "1.5", y: "3.1", w: "17.1", h: "4", Text: 'value.toFixed(digits) + " " + unit', Colour: "$text", Size: "2.5", Weight: "600" });
 
   await d.addPage("Dials");
   const gauge = await d.place("Gauge", { x: "4", y: "4", w: "16", h: "16", value: "Speed", max: "2", unit: '"m/s"' });
