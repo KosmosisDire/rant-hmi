@@ -27,5 +27,5 @@ screen.
 
 ```
 cd client && npm install && npm run build && cd ..
-cargo run -p rant-hmi -- examples/demo
+cargo run -p rant-hmi -- path/to/my-hmi
 ```
