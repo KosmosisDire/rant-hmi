@@ -104,7 +104,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await onBox("Bring to front");
   await eventually(() => top().at(-1).id === box, "the box to come to the front");
 
-  await d.menu(page.locator(`.screen:not([hidden]) .sidebar.left .list-row[data-id="${badge}"]`), "Select what holds it");
+  await d.menu(page.locator(`.screen:not([hidden]) .sidebar.left .list-row[data-id="${badge}"]`), "Select parent");
   await eventually(async () => (await page.locator(".screen:not([hidden]) .sidebar.left .list-row.selected[data-id]").getAttribute("data-id")) === box, "the box to be picked");
 
   // a field's label copies its value and resets it to the default

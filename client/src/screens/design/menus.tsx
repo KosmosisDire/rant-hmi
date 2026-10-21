@@ -100,7 +100,7 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
       { label: "Send to back", keys: "Ctrl Shift [", icon: <SendToBack size={13} />, run: () => restack(page, one, "back") },
     );
   }
-  if (holder) entries.push("-", { label: "Select what holds it", icon: <SquareDashedMousePointer size={13} />, run: () => pick(holder) });
+  if (holder) entries.push("-", { label: "Select parent", icon: <SquareDashedMousePointer size={13} />, run: () => pick(holder) });
   const drawn = (e.target as HTMLElement).closest(".el[data-id]");
   if (one === id && drawn && showsPicture(drawn)) entries.push("-", { label: "Save picture", icon: <Download size={13} />, run: () => savePicture(drawn, element?.props.name ?? "picture") });
   entries.push("-", { label: picked.length > 1 ? `Delete ${picked.length}` : "Delete", keys: "Del", icon: <Trash size={13} />, run: () => remove(page, picked) });
