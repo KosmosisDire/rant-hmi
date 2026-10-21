@@ -41,6 +41,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await set(parts[1], { w: "fill" });
   await shows("the fill to take the room left", async () => (await at(parts[1])).join() === "8,1,24,4");
 
+  // a side's own padding counts in units too
+  await set(row, { padding: null, "padding-left": "3" });
+  await shows("a left padding of 3 units", async () => (await at(parts[0]))[0] === 3);
+  await set(row, { padding: "1", "padding-left": null });
+
   await set(parts[1], { w: "6" });
   await set(row, { w: "15", wrap: "true" });
   await shows("the parts to wrap", async () => (await at(parts[2])).join() === "1,6,6,4");

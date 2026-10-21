@@ -76,8 +76,13 @@ const [raised, setRaised] = createSignal<Element | null>(null);
 /** How often a repeat may run at the most, in ms, as the HMI's own timers. */
 const QUICKEST = 50;
 
-/** CSS lengths that read a bare number as pixels. */
-const LENGTHS = new Set(["font-size", "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
+/** CSS lengths that read a bare number in units. */
+const SIDES = ["top", "right", "bottom", "left"];
+const LENGTHS = new Set([
+  ...["font-size", "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius"],
+  ...["border-width", "padding", "margin", "gap", "row-gap", "column-gap", "letter-spacing", "outline-width", "outline-offset"],
+  ...SIDES.flatMap((s) => [`padding-${s}`, `margin-${s}`, `border-${s}-width`]),
+]);
 
 /** A page's ground from its fill, the theme's `$ground` when it has none. None for a component,
  *  or a project without that token, which take the default. */
