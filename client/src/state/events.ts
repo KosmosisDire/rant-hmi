@@ -2,12 +2,14 @@
 // a component sends with `emit`, read from the component's own code.
 
 import { children, type Node, tree } from "../lang/arith.js";
-import { POINTER } from "../page/PageView";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { When } from "../protocol/When";
 import type { Suggestion } from "./complete";
 import { component } from "./store";
+
+/** What a pointer does to any element but an input. `outside` is a press anywhere else. */
+export const POINTER = ["tap", "press", "release", "hold", "repeat", "drag", "outside"];
 
 /** What `p` holds: its fields, or else the one value a component sends, as its code says it. */
 export interface Brought {
@@ -33,8 +35,15 @@ const POINTER_WORDS: Record<string, string> = {
   press: "pressed down",
   release: "let go, anywhere",
   hold: "held down a while",
+  repeat: "again and again while pressed",
   drag: "moved while pressed",
   outside: "a press anywhere else",
+};
+
+/** The events that take a time: its words, and the ms it is when left empty. */
+export const TIMED: Record<string, { label: string; ms: number }> = {
+  hold: { label: "After ms", ms: 500 },
+  repeat: { label: "Every ms", ms: 100 },
 };
 
 /** One event an element may handle, and whose it is: the pointer's, or its component's. */

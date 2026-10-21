@@ -33,7 +33,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await after.fill("600");
   await after.press("Enter");
   const hold = () => hmi.page(button).children.find((e) => e.id === face).handlers.find((h) => h.event === "hold");
-  await eventually(() => hold()?.code === "count = count + 1;" && hold()?.after === "600", "the hold handler and its time");
+  await eventually(() => hold()?.code === "count = count + 1;" && hold()?.ms === "600", "the hold handler and its time");
 
   const pageId = await hmi.addPage("Holds");
   const place = (x) => hmi.addElement(pageId, "use", { name: "Hold", x: String(x), y: "44", w: "220", h: "88" }, null, "HoldButton");

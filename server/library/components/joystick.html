@@ -1,6 +1,8 @@
 <component name="Joystick" size="220x220">
   <prop name="travel" default="70"/>
+  <prop name="repeatMs" default="100"/>
   <event name="move"/>
+  <event name="held"/>
   <var name="kx" start="0"/>
   <var name="ky" start="0"/>
   <svg id="e1" name="pad" x="0" y="0" w="220" h="220">
@@ -8,6 +10,10 @@
       kx = 0;
       ky = 0;
       emit("move", { x: 0, y: 0 });
+      emit("held", { x: 0, y: 0 });
+    </on>
+    <on event="repeat" every="repeatMs">
+      emit("held", { x: kx, y: -ky });
     </on>
     <on event="drag">
       // the knob goes where the finger is, as far as the ring

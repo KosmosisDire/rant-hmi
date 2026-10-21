@@ -224,12 +224,12 @@ export function designer(page) {
     },
 
     /** Gives the selected element a handler with this code, and a hold its time. */
-    async handler(event, code, after) {
+    async handler(event, code, ms) {
       if ((await d.code(event).count()) === 0) await d.addEvent(event);
       const box = d.code(event);
       await box.fill(code);
       await box.press("Control+Enter");
-      if (after !== undefined) await commit(right().locator(".event", { has: page.locator(".event-name", { hasText: new RegExp(`^${event}$`) }) }).locator(".event-when input"), after);
+      if (ms !== undefined) await commit(right().locator(".event", { has: page.locator(".event-name", { hasText: new RegExp(`^${event}$`) }) }).locator(".event-when input"), ms);
     },
   };
   return d;

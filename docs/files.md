@@ -104,6 +104,8 @@ component placed on a page is a tag named after it.
   needs no escaping. Expressions and code share the math in [math.md](math.md).
 - `<on>` holds a handler's code, first inside its element. A `hold` handler runs once a
   press lasts `after` ms, an expression, 500 when left out: `<on event="hold" after="600">`.
+  A `repeat` handler runs at the press, then every `every` ms while it lasts, 100 when left
+  out and 50 at the quickest: `<on event="repeat" every="200">`.
 - A handler reads what its event brings as `p`. A pointer event brings `x` and `y` across
   the element from 0 to 1, `angle` around its centre, `on` the part pressed and `inside`. An
   instance's own event brings what its component passes to `emit`.

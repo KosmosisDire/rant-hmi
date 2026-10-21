@@ -41,7 +41,7 @@ const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
 /// Events a second of, while the first still runs, is ignored. Any other is a stream, such as a
 /// drag or a joystick's move, whose latest must land, so it waits for the run.
-const ONCE: [&str; 5] = ["tap", "press", "release", "hold", "outside"];
+const ONCE: [&str; 6] = ["tap", "press", "release", "hold", "repeat", "outside"];
 
 /// What a screen's connection hands the loop.
 pub enum Inbound {

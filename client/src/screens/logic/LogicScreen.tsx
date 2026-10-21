@@ -242,8 +242,8 @@ export function LogicScreen(p: { shown: boolean }) {
                     code={h().h.code}
                     onCode={(code) => setHandler(h().pg.id, h().e.id, h().h.event, code)}
                     onRemove={() => setHandler(h().pg.id, h().e.id, h().h.event, null)}
-                    after={h().h.after}
-                    onAfter={h().h.event === "hold" ? (after) => setHandler(h().pg.id, h().e.id, "hold", h().h.code, after) : undefined}
+                    ms={h().h.ms}
+                    onMs={(ms) => setHandler(h().pg.id, h().e.id, h().h.event, h().h.code, ms)}
                     removeTitle={`Remove the ${h().h.event} handler`}
                     place={h().pg.interface ? "component" : "handler"}
                     names={namesOf(h().pg)}

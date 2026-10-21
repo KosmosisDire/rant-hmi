@@ -218,8 +218,8 @@ export function setProps(page: string, id: string, props: Record<string, string 
 
 /** Sets one event's handler, here at once too, so a change right after builds on this one
  *  and never sends back the code it replaced. A null code takes the handler away. */
-export function setHandler(page: string, id: string, event: string, code: string | null, after?: string) {
-  if (!send({ type: "edit", edit: { kind: "set_handler", page, id, event, code, after } })) return;
+export function setHandler(page: string, id: string, event: string, code: string | null, ms?: string) {
+  if (!send({ type: "edit", edit: { kind: "set_handler", page, id, event, code, ms } })) return;
   setState(
     "pages",
     (pg) => pg.id === page,
@@ -230,9 +230,9 @@ export function setHandler(page: string, id: string, event: string, code: string
       if (code === null) {
         if (at >= 0) e.handlers.splice(at, 1);
       } else if (at >= 0) {
-        Object.assign(e.handlers[at], { code, after: after ?? e.handlers[at].after });
+        Object.assign(e.handlers[at], { code, ms: ms ?? e.handlers[at].ms });
       } else {
-        e.handlers.push({ event, code, after: after ?? "" });
+        e.handlers.push({ event, code, ms: ms ?? "" });
       }
     }),
   );

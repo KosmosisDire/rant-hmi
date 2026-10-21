@@ -6,6 +6,7 @@
  */
 export type Handler = { event: string, code: string, 
 /**
- * For a hold, how long a press lasts before it runs, an expression in ms. Empty is 500.
+ * A time in ms, an expression: how long a hold's press lasts before it runs, 500 when
+ * empty, or how often a repeat runs while pressed, 100 when empty.
  */
-after: string, };
+ms: string, };

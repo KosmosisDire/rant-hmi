@@ -15,6 +15,7 @@ import { ImagePlay } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { componentAct, type Act } from "./act";
 import { svgOf } from "./markup";
+import { POINTER, TIMED } from "../state/events";
 
 export interface Box {
   x: number;
@@ -48,17 +49,14 @@ const FITS: Record<string, string> = { meet: "xMidYMid meet", slice: "xMidYMid s
 /** At most this many copies of a repeat, so a mistaken one never floods the page. */
 const COPIES = 500;
 
-/** What a pointer does to any element but an input. `outside` is a press anywhere else. */
-export const POINTER = ["tap", "press", "release", "hold", "drag", "outside"];
-
 /** The events a press on the element itself starts, which make it look pressable. */
 const PRESSES = POINTER.filter((e) => e !== "outside");
 
 /** The instance pressed last, drawn above the others so what it opens is never hidden. */
 const [raised, setRaised] = createSignal<Element | null>(null);
 
-/** How long a hold waits when its handler says nothing, in ms. */
-const HOLD = 500;
+/** How often a repeat may run at the most, in ms, as the HMI's own timers. */
+const QUICKEST = 50;
 
 /** CSS lengths that read a bare number as pixels. */
 const LENGTHS = new Set(["font-size", "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
@@ -173,13 +171,13 @@ function usePress(p: ElementProps & { at?: At }) {
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
   const fire = (event: string, payload: Pointer) => p.act?.fire(p.element, event, payload, p.at);
-  // a hold handler's time, an expression read where the element sits
-  const holdMs = () => {
-    const h = p.element.handlers.find((x) => x.event === "hold");
+  // a hold's or a repeat's time, an expression read where the element sits
+  const msOf = (event: string) => {
+    const h = p.element.handlers.find((x) => x.event === event);
     if (!h) return undefined;
-    const r = resolve(h.after || String(HOLD), p.scope);
+    const r = resolve(h.ms || String(TIMED[event].ms), p.scope);
     const n = r.ok ? Number(r.value) : NaN;
-    return Number.isFinite(n) ? n : HOLD;
+    return Number.isFinite(n) ? n : TIMED[event].ms;
   };
   const down = (e: PointerEvent & { currentTarget: Element | globalThis.Element }) => {
     if (!live() || e.button !== 0 || pressed()) return;
@@ -189,8 +187,12 @@ function usePress(p: ElementProps & { at?: At }) {
     fire("press", pointer(el, e, on));
     fire("drag", pointer(el, e, on));
     let last: PointerEvent = e;
-    const ms = holdMs();
+    const ms = msOf("hold");
     const held = ms === undefined ? undefined : setTimeout(() => fire("hold", pointer(el, last, on)), ms);
+    // a repeat runs at once, then on each beat until the press ends
+    const every = msOf("repeat");
+    if (every !== undefined) fire("repeat", pointer(el, e, on));
+    const beat = every === undefined ? undefined : setInterval(() => fire("repeat", pointer(el, last, on)), Math.max(every, QUICKEST));
     // a drag goes out at most once a frame, with the latest place
     let next: PointerEvent | null = null;
     const move = (m: PointerEvent) => {
@@ -208,6 +210,7 @@ function usePress(p: ElementProps & { at?: At }) {
       if (u.pointerId !== e.pointerId) return;
       next = null;
       clearTimeout(held);
+      clearInterval(beat);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);

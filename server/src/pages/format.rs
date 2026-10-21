@@ -102,8 +102,11 @@ fn element(out: &mut String, e: &Element, depth: usize) {
             out.push_str(">\n");
             let inner = "  ".repeat(depth + 1);
             for h in &e.handlers {
-                let after = if h.after.is_empty() { String::new() } else { format!(" after={}", quote(&h.after)) };
-                block(out, &inner, &format!("<on event=\"{}\"{after}>", h.event), &h.code, "</on>");
+                let time = match crate::pages::time_word(&h.event) {
+                    Some(word) if !h.ms.is_empty() => format!(" {word}={}", quote(&h.ms)),
+                    _ => String::new(),
+                };
+                block(out, &inner, &format!("<on event=\"{}\"{time}>", h.event), &h.code, "</on>");
             }
             if let Some(text) = text {
                 out.push_str(&format!("{inner}{text}\n"));
@@ -366,21 +369,27 @@ impl Reader<'_> {
             }
             self.expect("<on")?;
             let mut event = None;
-            let mut after = String::new();
+            let mut time = None;
             for (k, v) in self.attrs()? {
                 match k.as_str() {
                     "event" => event = Some(v),
-                    "after" => after = v,
+                    "after" | "every" => time = Some((k, v)),
                     other => return Err(self.error(&format!("<on> takes no attribute {other}"))),
                 }
             }
             let event = event.ok_or_else(|| self.error("<on> needs an event"))?;
+            // a hold waits after, a repeat runs every, and no other event takes a time
+            let ms = match time {
+                Some((k, v)) if crate::pages::time_word(&event) == Some(k.as_str()) => v,
+                Some((k, _)) => return Err(self.error(&format!("a {event} handler takes no {k}"))),
+                None => String::new(),
+            };
             self.expect(">")?;
             let n = outside(self.rest(), "</on>").ok_or_else(|| self.error("<on> never closes"))?;
             if out.iter().any(|h: &Handler| h.event == event) {
                 return Err(self.error(&format!("a second {event} handler")));
             }
-            out.push(Handler { event, code: dedent(&self.rest()[..n]), after });
+            out.push(Handler { event, code: dedent(&self.rest()[..n]), ms });
             self.at += n;
             self.expect("</on>")?;
             out.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
@@ -518,7 +527,7 @@ mod tests {
         let page = parse(text, "button").unwrap();
         let i = page.interface.as_ref().unwrap();
         assert_eq!(i.variables, [Local { name: "open".into(), start: "false".into() }]);
-        assert_eq!(page.children[0].handlers[0].after, "holdMs");
+        assert_eq!(page.children[0].handlers[0].ms, "holdMs");
         assert_eq!(write(&page), text);
     }
 
@@ -703,14 +712,14 @@ mod tests {
         props
     }
 
-    /// Handlers in the order a read sorts them, a hold's sometimes with its time.
+    /// Handlers in the order a read sorts them, a hold's or a repeat's sometimes with its time.
     fn some_handlers(rng: &mut Rng, tag: Tag) -> Vec<Handler> {
         let events: &[&str] = if tag == Tag::Input { &["change"] } else { &crate::pages::POINTER };
         let mut out = Vec::new();
         for e in events {
             if rng.below(4) == 0 {
-                let after = if *e == "hold" && rng.below(2) == 0 { rng.pick(&VALUES) } else { String::new() };
-                out.push(Handler { event: (*e).to_owned(), code: rng.pick(&CODE), after });
+                let ms = if crate::pages::time_word(e).is_some() && rng.below(2) == 0 { rng.pick(&VALUES) } else { String::new() };
+                out.push(Handler { event: (*e).to_owned(), code: rng.pick(&CODE), ms });
             }
         }
         out

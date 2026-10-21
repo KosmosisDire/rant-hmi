@@ -387,7 +387,7 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
   const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
   let ghost!: HTMLButtonElement;
-  const write = (event: string, code: string | null, after?: string) => setHandler(p.page, p.element.id, event, code, after);
+  const write = (event: string, code: string | null, ms?: string) => setHandler(p.page, p.element.id, event, code, ms);
   const heard = () => offered(p.element);
   // a handler for an event no longer offered still shows, so none hides
   const events = () => [...new Set([...heard().map((o) => o.event), ...p.element.handlers.map((h) => h.event)])];
@@ -412,8 +412,8 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
                 code={h().code}
                 onCode={(code) => write(event, code)}
                 onRemove={() => write(event, null)}
-                after={h().after}
-                onAfter={event === "hold" ? (after) => write(event, h().code, after) : undefined}
+                ms={h().ms}
+                onMs={(ms) => write(event, h().code, ms)}
                 removeTitle={`Remove the ${event} handler`}
                 place={where().place}
                 names={where().names}

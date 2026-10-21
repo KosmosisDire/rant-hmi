@@ -22,7 +22,7 @@ export function usedBy(name: string): Place[] {
   const walk = (page: Page, elements: Element[]) => {
     for (const e of elements) {
       for (const [key, value] of Object.entries(e.props)) if (key !== "name" && names(value)) out.push({ page, element: e, what: key });
-      for (const h of e.handlers) if (names(h.code) || names(h.after)) out.push({ page, element: e, what: `${h.event} handler` });
+      for (const h of e.handlers) if (names(h.code) || names(h.ms)) out.push({ page, element: e, what: `${h.event} handler` });
       walk(page, e.children);
     }
   };

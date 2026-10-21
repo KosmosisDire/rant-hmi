@@ -2,7 +2,7 @@
 
 import { For, type JSX, Show } from "solid-js";
 import { complete, type Place, signature, type Suggestion } from "../../state/complete";
-import { type Brought, type Offered, pOf } from "../../state/events";
+import { type Brought, type Offered, pOf, TIMED } from "../../state/events";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, X, Zap } from "../../ui/icons";
 
@@ -32,9 +32,9 @@ export function EventCard(p: {
   brings?: Brought;
   /** Each new number puts the caret in the code. */
   focus?: number;
-  /** A hold's time, an expression in ms, and its write. */
-  after?: string;
-  onAfter?: (text: string) => void;
+  /** A hold's wait or a repeat's period, an expression in ms, and its write. */
+  ms?: string;
+  onMs?: (text: string) => void;
   /** The trigger's settings, between the head and the code. */
   children?: JSX.Element;
 }) {
@@ -73,13 +73,15 @@ export function EventCard(p: {
           </button>
         </Show>
       </div>
-      <Show when={p.onAfter}>
-        <div class="event-when">
-          <div class="field">
-            <label>After ms</label>
-            <DraftInput value={p.after ?? ""} placeholder="500" onCommit={(t) => p.onAfter?.(t.trim())} complete={(t, c) => complete(t, c, "expression", p.names, p.also)} />
+      <Show when={p.onMs && TIMED[p.name]}>
+        {(t) => (
+          <div class="event-when">
+            <div class="field">
+              <label>{t().label}</label>
+              <DraftInput value={p.ms ?? ""} placeholder={String(t().ms)} onCommit={(text) => p.onMs?.(text.trim())} complete={(text, c) => complete(text, c, "expression", p.names, p.also)} />
+            </div>
           </div>
-        </div>
+        )}
       </Show>
       {p.children}
       <DraftInput

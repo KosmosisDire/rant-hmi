@@ -1,16 +1,21 @@
 // A designer builds a Joystick in the editor alone: a base, a travel ring and a knob drawn in
 // one drawing. The knob follows the finger while it stays within the ring, stops at the ring
 // beyond it, and springs back on release. It sends move with x and y from -1 to 1, up being
-// positive, which the page keeps in two variables.
+// positive, which the page keeps in two variables, and held with the same on each beat while
+// held, even a still one, and a last 0, 0 when let go.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   for (const name of ["jogX", "jogY"]) hmi.send({ type: "set_variable", name, variable: { name, start: 0, per: "screen" } });
+  // shared, so the test reads them as any screen would
+  for (const name of ["beats", "heldX"]) hmi.send({ type: "set_variable", name, variable: { name, start: 0, per: "hmi" } });
 
   await d.addComponent("Joystick", 220, 220);
   await d.addInput("travel", "70");
+  await d.addInput("repeatMs", "100");
   await d.addVariable("kx", "0");
   await d.addVariable("ky", "0");
   await d.addSends("move");
+  await d.addSends("held");
   await d.add("drawing", { Name: "pad", x: "0", y: "0", w: "220", h: "220" });
   await d.handler("drag", [
     "// the knob goes where the finger is, as far as the ring",
@@ -20,7 +25,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
     "ky = (dy * k) / travel;",
     'emit("move", { x: kx, y: -ky });',
   ].join("\n"));
-  await d.handler("release", 'kx = 0;\nky = 0;\nemit("move", { x: 0, y: 0 });');
+  await d.handler("release", 'kx = 0;\nky = 0;\nemit("move", { x: 0, y: 0 });\nemit("held", { x: 0, y: 0 });');
+  await d.handler("repeat", 'emit("held", { x: kx, y: -ky });', "repeatMs");
   await d.addShape("circle", { Name: "base", "Centre x": "110", "Centre y": "110", Radius: "104", Fill: "#1e2125", Stroke: "#3a4046", Thickness: "2" });
   await d.addShape("circle", { Name: "ring", "Centre x": "110", "Centre y": "110", Radius: "travel", Fill: '"none"', Stroke: "#2f3540", Thickness: "2", Dashes: '"4 6"' });
   await d.addShape("circle", { Name: "knob", "Centre x": "110 + kx * travel", "Centre y": "110 + ky * travel", Radius: "34", Fill: 'root.pressed ? "#4a8fd6" : "#3a4046"', Stroke: "#e4e6e8", Thickness: "2" });
@@ -28,6 +34,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addPage("Joystick");
   const stick = await d.place("Joystick", { x: "44", y: "44", w: "220", h: "220" });
   await d.handler("move", "jogX = p.x;\njogY = p.y;");
+  await d.handler("held", "beats = beats + 1;\nheldX = p.x;");
   await d.add("text", { Name: "readout", x: "308", y: "132", w: "264", h: "44", Text: '"x " + jogX.toFixed(2) + "  y " + jogY.toFixed(2)', Colour: "#e4e6e8", Size: "20" });
 
   await d.tab("Run");
@@ -57,8 +64,21 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(Math.abs(fx - (cx + 70 * scale)) < 3 && Math.abs(fy - cy) < 3, `the knob went to ${fx - cx}, ${fy - cy} past the ring`);
   await reads("x 1.00  y 0.00", "a full push right");
 
+  // held still, it keeps sending where it is, about once each 100 ms
+  const shared = (name) => hmi.state.values[name]?.value;
+  const beats = () => shared("beats");
+  const from = beats();
+  await page.waitForTimeout(600);
+  const counted = beats() - from;
+  check(counted >= 3 && counted <= 9, `held still for 600 ms it sent held ${counted} times`);
+  check(shared("heldX") === 1, "held sends where the stick is");
+
   await page.mouse.up();
   const [rx, ry] = await centre(knob);
   check(Math.abs(rx - cx) < 2 && Math.abs(ry - cy) < 2, "the knob did not spring back");
   await reads("x 0.00  y 0.00", "the release to stop the jog");
+  await eventually(async () => shared("heldX") === 0, "the release to send a last held at 0");
+  const after = beats();
+  await page.waitForTimeout(300);
+  check(beats() === after, "held went on after the release");
 }
