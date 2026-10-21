@@ -77,6 +77,7 @@ export function ComponentCard(p: { component: Page; open: boolean; page: Page | 
   return (
     <button
       class="card"
+      title={p.component.name}
       classList={{ selected: p.open, dragged: !!ghost() }}
       onClick={() => !dragged && openPage(p.component.id)}
       onPointerDown={down}

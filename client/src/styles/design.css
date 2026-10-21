@@ -166,10 +166,10 @@
    while a vertical swipe still scrolls them. */
 .pages.cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
   align-content: start;
-  gap: 6px;
-  padding: 6px;
+  gap: 2px;
+  padding: 4px 6px;
 }
 
 .pages.cards .list-hint {
@@ -179,9 +179,9 @@
 .card {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
-  padding: 6px;
+  padding: 4px;
   border-radius: 6px;
   text-align: left;
   touch-action: pan-y;
@@ -195,6 +195,14 @@
   background: var(--accent-bg);
 }
 
+/* a long name ends in an ellipsis, the whole of it in the card's title */
+.card .list-label {
+  overflow: hidden;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .card.selected .list-label {
   font-weight: 600;
 }
@@ -205,7 +213,7 @@
 
 .card-thumb {
   position: relative;
-  height: 64px;
+  height: 40px;
   overflow: hidden;
   border-radius: 4px;
   background: var(--panel3);

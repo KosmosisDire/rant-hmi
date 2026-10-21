@@ -1,6 +1,7 @@
-// A designer finds components as cards, each a picture of it over its name: a drag onto the
-// canvas places one centred where it lands, by mouse and by a finger's sideways drag, a drag
-// let go off the canvas or after Escape places nothing, and a click opens the component.
+// A designer finds components as small cards, each a picture of it over its name, a long one
+// cut short: a drag onto the canvas places one centred where it lands, by mouse and by a
+// finger's sideways drag, a drag let go off the canvas or after Escape places nothing, and a
+// click opens the component.
 
 export default async function ({ page, hmi, sys, d, check, eventually }) {
   const tile = await hmi.addComponent("Tile");
@@ -12,6 +13,13 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   // other scenarios' components come first, so the list may need a scroll to reach it
   await card.scrollIntoViewIfNeeded();
   check((await card.textContent()).trim() === "Tile", `the card says ${await card.textContent()}, not only its name`);
+
+  // a long name ends in an ellipsis, so its card stays as narrow as the rest
+  await hmi.addComponent("ConveyorSpeedReadoutPanel");
+  const long = page.locator(".screen:not([hidden]) .sidebar.left .card", { hasText: /^ConveyorSpeedReadoutPanel$/ });
+  await long.waitFor();
+  const [cut, wide] = await long.locator(".list-label").evaluate((l) => [l.scrollWidth > l.clientWidth, l.closest(".card").offsetWidth]);
+  check(cut && wide === (await card.evaluate((c) => c.offsetWidth)), "a long name widens its card instead of ending in an ellipsis");
 
   const placed = () => hmi.page(target).children.filter((e) => e.component === "Tile");
   const { width: w, height: h } = hmi.page(tile);
