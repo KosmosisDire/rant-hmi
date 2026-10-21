@@ -315,9 +315,11 @@ function ElementView(p: ElementProps & { at?: At }) {
     // a frame that lays out what it holds, its gap "auto" spreading them over its length
     const flow = p.element.tag === "div" ? flowOf(take("layout")) : undefined;
     const spread = !!flow && take("gap") === "auto";
-    // an instance's other properties are its inputs, never CSS, but for how it turns
+    // an instance's other properties are its inputs, never CSS, but for how it turns and moves.
+    // Design draws no motion, so a drag and the outlines follow the pointer at once.
     for (const key of Object.keys(p.element.props)) {
-      if (OWN.has(key) || (p.element.tag === "use" && key !== "rotate") || (key === "gap" && spread)) continue;
+      if (OWN.has(key) || (p.element.tag === "use" && key !== "rotate" && key !== "transition") || (key === "gap" && spread)) continue;
+      if (key === "transition" && p.design) continue;
       const v = take(key);
       if (v === undefined || v === null || v === "") continue;
       const bad = cssFault(key, v);

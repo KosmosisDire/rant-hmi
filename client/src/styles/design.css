@@ -535,6 +535,39 @@
   padding: 8px 10px;
 }
 
+/* a field whose changes animate: a mark after its label, or in its box where the label is its lead */
+.motion-mark {
+  display: inline-flex;
+  margin-left: 4px;
+  padding: 1px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--accent);
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.field.inside {
+  position: relative;
+}
+
+.field.inside > .motion-mark {
+  position: absolute;
+  right: 4px;
+  top: 15px;
+  translate: 0 -50%;
+  margin: 0;
+}
+
+.popover.parts.motion {
+  width: 340px;
+}
+
+.popover.motion .ghost {
+  margin-top: 6px;
+}
+
 /* corners where they sit on the box, two by two */
 .popover.parts.corners {
   display: grid;

@@ -138,6 +138,10 @@ component placed on a page is a tag named after it.
   origin of what holds the element, and the element turns about it. A shape's origin is a
   point of its own outline's box, only what it turns about, and its middle when unset.
 - `rotate`, in degrees clockwise, is CSS on every element, shapes too: `rotate: Speed * 90`.
+- `transition` animates changes as CSS does, `x`, `y`, `w` and `h` as `left`, `top`,
+  `width` and `height`: `transition: "background 300ms ease, left 200ms linear"`. A field's
+  menu sets it in the designer, which shows it with a mark beside the field. Run draws it,
+  Design does not, so a drag follows the pointer.
 - Every value but the name is an expression, kept raw: text goes in quotes, and `a < b`
   needs no escaping. Expressions and code share the math in [math.md](math.md).
 - `<on>` holds a handler's code, first inside its element. A `hold` handler runs once a

@@ -38,7 +38,7 @@ import {
   X,
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
-import { BorderField, Field, type FieldProps, keysOf, kindOf, PADDING, PartsField, Points, POINTS, RADIUS, type Where, WhereContext } from "./Field";
+import { BorderField, Field, type FieldProps, keysOf, kindOf, type Moving, PADDING, PartsField, Points, POINTS, RADIUS, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, ORIGINS, PAINT, ROTATE, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { absolute, type Align, align, boxOf, boxText, chain, find, flowed, originEdits, roomOf, scopeOf, sendEdits, setHandler, setProps, showProps, spread, tops } from "./tree";
@@ -59,6 +59,22 @@ const TEXT_LOOK: Spec[] = [
   // a text's lines within its box, as CSS aligns a block's content
   ["Vertical", "align-content", { kind: "choice", options: ['"start"', '"center"', '"end"'], placeholder: '"start"' }],
 ];
+/** The properties whose changes may animate, by key, each the CSS property it draws as. */
+const ANIMATES: Record<string, string> = {
+  x: "left",
+  y: "top",
+  w: "width",
+  h: "height",
+  rotate: "rotate",
+  background: "background",
+  opacity: "opacity",
+  color: "color",
+  "font-size": "font-size",
+  "border-radius": "border-radius",
+};
+/** What of an instance animates: its box, never its inputs. */
+const BOX = new Set(["x", "y", "w", "h", "rotate"]);
+
 /** The least and most a size the page works out may be, each with its field once set. */
 const LIMITS: [string, string, "w" | "h", string][] = [
   ["min w", "min-width", "w", "Min width"],
@@ -248,7 +264,19 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     onShow: (t: string) => showProps(p.page, p.element.id, { [key]: t }),
     // a frame's own properties are CSS, which the browser may drop, and of an instance's only its turn
     check: !shape() && !OWN.has(key) && (!instance() || key === "rotate") ? (v: unknown) => cssFault(key, v) : undefined,
+    motion: moving(key),
   });
+  // how a property's changes animate, in the element's transition, where it draws as CSS
+  const moving = (key: string): Moving | undefined => {
+    if (!ANIMATES[key] || shape() || grouped() || (instance() && !BOX.has(key))) return undefined;
+    return {
+      property: ANIMATES[key],
+      get transition() {
+        return p.element.props.transition ?? "";
+      },
+      write: (t) => setProps(p.page, p.element.id, { transition: t }),
+    };
+  };
   // a new origin leaves the element where it is drawn
   const newOrigin = (t: string | null) => sendEdits(originEdits(pageOf(p.page)!, p.element.id, t));
   const text = () => p.element.tag === "span";
@@ -477,7 +505,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">Look</div>
           <Field {...prop("background")} {...LOOK[0][2]} label="Fill" />
           <BorderField props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
-          <PartsField of={RADIUS} props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
+          <PartsField of={RADIUS} props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} motion={moving("border-radius")} />
           <For each={LOOK.slice(1)}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
           <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
@@ -571,7 +599,7 @@ function AutoLayout(p: { page: string; element: Element; prop: (key: string) => 
 }
 
 /** How the element turns: a frame by its rotation, a shape about its origin too. */
-function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" | "onShow">; specs: Spec[] }) {
+function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" | "onShow" | "motion">; specs: Spec[] }) {
   return (
     <>
       <div class="section">Turn</div>

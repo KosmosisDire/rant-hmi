@@ -10,10 +10,11 @@ import { capital } from "../../state/format";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
 import { DraftInput } from "../../ui/DraftInput";
-import { Braces, ChevronsUpDown, Copy, Grid3x3, Hash, Link, RotateCcw, SquareDashed, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
+import { Activity, Braces, ChevronsUpDown, Copy, Grid3x3, Hash, Link, RotateCcw, SquareDashed, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
 import { follow } from "../../ui/press";
+import { EASES, type Motion, motionOf, transitions, withMotion } from "./motion";
 
 /** Where the fields stand: the names their code reads, and what completion offers instead
  *  of the mesh imports, as a component offers its own names. */
@@ -51,6 +52,13 @@ export function kindOf(text: string): Kind {
   return "any";
 }
 
+/** A field whose changes may animate: the CSS property it is, and the element's transition. */
+export interface Moving {
+  property: string;
+  transition: string;
+  write: (text: string | null) => void;
+}
+
 export interface FieldProps {
   label: string;
   value: string;
@@ -78,6 +86,8 @@ export interface FieldProps {
   /** A lead of its own: its icon, its title and what a click on it does, given the lead, else
    *  what any does, while a drag on it still scrubs a number. */
   lead?: { icon: JSX.Element; title: string; onClick?: (lead: HTMLElement) => void };
+  /** How its changes animate, set from its menu and shown by a mark beside it. */
+  motion?: Moving;
 }
 
 /** One property, an expression unless `plain`. Under it, what stops it showing, and for
@@ -97,8 +107,27 @@ export function Field(p: FieldProps) {
     if (r.unknown) return { text: `${r.unknown} is unknown right now` };
     return { text: r.error, words: !/["'`]/.test(p.value) };
   });
+  // how its changes animate, none where code works the transition out
+  const [moving, setMoving] = createSignal(false);
+  const list = () => (p.motion ? transitions(p.motion.transition) : null);
+  const motion = () => {
+    const l = list();
+    return p.motion && l ? motionOf(l, p.motion.property) : undefined;
+  };
+  const animate = (m: Motion | null) => p.motion?.write(withMotion(list() ?? [], p.motion.property, m));
+  const mark = () => (
+    <Show when={motion()}>
+      {(m) => (
+        <button type="button" class="motion-mark" title={`Changes take ${m().ms} ms. Click to change how`} onClick={() => setMoving(!moving())}>
+          <Activity size={11} />
+        </button>
+      )}
+    </Show>
+  );
+  let host!: HTMLDivElement;
   return (
     <div
+      ref={host}
       class="field"
       classList={{ bound: !p.plain && !isConstant(p.value) && !word(), inside: p.inside }}
       onContextMenu={(e) => {
@@ -107,13 +136,65 @@ export function Field(p: FieldProps) {
         openMenu(e, [
           { label: "Reset to default", icon: <RotateCcw size={13} />, disabled: p.value.trim() === "", run: () => write("") },
           { label: "Copy the value", icon: <Copy size={13} />, disabled: p.value.trim() === "", run: () => copyText(p.value) },
+          ...(p.motion
+            ? [
+                {
+                  label: motion() ? "Change how it animates" : "Animate changes",
+                  icon: <Activity size={13} />,
+                  // a transition code works out is changed in code
+                  disabled: list() === null,
+                  run: () => {
+                    if (!motion()) animate({ ms: 300, ease: "ease" });
+                    setMoving(true);
+                  },
+                },
+              ]
+            : []),
         ]);
       }}
     >
       <Show when={!p.inside}>
-        <label>{p.label}</label>
+        <label>
+          {p.label}
+          {mark()}
+        </label>
       </Show>
       <ValueBox {...p} onWrite={write} />
+      <Show when={p.inside}>{mark()}</Show>
+      <Show when={moving() && motion()}>
+        {(m) => (
+          <Popover anchor={host} onClose={() => setMoving(false)} class="parts motion">
+            <div class="field">
+              <label>Time, ms</label>
+              <span class="vbox">
+                <DraftInput value={String(m().ms)} accept={(t) => /^\d+$/.test(t.trim())} onCommit={(t) => animate({ ms: Number(t), ease: m().ease })} />
+              </span>
+            </div>
+            <div class="field">
+              <label>Ease</label>
+              <div class="choice">
+                <For each={EASES}>
+                  {([ease, words]) => (
+                    <button classList={{ on: m().ease === ease }} onClick={() => animate({ ms: m().ms, ease })}>
+                      {words}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
+            <button
+              class="ghost"
+              onClick={() => {
+                setMoving(false);
+                animate(null);
+              }}
+            >
+              <X size={13} />
+              Stop animating
+            </button>
+          </Popover>
+        )}
+      </Show>
       <Show when={status()}>
         {(s) => (
           <span class="field-note">
@@ -464,7 +545,7 @@ export const keysOf = (f: Parts) => [f.all, ...f.parts.map(([, key]) => key)];
 /** One value for all parts that scrubs from its lead, a click on which opens a field per part.
  *  Parts of their own take the place of the one for all, never sit beside it, since CSS would
  *  let whichever comes later win. */
-export function PartsField(p: { of: Parts; props: Record<string, string | undefined>; write: (props: Record<string, string | null>) => void; show: (props: Record<string, string>) => void }) {
+export function PartsField(p: { of: Parts; props: Record<string, string | undefined>; write: (props: Record<string, string | null>) => void; show: (props: Record<string, string>) => void; motion?: Moving }) {
   const [opened, setOpened] = createSignal(false);
   let host!: HTMLDivElement;
   const part = (key: string) => p.props[key] ?? "";
@@ -496,6 +577,7 @@ export function PartsField(p: { of: Parts; props: Record<string, string | undefi
             onWrite={(t) => p.write({ [p.of.all]: t })}
             onShow={(t) => p.show({ [p.of.all]: t })}
             lead={{ icon: p.of.icon(), title: `Drag to change every ${p.of.each}, click for each one`, onClick: toggle }}
+            motion={p.motion}
           />
         }
       >
