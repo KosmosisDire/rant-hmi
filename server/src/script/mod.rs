@@ -276,7 +276,27 @@ impl Shared {
 
     fn flush(&mut self, run: u64) {
         for (alias, value) in self.pending.get_mut(&run).map(std::mem::take).unwrap_or_default() {
+            self.hold(run, &alias, &value);
             self.send(FromScript::Write { run, alias, value });
+        }
+    }
+
+    /// Takes a write going out as the latest value, so another run's write soon after builds on
+    /// it and not on what the mesh has not echoed back yet. A refused one comes back corrected.
+    fn hold(&mut self, run: u64, alias: &str, value: &Value) {
+        match self.variables.get(alias).map(|v| v.per) {
+            Some(Per::Screen) => {
+                if let Some(session) = self.sessions.get(&run).copied().flatten() {
+                    self.screens.entry(session).or_default().insert(alias.to_owned(), value.clone());
+                }
+            }
+            Some(Per::Hmi) => {
+                self.values.insert(alias.to_owned(), value.clone());
+            }
+            None if self.imports.contains_key(alias) => {
+                self.values.insert(alias.to_owned(), value.clone());
+            }
+            None => {}
         }
     }
 

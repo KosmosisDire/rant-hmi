@@ -752,6 +752,11 @@ impl App {
                 info!("{} sets {alias} to {value}", self.label(run));
                 let session = self.runs.get(&run).and_then(|r| r.session);
                 if let Err(text) = self.set(session, &alias, "", value) {
+                    // the engine took the write as the latest, so it hears what holds instead
+                    if self.project.find(&alias).is_some() {
+                        let now = self.update(&alias);
+                        self.script.send(ToScript::Values(vec![(alias, now.value.filter(|_| now.known))]));
+                    }
                     self.tell(run, Level::Fault, text);
                 }
             }
@@ -959,7 +964,15 @@ impl App {
             return Err(format!("{alias} is not a variable, so it cannot be set"));
         }
         let last = self.values.get(alias).and_then(|s| s.value.as_ref());
-        self.mesh.set(alias, path, value, last)
+        let whole = self.mesh.set(alias, path, value, last)?;
+        // what the HMI wrote is the latest it knows at once, so a write soon after builds on it,
+        // not on the value before, which the mesh has not echoed back yet
+        let slot = self.values.entry(alias.to_owned()).or_default();
+        slot.value = Some(whole.clone());
+        slot.known = true;
+        self.changed.insert(alias.to_owned());
+        self.script.send(ToScript::Values(vec![(alias.to_owned(), Some(whole))]));
+        Ok(())
     }
 
     /// Takes in the project as its files say now, after a change made outside the HMI. A file

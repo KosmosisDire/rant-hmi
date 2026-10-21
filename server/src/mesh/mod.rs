@@ -306,9 +306,9 @@ impl Mesh {
         self.attached.get(alias).ok_or_else(|| format!("{alias} is not on the mesh right now"))
     }
 
-    /// Sets a variable import, whole or one field of it. A field write starts from `last`,
-    /// the value the HMI holds, else from the schema's defaults.
-    pub fn set(&self, alias: &str, path: &str, value: Value, last: Option<&Value>) -> Result<(), String> {
+    /// Sets a variable import, whole or one field of it, and gives back the whole value it sent.
+    /// A field write starts from `last`, the value the HMI holds, else from the schema's defaults.
+    pub fn set(&self, alias: &str, path: &str, value: Value, last: Option<&Value>) -> Result<Value, String> {
         let a = self.attached(alias)?;
         let var = match &a.handle {
             Handle::Variable(var) => var,
@@ -325,7 +325,8 @@ impl Mesh {
             }
         };
         let bytes = codec::encode(schema, &a.shapes, &whole)?;
-        var.set(&bytes).map_err(|e| format!("{alias} refused the write: {e}"))
+        var.set(&bytes).map_err(|e| format!("{alias} refused the write: {e}"))?;
+        Ok(whole)
     }
 
     /// Sends a message on a topic imported to write.
