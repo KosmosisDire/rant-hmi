@@ -216,7 +216,11 @@
   height: 40px;
   overflow: hidden;
   border-radius: 4px;
-  background: var(--panel3);
+}
+
+/* a card, and what a drag carries, show the component alone on the sidebar */
+.card-fit .page {
+  background: none;
 }
 
 .card-fit {

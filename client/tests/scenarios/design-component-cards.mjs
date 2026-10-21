@@ -21,6 +21,8 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   const [cut, wide] = await long.locator(".list-label").evaluate((l) => [l.scrollWidth > l.clientWidth, l.closest(".card").offsetWidth]);
   check(cut && wide === (await card.evaluate((c) => c.offsetWidth)), "a long name widens its card instead of ending in an ellipsis");
 
+  const ground = await card.locator(".card-thumb").evaluate((t) => [t, t.querySelector(".page")].map((e) => getComputedStyle(e).backgroundColor).join());
+  check(ground === "rgba(0, 0, 0, 0),rgba(0, 0, 0, 0)", `a card shows a ground, ${ground}`);
   const placed = () => hmi.page(target).children.filter((e) => e.component === "Tile");
   const { width: w, height: h } = hmi.page(tile);
   const sheet = await page.locator(".screen:not([hidden]) .artboard .page-layer > .page").boundingBox();
