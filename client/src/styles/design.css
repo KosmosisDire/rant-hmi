@@ -446,7 +446,7 @@
   cursor: pointer;
 }
 
-.lead:hover {
+:root:not([data-pointer="touch"]) .lead:hover {
   color: var(--text);
   background: var(--cell-hover);
 }
@@ -486,7 +486,6 @@
   align-items: center;
   gap: 8px;
   text-align: left;
-  cursor: pointer;
 }
 
 .border-sum .linked {
@@ -693,7 +692,7 @@
   cursor: pointer;
 }
 
-.ghost:hover,
+:root:not([data-pointer="touch"]) .ghost:hover,
 .ghost.on {
   color: var(--text);
   border-color: var(--dim);

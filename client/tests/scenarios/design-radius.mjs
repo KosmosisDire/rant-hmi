@@ -37,6 +37,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Escape");
   const sum = await radius.locator(".border-sum span").allTextContents();
   check(sum.join() === "20,8,8,8", `the row sums the corners up as ${sum}`);
+  await radius.locator(".border-sum").click();
+  check((await page.locator(".popover.parts").count()) === 0, "a click on the corners' words opened them, not only the icon");
 
   await radius.locator('button[title="One radius for every corner"]').click();
   await eventually(() => now()["border-radius"] === "20" && now()["border-top-left-radius"] === undefined, "one radius for every corner, the top left's");

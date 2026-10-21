@@ -310,12 +310,12 @@ const BORDER: [string, string, Kind, Partial<FieldProps>][] = [
   ["Colour", "border-color", "colour", { placeholder: "#3a4046" }],
 ];
 
-/** A border as one row: a picture of it and its parts in words, opening a panel with a field
- *  per part. A first part written fills the width and style it needs to show. */
+/** A border as one row: its parts in words, and a picture of it whose click opens a panel with
+ *  a field per part. A first part written fills the width and style it needs to show. */
 export function BorderField(p: { props: Record<string, string | undefined>; write: (props: Record<string, string | null>) => void; show: (props: Record<string, string>) => void }) {
   const where = useContext(WhereContext);
   const [opened, setOpened] = createSignal(false);
-  let row!: HTMLButtonElement;
+  let row!: HTMLSpanElement;
   const part = (key: string) => p.props[key] ?? "";
   const any = () => BORDER.some(([, key]) => part(key) !== "");
   const now = (key: string, fallback: string) => {
@@ -331,13 +331,13 @@ export function BorderField(p: { props: Record<string, string | undefined>; writ
   return (
     <div class="field" classList={{ bound: BORDER.some(([, key]) => !isConstant(part(key))) }}>
       <label>Border</label>
-      <span class="vbox has-lead">
-        <button ref={row} type="button" class="editor border-sum" onClick={() => setOpened(!opened())}>
+      <span ref={row} class="vbox has-lead">
+        <span class="editor border-sum">
           <Show when={any()} fallback={<span class="faint">None</span>}>
             <For each={BORDER}>{([, key]) => <span classList={{ linked: !isConstant(part(key)) }}>{word(part(key)) || "-"}</span>}</For>
           </Show>
-        </button>
-        <span class="lead" aria-hidden="true">
+        </span>
+        <button type="button" class="lead" title="Edit the border" onClick={() => setOpened(!opened())}>
           <span
             class="border-look"
             classList={{ none: !any() }}
@@ -347,7 +347,7 @@ export function BorderField(p: { props: Record<string, string | undefined>; writ
               "border-color": now("border-color", "currentColor"),
             }}
           />
-        </span>
+        </button>
         <Show when={any()}>
           <button class="icon-btn tail" title="No border" onClick={() => p.write(Object.fromEntries(BORDER.map(([, key]) => [key, null])))}>
             <X size={12} />
@@ -459,9 +459,9 @@ export function PartsField(p: { of: Parts; props: Record<string, string | undefi
         <div class="field" classList={{ bound: p.of.parts.some(([, key]) => !isConstant(part(key))) }}>
           <label>{p.of.label}</label>
           <span class="vbox has-lead">
-            <button type="button" class="editor border-sum" onClick={toggle}>
+            <span class="editor border-sum">
               <For each={p.of.parts}>{([, key]) => <span classList={{ linked: !isConstant(part(key)) }}>{part(key) || "0"}</span>}</For>
-            </button>
+            </span>
             <button type="button" class="lead" title={`Each ${p.of.each}`} onClick={toggle}>
               {p.of.icon()}
             </button>

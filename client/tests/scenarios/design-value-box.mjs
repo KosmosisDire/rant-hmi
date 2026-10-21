@@ -52,8 +52,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => now().background === "$leadTone", "a token to be kept by its name");
   check((await page.locator(".colour-picker").count()) === 0, "the picker stayed open after a token was picked");
 
-  // a border one part at a time: the width brings a style with it, the colour binds alone
+  // a border one part at a time, its parts opened from its icon alone: the width brings a style
+  // with it, the colour binds alone
   await page.locator(".border-sum").click();
+  check((await page.locator(".popover.parts").count()) === 0, "a click on the border's words opened its parts");
+  await page.locator('button[title="Edit the border"]').click();
   await d.setField("Width", "2");
   await eventually(() => now()["border-width"] === "2" && now()["border-style"] === '"solid"', "a width to bring a solid style");
   await d.setField("Colour", 'Running ? "#2e7d32" : "#c62828"');
