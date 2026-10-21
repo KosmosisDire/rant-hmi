@@ -254,6 +254,8 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   check((await estop.evaluate((e) => getComputedStyle(e).visibility)) === "hidden", "the warning shows while the cell is safe");
   await hold(stop, 100);
   await eventually(async () => value("SafetyStatus")?.estop === false && (await estop.evaluate((e) => getComputedStyle(e).visibility)) === "visible", "the warning at a stop");
+  // the circuit takes no reset while the stop is still sent
+  await eventually(() => value("SafetyCmd")?.stop === false, "the stop let go");
   await el(reset).click();
   await eventually(async () => value("SafetyStatus")?.estop === true && (await estop.evaluate((e) => getComputedStyle(e).visibility)) === "hidden", "the warning gone after a reset");
   await el(slow).click();
@@ -300,6 +302,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await eventually(() => value("Robot")?.servo_power === true, "the servos on again");
   await hold(stop, 100);
   await eventually(async () => value("Robot")?.alarm === true && (await el(alarm).textContent()) === "4000", async () => `the alarm, it reads ${await el(alarm).textContent()}`);
+  await eventually(() => value("SafetyCmd")?.stop === false, "the stop let go");
   await el(reset).click();
   await eventually(() => value("SafetyStatus")?.estop === true, "the cell safe again");
   await el(alarm).click();
