@@ -1,14 +1,14 @@
 import { createMemo, createSignal, For, Show, useContext } from "solid-js";
 import { produce } from "solid-js/store";
 import { send } from "../../net/connection";
-import { OWN, SHAPES } from "../../page/PageView";
+import { cssFault, OWN, SHAPES } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Interface } from "../../protocol/Interface";
 import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
-import { docScope, pageScope } from "../../state/bind";
+import { docScope, pageScope, resolve } from "../../state/bind";
 import { complete, componentNames, REPEAT } from "../../state/complete";
 import { brings, offered } from "../../state/events";
 import { component, page as pageOf, setState, state } from "../../state/store";
@@ -231,6 +231,8 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     },
     onWrite: (t: string | null) => setProps(p.page, p.element.id, { [key]: t }),
     onShow: (t: string) => showProps(p.page, p.element.id, { [key]: t }),
+    // a frame's own properties are CSS, which the browser may drop
+    check: !shape() && !OWN.has(key) ? (v: unknown) => cssFault(key, v) : undefined,
   });
   const text = () => p.element.tag === "span";
   const instance = () => p.element.tag === "use";
@@ -252,6 +254,34 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
       .filter(([k]) => loose(k))
       .map(([k, v]) => `${k}: ${v}`)
       .join("\n");
+  // why each of those would not show, and for words without quotes a way to make them text
+  const otherFaults = () =>
+    Object.entries(p.element.props).flatMap(([k, v]) => {
+      if (!loose(k) || v === undefined) return [];
+      const r = resolve(v, where().scope);
+      if (!r.ok) return r.unknown ? [] : [{ key: k, text: `${k}: ${r.error}`, quote: /["'`]/.test(v) ? undefined : JSON.stringify(v.trim()) }];
+      const bad = !shape() && r.value !== undefined && r.value !== null && r.value !== "" ? cssFault(k, r.value) : undefined;
+      return bad ? [{ key: k, text: bad, quote: undefined }] : [];
+    });
+  const faultNotes = () => (
+    <For each={otherFaults()}>
+      {(f) => (
+        <span class="field-note">
+          {f.text}
+          <Show when={f.quote}>
+            {(q) => (
+              <>
+                {" "}
+                <button class="field-fix" onClick={() => setProps(p.page, p.element.id, { [f.key]: q() })}>
+                  Make it text
+                </button>
+              </>
+            )}
+          </Show>
+        </span>
+      )}
+    </For>
+  );
   const setOther = (body: string) => {
     const next = new Map<string, string>();
     for (const line of body.split("\n")) {
@@ -319,6 +349,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <For each={PAINT.filter(([, key]) => !(p.element.tag === "g" && key === "transform"))}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More attributes</div>
           <DraftInput multiline class="editor css" value={other()} placeholder={'stroke-linejoin: "round"'} onCommit={setOther} />
+          {faultNotes()}
         </Show>
         <Show when={(drawing() || shape()) && pageOf(p.page)}>{(pg) => <AddShape page={pg()} element={p.element} />}</Show>
         <Show when={instance()}>
@@ -364,6 +395,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <For each={LOOK.slice(1)}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
           <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
+          {faultNotes()}
         </Show>
         <Show when={!grouped()}>
           <Events page={p.page} element={p.element} focus={(event) => typed(`on:${event}`)} />

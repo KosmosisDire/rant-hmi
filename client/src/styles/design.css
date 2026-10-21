@@ -335,8 +335,15 @@
   cursor: pointer;
 }
 
-.field-fix:hover {
+/* only under a mouse: a finger leaves what it touched hovered */
+:root:not([data-pointer="touch"]) .field-fix:hover {
   text-decoration: underline;
+}
+
+/* under a box with no grid of its own, as More CSS is, a note takes its own line */
+.pane-body > .field-note {
+  display: block;
+  margin-top: 4px;
 }
 
 .placement {

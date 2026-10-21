@@ -140,6 +140,13 @@ function css(key: string, v: unknown): string {
   return LENGTHS.has(key) ? `${text}px` : key === "rotate" ? `${text}deg` : text;
 }
 
+/** Why the browser would drop a CSS value, as for a misspelt property or a colour it cannot
+ *  read, or nothing when it takes it. */
+export function cssFault(key: string, v: unknown): string | undefined {
+  const text = css(key, v);
+  return CSS.supports(key, text) ? undefined : `${text} is not a ${key} the browser takes`;
+}
+
 /** How a shape turns, as CSS: about its origin, a point of its own box, never the drawing's
  *  corner. SVG's own rotate attribute turns a text's letters instead. */
 const TURNS: Record<string, string> = { rotate: "rotate", origin: "transform-origin" };
@@ -278,7 +285,10 @@ function ElementView(p: ElementProps & { at?: At }) {
     for (const key of p.element.tag === "use" ? [] : Object.keys(p.element.props)) {
       if (OWN.has(key)) continue;
       const v = take(key);
-      if (v !== undefined && v !== null && v !== "") style[key] = css(key, v);
+      if (v === undefined || v === null || v === "") continue;
+      const bad = cssFault(key, v);
+      if (bad) faults.push(bad);
+      else style[key] = css(key, v);
     }
     const o = p.overrides?.(p.element.id);
     const at = (k: keyof Box) => {

@@ -63,6 +63,8 @@ export interface FieldProps {
   /** Placement: a trailing % is a share of what holds the element. */
   percent?: boolean;
   focus?: number;
+  /** Why a value the code gives would not show, as CSS the browser drops, or nothing. */
+  check?: (value: unknown) => string | undefined;
   /** A lead of its own: its icon, its title and what a click on it does, while a drag on it
    *  still scrubs a number. */
   lead?: { icon: JSX.Element; title: string; onClick: () => void };
@@ -76,7 +78,10 @@ export function Field(p: FieldProps) {
   const status = createMemo(() => {
     if (p.plain) return undefined;
     const r = resolve(p.percent ? percentOf(p.value).expr : p.value, where().scope);
-    if (r.ok) return undefined;
+    if (r.ok) {
+      const bad = r.value !== undefined && r.value !== null && r.value !== "" ? p.check?.(r.value) : undefined;
+      return bad ? { text: bad } : undefined;
+    }
     if (r.unknown) return { text: `${r.unknown} is unknown right now` };
     return { text: r.error, words: !/["'`]/.test(p.value) };
   });
