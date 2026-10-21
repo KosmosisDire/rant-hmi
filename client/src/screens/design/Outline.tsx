@@ -266,7 +266,6 @@ function Layers(p: {
               <TagIcon tag={e.tag} size={13} />
             </span>
             <span class="list-label">{e.props.name ?? e.id}</span>
-            <span class="list-trail mono faint">{e.id}</span>
           </button>
           <Show when={e.children.length > 0}>
             <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} onPick={p.onPick} onEdit={p.onEdit} onMenu={p.onMenu} />
