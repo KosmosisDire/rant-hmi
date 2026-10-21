@@ -9,7 +9,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const panel = await hmi.addElement(pageId, "div", { name: "panel", x: "600", y: "200", w: "200", h: "100", origin: '"50% 50%"', background: "#2a2f35" });
   const dot = await hmi.addElement(pageId, "div", { name: "dot", x: "0", y: "0", w: "20", h: "20", background: "#c62828" }, panel);
   await d.openPage("Origins");
-  const left = (id) => d.el(id).evaluate((e) => [parseFloat(e.style.left), parseFloat(e.style.top)]);
+  // where its corner is drawn in what holds it, in page pixels
+  const left = (id) =>
+    d.el(id).evaluate((e) => {
+      const [r, o] = [e.getBoundingClientRect(), e.parentElement.closest(".el, .page").getBoundingClientRect()];
+      const k = e.closest(".page").getBoundingClientRect().width / 1408;
+      return [Math.round((r.left - o.left) / k), Math.round((r.top - o.top) / k)];
+    });
   check((await left(panel)).join() === "500,150", `x and y place the panel's corner at ${await left(panel)}, not its middle`);
   check((await left(dot)).join() === "100,50", `the dot inside sits at ${await left(dot)}, not at the panel's middle`);
 

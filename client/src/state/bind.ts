@@ -34,15 +34,46 @@ export function placement(value: string | undefined, whole: number, scope: Scope
   return percent ? (n * whole) / 100 : n;
 }
 
-/** Where an origin puts its point in a box `w` by `h`, from its top left: a pair such as
- *  "50% 100%", each a percent of the box or pixels. Unset, or not such a pair, is the corner. */
-export function originAt(value: unknown, w: number, h: number): { x: number; y: number } {
+/** An origin's two parts, a pair such as "50% 100%", each a number and whether it is a percent
+ *  of the box rather than pixels. Unset, or not such a pair, is the corner. */
+function originParts(value: unknown): { n: number; percent: boolean }[] {
   const [a, b] = typeof value === "string" ? value.trim().split(/\s+/) : [];
-  const one = (t: string | undefined, whole: number) => {
+  const one = (t: string | undefined) => {
     const n = parseFloat(t ?? "");
-    return !Number.isFinite(n) ? 0 : t!.endsWith("%") ? (n * whole) / 100 : n;
+    return Number.isFinite(n) ? { n, percent: t!.endsWith("%") } : { n: 0, percent: false };
   };
-  return { x: one(a, w), y: one(b, h) };
+  return [one(a), one(b)];
+}
+
+/** Where an origin puts its point in a box `w` by `h`, from its top left. */
+export function originAt(value: unknown, w: number, h: number): { x: number; y: number } {
+  const [a, b] = originParts(value).map((p, i) => (p.percent ? (p.n * (i === 0 ? w : h)) / 100 : p.n));
+  return { x: a, y: b };
+}
+
+/** An origin as CSS lengths, for a box whose size only the page knows. `by` -1 flips them, to
+ *  move a box so its origin sits where its corner was. Null at the corner. */
+export function originCss(value: unknown, by = 1): [string, string] | null {
+  const parts = originParts(value);
+  return parts.every((p) => p.n === 0) ? null : (parts.map((p) => `${p.n * by}${p.percent ? "%" : "px"}`) as [string, string]);
+}
+
+/** What w or h may say in place of a size: hug, the size of what the element holds, or fill,
+ *  the room its frame leaves it. Words, never expressions, as a trailing % is. */
+export type SizeWord = "hug" | "fill";
+
+export function sizeWord(value: string | undefined): SizeWord | undefined {
+  const v = value?.trim();
+  return v === "hug" || v === "fill" ? v : undefined;
+}
+
+/** How a frame lays out what it holds, one after another: toward the right, down, left or up. */
+export type Flow = "right" | "down" | "left" | "up";
+
+export const FLOWS: Flow[] = ["right", "down", "left", "up"];
+
+export function flowOf(value: unknown): Flow | undefined {
+  return FLOWS.includes(value as Flow) ? (value as Flow) : undefined;
 }
 
 /** True when the value reads nothing live: a number, a quoted text, a colour or a word

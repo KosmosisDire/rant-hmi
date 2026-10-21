@@ -7,7 +7,7 @@ import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Kept, originAt, pageScope, percentOf, placement, repeatScope, resolve, type Scope } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Scope, sizeWord } from "../state/bind";
 import { fields, short } from "../state/format";
 import { play, stopPlaying } from "../net/video";
 import { component, entity, live, notify, state } from "../state/store";
@@ -40,17 +40,19 @@ export function union(boxes: Box[]): Box {
 /** A box the editor shows in place of an element's own while a drag lands. */
 export type Overrides = (id: string) => Box | undefined;
 
-/** The size of what holds an element, which a percent in its placement is a share of, and
- *  its origin, the point its children's x and y count from, the corner when unset. */
-export interface Room {
-  w: number;
-  h: number;
-  ox?: number;
-  oy?: number;
+/** What holds an element: the origin its x and y count from, as CSS lengths, and the frame's
+ *  flow when it lays out what it holds, which then waits on no x or y. */
+export interface Holder {
+  ox: string;
+  oy: string;
+  flow?: Flow;
 }
 
+/** The page's corner, where its own elements count from. */
+const CORNER: Holder = { ox: "0px", oy: "0px" };
+
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "text", "value", "viewbox", "src", "fit", "markup"]);
+export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "text", "value", "viewbox", "src", "fit", "markup"]);
 
 /** What a drawing holds: SVG shapes, whose every property but the name is an attribute. */
 export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
@@ -129,7 +131,7 @@ export function PageView(p: { page: Page; overrides?: Overrides; size?: { width:
   const size = () => p.size ?? p.page;
   return (
     <div class="page" classList={{ design: p.design }} style={{ width: `${size().width}px`, height: `${size().height}px`, "--page-ground": pageGround(p.page) }}>
-      <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={{ w: p.page.width, h: p.page.height }} overrides={p.overrides} design={p.design} act={p.act} />}</For>
+      <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} />}</For>
     </div>
   );
 }
@@ -159,7 +161,7 @@ function words(v: unknown): string {
 interface ElementProps {
   element: Element;
   scope: Scope;
-  room: Room;
+  room: Holder;
   overrides?: Overrides;
   design?: boolean;
   act?: Act;
@@ -281,40 +283,75 @@ function ElementView(p: ElementProps & { at?: At }) {
       else faults.push(`${key}: ${r.error}`);
       return undefined;
     };
+    // a frame that lays out what it holds, its gap "auto" spreading them over its length
+    const flow = p.element.tag === "div" ? flowOf(take("layout")) : undefined;
+    const spread = !!flow && take("gap") === "auto";
     // an instance's other properties are its inputs, never CSS, but for how it turns
     for (const key of Object.keys(p.element.props)) {
-      if (OWN.has(key) || (p.element.tag === "use" && key !== "rotate")) continue;
+      if (OWN.has(key) || (p.element.tag === "use" && key !== "rotate") || (key === "gap" && spread)) continue;
       const v = take(key);
       if (v === undefined || v === null || v === "") continue;
       const bad = cssFault(key, v);
       if (bad) faults.push(bad);
       else style[key] = css(key, v);
     }
-    const o = p.overrides?.(p.element.id);
-    const at = (k: keyof Box) => {
-      if (o) return o[k];
+    // placed in CSS, so a size only the page knows, as a hug's or a fill's, still places it
+    const length = (k: keyof Box) => {
       const { expr, percent } = percentOf(p.element.props[k]);
       const n = Number(take(k, expr) ?? 0);
-      const whole = k === "x" || k === "w" ? p.room.w : p.room.h;
-      return Number.isFinite(n) ? (percent ? (n * whole) / 100 : n) : 0;
+      return !Number.isFinite(n) ? "0px" : percent ? `${n}%` : `${n}px`;
     };
-    // x and y place its origin, counted from the origin of what holds it, and it turns about it
-    const [w, h] = [at("w"), at("h")];
-    const own = originAt(take("origin"), w, h);
-    style.left = `${o ? o.x : (p.room.ox ?? 0) + at("x") - own.x}px`;
-    style.top = `${o ? o.y : (p.room.oy ?? 0) + at("y") - own.y}px`;
-    style.width = `${w}px`;
-    style.height = `${h}px`;
-    style["transform-origin"] = `${own.x}px ${own.y}px`;
+    const word = (k: "w" | "h") => sizeWord(p.element.props[k]);
+    // a hugging instance takes its component's own size
+    const made = p.element.tag === "use" ? component(p.element.component ?? "") : undefined;
+    const size = (k: "w" | "h") => {
+      if (word(k) === "fill") return "100%";
+      if (word(k) === "hug") return made ? `${k === "w" ? made.width : made.height}px` : undefined;
+      return length(k);
+    };
+    const origin = take("origin");
+    const [ox, oy] = originCss(origin) ?? ["0px", "0px"];
+    const o = p.overrides?.(p.element.id);
+    if (p.room.flow) {
+      // its frame lays it out: x and y wait, and a fill takes the room left along the flow
+      style.position = "relative";
+      const along = p.room.flow === "right" || p.room.flow === "left" ? "w" : "h";
+      for (const k of ["w", "h"] as const) {
+        const side = k === "w" ? "width" : "height";
+        if (word(k) === "fill" && k === along) Object.assign(style, { flex: "1 1 0", [`min-${side}`]: "0" });
+        else if (word(k) === "fill") style["align-self"] = "stretch";
+        else {
+          const s = size(k);
+          if (s) style[side] = s;
+          if (k === along) style["flex-shrink"] = "0";
+        }
+      }
+    } else if (o) {
+      Object.assign(style, { left: `${o.x}px`, top: `${o.y}px`, width: `${o.w}px`, height: `${o.h}px` });
+    } else {
+      // x and y place its origin, counted from the origin of what holds it
+      const from = (o: string, k: "x" | "y") => (o === "0px" ? length(k) : `calc(${o} + ${length(k)})`);
+      style.left = from(p.room.ox, "x");
+      style.top = from(p.room.oy, "y");
+      const back = originCss(origin, -1);
+      if (back) style.translate = back.join(" ");
+      for (const k of ["w", "h"] as const) {
+        const s = size(k);
+        if (s) style[k === "w" ? "width" : "height"] = s;
+      }
+    }
+    // it turns about its origin
+    style["transform-origin"] = `${ox} ${oy}`;
+    if (flow) Object.assign(style, layoutCss(flow, take("wrap") === true, take("align"), spread));
     const text = p.element.tag === "span" ? words(take("text")) : "";
     const value = p.element.tag === "input" ? take("value") : undefined;
     const drawing = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
     const media = p.element.tag === "media" ? { alias: playable(p.element.props.src, () => take("src")), src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
-    return { style, unknown, faults, text, value, drawing, markup, media, w, h, ox: own.x, oy: own.y };
+    return { style, unknown, faults, text, value, drawing, markup, media, holder: { ox, oy, flow } as Holder };
   });
   const press = usePress(p);
-  const inner = (c: Element) => <Placed element={c} scope={p.scope} room={{ w: look().w, h: look().h, ox: look().ox, oy: look().oy }} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
+  const inner = (c: Element) => <Placed element={c} scope={p.scope} room={look().holder} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
   return (
     <div
       data-id={p.inside ? undefined : p.element.id}
@@ -344,7 +381,7 @@ function ElementView(p: ElementProps & { at?: At }) {
         <Match when={look().markup}>{(m) => <>{m()}</>}</Match>
         <Match when={look().media}>{(m) => <MediaView alias={m().alias} src={m().src} fit={m().fit} />}</Match>
         <Match when={p.element.tag === "use"}>
-          <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} act={p.act} />
+          <Instance element={p.element} scope={p.scope} design={p.design} act={p.act} />
         </Match>
         <Match when={p.element.tag === "input"}>
           <InputBox element={p.element} scope={p.scope} value={look().value} act={p.act} />
@@ -362,6 +399,30 @@ function GroupView(p: ElementProps) {
       <For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} room={p.room} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>
     </div>
   );
+}
+
+/** A layout frame as CSS: what it holds in a row or a column, wrapped or not, set at one of nine
+ *  points such as "top left", or spread over its whole length. Its start is where the flow
+ *  starts, so "left" stays left when it runs right to left. */
+function layoutCss(flow: Flow, wrap: boolean, align: unknown, spread: boolean): Record<string, string> {
+  const words = typeof align === "string" ? align.trim().split(/\s+/) : [];
+  const middle = words.includes("center") ? "center" : undefined;
+  const v = words.find((w) => w === "top" || w === "bottom") ?? middle ?? "top";
+  const h = words.find((w) => w === "left" || w === "right") ?? middle ?? "left";
+  const END: Record<string, string> = { top: "flex-start", left: "flex-start", center: "center", bottom: "flex-end", right: "flex-end" };
+  const across = flow === "right" || flow === "left";
+  const back = flow === "left" || flow === "up";
+  const flip = (s: string) => (s === "flex-start" ? "flex-end" : s === "flex-end" ? "flex-start" : s);
+  const main = END[across ? h : v];
+  const cross = END[across ? v : h];
+  return {
+    display: "flex",
+    "flex-direction": { right: "row", down: "column", left: "row-reverse", up: "column-reverse" }[flow],
+    "flex-wrap": wrap ? "wrap" : "nowrap",
+    "justify-content": spread ? "space-between" : back ? flip(main) : main,
+    "align-items": cross,
+    "align-content": cross,
+  };
 }
 
 /** The SVG a markup element's code gives, as text or a list of it. Why it cannot be drawn
@@ -595,7 +656,7 @@ function local(el: globalThis.Element, e: PointerEvent): { x: number; y: number;
 /** A component in an instance's box, scaled to fit and centred. While a pointer is down on it,
  *  what it writes shows at once, and after release what its bindings say. It keeps its own
  *  variables, and which of its parts the pointer presses or is over. */
-function Instance(p: { element: Element; scope: Scope; w: number; h: number; design?: boolean; act?: Act }) {
+function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: Act }) {
   const name = () => p.element.component ?? "";
   const [held, setHeld] = createSignal<Map<string, unknown> | null>(null);
   const hold = (e: PointerEvent) => {
@@ -612,6 +673,17 @@ function Instance(p: { element: Element; scope: Scope; w: number; h: number; des
     },
   };
   const kept = keep();
+  // the box it is placed at, as the page lays it out, which a scaled component fits
+  const [placed, setPlaced] = createSignal({ w: 0, h: 0 });
+  let watch: ResizeObserver | undefined;
+  onCleanup(() => watch?.disconnect());
+  const measure = (el: HTMLElement) => {
+    const host = el.parentElement;
+    if (!host) return;
+    watch?.disconnect();
+    watch = new ResizeObserver(() => setPlaced({ w: host.clientWidth, h: host.clientHeight }));
+    watch.observe(host);
+  };
   return (
     <Show when={component(name())} fallback={<div class="instance-missing">{name()} is missing</div>}>
       {(c) => {
@@ -623,21 +695,24 @@ function Instance(p: { element: Element; scope: Scope; w: number; h: number; des
         const display = () => p.element.handlers.length === 0 && bindable().length > 0 && !bindable().some((i) => scope.writes(i.name));
         // scaled whole to fit and centred, or laid out in the box itself
         const fills = () => c().interface?.sizing === "fill";
-        const box = () => (fills() ? { w: p.w, h: p.h } : { w: c().width, h: c().height });
-        const k = () => Math.min(p.w / c().width, p.h / c().height);
-        const place = () => (fills() ? "none" : `translate(${(p.w - c().width * k()) / 2}px, ${(p.h - c().height * k()) / 2}px) scale(${k()})`);
+        const k = () => Math.min(placed().w / c().width, placed().h / c().height);
+        const place = () => (fills() ? "none" : `translate(${(placed().w - c().width * k()) / 2}px, ${(placed().h - c().height * k()) / 2}px) scale(${k()})`);
         return (
           // held from the capture, before any part's handler writes, and a part's press heard
           // after its own handlers, so a release handler still reads how long it was held
           <div
             class="instance"
-            style={{ width: `${box().w}px`, height: `${box().h}px`, transform: place() }}
-            ref={(el) => el.addEventListener("pointerdown", hold, true)}
+            style={{ width: fills() ? "100%" : `${c().width}px`, height: fills() ? "100%" : `${c().height}px`, transform: place() }}
+            ref={(el) => {
+              el.addEventListener("pointerdown", hold, true);
+              // its element holds it only once the tree is built
+              queueMicrotask(() => measure(el));
+            }}
             onPointerDown={(e) => p.act && !display() && kept.press(e)}
             onPointerOver={(e) => p.act && !display() && kept.over(e)}
             onPointerLeave={() => kept.leave()}
           >
-            <For each={c().children}>{(e) => <Placed element={e} scope={scope} room={box()} design={p.design} act={display() ? undefined : act} inside />}</For>
+            <For each={c().children}>{(e) => <Placed element={e} scope={scope} room={CORNER} design={p.design} act={display() ? undefined : act} inside />}</For>
           </div>
         );
       }}

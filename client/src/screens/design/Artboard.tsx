@@ -12,7 +12,7 @@ import { follow } from "../../ui/press";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
 import { leaves } from "../../page/PageView";
-import { absolute, boxOf, boxText, find, isGroup, literal, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
+import { absolute, boxOf, boxText, find, isGroup, laidOut, literal, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 /** Places snap to whole pixels. A finer one is typed as a fraction, or dragged with Alt. */
 export const GRID = 1;
@@ -239,14 +239,14 @@ export function Artboard(p: {
         startShape(handle, p.selected[0]);
       } else if (handle && p.selected.length === 1) {
         const one = find(p.page.children, p.selected[0]);
-        if (one && literal(one, keysFor(handle))) start(handle, one.id, [one]);
+        if (one && movable(one, keysFor(handle))) start(handle, one.id, [one]);
       } else if (hit && (e.shiftKey || e.ctrlKey || e.metaKey)) {
         return p.onPick(hit, true);
       } else if (holder && hit && shape(holder)) {
         startShape("move", holder);
         if (drag?.kind === "shape") drag.enter = hit;
       } else if (holder && hit) {
-        const group = tops(p.page, p.selected).filter((g) => literal(g, ["x", "y"]));
+        const group = tops(p.page, p.selected).filter((g) => movable(g, ["x", "y"]));
         if (group.some((g) => g.id === holder)) start("move", holder, group, hit);
         else p.onPick(hit);
       } else if (hit && shape(hit)) {
@@ -256,7 +256,7 @@ export function Artboard(p: {
         // a press on one of several selected moves them all, any other picks it alone
         const keep = p.selected.length > 1 && p.selected.includes(hit);
         if (!keep) p.onPick(hit);
-        const group = (keep ? tops(p.page, p.selected) : [find(p.page.children, hit)!]).filter((g) => literal(g, ["x", "y"]));
+        const group = (keep ? tops(p.page, p.selected) : [find(p.page.children, hit)!]).filter((g) => movable(g, ["x", "y"]));
         if (group.some((g) => g.id === hit)) start("move", hit, group);
       } else if (e.shiftKey) {
         drag = { kind: "box", sx: e.clientX, sy: e.clientY };
@@ -376,14 +376,17 @@ export function Artboard(p: {
     return { left: `${v.x}px`, top: `${v.y}px`, width: `${p.page.width * v.k}px`, height: `${p.page.height * v.k}px` };
   };
 
-  // a shape's attributes place it, so its ring is measured from the drawn page, each frame
-  // while one is picked, as live values may move it
+  // a shape's attributes place it, and the page lays some elements out itself, so their rings
+  // are measured from the drawn page, each frame while one is picked, as live values may move it
   const shape = (id: string) => SHAPES.has(find(p.page.children, id)?.tag ?? "");
+  const measuredOne = (id: string) => shape(id) || laidOut(p.page, id);
+  // what a drag may move or size: numbers it can write, and a place no frame's flow sets
+  const movable = (e: Element, keys: (keyof Box)[]) => literal(e, keys) && !roomOf(p.page, e.id).flows;
   // what holds the picked elements, outlined faintly so their bounds show
   const parents = () => [...new Set(p.selected.map((id) => parentOf(p.page, id)))].filter((id): id is string => !!id && !p.selected.includes(id));
   const [measured, setMeasured] = createSignal<Record<string, DOMRect>>({});
   createEffect(() => {
-    const ids = [...p.selected, ...parents()].filter(shape);
+    const ids = [...p.selected, ...parents()].filter(measuredOne);
     if (ids.length === 0) return;
     let frame = requestAnimationFrame(function measure() {
       const at: Record<string, DOMRect> = {};
@@ -437,9 +440,11 @@ export function Artboard(p: {
   };
   // a flat side, as a level line's, has nothing to scale, and its grips would cover the
   // middle a press moves it by
+  // and a size the page sets, as a hug's, has none to pull
   const grips = (id: string) => {
     const m = shape(id) ? measured()[id] : undefined;
-    return HANDLES.filter((h) => !(m && m.height < 2 && /^[ns]$/.test(h)) && !(m && m.width < 2 && /^[ew]$/.test(h)));
+    const e = find(p.page.children, id);
+    return HANDLES.filter((h) => !(m && m.height < 2 && /^[ns]$/.test(h)) && !(m && m.width < 2 && /^[ew]$/.test(h)) && (shape(id) || (!!e && literal(e, keysFor(h)))));
   };
   // the point shows once the element says how it turns
   const turns = (id: string) => {
@@ -456,6 +461,8 @@ export function Artboard(p: {
       const [left, top] = [Math.round(m.left - r.left), Math.round(m.top - r.top)];
       return { left: `${left}px`, top: `${top}px`, width: `${Math.round(m.right - r.left) - left}px`, height: `${Math.round(m.bottom - r.top) - top}px` };
     }
+    // laid out by the page, it is read again each frame
+    if (laidOut(p.page, id)) measured();
     const b = absolute(p.page, id, overrides);
     if (!b) return undefined;
     const v = view();
@@ -500,7 +507,7 @@ export function Artboard(p: {
           <Show when={ring(id)}>
             {(r) => (
               <div class="ring" style={r()}>
-                <Show when={p.selected.length === 1 && (!shape(id) || scales(id)) && find(p.page.children, id)?.tag !== "group"}>
+                <Show when={p.selected.length === 1 && (!shape(id) || scales(id)) && find(p.page.children, id)?.tag !== "group" && !roomOf(p.page, id).flows}>
                   <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} />}</For>
                 </Show>
               </div>
