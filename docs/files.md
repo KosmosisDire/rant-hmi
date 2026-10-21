@@ -61,6 +61,14 @@ set = { target = "Speed", value = "v / 100" }
 name = "accent"
 dark = "#ff8800"
 light = "#0088ff"
+
+[[token]]
+name = "accentBg"
+dark = "$accent.alpha(0.15)"
+
+[[token]]
+name = "radius"
+dark = "0.5"
 ```
 
 - `kind` is `topic`, `variable`, `function` or `task`. `intent` is `read` or `write`, and a
@@ -77,6 +85,9 @@ light = "#0088ff"
   one with a `set` gives its `target`, a variable imported to write, an HMI variable or
   another computed value with a setter, the `value` expression. One that reads itself is
   refused.
+- A token's `dark` and `light` are expressions over other tokens and the math: a colour, a
+  number in units or a text. `light` left out is the dark one, worked out in light. Tokens
+  that read each other in a ring cannot be worked out.
 
 ## Pages and components
 
