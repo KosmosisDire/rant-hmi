@@ -114,6 +114,8 @@ component placed on a page is a tag named after it.
 - `repeat` draws an element once per item of a list, or a number of times:
   `<div repeat="6" x="44 + index * 132">`. It and all inside it read `index`, from 0, and
   `item`, and so do their handlers.
+- `<group>` keeps elements together, which the editor picks and moves as one. It has no box,
+  origin or place of its own, so what it holds sits as it would without it.
 - `<svg>` is a drawing, placed like a frame. It holds shapes (`path`, `circle`, `ellipse`,
   `rect`, `line`, `polyline`, `polygon`, `text`, and `g` to group them), drawn in its
   `viewbox` units, by default its size in pixels. `fit` is `"meet"`, `"slice"` or

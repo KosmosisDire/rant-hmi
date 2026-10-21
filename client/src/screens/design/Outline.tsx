@@ -259,7 +259,7 @@ function Layers(p: {
             class="list-row"
             classList={{ selected: p.selected.includes(e.id), dragged: e.id === p.dragging, "drop-front": at(e.id) === "front", "drop-behind": at(e.id) === "behind", "drop-inside": at(e.id) === "inside" }}
             data-id={e.id}
-            data-frame={e.tag === "div" || e.tag === "svg" || e.tag === "g" ? "" : undefined}
+            data-frame={e.tag === "div" || e.tag === "group" || e.tag === "svg" || e.tag === "g" ? "" : undefined}
             data-open={e.children.length > 0 ? "" : undefined}
             onClick={(ev) => p.onPick(e.id, ev.shiftKey || ev.ctrlKey || ev.metaKey)}
             onDblClick={() => p.onEdit(e.id, "name")}

@@ -25,6 +25,18 @@ export interface Box {
   h: number;
 }
 
+/** What a group holds, through the groups inside it, or the element itself: what has a place. */
+export function leaves(e: Element): Element[] {
+  return e.tag === "group" ? e.children.flatMap(leaves) : [e];
+}
+
+/** The box around `boxes`, an empty one at the corner for none. */
+export function union(boxes: Box[]): Box {
+  if (boxes.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+  const [x, y] = [Math.min(...boxes.map((b) => b.x)), Math.min(...boxes.map((b) => b.y))];
+  return { x, y, w: Math.max(...boxes.map((b) => b.x + b.w)) - x, h: Math.max(...boxes.map((b) => b.y + b.h)) - y };
+}
+
 /** A box the editor shows in place of an element's own while a drag lands. */
 export type Overrides = (id: string) => Box | undefined;
 
@@ -78,8 +90,16 @@ const GAP = 22;
 /** A page as a narrow screen shows it: its top level elements one under another in reading
  *  order, rows by how far down they start, left to right within a row. */
 export function stacked(page: Page): { width: number; height: number; at: Overrides } {
-  const at = (e: Element, k: keyof Box) => placement(e.props[k], k === "x" || k === "w" ? page.width : page.height);
-  const boxes = page.children.map((e) => ({ id: e.id, b: { x: at(e, "x"), y: at(e, "y"), w: at(e, "w"), h: at(e, "h") } }));
+  // a box from its top left, as x and y place its origin
+  const box = (e: Element): Box => {
+    if (e.tag === "group") return union(e.children.map(box));
+    const at = (k: keyof Box) => placement(e.props[k], k === "x" || k === "w" ? page.width : page.height);
+    const [w, h] = [at("w"), at("h")];
+    const r = e.props.origin === undefined ? undefined : resolve(e.props.origin, pageScope);
+    const own = originAt(r?.ok ? r.value : undefined, w, h);
+    return { x: at("x") - own.x, y: at("y") - own.y, w, h };
+  };
+  const boxes = page.children.map((e) => ({ e, b: box(e) }));
   boxes.sort((p, q) => p.b.y - q.b.y);
   const order: typeof boxes = [];
   for (let i = 0; i < boxes.length; ) {
@@ -91,8 +111,12 @@ export function stacked(page: Page): { width: number; height: number; at: Overri
   }
   const places = new Map<string, Box>();
   let y = GAP;
-  for (const { id, b } of order) {
-    places.set(id, { ...b, x: GAP, y });
+  for (const { e, b } of order) {
+    // what a group holds keeps its places within the group's box
+    for (const l of leaves(e)) {
+      const lb = box(l);
+      places.set(l.id, { ...lb, x: GAP + lb.x - b.x, y: y + lb.y - b.y });
+    }
     y += b.h + GAP;
   }
   return { width: Math.max(1, ...order.map(({ b }) => b.w)) + 2 * GAP, height: y, at: (id) => places.get(id) };
@@ -238,6 +262,7 @@ function usePress(p: ElementProps & { at?: At }) {
  *  the page's, so it carries no id to pick it by. `at` is the copy of a repeat it is. */
 function ElementView(p: ElementProps & { at?: At }) {
   if (SHAPES.has(p.element.tag)) return <ShapeView {...p} />;
+  if (p.element.tag === "group") return <GroupView {...p} />;
   const look = createMemo(() => {
     const style: Record<string, string> = {};
     const faults: string[] = [];
@@ -315,6 +340,16 @@ function ElementView(p: ElementProps & { at?: At }) {
           <InputBox element={p.element} scope={p.scope} value={look().value} act={p.act} />
         </Match>
       </Switch>
+    </div>
+  );
+}
+
+/** A group: no box of its own, so what it holds sits in the room the group sits in. It still
+ *  names a part a press or a hover is in. */
+function GroupView(p: ElementProps) {
+  return (
+    <div data-id={p.inside ? undefined : p.element.id} data-name={p.element.props.name} class="el group">
+      <For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} room={p.room} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>
     </div>
   );
 }

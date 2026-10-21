@@ -6,7 +6,7 @@ import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { state } from "../../state/store";
 import { type MenuEntry, type MenuItem, openMenu } from "../../ui/Menu";
-import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Download, Plus, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash } from "../../ui/icons";
+import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Download, Group, Plus, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash, Ungroup } from "../../ui/icons";
 import { savePicture, showsPicture } from "../../ui/Picture";
 import { addElement, KINDS, STARTS } from "./add";
 import { duplicate, pasteHere } from "./clipboard";
@@ -14,7 +14,7 @@ import { makeComponent } from "./component";
 import type { Pick } from "./DesignScreen";
 import { addShape, SHAPE_KINDS } from "./ShapeFields";
 import { TagIcon } from "./TagIcon";
-import { absolute, find, parentOf, remove, restack, tops } from "./tree";
+import { absolute, find, group, isGroup, parentOf, remove, restack, tops, ungroup } from "./tree";
 
 /** A spot on the page, as the canvas was clicked. */
 type Spot = { x: number; y: number };
@@ -76,6 +76,18 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
     { label: "Copy", keys: "Ctrl C", icon: <Copy size={13} />, run: copySelection },
     { label: "Paste", keys: "Ctrl V", icon: <ClipboardPaste size={13} />, run: () => void pasteHere(page, ids.at(-1) ?? null) },
     { label: "Duplicate", keys: "Ctrl D", icon: <CopyPlus size={13} />, run: () => duplicate(page, picked) },
+    "-",
+    { label: "Group", keys: "Ctrl G", icon: <Group size={13} />, disabled: picked.some((x) => parentOf(page, x.id) !== parentOf(page, picked[0].id)), run: () => group(page, ids) },
+  );
+  if (picked.some(isGroup)) {
+    entries.push({
+      label: "Ungroup",
+      keys: "Ctrl Shift G",
+      icon: <Ungroup size={13} />,
+      run: () => ungroup(page, ids).forEach((held, i) => pick(held, i > 0)),
+    });
+  }
+  entries.push(
     "-",
     { label: "Convert to component", icon: <Component size={13} />, run: () => makeComponent(page, ids) },
   );

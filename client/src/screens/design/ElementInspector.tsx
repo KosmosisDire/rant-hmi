@@ -235,6 +235,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const input = () => p.element.tag === "input";
   const drawing = () => p.element.tag === "svg";
   const shape = () => SHAPES.has(p.element.tag);
+  const grouped = () => p.element.tag === "group";
   // the field a double click types into: the one asked for, else the element's main one
   const typed = (key: string) => {
     const t = p.typing;
@@ -274,8 +275,10 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
       <div class="pane-body pad">
         <div class="section">Element</div>
         <Field {...prop("name")} label="Name" plain focus={typed("name")} />
-        <Field {...prop("repeat")} label="Repeat" placeholder="a list, or a count" />
-        <Show when={!shape()}>
+        <Show when={!grouped()} fallback={<div class="placeholder">A group keeps what it holds together. A click picks it whole and another the part under the pointer, and each part keeps its own place. Ctrl Shift G ungroups it.</div>}>
+          <Field {...prop("repeat")} label="Repeat" placeholder="a list, or a count" />
+        </Show>
+        <Show when={!shape() && !grouped()}>
           <div class="section">Placement</div>
           <div class="placement">
             <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} />}</For>
@@ -351,7 +354,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={text() || input()}>
           <For each={TEXT_LOOK}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
         </Show>
-        <Show when={!instance() && !shape()}>
+        <Show when={!instance() && !shape() && !grouped()}>
           <div class="section">Look</div>
           <Field {...prop("background")} {...LOOK[0][2]} label="Fill" />
           <BorderField props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
@@ -360,7 +363,9 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">More CSS</div>
           <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
         </Show>
-        <Events page={p.page} element={p.element} focus={(event) => typed(`on:${event}`)} />
+        <Show when={!grouped()}>
+          <Events page={p.page} element={p.element} focus={(event) => typed(`on:${event}`)} />
+        </Show>
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => send({ type: "edit", edit: { kind: "remove_element", page: p.page, id: p.element.id } })}>

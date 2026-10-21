@@ -456,7 +456,7 @@ impl Reader<'_> {
             self.expect(">")?;
             handlers = self.handlers()?;
             match tag {
-                Tag::Div | Tag::Svg | Tag::Group => children = self.children(&word)?,
+                Tag::Div | Tag::Group | Tag::Svg | Tag::G => children = self.children(&word)?,
                 Tag::Span | Tag::SvgText | Tag::Markup => {
                     if tag == Tag::Markup {
                         // the gap before took the first line's indent, which dedent measures against the rest
@@ -729,13 +729,13 @@ mod tests {
         let mut out = Vec::new();
         for _ in 0..rng.below(3) {
             *ids += 1;
-            let tag = [Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::Group][rng.below(5)];
+            let tag = [Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G][rng.below(5)];
             let mut props = some_props(rng, &["name", "cx", "r", "fill", "stroke", "d", "transform"]);
             if tag == Tag::SvgText {
                 props.insert(TEXT.to_owned(), rng.pick(&VALUES));
             }
             let id = format!("e{ids}");
-            let children = if tag == Tag::Group && depth < 3 { random_shapes(rng, ids, depth + 1) } else { Vec::new() };
+            let children = if tag == Tag::G && depth < 3 { random_shapes(rng, ids, depth + 1) } else { Vec::new() };
             out.push(Element { id, tag, component: None, props, handlers: some_handlers(rng, tag), children });
         }
         out
@@ -744,13 +744,13 @@ mod tests {
     fn random_element(rng: &mut Rng, ids: &mut usize, depth: usize) -> Element {
         *ids += 1;
         let id = format!("e{ids}");
-        let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Use][rng.below(7)];
+        let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Use, Tag::Group][rng.below(8)];
         let keys: Vec<&str> = ATTRS.iter().chain(STYLE.iter()).copied().collect();
         let mut props = some_props(rng, &keys);
         let mut children = Vec::new();
         let mut component = None;
         match tag {
-            Tag::Div if depth < 3 => {
+            Tag::Div | Tag::Group if depth < 3 => {
                 for _ in 0..rng.below(3) {
                     children.push(random_element(rng, ids, depth + 1));
                 }

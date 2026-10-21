@@ -11,7 +11,8 @@ import { Keyboard } from "../../ui/icons";
 import { follow } from "../../ui/press";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
-import { absolute, boxOf, boxText, find, literal, parentOf, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
+import { leaves } from "../../page/PageView";
+import { absolute, boxOf, boxText, find, isGroup, literal, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 export const GRID = 11;
 /** Grid lines every so many units and how strong each set is. A set fades out as its lines
@@ -29,6 +30,7 @@ const KEYS: [string, string][] = [
   ["Wheel", "zoom about the pointer"],
   ["Drag on empty space", "pan, as the middle button does"],
   ["Click", "select"],
+  ["Click a group", "select it whole, click again for the part"],
   ["Shift or Ctrl click", "add to the selection or take away"],
   ["Shift drag on empty space", "add what lies wholly inside"],
   ["Ctrl A", "select everything on the page"],
@@ -37,18 +39,20 @@ const KEYS: [string, string][] = [
   ["Double click", "type into the element's field"],
   ["Delete", "remove"],
   ["Ctrl D", "duplicate"],
+  ["Ctrl G", "group, Ctrl Shift G ungroups"],
   ["Ctrl C, X, V", "copy, cut and paste"],
   ["Ctrl [ and ]", "send back, bring forward, Shift all the way"],
   ["Ctrl Z", "undo, Ctrl Shift Z or Ctrl Y redoes"],
   ["Escape", "let go"],
 ];
 
-/** A pan, a box drawn to select, or a move or resize of `ids` led by the one under the pointer. */
+/** A pan, a box drawn to select, or a move or resize of `ids` led by the one under the pointer.
+ *  `enter` is what a press inside a selected group picks when it lets go unmoved. */
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "box"; sx: number; sy: number }
-  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number }
-  | { kind: "shape"; how: "move" | Handle; id: string; sx: number; sy: number; base: Element; screen: DOMMatrix; outline: DOMRect; props: Record<string, string> | null };
+  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string }
+  | { kind: "shape"; how: "move" | Handle; id: string; sx: number; sy: number; base: Element; screen: DOMMatrix; outline: DOMRect; props: Record<string, string> | null; enter?: string };
 
 /** A box shown in place of an element's own until the page carries it. `n` names the drag
  *  that made it, so a finished drag never clears a newer one's box. */
@@ -209,10 +213,15 @@ export function Artboard(p: {
       drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
     } else if (e.button === 0) {
       const handle = target.closest("[data-handle]")?.getAttribute("data-handle") as Handle | null;
-      const hit = target.closest(".el[data-id]")?.getAttribute("data-id") ?? null;
-      const start = (kind: "move" | Handle, lead: string, group: Element[]) => {
-        const bases = Object.fromEntries(group.map((g) => [g.id, boxOf(g, roomOf(p.page, g.id))]));
-        drag = { kind, lead, ids: group.map((g) => g.id), sx: e.clientX, sy: e.clientY, bases, boxes: { ...bases }, n: ++drags };
+      const deepest = target.closest(".el[data-id]")?.getAttribute("data-id") ?? null;
+      const hit = deepest && pickAt(p.page, deepest, p.selected);
+      // a selected group the press is inside, which it moves rather than picking into at once
+      const holder = deepest && hit ? p.selected.find((id) => id !== hit && isGroup(find(p.page.children, id)) && !!find(find(p.page.children, id)!.children, deepest)) : undefined;
+      // a group moves by what it holds, led by the box around them
+      const start = (kind: "move" | Handle, lead: string, group: Element[], enter?: string) => {
+        const all = group.flatMap((g) => (g.tag === "group" ? [g, ...leaves(g)] : [g]));
+        const bases = Object.fromEntries(all.map((g) => [g.id, boxOf(g, roomOf(p.page, g.id))]));
+        drag = { kind, lead, ids: all.map((g) => g.id), sx: e.clientX, sy: e.clientY, bases, boxes: { ...bases }, n: ++drags, enter };
       };
       // a shape's own attributes move and scale it, in its drawing's units
       const startShape = (how: "move" | Handle, id: string) => {
@@ -230,6 +239,13 @@ export function Artboard(p: {
         if (one && literal(one, keysFor(handle))) start(handle, one.id, [one]);
       } else if (hit && (e.shiftKey || e.ctrlKey || e.metaKey)) {
         return p.onPick(hit, true);
+      } else if (holder && hit && shape(holder)) {
+        startShape("move", holder);
+        if (drag?.kind === "shape") drag.enter = hit;
+      } else if (holder && hit) {
+        const group = tops(p.page, p.selected).filter((g) => literal(g, ["x", "y"]));
+        if (group.some((g) => g.id === holder)) start("move", holder, group, hit);
+        else p.onPick(hit);
       } else if (hit && shape(hit)) {
         p.onPick(hit);
         startShape("move", hit);
@@ -301,12 +317,21 @@ export function Artboard(p: {
     const d = drag;
     drag = null;
     if (d?.kind === "box") return takeBox();
-    if (d?.kind === "shape") return d.props && setProps(p.page.id, d.id, d.props);
+    if (d?.kind === "shape") {
+      const moved = !!d.props && Object.entries(d.props).some(([k, v]) => d.base.props[k] !== v);
+      if (!moved && d.enter) p.onPick(d.enter);
+      return moved && setProps(p.page.id, d.id, d.props!);
+    }
     if (!d || d.kind === "pan") return;
     const edits: Edit[] = [];
     for (const id of d.ids) {
       const props: Record<string, string> = {};
       const [e, room] = [find(p.page.children, id), roomOf(p.page, id)];
+      // a group has no place of its own: what it holds moved
+      if (e?.tag === "group") {
+        release(id, d.n);
+        continue;
+      }
       for (const k of ["x", "y", "w", "h"] as (keyof Box)[]) {
         // a new size moves the origin, so x and y follow w and h
         const changed = (key: keyof Box) => d.boxes[id][key] !== d.bases[id][key];
@@ -316,6 +341,7 @@ export function Artboard(p: {
       else release(id, d.n);
     }
     sendEdits(edits);
+    if (edits.length === 0 && d.enter) p.onPick(d.enter);
     // a refused write must not hold its boxes forever
     window.setTimeout(() => d.ids.forEach((id) => release(id, d.n)), 3000);
   };
@@ -445,7 +471,8 @@ export function Artboard(p: {
       onPointerDown={down}
       onContextMenu={(e) => {
         cancel();
-        const hit = (e.target as HTMLElement).closest(".el[data-id]")?.getAttribute("data-id");
+        const deepest = (e.target as HTMLElement).closest(".el[data-id]")?.getAttribute("data-id");
+        const hit = deepest && pickAt(p.page, deepest, p.selected);
         const [r, v] = [host.getBoundingClientRect(), view()];
         const at = { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
         if (hit) elementMenu(e, p.page, p.selected, p.onPick, hit, at);
@@ -470,7 +497,7 @@ export function Artboard(p: {
           <Show when={ring(id)}>
             {(r) => (
               <div class="ring" style={r()}>
-                <Show when={p.selected.length === 1 && (!shape(id) || scales(id))}>
+                <Show when={p.selected.length === 1 && (!shape(id) || scales(id)) && find(p.page.children, id)?.tag !== "group"}>
                   <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} />}</For>
                 </Show>
               </div>

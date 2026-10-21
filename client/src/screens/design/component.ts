@@ -8,6 +8,7 @@ import type { Page } from "../../protocol/Page";
 import { isPercent } from "../../state/bind";
 import { notify, state } from "../../state/store";
 import { paint } from "../../ui/highlight";
+import { leaves } from "../../page/PageView";
 import { boxOf, boxText, childrenOf, literal, parentOf, roomOf, sendEdits, tops } from "./tree";
 
 /** A name's words joined, each after the first with a capital: "Start stop" gives startStop. */
@@ -47,12 +48,15 @@ export function makeComponent(page: Page, ids: string[]) {
   const parts: Element[] = JSON.parse(JSON.stringify(picked));
   // in pixels, since a percent of the page would mean a share of the component instead
   const room = { w: right - left, h: bottom - top };
-  parts.forEach((e, i) => {
-    if (isPercent(e.props.w)) e.props.w = String(boxes[i].w);
-    if (isPercent(e.props.h)) e.props.h = String(boxes[i].h);
+  // each part with a place, through the groups, as the copies line up with what they copy
+  const own = picked.flatMap(leaves);
+  parts.flatMap(leaves).forEach((e, i) => {
+    const b = boxOf(own[i], roomOf(page, own[i].id));
+    if (isPercent(e.props.w)) e.props.w = String(b.w);
+    if (isPercent(e.props.h)) e.props.h = String(b.h);
     if (isPercent(e.props.x)) e.props.x = "0";
     if (isPercent(e.props.y)) e.props.y = "0";
-    const there = { ...boxes[i], x: boxes[i].x - left, y: boxes[i].y - top };
+    const there = { ...b, x: b.x - left, y: b.y - top };
     Object.assign(e.props, { x: boxText(e, "x", there, room), y: boxText(e, "y", there, room) });
   });
 

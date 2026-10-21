@@ -23,6 +23,11 @@
   line-height: 1.25;
 }
 
+/* A group has no box: what it holds sits where it would without it. */
+.el.group {
+  display: contents;
+}
+
 /* An input fills its element, which carries its look. One refused shows red until fixed. */
 .el-input {
   width: 100%;

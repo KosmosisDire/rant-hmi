@@ -169,13 +169,16 @@ pub enum Tag {
     #[serde(rename = "text")]
     SvgText,
     /// Shapes kept together in a drawing, moved as one by a transform.
-    #[serde(rename = "g")]
+    G,
+    /// Elements kept together, picked and moved as one. It has no box, origin or place of its
+    /// own, so what it holds sits where it would without it.
     Group,
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-const WORDS: [(Tag, &str); 15] = [
+const WORDS: [(Tag, &str); 16] = [
     (Tag::Div, "div"),
+    (Tag::Group, "group"),
     (Tag::Span, "span"),
     (Tag::Input, "input"),
     (Tag::Media, "media"),
@@ -189,7 +192,7 @@ const WORDS: [(Tag, &str); 15] = [
     (Tag::Polyline, "polyline"),
     (Tag::Polygon, "polygon"),
     (Tag::SvgText, "text"),
-    (Tag::Group, "g"),
+    (Tag::G, "g"),
 ];
 
 impl Tag {
@@ -199,17 +202,18 @@ impl Tag {
 
     /// A shape draws inside a drawing, and its every property is an SVG attribute.
     pub fn is_shape(self) -> bool {
-        matches!(self, Tag::Path | Tag::Circle | Tag::Ellipse | Tag::Rect | Tag::Line | Tag::Polyline | Tag::Polygon | Tag::SvgText | Tag::Group)
+        matches!(self, Tag::Path | Tag::Circle | Tag::Ellipse | Tag::Rect | Tag::Line | Tag::Polyline | Tag::Polygon | Tag::SvgText | Tag::G)
     }
 
-    /// Whether this may hold a `child`: a frame holds elements, a drawing or a group shapes.
+    /// Whether this may hold a `child`: a frame or a group holds elements, a drawing or its
+    /// group shapes.
     fn holds(self, child: Tag) -> Result<(), String> {
         match self {
-            Tag::Div if child.is_shape() => Err("a shape goes in a drawing".into()),
-            Tag::Div => Ok(()),
-            Tag::Svg | Tag::Group if child.is_shape() => Ok(()),
-            Tag::Svg | Tag::Group => Err("a drawing holds only shapes".into()),
-            _ => Err("only a frame or a drawing holds other elements".into()),
+            Tag::Div | Tag::Group if child.is_shape() => Err("a shape goes in a drawing".into()),
+            Tag::Div | Tag::Group => Ok(()),
+            Tag::Svg | Tag::G if child.is_shape() => Ok(()),
+            Tag::Svg | Tag::G => Err("a drawing holds only shapes".into()),
+            _ => Err("only a frame, a group or a drawing holds other elements".into()),
         }
     }
 }
@@ -249,6 +253,11 @@ pub enum Edit {
     PutElement { page: String, parent: Option<String>, index: usize, element: Element },
     /// Moves an element to `index` of `parent`, counted once the element is taken out.
     MoveElement { page: String, id: String, parent: Option<String>, index: usize },
+    /// Puts elements that share a holder into a new group where the front most of them stood,
+    /// in their order. Shapes go into a drawing's group.
+    Group { page: String, ids: Vec<String> },
+    /// Puts what a group holds in its place and removes it.
+    Ungroup { page: String, id: String },
     /// Sets each property to its value, or removes it where the value is null.
     SetProps { page: String, id: String, props: BTreeMap<String, Option<String>> },
     /// Sets the code the element runs on `event`, or removes its handler where it is null.
@@ -604,6 +613,44 @@ impl Pages {
                 let list = holder(p, &parent, tag)?;
                 list.insert(index.min(list.len()), element);
                 Edit::MoveElement { page: page.clone(), id, parent: from, index: at }
+            }
+            Edit::Group { page, ids } => {
+                let p = self.page_mut(&page)?;
+                let mut order = Vec::new();
+                for id in &ids {
+                    let (holder, at) = locate(&p.children, id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
+                    order.push((holder, at, id.clone()));
+                }
+                order.sort();
+                order.dedup();
+                let (Some(first), Some(front)) = (order.first(), order.last()) else { return Err("pick something to group".into()) };
+                if order.iter().any(|(holder, ..)| *holder != first.0) {
+                    return Err("pick elements that sit in one frame to group them".into());
+                }
+                let tag = if find(&p.children, &first.2).expect("located above").tag.is_shape() { Tag::G } else { Tag::Group };
+                // the group takes the next id, as AddElement gives it
+                let group = format!("e{}", highest(&p.children) + 1);
+                let element = Element { id: String::new(), tag, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: Vec::new() };
+                let mut edits = vec![Edit::AddElement { page: page.clone(), parent: first.0.clone(), index: Some(front.1 + 1), element }];
+                edits.extend(order.iter().enumerate().map(|(k, (.., id))| Edit::MoveElement { page: page.clone(), id: id.clone(), parent: Some(group.clone()), index: k }));
+                return self.change(Edit::Batch { edits }, touched, made);
+            }
+            Edit::Ungroup { page, id } => {
+                let p = self.page_mut(&page)?;
+                let (holder, at) = locate(&p.children, &id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
+                let group = find(&p.children, &id).expect("located above");
+                if !matches!(group.tag, Tag::Group | Tag::G) {
+                    return Err(format!("{id} is not a group"));
+                }
+                if let Some(key) = group.props.keys().find(|k| *k != "name") {
+                    return Err(format!("the group sets {key}, which ungrouping would lose"));
+                }
+                if !group.handlers.is_empty() {
+                    return Err("the group handles events, which ungrouping would lose".into());
+                }
+                let mut edits: Vec<Edit> = group.children.iter().enumerate().map(|(k, c)| Edit::MoveElement { page: page.clone(), id: c.id.clone(), parent: holder.clone(), index: at + k }).collect();
+                edits.push(Edit::RemoveElement { page: page.clone(), id });
+                return self.change(Edit::Batch { edits }, touched, made);
             }
             Edit::SetProps { page, id, props } => {
                 check_props(props.keys())?;
@@ -1082,7 +1129,7 @@ mod tests {
         let o = || "overview".to_string();
         let span = pages.apply(add(o(), None, Tag::Span, BTreeMap::new())).unwrap().made.unwrap().1;
         let into_span = add(o(), Some(span.clone()), Tag::Div, BTreeMap::new());
-        assert_eq!(pages.apply(into_span).err().unwrap(), "only a frame or a drawing holds other elements");
+        assert_eq!(pages.apply(into_span).err().unwrap(), "only a frame, a group or a drawing holds other elements");
         let bad = add(o(), None, Tag::Div, props(&[("Background", "red")]));
         assert_eq!(pages.apply(bad).err().unwrap(), "\"Background\" is not a property name");
         assert!(pages.apply(Edit::RemoveElement { page: o(), id: "e9".into() }).is_err());
@@ -1205,7 +1252,7 @@ mod tests {
         let kids: Vec<_> = pages.list[0].children[1].children.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(kids, ["e4", "e5"]);
         let bad = Element { id: String::new(), tag: Tag::Span, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: vec![leaf("", Tag::Span)] };
-        assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame or a drawing holds other elements");
+        assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame, a group or a drawing holds other elements");
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1303,10 +1350,40 @@ mod tests {
         assert_eq!(pages.apply(add("overview".into(), Some(drawing.clone()), Tag::Div, props(&[]))).unwrap_err(), "a drawing holds only shapes");
         let into_frame = Edit::MoveElement { page: "overview".into(), id: circle.clone(), parent: Some(frame), index: 0 };
         assert_eq!(pages.apply(into_frame).unwrap_err(), "a shape goes in a drawing");
-        let group = pages.apply(add("overview".into(), Some(drawing.clone()), Tag::Group, props(&[]))).unwrap().made.unwrap().1;
+        let group = pages.apply(add("overview".into(), Some(drawing.clone()), Tag::G, props(&[]))).unwrap().made.unwrap().1;
         pages.apply(Edit::MoveElement { page: "overview".into(), id: circle.clone(), parent: Some(group.clone()), index: 0 }).unwrap();
         let again = Pages::open(&dir).unwrap();
         assert_eq!(find(&again.get("overview").unwrap().children, &group).unwrap().children[0].id, circle);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn grouping_keeps_order_and_place_and_undoes_as_one() {
+        let dir = scratch("group");
+        let mut pages = Pages::open(&dir).unwrap();
+        let o = || "overview".to_string();
+        let ids: Vec<String> = (0..4).map(|_| pages.apply(add(o(), None, Tag::Div, props(&[]))).unwrap().made.unwrap().1).collect();
+        let tops = |pages: &Pages| pages.get("overview").unwrap().children.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+        let before = tops(&pages);
+        let grouped = pages.apply(Edit::Group { page: o(), ids: vec![ids[3].clone(), ids[1].clone()] }).unwrap();
+        let group = grouped.made.clone().unwrap().1;
+        let page = pages.get("overview").unwrap();
+        assert_eq!(tops(&pages), vec![ids[0].clone(), ids[2].clone(), group.clone()]);
+        assert_eq!(page.children[2].tag, Tag::Group);
+        assert_eq!(page.children[2].children.iter().map(|e| e.id.clone()).collect::<Vec<_>>(), vec![ids[1].clone(), ids[3].clone()]);
+        assert!(fs::read_to_string(dir.join("pages/overview.html")).unwrap().contains("<group id="));
+        pages.apply(grouped.undo).unwrap();
+        assert_eq!(tops(&pages), before);
+        pages.apply(Edit::Group { page: o(), ids: vec![ids[1].clone(), ids[2].clone()] }).unwrap();
+        let group = tops(&pages)[1].clone();
+        let ungrouped = pages.apply(Edit::Ungroup { page: o(), id: group.clone() }).unwrap();
+        assert_eq!(tops(&pages), before);
+        pages.apply(ungrouped.undo).unwrap();
+        assert_eq!(tops(&pages), vec![ids[0].clone(), group.clone(), ids[3].clone()]);
+        let frame = pages.apply(add(o(), Some(group.clone()), Tag::Div, props(&[]))).unwrap().made.unwrap().1;
+        assert_eq!(pages.apply(Edit::Group { page: o(), ids: vec![frame, ids[0].clone()] }).unwrap_err(), "pick elements that sit in one frame to group them");
+        pages.apply(Edit::SetProps { page: o(), id: group.clone(), props: [("repeat".to_string(), Some("3".to_string()))].into() }).unwrap();
+        assert_eq!(pages.apply(Edit::Ungroup { page: o(), id: group }).unwrap_err(), "the group sets repeat, which ungrouping would lose");
         fs::remove_dir_all(&dir).unwrap();
     }
 

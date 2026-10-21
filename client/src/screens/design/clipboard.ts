@@ -8,7 +8,7 @@ import type { Page } from "../../protocol/Page";
 import { SHAPES } from "../../page/PageView";
 import { GRID } from "./Artboard";
 import { moving, reshape } from "./geometry";
-import { boxOf, boxText, childrenOf, find, holds, literal, parentOf, roomOf, sendEdits } from "./tree";
+import { boxOf, childrenOf, find, holds, literal, parentOf, roomOf, sendEdits, shiftCopy } from "./tree";
 
 const MARK = "rant-hmi elements";
 
@@ -79,10 +79,7 @@ function moveCorner(page: Page, elements: Element[], spot: { x: number; y: numbe
   if (movable.length === 0) return;
   const boxes = movable.map((e) => boxOf(e, room));
   const [dx, dy] = [Math.round(spot.x / GRID) * GRID - Math.min(...boxes.map((b) => b.x)), Math.round(spot.y / GRID) * GRID - Math.min(...boxes.map((b) => b.y))];
-  movable.forEach((e, i) => {
-    const there = { ...boxes[i], x: boxes[i].x + dx, y: boxes[i].y + dy };
-    Object.assign(e.props, { x: boxText(e, "x", there, room), y: boxText(e, "y", there, room) });
-  });
+  movable.forEach((e) => shiftCopy(e, room, dx, dy));
 }
 
 /** A copy of each element just in front of it, one grid step down and right. */
@@ -94,12 +91,7 @@ export function duplicate(page: Page, elements: Element[]) {
     const copy: Element = JSON.parse(JSON.stringify(element));
     // a shape steps by its own attributes, a frame by its place, in the unit it is written in
     if (SHAPES.has(copy.tag)) Object.assign(copy.props, reshape(copy, moving(GRID, GRID)) ?? {});
-    else if (literal(copy, ["x", "y"])) {
-      const room = roomOf(page, element.id);
-      const b = boxOf(element, room);
-      const there = { ...b, x: b.x + GRID, y: b.y + GRID };
-      Object.assign(copy.props, { x: boxText(copy, "x", there, room), y: boxText(copy, "y", there, room) });
-    }
+    else if (literal(copy, ["x", "y"])) shiftCopy(copy, roomOf(page, element.id), GRID, GRID);
     const shift = before.get(parent) ?? 0;
     before.set(parent, shift + 1);
     const index = childrenOf(page, parent).findIndex((c) => c.id === element.id) + 1 + shift;

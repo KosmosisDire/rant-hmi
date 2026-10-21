@@ -1,14 +1,14 @@
 // Finding elements and their boxes in a page's tree.
 
 import { send } from "../../net/connection";
-import { type Box, type Overrides, type Room, SHAPES } from "../../page/PageView";
+import { type Box, leaves, type Overrides, type Room, SHAPES, union } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { produce } from "solid-js/store";
 import { docScope, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope } from "../../state/bind";
-import { setState } from "../../state/store";
+import { notify, setState } from "../../state/store";
 
 /** The element and every frame around it, outermost first. */
 export function chain(elements: Element[], id: string): Element[] | undefined {
@@ -38,6 +38,18 @@ export function tops(page: Page, ids: string[]): Element[] {
   return out;
 }
 
+/** Whether an element is a group, of elements or of a drawing's shapes, picked whole first. */
+export const isGroup = (e: Element | undefined) => e?.tag === "group" || e?.tag === "g";
+
+/** What a click on `hit` picks: the outermost group around it the selection has not entered,
+ *  so a group is picked whole before what it holds. */
+export function pickAt(page: Page, hit: string, selected: string[]): string {
+  for (const e of chain(page.children, hit) ?? []) {
+    if (e.id !== hit && isGroup(e) && !selected.some((id) => id === e.id || find(e.children, id))) return e.id;
+  }
+  return hit;
+}
+
 /** The frame an element sits in, null for the page. */
 export function parentOf(page: Page, id: string): string | null {
   const path = chain(page.children, id);
@@ -60,6 +72,8 @@ function originOf(e: Element, w: number, h: number, scope: Scope = pageScope) {
 export function boxOf(e: Element, room: Room, overrides?: Overrides, scope: Scope = pageScope): Box {
   const kept = overrides?.(e.id);
   if (kept) return kept;
+  // a group's box is the one around what it holds, which shares its room
+  if (e.tag === "group") return union(e.children.map((c) => boxOf(c, room, overrides, scope)));
   const at = (k: keyof Box) => placement(e.props[k], k === "x" || k === "w" ? room.w : room.h, scope);
   const [w, h] = [at("w"), at("h")];
   const own = originOf(e, w, h, scope);
@@ -70,6 +84,7 @@ export function boxOf(e: Element, room: Room, overrides?: Overrides, scope: Scop
  *  the page. */
 export function inside(page: Page, frame: string | null): { at: Box; room: Room } {
   const e = frame ? find(page.children, frame) : undefined;
+  if (e?.tag === "group") return inside(page, parentOf(page, e.id));
   const b = frame ? absolute(page, frame) : undefined;
   if (!e || !b) return { at: { x: 0, y: 0, w: page.width, h: page.height }, room: { w: page.width, h: page.height } };
   const o = originOf(e, b.w, b.h, scopeOf(page, frame!));
@@ -121,28 +136,51 @@ export function absolute(page: Page, id: string, overrides?: Overrides): Box | u
   if (!path) return undefined;
   const reads = scopes(page, path);
   let room: Room = { w: page.width, h: page.height };
-  const boxes = path.map((e, i) => {
+  const at = { x: 0, y: 0 };
+  for (const [i, e] of path.slice(0, -1).entries()) {
+    // a group holds no room of its own
+    if (e.tag === "group") continue;
     const b = boxOf(e, room, overrides, reads[i]);
     const o = originOf(e, b.w, b.h, reads[i]);
     room = { w: b.w, h: b.h, ox: o.x, oy: o.y };
-    return b;
-  });
-  const own = boxes[boxes.length - 1];
-  const offset = boxes.slice(0, -1).reduce((at, b) => ({ x: at.x + b.x, y: at.y + b.y }), { x: 0, y: 0 });
-  return { x: own.x + offset.x, y: own.y + offset.y, w: own.w, h: own.h };
+    [at.x, at.y] = [at.x + b.x, at.y + b.y];
+  }
+  const own = boxOf(path[path.length - 1], room, overrides, reads[path.length - 1]);
+  return { ...own, x: own.x + at.x, y: own.y + at.y };
 }
 
 /** True when each of `keys` is a plain number, a plain percent or unset, so a drag may write
- *  them. A shape has no box of ours to drag: its attributes place it. */
+ *  them, and for a group so in all it holds. A shape has no box of ours: its attributes place it. */
 export function literal(e: Element, keys: (keyof Box)[]): boolean {
+  if (e.tag === "group") return e.children.length > 0 && e.children.every((c) => literal(c, keys));
   return !SHAPES.has(e.tag) && keys.every((k) => e.props[k] === undefined || isNumber(e.props[k]) || isPercent(e.props[k]));
+}
+
+/** The x and y that put `e` dx and dy on from where it sits in `room`. */
+function shifted(e: Element, room: Room, dx: number, dy: number): { x: string; y: string } {
+  const b = boxOf(e, room);
+  const there = { ...b, x: b.x + dx, y: b.y + dy };
+  return { x: boxText(e, "x", there, room), y: boxText(e, "y", there, room) };
+}
+
+/** The edits that move an element on the page dx and dy, a group by what it holds. */
+export function shiftBy(page: Page, e: Element, dx: number, dy: number): Edit[] {
+  const room = roomOf(page, e.id);
+  return leaves(e)
+    .filter((l) => literal(l, ["x", "y"]))
+    .map((l): Edit => ({ kind: "set_props", page: page.id, id: l.id, props: shifted(l, room, dx, dy) }));
+}
+
+/** Moves a copy dx and dy across `room`, as shiftBy moves an element on the page. */
+export function shiftCopy(e: Element, room: Room, dx: number, dy: number) {
+  for (const l of leaves(e)) if (literal(l, ["x", "y"])) Object.assign(l.props, shifted(l, room, dx, dy));
 }
 
 /** Whether `parent`, or the page for null, may hold a `child`: a frame holds elements, a
  *  drawing or a group shapes, as the backend allows. */
 export function holds(parent: Tag | null, child: Tag): boolean {
   const shape = SHAPES.has(child);
-  if (parent === null || parent === "div") return !shape;
+  if (parent === null || parent === "div" || parent === "group") return !shape;
   return (parent === "svg" || parent === "g") && shape;
 }
 
@@ -154,11 +192,15 @@ export function moveTo(page: Page, id: string, parent: string | null, index: num
   const from = parentOf(page, id);
   if (from === parent && childrenOf(page, from).findIndex((c) => c.id === id) === index) return;
   const edits: Edit[] = [{ kind: "move_element", page: page.id, id, parent, index }];
-  if (from !== parent && literal(e, ["x", "y"])) {
-    const [a, b] = [inside(page, from), inside(page, parent)];
-    const own = boxOf(e, a.room);
-    const there = { ...own, x: own.x + a.at.x - b.at.x, y: own.y + a.at.y - b.at.y };
-    edits.push({ kind: "set_props", page: page.id, id, props: { x: boxText(e, "x", there, b.room), y: boxText(e, "y", there, b.room) } });
+  const [a, b] = [inside(page, from), inside(page, parent)];
+  // into or out of a group, the room stays and so does every place
+  const same = a.at.x === b.at.x && a.at.y === b.at.y && a.room.ox === b.room.ox && a.room.oy === b.room.oy;
+  if (from !== parent && !same && literal(e, ["x", "y"])) {
+    for (const l of leaves(e)) {
+      const own = boxOf(l, a.room);
+      const there = { ...own, x: own.x + a.at.x - b.at.x, y: own.y + a.at.y - b.at.y };
+      edits.push({ kind: "set_props", page: page.id, id: l.id, props: { x: boxText(l, "x", there, b.room), y: boxText(l, "y", there, b.room) } });
+    }
   }
   sendEdits(edits);
 }
@@ -175,6 +217,21 @@ export function restack(page: Page, id: string, how: Restack) {
   moveTo(page, id, parent, to);
 }
 
+/** Puts elements that share a holder into a new group, which the screen then selects. */
+export function group(page: Page, ids: string[]) {
+  const picked = tops(page, ids);
+  if (picked.length === 0) return;
+  if (picked.some((e) => parentOf(page, e.id) !== parentOf(page, picked[0].id))) return notify("Pick elements that sit in one frame to group them.", "warn");
+  send({ type: "edit", edit: { kind: "group", page: page.id, ids: picked.map((e) => e.id) } });
+}
+
+/** Puts what each picked group holds in its place, as one undo. Gives back what they held. */
+export function ungroup(page: Page, ids: string[]): string[] {
+  const groups = tops(page, ids).filter(isGroup);
+  sendEdits(groups.map((g): Edit => ({ kind: "ungroup", page: page.id, id: g.id })));
+  return groups.flatMap((g) => g.children.map((c) => c.id));
+}
+
 /** Removes elements as one undo. */
 export function remove(page: Page, elements: Element[]) {
   sendEdits(elements.map((e) => ({ kind: "remove_element", page: page.id, id: e.id })));
@@ -183,18 +240,18 @@ export function remove(page: Page, elements: Element[]) {
 /** An edge or centre several elements line up on. */
 export type Align = "left" | "centre" | "right" | "top" | "middle" | "bottom";
 
-/** The selected elements that can move, each with its box on the page and where its frame
- *  starts there. */
+/** The selected elements that can move, each with its box on the page. */
 function placed(page: Page, ids: string[]) {
   return tops(page, ids)
     .filter((e) => literal(e, ["x", "y"]))
     .flatMap((e) => {
       const b = absolute(page, e.id);
-      const room = roomOf(page, e.id);
-      const own = boxOf(e, room);
-      return b ? [{ e, b, room, origin: { x: b.x - own.x, y: b.y - own.y } }] : [];
+      return b ? [{ e, b }] : [];
     });
 }
+
+/** The edits that move `e` across or down from `from` to `to`, none when it stays. */
+const along = (page: Page, e: Element, across: boolean, from: number, to: number) => (to === from ? [] : shiftBy(page, e, across ? to - from : 0, across ? 0 : to - from));
 
 /** Lines elements up on one edge or centre of the box around them, as one undo. */
 export function align(page: Page, ids: string[], how: Align) {
@@ -203,13 +260,10 @@ export function align(page: Page, ids: string[], how: Align) {
   const start = Math.min(...all.map(({ b }) => (across ? b.x : b.y)));
   const end = Math.max(...all.map(({ b }) => (across ? b.x + b.w : b.y + b.h)));
   sendEdits(
-    all.flatMap(({ e, b, room, origin }) => {
+    all.flatMap(({ e, b }) => {
       const size = across ? b.w : b.h;
       const at = how === "left" || how === "top" ? start : how === "right" || how === "bottom" ? end - size : Math.round((start + end - size) / 2);
-      const key = across ? "x" : "y";
-      const local = at - (across ? origin.x : origin.y);
-      const moved = { ...b, x: across ? local : b.x - origin.x, y: across ? b.y - origin.y : local };
-      return local === (across ? b.x - origin.x : b.y - origin.y) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: boxText(e, key, moved, room) } } as Edit];
+      return along(page, e, across, across ? b.x : b.y, at);
     }),
   );
 }
@@ -225,12 +279,10 @@ export function spread(page: Page, ids: string[], across: boolean) {
   const gap = ((across ? last.b.x : last.b.y) + size(last.b) - first - all.reduce((n, { b }) => n + size(b), 0)) / (all.length - 1);
   let at = first;
   sendEdits(
-    all.flatMap(({ e, b, room, origin }) => {
-      const key = across ? "x" : "y";
-      const local = Math.round(at) - (across ? origin.x : origin.y);
+    all.flatMap(({ e, b }) => {
+      const to = Math.round(at);
       at += size(b) + gap;
-      const moved = { ...b, x: across ? local : b.x - origin.x, y: across ? b.y - origin.y : local };
-      return local === (across ? b.x - origin.x : b.y - origin.y) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: boxText(e, key, moved, room) } } as Edit];
+      return along(page, e, across, across ? b.x : b.y, to);
     }),
   );
 }

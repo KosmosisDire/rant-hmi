@@ -6,7 +6,7 @@ import { Artboard, GRID } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
-import { boxOf, boxText, find, literal, remove, restack, roomOf, sendEdits, tops } from "./tree";
+import { find, group, remove, restack, sendEdits, shiftBy, tops, ungroup } from "./tree";
 
 /** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
 export type Pick = (id: string | null, add?: boolean) => void;
@@ -110,6 +110,13 @@ export function DesignScreen(p: { shown: boolean }) {
       if (mod && letter === "d") {
         e.preventDefault();
         duplicate(page, picked);
+      } else if (mod && letter === "g") {
+        e.preventDefault();
+        if (!e.shiftKey) group(page, selection());
+        else {
+          const held = ungroup(page, selection());
+          if (held.length > 0) setSelection(held);
+        }
       } else if (mod && ["[", "]", "{", "}"].includes(e.key) && picked.length === 1) {
         e.preventDefault();
         const forward = e.key === "]" || e.key === "}";
@@ -119,20 +126,13 @@ export function DesignScreen(p: { shown: boolean }) {
       } else if (e.key === "Escape") {
         setSelection([]);
       } else if (e.key.startsWith("Arrow")) {
-        const movable = picked.filter((el) => literal(el, ["x", "y"]));
-        if (movable.length === 0) return;
-        e.preventDefault();
         const step = GRID * (e.shiftKey ? 4 : 1);
         const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
         const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-        sendEdits(
-          movable.map((el) => {
-            const room = roomOf(page, el.id);
-            const b = boxOf(el, room);
-            const there = { ...b, x: b.x + dx, y: b.y + dy };
-            return { kind: "set_props", page: page.id, id: el.id, props: { x: boxText(el, "x", there, room), y: boxText(el, "y", there, room) } };
-          }),
-        );
+        const edits = picked.flatMap((el) => shiftBy(page, el, dx, dy));
+        if (edits.length === 0) return;
+        e.preventDefault();
+        sendEdits(edits);
       }
     };
     // copy and cut take the selection, paste puts ours down, unless a field or some selected

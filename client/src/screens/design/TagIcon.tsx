@@ -2,7 +2,7 @@
 
 import { Match, Switch } from "solid-js";
 import type { Tag } from "../../protocol/Tag";
-import { ChartSpline, Circle, CodeXml, Component, Group, ImagePlay, Minus, Pentagon, RectangleHorizontal, Shapes, Spline, Square, TextCursorInput, Type } from "../../ui/icons";
+import { ChartSpline, Circle, CodeXml, Component, Folder, ImagePlay, Minus, Pentagon, RectangleHorizontal, Shapes, Spline, Square, TextCursorInput, Type } from "../../ui/icons";
 
 /** What each tag is called in the editor. */
 export const TAG_WORDS: Record<Tag, string> = {
@@ -22,6 +22,7 @@ export const TAG_WORDS: Record<Tag, string> = {
   polygon: "polygon",
   text: "text",
   g: "group",
+  group: "group",
 };
 
 export function TagIcon(p: { tag: Tag; size: number }) {
@@ -63,8 +64,8 @@ export function TagIcon(p: { tag: Tag; size: number }) {
       <Match when={p.tag === "polygon"}>
         <Pentagon size={p.size} />
       </Match>
-      <Match when={p.tag === "g"}>
-        <Group size={p.size} />
+      <Match when={p.tag === "g" || p.tag === "group"}>
+        <Folder size={p.size} />
       </Match>
     </Switch>
   );
