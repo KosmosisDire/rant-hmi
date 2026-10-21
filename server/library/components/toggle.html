@@ -1,11 +1,14 @@
-<component name="Toggle" size="8x4">
+<component name="Toggle" size="8x4" sizing="fill">
   <prop name="value" default="false" bindable="true"/>
+  <prop name="colour" default="$accent"/>
+  <prop name="trackColour" default="$panel3"/>
+  <prop name="knobColour" default="$text"/>
   <event name="change"/>
-  <div id="e1" name="track" x="0" y="0" w="8" h="4" style="background: value ? $accent : $panel3; border-radius: 2">
+  <div id="e1" name="track" x="0" y="0" w="100%" h="100%" style="background: value ? colour : trackColour; border-radius: $radiusPill">
     <on event="tap">
       value = !value;
       emit("change", value);
     </on>
-    <div id="e2" name="knob" x="value ? 4.4 : 0.4" y="0.4" w="3.2" h="3.2" style='background: $text; border-radius: 1.6; box-shadow: "0 1px 3px #0006"; transition: "left 120ms ease-out"'/>
+    <div id="e2" name="knob" x="(value ? 100 : 0)%" y="0" w="hug" h="100%" origin='value ? "100% 0%" : "0% 0%"' style='aspect-ratio: 1; background: knobColour; background-clip: "padding-box"; border-color: "transparent"; border-radius: "50%"; border-style: "solid"; border-width: 0.4; filter: "drop-shadow(0 1px 2px #0006)"; transition: "left 120ms ease-out, translate 120ms ease-out"'/>
   </div>
 </component>
