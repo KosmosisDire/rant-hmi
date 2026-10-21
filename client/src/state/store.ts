@@ -116,15 +116,6 @@ export function putLocal<L extends keyof Keyed>(list: L, key: string, record: Ke
   );
 }
 
-/** `base`, or it with a number after it, a name none of the HMI's own has: no variable, record
- *  or computed value. */
-export function freeLocal(base: string): string {
-  const taken = (n: string) => state.variables.some((v) => v.name === n) || state.records.some((r) => r.name === n) || state.computed.some((c) => c.name === n);
-  let name = base;
-  for (let n = 2; taken(name); n++) name = `${base}${n}`;
-  return name;
-}
-
 /** Loads the client the backend serves when this screen runs another, as after an update.
  *  Only once per build, so a screen that still differs never reloads for ever. */
 function catchUp(build: string) {

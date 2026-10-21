@@ -4,13 +4,13 @@
 import { apiIn } from "../lang/api.js";
 import { kind, LIBRARY, METHODS_OF } from "../lang/math.js";
 import type { FieldInfo } from "../protocol/FieldInfo";
-import type { Import } from "../protocol/Import";
 import type { Kind } from "../protocol/Kind";
 import type { Page } from "../protocol/Page";
 import type { TypeInfo } from "../protocol/TypeInfo";
 import type { Value } from "../protocol/Value";
 import { partNames, tokenValue } from "./bind";
 import { fields, typeLabel } from "./format";
+import { names } from "./names";
 import { entity, live, state } from "./store";
 
 export interface Suggestion {
@@ -269,30 +269,27 @@ function given(path: string[], place: Place, names?: Suggestion[], also?: Sugges
 }
 
 function top(place: Place): Suggestion[] {
-  // an expression only reads, so nothing it could call is offered there
-  const callable = (i: Import) => i.kind === "function" || i.kind === "task";
-  const imports = state.imports.filter((i) => place !== "expression" || !callable(i)).map((i): Suggestion => {
-    const v = live(i.alias);
-    const t = entity(i.entity)?.schema;
-    const insert = i.kind === "function" ? `await ${i.alias}(` : i.alias;
-    return { label: i.alias, insert, icon: i.kind, type: t?.name || bareType(t?.fields) || i.kind, value: v.value, known: v.known };
+  return names("import", "variable", "computed", "record", "enum").flatMap((n): Suggestion[] => {
+    const v = live(n.name);
+    switch (n.of) {
+      case "import": {
+        // an expression only reads, so nothing it could call is offered there
+        if (place === "expression" && (n.kind === "function" || n.kind === "task")) return [];
+        const t = entity(state.imports.find((i) => i.alias === n.name)?.entity ?? "")?.schema;
+        const insert = n.kind === "function" ? `await ${n.name}(` : n.name;
+        return [{ label: n.name, insert, icon: n.kind!, type: t?.name || bareType(t?.fields) || n.kind, value: v.value, known: v.known }];
+      }
+      case "record": {
+        // a record shows its latest value, the list being too long to preview
+        const last = Array.isArray(v.value) ? (v.value.at(-1) as { v?: Value } | undefined)?.v : undefined;
+        return [{ label: n.name, insert: n.name, icon: "local", type: n.words, value: last ?? null, known: last !== undefined }];
+      }
+      case "enum":
+        return [{ label: n.name, insert: n.name, icon: "enum", type: n.words, members: [options(state.enums.find((e) => e.name === n.name)?.options ?? [])] }];
+      default:
+        return [{ label: n.name, insert: n.name, icon: "local", type: n.words, value: v.value, known: v.known }];
+    }
   });
-  const variables = state.variables.map((x): Suggestion => {
-    const v = live(x.name);
-    return { label: x.name, insert: x.name, icon: "local", type: "variable", value: v.value, known: v.known };
-  });
-  // a record shows its latest value, the list being too long to preview
-  const records = state.records.map((r): Suggestion => {
-    const list = live(r.name).value;
-    const last = Array.isArray(list) ? (list.at(-1) as { v?: Value } | undefined)?.v : undefined;
-    return { label: r.name, insert: r.name, icon: "local", type: `record of ${r.source}`, value: last ?? null, known: last !== undefined };
-  });
-  const computed = state.computed.map((c): Suggestion => {
-    const v = live(c.name);
-    return { label: c.name, insert: c.name, icon: "local", type: c.unit ? `computed, ${c.unit}` : "computed", value: v.value, known: v.known };
-  });
-  const enums = state.enums.map((e): Suggestion => ({ label: e.name, insert: e.name, icon: "enum", type: "enum", members: [options(e.options)] }));
-  return [...imports, ...variables, ...computed, ...records, ...enums];
 }
 
 /** What an enum offers after a dot: its option names, as a list. */

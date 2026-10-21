@@ -2,7 +2,7 @@
 // they name, an import by its kind and the HMI's own things blue. It never needs the code to parse.
 
 import type { Kind } from "../protocol/Kind";
-import { state } from "../state/store";
+import { named } from "../state/names";
 
 export type Paint = "kw" | "str" | "com" | Kind | "local" | "prop" | null;
 
@@ -15,12 +15,10 @@ const WORD = /[A-Za-z_$][\w$]*/y;
 const NUMBER = /\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
 const HEX = /#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w$])/iy;
 
-/** What a name is: an import's kind, the HMI's own, else nothing to colour. */
-function named(word: string): Paint {
-  if (word.startsWith("$")) return state.tokens.some((t) => `$${t.name}` === word) ? "local" : null;
-  const imp = state.imports.find((i) => i.alias === word);
-  if (imp) return imp.kind;
-  return state.variables.some((v) => v.name === word) || state.records.some((r) => r.name === word) ? "local" : null;
+/** A name's colour: an import's kind, else the HMI's own, else none. */
+function colour(word: string): Paint {
+  const n = named(word);
+  return !n ? null : (n.kind ?? "local");
 }
 
 /** The source as runs of text and how to colour each. */
@@ -60,7 +58,7 @@ export function paint(src: string): [string, Paint][] {
       j = i + word.length;
       // a field after a dot is the value's own, whatever its name
       const dotted = /\.\s*$/.test(src.slice(0, i));
-      p = dotted ? null : KEYWORDS.has(word) ? "kw" : named(word);
+      p = dotted ? null : KEYWORDS.has(word) ? "kw" : colour(word);
     }
     push(src.slice(i, j), p);
     i = j;

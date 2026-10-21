@@ -3,9 +3,10 @@
 
 export default async function ({ page, hmi, d, check, eventually }) {
   hmi.send({ type: "set_variable", name: "presses", variable: { name: "presses", start: 0, per: "hmi" } });
+  hmi.send({ type: "set_computed", name: "step", computed: { name: "step", get: "1" } });
   const pageId = await hmi.addPage("Colours");
   const id = await hmi.addElement(pageId, "span", { name: "Speed", x: "44", y: "44", w: "264", h: "44", text: 'Running ? Speed.toFixed(1) + " m/s, going steady on the line" : "Stopped"' });
-  await hmi.setHandler(pageId, id, "tap", "// count\npresses = presses + 1;");
+  await hmi.setHandler(pageId, id, "tap", "// count\npresses = presses + step;");
   await d.openPage("Colours");
   await d.el(id).click();
 
@@ -15,7 +16,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(text.includes('hl-str:" m/s, going steady on the line"'), "the text is not green");
   check(!text.some((r) => r.endsWith(":toFixed")), "a field after a dot took a name's colour");
   const code = await runs(".event");
-  check(code.includes("hl-com:// count") && code.includes("hl-local:presses"), `the handler is not in colour: ${code}`);
+  check(code.includes("hl-com:// count") && code.includes("hl-local:presses") && code.includes("hl-local:step"), `the handler is not in colour: ${code}`);
 
   const field = d.field("Text");
   await field.click();

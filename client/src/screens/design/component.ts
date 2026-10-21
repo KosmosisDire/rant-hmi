@@ -6,6 +6,7 @@ import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Page } from "../../protocol/Page";
 import { isPercent } from "../../state/bind";
+import { freeName } from "../../state/names";
 import { notify, state } from "../../state/store";
 import { paint } from "../../ui/highlight";
 import { leaves } from "../../page/PageView";
@@ -15,13 +16,6 @@ import { boxOf, boxText, childrenOf, literal, parentOf, roomOf, sendEdits, tops 
 function joined(text: string, first: (w: string) => string): string {
   const words = text.split(/[^A-Za-z0-9]+/).filter(Boolean);
   return words.map((w, n) => (n === 0 ? first(w) : w[0].toUpperCase() + w.slice(1))).join("");
-}
-
-/** The first of `base`, base2, base3 that `taken` leaves free. */
-function free(base: string, taken: (name: string) => boolean): string {
-  let name = base;
-  for (let n = 2; taken(name); n++) name = `${base}${n}`;
-  return name;
 }
 
 /** As the backend spells a page's id from its name. */
@@ -74,7 +68,7 @@ export function makeComponent(page: Page, ids: string[]) {
           if (kind === null || kind === "kw" || kind === "str" || kind === "com" || text.startsWith("$")) return text;
           let to = renamed.get(text);
           if (!to) {
-            to = free(joined(text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "x", "y", "w", "h", "origin", "rotate", "text"].includes(n) || inputs.some((i) => i.name === n));
+            to = freeName(joined(text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "x", "y", "w", "h", "origin", "rotate", "text"].includes(n) || inputs.some((i) => i.name === n));
             renamed.set(text, to);
             inputs.push({ name: to, default: "0", bindable: false });
           }
@@ -93,15 +87,15 @@ export function makeComponent(page: Page, ids: string[]) {
   const handlers: Element["handlers"] = [];
   for (const e of each(parts)) {
     e.handlers = e.handlers.map((h) => {
-      const event = free(joined(`${e.props.name ?? "part"} ${h.event}`, (w) => w.toLowerCase()), (n) => events.includes(n));
+      const event = freeName(joined(`${e.props.name ?? "part"} ${h.event}`, (w) => w.toLowerCase()), (n) => events.includes(n));
       events.push(event);
       handlers.push({ event, code: h.code, ms: "" });
       return { ...h, code: `emit("${event}", p);` };
     });
   }
 
-  const name = free(joined((group ?? picked[0]).props.name ?? "", (w) => w[0].toUpperCase() + w.slice(1)).replace(/^[^A-Z]+/, "") || "Part", (n) => state.pages.some((p) => p.interface !== null && p.name === n));
-  const id = free(slug(name), (n) => state.pages.some((p) => p.id === n));
+  const name = freeName(joined((group ?? picked[0]).props.name ?? "", (w) => w[0].toUpperCase() + w.slice(1)).replace(/^[^A-Z]+/, "") || "Part", (n) => state.pages.some((p) => p.interface !== null && p.name === n));
+  const id = freeName(slug(name), (n) => state.pages.some((p) => p.id === n));
   const component: Page = { id, name, width: right - left, height: bottom - top, shows: "full", fill: "", interface: { inputs, events, variables: [], sizing: "scale" }, children: parts };
   const instance: Element = {
     id: "",

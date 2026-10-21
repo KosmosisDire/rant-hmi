@@ -12,6 +12,7 @@ import type { Sizing } from "../../protocol/Sizing";
 import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
 import { complete, completeCss, componentNames, REPEAT, signature, signatureCss } from "../../state/complete";
 import { brings, offered } from "../../state/events";
+import { freeName } from "../../state/names";
 import { component, page as pageOf, setState, state } from "../../state/store";
 import { paintCss } from "../../ui/highlight";
 import { openPage } from "../../state/view";
@@ -768,8 +769,7 @@ function Inputs(p: { page: string; inputs: Input[] }) {
     });
   };
   const add = () => {
-    let name = "input";
-    for (let n = 2; p.inputs.some((i) => i.name === name); n++) name = `input${n}`;
+    const name = freeName("input", (n) => p.inputs.some((i) => i.name === n));
     write(name, { name, default: "0", bindable: false });
   };
   return (
@@ -821,8 +821,7 @@ function Variables(p: { page: string; variables: Local[] }) {
     });
   };
   const add = () => {
-    let name = "state";
-    for (let n = 2; p.variables.some((v) => v.name === name); n++) name = `state${n}`;
+    const name = freeName("state", (n) => p.variables.some((v) => v.name === n));
     write(name, { name, start: "0" });
   };
   return (
@@ -870,8 +869,7 @@ function Sends(p: { page: string; events: string[] }) {
     });
   };
   const add = () => {
-    let name = "change";
-    for (let n = 2; p.events.includes(name); n++) name = `change${n}`;
+    const name = freeName("change", (n) => p.events.includes(n));
     write(name, name);
   };
   return (

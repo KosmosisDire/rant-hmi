@@ -9,6 +9,7 @@ import type { Page } from "../protocol/Page";
 import type { Token } from "../protocol/Token";
 import type { Value } from "../protocol/Value";
 import { mode } from "./mode";
+import { named } from "./names";
 import { live, notify, state } from "./store";
 
 /** One unit of every length, in CSS pixels: placement, sizes, diagrams, spacing, radii, borders
@@ -172,34 +173,25 @@ function themed(s: Scope): Scope {
 /** A page reads its mesh imports, variables, records and computed values, live, and the mesh's
  *  enums, and writes those it may on the backend. */
 export const pageScope: Scope = themed({
-  has: (name) =>
-    state.imports.some((i) => i.alias === name) ||
-    state.variables.some((v) => v.name === name) ||
-    state.records.some((r) => r.name === name) ||
-    state.computed.some((c) => c.name === name) ||
-    state.enums.some((e) => e.name === name),
+  // the theme around it reads the tokens
+  has: (name) => (named(name)?.of ?? "token") !== "token",
   get: (name) => {
     // its options a fresh list at each read, as a value's are
-    const kind = state.enums.find((e) => e.name === name);
-    if (kind) return { options: [...kind.options] };
+    if (named(name)?.of === "enum") return { options: [...(state.enums.find((e) => e.name === name)?.options ?? [])] };
     const v = live(name);
     if (!v.known) throw new Unknown(name);
     return v.value;
   },
   set: (name, path, value) => {
-    const imp = state.imports.find((i) => i.alias === name);
-    if (imp && (imp.kind !== "variable" || imp.intent !== "write")) throw new TypeError(`${name} cannot be set from here`);
-    if (state.records.some((r) => r.name === name)) throw new TypeError(`${name} is a record, which only its source fills`);
-    if (state.enums.some((e) => e.name === name)) throw new TypeError(`${name} is an enum of the mesh's, so it cannot be set`);
-    const worked = state.computed.find((c) => c.name === name);
-    if (worked && !worked.set) throw new TypeError(`${name} is worked out from other values, and has no setter to write it`);
-    if (worked && path !== "") throw new TypeError(`${name} is worked out whole, so it is set whole`);
-    if (!imp && !worked && !state.variables.some((v) => v.name === name)) throw new ReferenceError(pageScope.missing(name));
+    const n = named(name);
+    if (!n || n.of === "token") throw new ReferenceError(pageScope.missing(name));
+    if (n.fixed) throw new TypeError(n.fixed);
+    if (n.of === "computed" && path !== "") throw new TypeError(`${name} is worked out whole, so it is set whole`);
     send({ type: "set", alias: name, path, value: value as Value });
   },
   writes: (name) => {
-    const imp = state.imports.find((i) => i.alias === name);
-    return imp ? imp.kind === "variable" && imp.intent === "write" : state.variables.some((v) => v.name === name) || state.computed.some((c) => c.name === name && !!c.set);
+    const n = named(name);
+    return !!n && n.of !== "token" && !n.fixed;
   },
   missing: (name) => `${name} names no mesh import, variable or record`,
 });

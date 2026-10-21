@@ -4,7 +4,7 @@
 
 import { paint } from "../ui/highlight";
 import type { Suggestion } from "./complete";
-import { state } from "./store";
+import { named } from "./names";
 
 export type Verb = "sets" | "calls" | "sends" | "opens" | "emits";
 
@@ -30,13 +30,8 @@ export function bare(code: string): string {
  *  the mesh imports and variables where code reads something else, as a component does. */
 function reading(name: string, names?: Suggestion[]): string | undefined {
   if (names) return names.find((n) => n.label === name)?.type;
-  const imp = state.imports.find((i) => i.alias === name);
-  if (imp) return `${imp.kind}, ${imp.intent}`;
-  const v = state.variables.find((x) => x.name === name);
-  if (v) return v.per === "screen" ? "variable, per screen" : "variable, shared";
-  const c = state.computed.find((x) => x.name === name);
-  if (c) return c.unit ? `computed, ${c.unit}` : "computed";
-  return state.records.some((r) => r.name === name) ? "record" : undefined;
+  const n = named(name);
+  return n && n.of !== "enum" && n.of !== "token" ? n.words : undefined;
 }
 
 /** What `code` uses, read with the names completion offers there. */

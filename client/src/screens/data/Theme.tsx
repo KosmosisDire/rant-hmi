@@ -5,6 +5,7 @@ import { batch, createMemo, For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Token } from "../../protocol/Token";
 import { tokenScope, tokenValue } from "../../state/bind";
+import { freeName } from "../../state/names";
 import { putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Grid } from "../../ui/Grid";
@@ -49,8 +50,7 @@ function setToken(name: string, token: Token | null) {
 
 export function ThemeTable(p: Picking) {
   const add = () => {
-    let name = "color";
-    for (let n = 2; state.tokens.some((t) => t.name === name); n++) name = `color${n}`;
+    const name = freeName("color", (n) => state.tokens.some((t) => t.name === n));
     setToken(name, { name, dark: "#4a8fd6", light: "#2f6fb4" });
     p.onSelect({ kind: "token", name });
   };

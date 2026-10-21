@@ -4,6 +4,7 @@ import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { remembered } from "../../state/remember";
+import { freeName } from "../../state/names";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
 import { ChevronDown, ChevronRight, Component, CopyPlus, File, Plus, Star, Trash } from "../../ui/icons";
@@ -73,8 +74,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     send({ type: "edit", edit: { kind: "add_page", name: `Page ${n}` } });
   };
   const addComponent = () => {
-    let name = "Component";
-    for (let n = 2; components().some((c) => c.name === name); n++) name = `Component${n}`;
+    const name = freeName("Component", (n) => components().some((c) => c.name === n));
     send({ type: "edit", edit: { kind: "add_component", name } });
   };
   // a copy's name, free among the pages, spelled as a component's when it is one
