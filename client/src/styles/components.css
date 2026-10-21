@@ -648,7 +648,8 @@
   transition: background-color 0.1s;
 }
 
-.list-row:hover {
+/* only under a mouse: a finger leaves what it touched hovered */
+:root:not([data-pointer="touch"]) .list-row:hover {
   background: var(--panel2);
 }
 

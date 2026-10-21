@@ -184,18 +184,39 @@ export function holds(parent: Tag | null, child: Tag): boolean {
   return (parent === "svg" || parent === "g") && shape;
 }
 
-/** Moves an element to `index` of `parent`, counted without it. Into another frame it keeps
- *  its place on the page when its x and y are plain numbers. One undo takes it all back. */
+/** Moves an element to `index` of `parent`, counted without it, as moveAll does. */
 export function moveTo(page: Page, id: string, parent: string | null, index: number) {
-  const e = find(page.children, id);
-  if (!e) return;
-  const from = parentOf(page, id);
-  if (from === parent && childrenOf(page, from).findIndex((c) => c.id === id) === index) return;
-  const edits: Edit[] = [{ kind: "move_element", page: page.id, id, parent, index }];
-  const [a, b] = [inside(page, from), inside(page, parent)];
-  // into or out of a group, the room stays and so does every place
-  const same = a.at.x === b.at.x && a.at.y === b.at.y && a.room.ox === b.room.ox && a.room.oy === b.room.oy;
-  if (from !== parent && !same && literal(e, ["x", "y"])) {
+  moveAll(page, [id], parent, index);
+}
+
+/** Moves elements, kept together in the order given, to `index` of `parent` counted without
+ *  them. Into another frame each keeps its place on the page when its x and y are plain
+ *  numbers. One undo takes it all back. */
+export function moveAll(page: Page, ids: string[], parent: string | null, index: number) {
+  const edits: Edit[] = [];
+  // each holder's list as the moves before leave it, so each index is the one it lands at
+  const lists = new Map<string | null, string[]>();
+  const list = (holder: string | null) => lists.get(holder) ?? lists.set(holder, childrenOf(page, holder).map((c) => c.id)).get(holder)!;
+  const b = inside(page, parent);
+  let last: string | null = null;
+  for (const id of ids) {
+    const e = find(page.children, id);
+    if (!e) continue;
+    const from = parentOf(page, id);
+    const was = list(from).indexOf(id);
+    list(from).splice(was, 1);
+    const to = list(parent);
+    // the first goes in front of what stays behind the slot, the rest each in front of the last
+    const behind = last ?? to.filter((x) => !ids.includes(x))[index - 1];
+    const at = behind === undefined ? 0 : to.indexOf(behind) + 1;
+    to.splice(at, 0, id);
+    last = id;
+    if (from === parent && at === was) continue;
+    edits.push({ kind: "move_element", page: page.id, id, parent, index: at });
+    const a = inside(page, from);
+    // into or out of a group, the room stays and so does every place
+    const same = a.at.x === b.at.x && a.at.y === b.at.y && a.room.ox === b.room.ox && a.room.oy === b.room.oy;
+    if (from === parent || same || !literal(e, ["x", "y"])) continue;
     for (const l of leaves(e)) {
       const own = boxOf(l, a.room);
       const there = { ...own, x: own.x + a.at.x - b.at.x, y: own.y + a.at.y - b.at.y };

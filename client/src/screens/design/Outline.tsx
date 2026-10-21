@@ -13,7 +13,7 @@ import { ComponentCard } from "./ComponentCard";
 import type { Pick } from "./DesignScreen";
 import { addMenu, elementMenu, layersMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
-import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
+import { chain, childrenOf, find, holds, moveAll, parentOf, tops } from "./tree";
 import { follow } from "../../ui/press";
 
 const FOLDS = ["open", "closed"] as const;
@@ -144,49 +144,43 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
   );
 }
 
-/** Where a dragged layer would land: in front of a row, behind it, or inside a frame. */
-type Spot = { id: string; where: "front" | "behind" | "inside" };
+/** Where dragged layers would land: `index` of `parent`, counted without them. A line between
+ *  rows shows the place, indented to its depth, or a frame they go into lights up. */
+type Spot = { parent: string | null; index: number; line?: { y: number; depth: number }; into?: string };
 
-/** The layers, front first as they stack. A row dragged onto another's edge goes in front of
- *  or behind it, onto a frame's middle into that frame. */
+/** The layers, front first as they stack. Rows dragged onto another's edge go in front of or
+ *  behind it, onto a frame's middle into that frame, and below them all to the page's back.
+ *  A selected row takes the rest of the selection with it. */
 function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (id: string, key: string) => void }) {
   let host!: HTMLDivElement;
   let press: { id: string; y: number } | null = null;
-  const [dragging, setDragging] = createSignal<string | null>(null);
+  const [dragging, setDragging] = createSignal<string[]>([]);
   const [spot, setSpot] = createSignal<Spot | null>(null);
 
-  const spotAt = (y: number, id: string): Spot | null => {
-    for (const row of host.querySelectorAll<HTMLElement>(".list-row[data-id]")) {
-      const r = row.getBoundingClientRect();
-      if (y < r.top || y >= r.bottom) continue;
-      const over = row.dataset.id!;
-      if (chain(p.page.children, over)?.some((e) => e.id === id)) return null;
-      const f = (y - r.top) / r.height;
-      // only where what is dragged may go: shapes in drawings, the rest in frames
-      const tag = find(p.page.children, id)?.tag;
-      const at = find(p.page.children, over);
-      const parent = parentOf(p.page, over);
-      if (!tag) return null;
-      const frame = !!at && holds(at.tag, tag);
-      // under an open frame the next row is its front child, so its lower edge means inside too
-      if (frame && f > 0.25 && (f < 0.75 || row.dataset.open !== undefined)) return { id: over, where: "inside" };
-      if (!holds(parent ? (find(p.page.children, parent)?.tag ?? null) : null, tag)) return null;
-      return { id: over, where: f < 0.5 ? "front" : "behind" };
-    }
-    return null;
-  };
-
-  const drop = (id: string, s: Spot) => {
-    if (s.where === "inside") {
-      const frame = find(p.page.children, s.id);
-      if (frame) moveTo(p.page, id, frame.id, frame.children.filter((c) => c.id !== id).length);
-      return;
-    }
-    const parent = parentOf(p.page, s.id);
-    const at = childrenOf(p.page, parent)
-      .filter((c) => c.id !== id)
-      .findIndex((c) => c.id === s.id);
-    moveTo(p.page, id, parent, s.where === "front" ? at + 1 : at);
+  const spotAt = (y: number, ids: string[]): Spot | null => {
+    const rows = [...host.querySelectorAll<HTMLElement>(".list-row[data-id]")].map((row) => ({ id: row.dataset.id!, open: row.dataset.open !== undefined, r: row.getBoundingClientRect() }));
+    const top = host.getBoundingClientRect().top - host.scrollTop;
+    // only where all that is dragged may go: shapes in drawings, the rest in frames
+    const tags = ids.map((id) => find(p.page.children, id)?.tag).filter((t): t is Tag => !!t);
+    const fits = (holder: string | null) => tags.every((t) => holds(holder ? (find(p.page.children, holder)?.tag ?? null) : null, t));
+    const stays = (holder: string | null) => childrenOf(p.page, holder).filter((c) => !ids.includes(c.id));
+    // the row under the pointer, or in a gap the one below it
+    const i = rows.findIndex(({ r }) => y < r.bottom);
+    if (i < 0) return fits(null) && rows.length > 0 ? { parent: null, index: 0, line: { y: rows[rows.length - 1].r.bottom - top + 1, depth: 0 } } : null;
+    const { id: over, open, r } = rows[i];
+    const path = chain(p.page.children, over) ?? [];
+    if (path.some((e) => ids.includes(e.id))) return null;
+    const f = Math.max(0, (y - r.top) / r.height);
+    // under an open frame the next row is its front child, so its lower edge means inside too
+    if (fits(over) && f > 0.25 && (f < 0.75 || open)) return { parent: over, index: stays(over).length, into: over };
+    const parent = parentOf(p.page, over);
+    if (!fits(parent)) return null;
+    const k = stays(parent).findIndex((c) => c.id === over);
+    const front = f < 0.5;
+    // midway between this row and its neighbour, so one place draws one line
+    const near = rows[front ? i - 1 : i + 1]?.r;
+    const at = front ? (near ? (near.bottom + r.top) / 2 : r.top) : near ? (r.bottom + near.top) / 2 : r.bottom;
+    return { parent, index: front ? k + 1 : k, line: { y: at - top, depth: path.length - 1 } };
   };
 
   const down = (e: PointerEvent) => {
@@ -197,24 +191,26 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
   };
   const move = (e: PointerEvent) => {
     if (!press) return;
-    if (!dragging() && Math.abs(e.clientY - press.y) > 4) {
-      setDragging(press.id);
+    if (dragging().length === 0 && Math.abs(e.clientY - press.y) > 4) {
+      const several = p.selected.length > 1 && p.selected.includes(press.id);
+      // back to front, so they keep their order where they land
+      setDragging(several ? tops(p.page, p.selected).map((x) => x.id) : [press.id]);
       // once captured, the release clicks no row
       host.setPointerCapture(e.pointerId);
     }
-    if (dragging()) setSpot(spotAt(e.clientY, press.id));
+    if (dragging().length > 0) setSpot(spotAt(e.clientY, dragging()));
   };
   const up = () => {
-    const [id, s] = [dragging(), spot()];
+    const [ids, s] = [dragging(), spot()];
     press = null;
-    setDragging(null);
+    setDragging([]);
     setSpot(null);
-    if (id && s) drop(id, s);
+    if (ids.length > 0 && s) moveAll(p.page, ids, s.parent, s.index);
   };
 
   return (
     <div
-      class="pane-body"
+      class="pane-body layers"
       ref={host}
       onPointerDown={down}
       // a row has its own menu, so this is the space around them, the page's top level
@@ -231,11 +227,12 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
         onMenu={(e, id) => {
           // a long press opens the menu, so it moves no row
           press = null;
-          setDragging(null);
+          setDragging([]);
           setSpot(null);
           elementMenu(e, p.page, p.selected, p.onPick, id);
         }}
       />
+      <Show when={spot()?.line}>{(l) => <div class="drop-line" style={{ top: `${l().y}px`, left: `${14 + l().depth * 14}px` }} />}</Show>
     </div>
   );
 }
@@ -244,20 +241,19 @@ function Layers(p: {
   elements: Element[];
   depth: number;
   selected: string[];
-  dragging: string | null;
+  dragging: string[];
   spot: Spot | null;
   onPick: Pick;
   onEdit: (id: string, key: string) => void;
   onMenu: (e: MouseEvent, id: string) => void;
 }) {
-  const at = (id: string) => (p.spot?.id === id ? p.spot.where : undefined);
   return (
     <For each={[...p.elements].reverse()}>
       {(e) => (
         <>
           <button
             class="list-row"
-            classList={{ selected: p.selected.includes(e.id), dragged: e.id === p.dragging, "drop-front": at(e.id) === "front", "drop-behind": at(e.id) === "behind", "drop-inside": at(e.id) === "inside" }}
+            classList={{ selected: p.selected.includes(e.id), dragged: p.dragging.includes(e.id), "drop-inside": p.spot?.into === e.id }}
             data-id={e.id}
             data-frame={e.tag === "div" || e.tag === "group" || e.tag === "svg" || e.tag === "g" ? "" : undefined}
             data-open={e.children.length > 0 ? "" : undefined}

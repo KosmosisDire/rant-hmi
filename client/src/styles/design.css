@@ -266,12 +266,32 @@
   opacity: 0.45;
 }
 
-.list-row.drop-front {
-  box-shadow: inset 0 2px 0 var(--accent);
+.layers {
+  position: relative;
 }
 
-.list-row.drop-behind {
-  box-shadow: inset 0 -2px 0 var(--accent);
+/* Where dragged layers land between rows, from the depth they land at to the right edge. */
+.drop-line {
+  position: absolute;
+  right: 6px;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.drop-line::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--panel);
 }
 
 .list-row.drop-inside {
