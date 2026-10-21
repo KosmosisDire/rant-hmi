@@ -62,10 +62,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.select("Box");
   await right.locator(".ghost", { hasText: "Lay out what it holds" }).click();
   await is("layout", '"down"');
+  await is("gap", "$space");
   await right.locator('button[title="Left to right"]').click();
   await is("layout", '"right"');
   await right.locator('.point[title="Center"]').click();
   await is("align", '"center"');
+  await field("Spacing").locator("button", { hasText: /^Spread$/ }).click();
+  await is("gap", '"auto"');
+  await field("Spacing").locator("button", { hasText: /^Packed$/ }).click();
+  await is("gap", "$space");
   await field("Spacing").locator("button", { hasText: /^Spread$/ }).click();
   await is("gap", '"auto"');
   await field("Width").locator("button", { hasText: /^Hug$/ }).click();

@@ -498,7 +498,7 @@ function AutoLayout(p: { page: string; element: Element; prop: (key: string) => 
       <Show
         when={p.element.props.layout !== undefined}
         fallback={
-          <button class="ghost" onClick={() => set({ layout: '"down"', gap: p.element.props.gap ?? "10" })}>
+          <button class="ghost" onClick={() => set({ layout: '"down"', gap: p.element.props.gap ?? "$space" })}>
             <Plus size={13} />
             Lay out what it holds
           </button>
@@ -523,7 +523,7 @@ function AutoLayout(p: { page: string; element: Element; prop: (key: string) => 
         <div class="field">
           <label>Spacing</label>
           <div class="choice">
-            <button classList={{ on: !spread() }} title="A gap between each" onClick={() => spread() && set({ gap: "10" })}>
+            <button classList={{ on: !spread() }} title="A gap between each" onClick={() => spread() && set({ gap: "$space" })}>
               Packed
             </button>
             <button classList={{ on: spread() }} title="Spread over the frame's whole length" onClick={() => !spread() && set({ gap: '"auto"' })}>
