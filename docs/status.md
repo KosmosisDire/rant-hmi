@@ -12,6 +12,8 @@ The screens connected, a list. Each holds:
 - `address`: where it connects from
 - `connected_at`: when it connected, in Unix seconds
 - `ping_ms`: the last round trip to it and back, 0 until one is measured
+- `jitter_ms`: how much the round trip wavers, smoothed as RTP does: each new round trip
+  moves it a sixteenth of the way to how far that one was from the last
 
 ## Hmi/Status
 

@@ -94,6 +94,8 @@ struct Session {
     /// When it connected, in Unix seconds.
     since: u64,
     ping: Option<Duration>,
+    /// How much the round trip wavers, in ms, smoothed.
+    jitter: f64,
     heard: Instant,
     /// The edits that undo this screen's own edits, newest last, and those that redo them.
     undo: Vec<Edit>,
@@ -267,7 +269,7 @@ impl App {
             Inbound::Open { session, out, local, remote } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, local, remote, since: since_epoch().as_secs(), ping: None, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
+                self.sessions.insert(session, Session { out, local, remote, since: since_epoch().as_secs(), ping: None, jitter: 0.0, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -280,6 +282,9 @@ impl App {
             Inbound::Heard { session, ping } => {
                 if let Some(s) = self.sessions.get_mut(&session) {
                     s.heard = Instant::now();
+                    if let (Some(last), Some(now)) = (s.ping, ping) {
+                        s.jitter += ((now.as_secs_f64() - last.as_secs_f64()).abs() * 1000.0 - s.jitter) / 16.0;
+                    }
                     s.ping = ping.or(s.ping);
                 }
             }
@@ -1079,6 +1084,7 @@ impl App {
                 address: s.remote.to_string().as_str().try_into().unwrap_or_default(),
                 connected_at: s.since,
                 ping_ms: s.ping.map_or(0.0, |p| p.as_secs_f64() * 1000.0),
+                jitter_ms: s.jitter,
             })
             .collect();
         clients.sort_by_key(|c| c.id);

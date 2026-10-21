@@ -1,6 +1,6 @@
 // A user shows the HMI's own state on a page: Hmi/Status and Hmi/Clients are on the mesh like
 // any entity, read only, and import as any other, this screen among the clients, its round trip
-// measured anew 20 times a second.
+// measured anew 20 times a second and its jitter smoothed.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Data");
@@ -18,4 +18,6 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const pings = new Set();
   for (const start = Date.now(); Date.now() - start < 1000; await page.waitForTimeout(10)) pings.add(JSON.stringify((hmi.state.values.Screens?.value ?? []).map((c) => c.ping_ms)));
   check(pings.size >= 8, `the round trips changed ${pings.size} times in a second`);
+  const jitter = (hmi.state.values.Screens?.value ?? []).map((c) => c.jitter_ms);
+  check(jitter.every((j) => typeof j === "number" && j >= 0 && j < 50) && jitter.some((j) => j > 0), `the jitters read ${jitter}`);
 }
