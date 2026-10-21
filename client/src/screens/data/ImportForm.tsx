@@ -2,7 +2,7 @@ import { createSignal, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { Intent } from "../../protocol/Intent";
-import { capital, intentWords } from "../../state/format";
+import { capital, choosesIntent, intentWords } from "../../state/format";
 import { setState, state } from "../../state/store";
 
 /** The alias an entity gets unless the user types another: its last segment in
@@ -25,7 +25,7 @@ export function ImportForm(p: { entity: EntityInfo }) {
   const canWrite = () => p.entity.kind !== "variable" || p.entity.writable;
   const submit = () => {
     setState("refused", null);
-    send({ type: "import", import: { alias: alias().trim(), entity: p.entity.name, kind: p.entity.kind, intent: intent() } });
+    send({ type: "import", import: { alias: alias().trim(), entity: p.entity.name, kind: p.entity.kind, intent: choosesIntent(p.entity.kind) ? intent() : "write" } });
   };
   return (
     <form
@@ -40,8 +40,10 @@ export function ImportForm(p: { entity: EntityInfo }) {
       </label>
       <input id="alias" class="text-field" value={alias()} onInput={(e) => setAlias(e.currentTarget.value)} spellcheck={false} />
       <div class="form-row">
-        <span class="dim">Intent</span>
-        <div class="choice">
+        <span class="dim" hidden={!choosesIntent(p.entity.kind)}>
+          Intent
+        </span>
+        <div class="choice" hidden={!choosesIntent(p.entity.kind)}>
           <button type="button" classList={{ on: intent() === "read" }} onClick={() => setIntent("read")}>
             {capital(intentWords(p.entity.kind, "read"))}
           </button>

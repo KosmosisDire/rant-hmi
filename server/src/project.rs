@@ -337,8 +337,9 @@ impl Project {
     }
 
     /// Adds an import and saves. The error is for the user.
-    pub fn import(&mut self, import: Import) -> Result<(), String> {
+    pub fn import(&mut self, mut import: Import) -> Result<(), String> {
         check_alias(&import.alias)?;
+        import.intent = callable(import.kind).unwrap_or(import.intent);
         if self.find(&import.alias).is_some() {
             return Err(format!("{} is already an import", import.alias));
         }
@@ -357,7 +358,8 @@ impl Project {
     }
 
     /// Changes an import's alias or intent and saves. Its entity and kind stay.
-    pub fn change(&mut self, alias: &str, to: Import) -> Result<(), String> {
+    pub fn change(&mut self, alias: &str, mut to: Import) -> Result<(), String> {
+        to.intent = callable(to.kind).unwrap_or(to.intent);
         let at = self.imports.iter().position(|i| i.alias == alias).ok_or_else(|| format!("{alias} is not an import"))?;
         let old = &self.imports[at];
         if to.entity != old.entity || to.kind != old.kind {
@@ -383,6 +385,11 @@ impl Project {
     fn save(&self) -> Result<(), String> {
         files::write_toml(&imports_file(&self.root), &ImportsFile { imports: self.imports.clone() })
     }
+}
+
+/// A function or a task is only called, so its import is always one to write.
+fn callable(kind: Kind) -> Option<Intent> {
+    matches!(kind, Kind::Function | Kind::Task).then_some(Intent::Write)
 }
 
 fn imports_file(root: &Path) -> PathBuf {

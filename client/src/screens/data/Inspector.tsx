@@ -6,7 +6,7 @@ import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
 import type { Value } from "../../protocol/Value";
-import { capital, intentWords, typeLabel } from "../../state/format";
+import { capital, choosesIntent, intentWords, typeLabel } from "../../state/format";
 import { entity, importOf, live, putLocal, setState, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { KindIcon } from "../../ui/marks";
@@ -89,17 +89,19 @@ function EntityView(p: { entity: EntityInfo }) {
         <About
           rows={[
             ["Providers", String(p.entity.providers)],
-            ["Type", p.entity.schema?.name || "anonymous"],
+            ...(choosesIntent(p.entity.kind) ? [["Type", p.entity.schema?.name || "anonymous"] as [string, string]] : []),
             ...(p.entity.kind === "variable" ? [["Takes sets", p.entity.writable ? "yes" : "no"] as [string, string]] : []),
           ]}
         />
-        <Show when={p.entity.schema} fallback={<div class="placeholder">Its details have not arrived yet.</div>}>
-          {(t) => (
-            <>
-              <div class="section">{p.entity.kind === "function" || p.entity.kind === "task" ? "Request" : "Fields"}</div>
-              <Fields fields={t().fields} depth={0} />
-            </>
-          )}
+        <Show when={choosesIntent(p.entity.kind)} fallback={<Calls entity={p.entity} />}>
+          <Show when={p.entity.schema} fallback={<div class="placeholder">Its details have not arrived yet.</div>}>
+            {(t) => (
+              <>
+                <div class="section">Fields</div>
+                <Fields fields={t().fields} depth={0} />
+              </>
+            )}
+          </Show>
         </Show>
         <ImportForm entity={p.entity} />
       </div>
@@ -145,7 +147,7 @@ function ImportView(p: { imp: Import; onOpen: (page: string) => void }) {
           <label>Alias</label>
           <DraftInput value={p.imp.alias} accept={(t) => /^[A-Z][A-Za-z0-9_]*$/.test(t.trim())} onCommit={(alias) => change({ alias: alias.trim() })} />
         </div>
-        <div class="field">
+        <div class="field" hidden={!choosesIntent(p.imp.kind)}>
           <label>Intent</label>
           <div class="choice">
             <For each={["read", "write"] as Intent[]}>
@@ -166,10 +168,11 @@ function ImportView(p: { imp: Import; onOpen: (page: string) => void }) {
           rows={[
             ["Entity", p.imp.entity],
             ["Kind", p.imp.kind],
-            ["State", v().known ? "live" : "unknown"],
+            ["State", choosesIntent(p.imp.kind) ? (v().known ? "live" : "unknown") : e()?.providers ? "on the mesh" : "not on the mesh"],
           ]}
         />
         <Switch>
+          <Match when={!choosesIntent(p.imp.kind) && e()}>{(en) => <Calls entity={en()} />}</Match>
           <Match when={e()?.schema}>
             {(t) => (
               <>
@@ -193,6 +196,22 @@ function ImportView(p: { imp: Import; onOpen: (page: string) => void }) {
           Remove
         </button>
       </div>
+    </>
+  );
+}
+
+/** What a function or a task takes and gives back. An untyped one takes and gives nothing. */
+function Calls(p: { entity: EntityInfo }) {
+  return (
+    <>
+      <div class="section">Request</div>
+      <Show when={p.entity.schema} fallback={<div class="placeholder">Takes nothing.</div>}>
+        {(t) => <Fields fields={t().fields} depth={0} />}
+      </Show>
+      <div class="section">Answer</div>
+      <Show when={p.entity.response} fallback={<div class="placeholder">Gives nothing back.</div>}>
+        {(t) => <Fields fields={t().fields} depth={0} />}
+      </Show>
     </>
   );
 }

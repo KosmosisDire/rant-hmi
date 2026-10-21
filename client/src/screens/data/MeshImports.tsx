@@ -1,7 +1,7 @@
 import { For, Show } from "solid-js";
 import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
-import { capital, intentWords } from "../../state/format";
+import { capital, choosesIntent, intentWords } from "../../state/format";
 import { live, state } from "../../state/store";
 import { Copy, Trash } from "../../ui/icons";
 import { KindIcon } from "../../ui/marks";
@@ -12,10 +12,10 @@ import { canWrite, changeImport, unimport } from "./Inspector";
 
 /** An import's right click menu: what it may do, its alias to copy, and removing it. */
 function importMenu(e: MouseEvent, i: Import) {
-  const intents: Intent[] = ["read", "write"];
+  const intents: Intent[] = choosesIntent(i.kind) ? ["read", "write"] : [];
   openMenu(e, [
     ...intents.map((intent) => ({ label: capital(intentWords(i.kind, intent)), disabled: i.intent === intent || (intent === "write" && !canWrite(i)), run: () => changeImport(i, { intent }) })),
-    "-",
+    ...(intents.length > 0 ? ["-" as const] : []),
     { label: "Copy the alias", icon: <Copy size={13} />, run: () => copyText(i.alias) },
     "-",
     { label: "Remove", icon: <Trash size={13} />, run: () => unimport(i.alias) },

@@ -5,7 +5,10 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use rant::{Node, NodeOptions, Qos, VariableOptions};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, VariableOptions};
 use rant_hmi::mesh::{Delivery, Mesh, MeshOptions};
 use rant_hmi::project::{Import, Intent, Kind};
 use rant_hmi::status::{self, Client, HmiStatus};
@@ -126,4 +129,40 @@ fn publishes_its_own_status() {
     while !(read.get().unwrap() == Some(later.clone()) && list.get().unwrap() == Some(clients.clone())) {
         within("another node to read the status", start);
     }
+}
+
+#[test]
+fn calls_a_function_that_takes_nothing() {
+    let local = || NodeOptions::new().domain(DOMAIN + 4).multicast_interface("127.0.0.1").max_topics(16);
+    let cam = Node::new("test_cam", local()).unwrap();
+    let homed = Arc::new(AtomicU32::new(0));
+    let count = homed.clone();
+    // untyped both ways, as a camera's Home is
+    let _home = cam
+        .function_definition::<Bytes, Bytes, _>("Cam/Home", FunctionOptions::new(), move |_| {
+            count.fetch_add(1, Ordering::SeqCst);
+            Vec::new()
+        })
+        .unwrap();
+
+    let (tx, _rx) = unbounded_channel();
+    let (frames, _) = unbounded_channel();
+    let mut mesh = Mesh::open(&MeshOptions { name: "hmi_caller".into(), domain: DOMAIN + 4, loopback: true }, tx, frames).unwrap();
+    let home = import("Home", "Cam/Home", Kind::Function, Intent::Write);
+    let start = Instant::now();
+    while !mesh.attach(&home) {
+        within("the function to attach", start);
+    }
+    assert!(mesh.call("Home", &Value::map::<&str>([])).is_ok());
+    assert_eq!(mesh.call("Home", &Value::Float(1.0)).err().unwrap(), "Home takes nothing");
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let start = Instant::now();
+    loop {
+        // the provider may not be known for a moment, so a first call can find none
+        if runtime.block_on(mesh.call("Home", &Value::Null).unwrap()).is_ok() {
+            break;
+        }
+        within("a call to reach the provider", start);
+    }
+    assert!(homed.load(Ordering::SeqCst) >= 1);
 }

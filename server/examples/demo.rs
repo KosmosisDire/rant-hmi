@@ -1,5 +1,6 @@
 //! A small line to try the HMI on: a conveyor, a jog topic, a reset function, a moving robot,
-//! a camera with the boxes a detector finds in its frames, and the same view as MJPEG video.
+//! a camera with the boxes a detector finds in its frames and a home it counts, and the same
+//! view as MJPEG video.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
@@ -7,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use rant::types::{AlignedBox2D, Double2, Double3, Empty, Image, ImageFormat, JointState, Pose, Quaternion, Timestamp, VideoCodec, VideoFrame};
-use rant::{FunctionOptions, Node, NodeOptions, Qos, Request, VariableOptions};
+use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, Request, VariableOptions};
 
 #[derive(rant::Message, Clone)]
 struct Conveyor {
@@ -65,6 +66,14 @@ fn main() -> Result<(), rant::Error> {
     let parts = Arc::new(AtomicU32::new(0));
     let cleared = parts.clone();
     let _reset = node.function_definition("Line1/Reset", FunctionOptions::new(), move |_: Request<Empty, u32>| Ok::<_, &str>(cleared.swap(0, Ordering::Relaxed)))?;
+    // the camera's home takes and gives nothing, untyped as many devices' commands are
+    let homes = Arc::new(AtomicU32::new(0));
+    let homing = homes.clone();
+    let _home = node.function_definition::<Bytes, Bytes, _>("Cell/Camera/Home", FunctionOptions::new(), move |_| {
+        homing.fetch_add(1, Ordering::Relaxed);
+        Vec::new()
+    })?;
+    let homed = node.variable_definition::<u32>("Cell/Camera/Homes", VariableOptions::new().initial(0))?;
 
     println!("demo_line is up on domain {domain}{}", if loopback { ", on this host only" } else { "" });
     let start = Instant::now();
@@ -73,6 +82,10 @@ fn main() -> Result<(), rant::Error> {
     loop {
         if let Some(v) = jog.lock().unwrap().take() {
             speed.set(&v)?;
+        }
+        let n = homes.load(Ordering::Relaxed);
+        if homed.get()? != Some(n) {
+            homed.set(&n)?;
         }
         let t = start.elapsed().as_secs_f64();
         let on = running.get()?.unwrap_or(false);

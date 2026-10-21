@@ -55,7 +55,8 @@ struct Attached {
     /// The import as it was attached, so a new intent remakes the handle.
     import: Import,
     generation: u64,
-    schema: Schema,
+    /// None for a function whose request is untyped, which the HMI sends empty.
+    schema: Option<Schema>,
     shapes: Vec<Shape>,
     handle: Handle,
 }
@@ -137,8 +138,10 @@ impl Mesh {
         }
         // the old handle goes first, so its name is free for the new one
         self.attached.remove(&import.alias);
-        let Some(schema) = entity.schema.clone() else { return false };
-        match self.handle(import, &entity, schema) {
+        if entity.schema.is_none() && import.kind != Kind::Function {
+            return false;
+        }
+        match self.handle(import, &entity, entity.schema.clone()) {
             Ok(a) => {
                 self.attached.insert(import.alias.clone(), a);
                 if let Some(value) = self.own.values.get(import.entity.as_str()) {
@@ -190,7 +193,7 @@ impl Mesh {
         self.attached
             .iter()
             .filter(|(_, a)| matches!(a.handle, Handle::Topic { .. } | Handle::Function { .. }))
-            .map(|(alias, a)| (alias.clone(), Form { name: a.schema.name(), fields: codec::top_fields(&a.shapes) }))
+            .filter_map(|(alias, a)| Some((alias.clone(), Form { name: a.schema.as_ref()?.name(), fields: codec::top_fields(&a.shapes) })))
             .collect()
     }
 
@@ -198,8 +201,9 @@ impl Mesh {
         self.attached.remove(alias);
     }
 
-    fn handle(&self, import: &Import, entity: &Entity, schema: Schema) -> Result<Attached, String> {
-        let shapes = codec::shapes(&schema);
+    fn handle(&self, import: &Import, entity: &Entity, schema: Option<Schema>) -> Result<Attached, String> {
+        let shapes = schema.as_ref().map(codec::shapes).unwrap_or_default();
+        let typed = || schema.as_ref().ok_or_else(|| format!("{} has no type", import.entity));
         let (alias, tx, tree) = (import.alias.clone(), self.deliveries.clone(), shapes.clone());
         let deliver = move |value: Value| {
             let _ = tx.send(Delivery { alias: alias.clone(), value });
@@ -207,7 +211,7 @@ impl Mesh {
         let handle = match import.kind {
             Kind::Variable if [status::CLIENTS, status::STATUS].contains(&import.entity.as_str()) => Handle::Own,
             Kind::Topic => {
-                let qos = Qos::new().schema(&schema).reliable(entity.reliable);
+                let qos = Qos::new().schema(typed()?).reliable(entity.reliable);
                 let sub = self.node.subscriber::<Bytes>(&import.entity, qos.clone(), move |m| deliver(codec::decode(&m, &tree)));
                 let publisher = match import.intent {
                     Intent::Write => Some(self.node.publisher::<Bytes>(&import.entity, qos).map_err(|e| e.to_string())?),
@@ -218,13 +222,16 @@ impl Mesh {
             Kind::Variable => {
                 let var = self
                     .node
-                    .remote_variable::<Bytes>(&import.entity, VariableOptions::new().schema(&schema))
+                    .remote_variable::<Bytes>(&import.entity, VariableOptions::new().schema(typed()?))
                     .map_err(|e| e.to_string())?;
                 var.on_change(move |u| deliver(codec::decode(&u.into_inner(), &tree))).map_err(|e| e.to_string())?;
                 Handle::Variable(var)
             }
             Kind::Function => {
-                let mut o = FunctionOptions::new().request_schema(&schema);
+                let mut o = FunctionOptions::new();
+                if let Some(request) = &schema {
+                    o = o.request_schema(request);
+                }
                 if let Some(answer) = &entity.response_schema {
                     o = o.response_schema(answer);
                 }
@@ -286,15 +293,16 @@ impl Mesh {
             Handle::Own => return Err(format!("{alias} is the HMI's own, which only it sets")),
             _ => return Err(format!("{alias} is not a variable, so it cannot be set")),
         };
+        let schema = a.schema.as_ref().ok_or_else(|| format!("{alias} has no type, so it cannot be set"))?;
         let whole = match path.is_empty() {
             true => value,
             false => {
-                let mut base = last.cloned().unwrap_or_else(|| codec::default_value(&a.schema, &a.shapes));
+                let mut base = last.cloned().unwrap_or_else(|| codec::default_value(schema, &a.shapes));
                 codec::put(&mut base, path, value)?;
                 base
             }
         };
-        let bytes = codec::encode(&a.schema, &a.shapes, &whole)?;
+        let bytes = codec::encode(schema, &a.shapes, &whole)?;
         var.set(&bytes).map_err(|e| format!("{alias} refused the write: {e}"))
     }
 
@@ -304,7 +312,8 @@ impl Mesh {
         let Handle::Topic { publisher: Some(publisher), .. } = &a.handle else {
             return Err(format!("{alias} is not a topic imported to write, so it cannot send"));
         };
-        let bytes = codec::encode(&a.schema, &a.shapes, value)?;
+        let schema = a.schema.as_ref().ok_or_else(|| format!("{alias} has no type, so it cannot send"))?;
+        let bytes = codec::encode(schema, &a.shapes, value)?;
         publisher.send(&bytes).map_err(|e| format!("{alias} could not send: {e}"))
     }
 
@@ -314,7 +323,12 @@ impl Mesh {
         let Handle::Function { remote, answer } = &a.handle else {
             return Err(format!("{alias} is not a function, so it cannot be called"));
         };
-        let bytes = codec::encode(&a.schema, &a.shapes, request)?;
+        let bytes = match &a.schema {
+            Some(schema) => codec::encode(schema, &a.shapes, request)?,
+            // an untyped request goes empty, so the call takes nothing
+            None if matches!(request, Value::Null) || matches!(request, Value::Map(m) if m.is_empty()) => Vec::new(),
+            None => return Err(format!("{alias} takes nothing")),
+        };
         let pending = remote.call_async(&bytes, CallOptions::new()).map_err(|e| format!("{alias} could not be called: {e}"))?;
         let answer = answer.clone();
         Ok(async move {

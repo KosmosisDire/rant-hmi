@@ -729,10 +729,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let call = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<Promise<'js>> {
         let mut st = s.borrow_mut();
         let import = st.imports.get(&alias).filter(|i| i.kind == Kind::Function);
-        let import = import.ok_or_else(|| Exception::throw_type(&ctx, &format!("{alias} is not a function on the mesh")))?;
-        if import.intent != Intent::Write {
-            return Err(Exception::throw_type(&ctx, &format!("{alias} is imported to read. Import it to write to call it.")));
-        }
+        import.ok_or_else(|| Exception::throw_type(&ctx, &format!("{alias} is not a function on the mesh")))?;
         let request = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
         let (promise, resolve, reject) = ctx.promise()?;
         // what the run wrote before the call goes out before it

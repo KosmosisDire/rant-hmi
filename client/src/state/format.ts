@@ -14,11 +14,15 @@ export function number(n: number): string {
 /** Text with its first letter a capital, as a row or a button starts. */
 export const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
-/** What an import's intent allows, in words: reading is always allowed, and write adds what
- *  its kind takes, a set, a send or a call. */
+/** What an import's intent allows, in words: reading is always allowed, and write adds a set
+ *  or a send. A function or a task is only ever called. */
 export function intentWords(kind: Kind, intent: Intent): string {
-  return intent === "read" ? "read only" : `read and ${{ topic: "send", variable: "set", function: "call", task: "call" }[kind]}`;
+  if (kind === "function" || kind === "task") return "call";
+  return intent === "read" ? "read only" : `read and ${kind === "topic" ? "send" : "set"}`;
 }
+
+/** Whether an import has a read or write intent to choose, as a function or a task has not. */
+export const choosesIntent = (kind: Kind) => kind === "variable" || kind === "topic";
 
 /** A struct's fields by name, or null for any other value. */
 export function fields(v: Value | null | undefined): { [key in string]?: Value } | null {

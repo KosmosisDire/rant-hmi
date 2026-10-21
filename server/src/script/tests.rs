@@ -125,7 +125,6 @@ fn mistakes_say_what_and_where() {
     let cases = [
         ("Target = 1;", "Target is imported to read. Import it to write to change it. (line 1)"),
         ("Joints = 1;", "Joints is not a variable, so it cannot be set (line 1)"),
-        ("await Peek();", "Peek is imported to read. Import it to write to call it. (line 1)"),
         ("\nSped = 1;", "Sped names no mesh import, variable or record (line 2)"),
         ("Speed = ;", "Unexpected token (line 1)"),
         ("Speed = 1;
