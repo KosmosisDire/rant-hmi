@@ -9,6 +9,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::body::Bytes;
 use str0m::change::SdpOffer;
 use str0m::channel::ChannelId;
 use str0m::format::Codec;
@@ -24,6 +25,14 @@ use crate::protocol::ClientMsg;
 /// The labels a screen gives its two channels.
 pub const RELIABLE: &str = "reliable";
 pub const BEST_EFFORT: &str = "best-effort";
+
+/// A message bigger than this goes over the socket. Losing any of its packets loses all of it
+/// on the best effort channel, and on the reliable one it holds back what comes after.
+pub const MESSAGE_MAX: usize = 16 * 1024;
+
+/// A screen that missed messages, its channels full, gets everything again once one drains
+/// below this. Full is str0m's 128 KiB for the two together.
+const DRAINED: usize = 32 * 1024;
 
 /// One H264 frame of an import's video, in Annex B as the mesh carries it.
 pub struct Frame {
@@ -44,6 +53,9 @@ pub enum ToRtc {
     /// The screen is gone, and so is all it played.
     Gone { session: u32 },
     Frame(Frame),
+    /// A message for a screen, on its reliable channel or its best effort one. It is left out
+    /// while the channels are full.
+    Send { session: u32, reliable: bool, bytes: Bytes },
 }
 
 pub enum FromRtc {
@@ -55,6 +67,8 @@ pub enum FromRtc {
     Linked { session: u32, open: bool },
     /// What a screen sent on a channel.
     Message { session: u32, msg: ClientMsg },
+    /// A screen's channels drained after it missed messages, so it needs them all.
+    CaughtUp { session: u32 },
 }
 
 struct Peer {
@@ -74,6 +88,8 @@ enum Carries {
 struct Channels {
     reliable: Option<ChannelId>,
     best_effort: Option<ChannelId>,
+    /// Messages were left out while the channels were full.
+    missed: bool,
 }
 
 struct Video {
@@ -91,7 +107,7 @@ impl Peer {
     }
 
     fn linked(&self) -> bool {
-        matches!(&self.carries, Carries::Messages(Channels { reliable: Some(_), best_effort: Some(_) }))
+        matches!(&self.carries, Carries::Messages(Channels { reliable: Some(_), best_effort: Some(_), .. }))
     }
 
     fn name(&self) -> String {
@@ -161,6 +177,11 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, said: UnboundedSender<FromR
                     let data: Arc<[u8]> = f.data.into();
                     for p in peers.iter_mut().filter(|p| p.plays(&f.alias)) {
                         write(p, f.keyframe, f.pts, &data);
+                    }
+                }
+                Some(ToRtc::Send { session, reliable, bytes }) => {
+                    if let Some(p) = peers.iter_mut().find(|p| p.session == session && matches!(p.carries, Carries::Messages(_))) {
+                        put(p, reliable, &bytes);
                     }
                 }
             },
@@ -262,11 +283,21 @@ async fn drive(p: &mut Peer, said: &UnboundedSender<FromRtc>) {
                     }
                     (Event::MediaAdded(m), Carries::Video(v)) => v.mid = Some(m.mid),
                     (Event::Connected, Carries::Video(v)) => v.connected = true,
-                    (Event::ChannelOpen(id, label), Carries::Messages(c)) => match label.as_str() {
-                        RELIABLE => c.reliable = Some(id),
-                        BEST_EFFORT => c.best_effort = Some(id),
-                        _ => warn!("screen {} opened a channel {label} this backend does not know", p.session),
-                    },
+                    (Event::ChannelOpen(id, label), Carries::Messages(c)) => {
+                        match label.as_str() {
+                            RELIABLE => c.reliable = Some(id),
+                            BEST_EFFORT => c.best_effort = Some(id),
+                            _ => warn!("screen {} opened a channel {label} this backend does not know", p.session),
+                        }
+                        if let Some(mut channel) = p.rtc.channel(id) {
+                            channel.set_buffered_amount_low_threshold(DRAINED);
+                        }
+                    }
+                    (Event::ChannelBufferedAmountLow(_), Carries::Messages(c)) => {
+                        if std::mem::take(&mut c.missed) {
+                            let _ = said.send(FromRtc::CaughtUp { session: p.session });
+                        }
+                    }
                     (Event::ChannelClose(id), Carries::Messages(c)) => {
                         for slot in [&mut c.reliable, &mut c.best_effort] {
                             if *slot == Some(id) {
@@ -294,6 +325,18 @@ async fn drive(p: &mut Peer, said: &UnboundedSender<FromRtc>) {
                 return;
             }
         }
+    }
+}
+
+/// Writes a message on one of a screen's channels, or leaves it out while they are full.
+fn put(p: &mut Peer, reliable: bool, bytes: &[u8]) {
+    let Carries::Messages(c) = &mut p.carries else { return };
+    let Some(id) = (if reliable { c.reliable } else { c.best_effort }) else { return };
+    let Some(mut channel) = p.rtc.channel(id) else { return };
+    match channel.write(true, bytes) {
+        Ok(true) => {}
+        Ok(false) => c.missed = true,
+        Err(e) => warn!("a message for screen {} did not go: {e}", p.session),
     }
 }
 

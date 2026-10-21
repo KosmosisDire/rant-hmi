@@ -63,7 +63,7 @@ struct Attached {
 
 enum Handle {
     /// The subscription is held only so it lives. A topic imported to write publishes too.
-    Topic { _subscription: Subscriber<Bytes>, publisher: Option<Publisher<Bytes>> },
+    Topic { _subscription: Subscriber<Bytes>, publisher: Option<Publisher<Bytes>>, reliable: bool },
     Variable(RemoteVariable<Bytes>),
     /// A function: its request goes by the import's schema, its answer by `answer`'s.
     Function { remote: RemoteFunction<Bytes, Bytes>, answer: Option<(Schema, Vec<Shape>)> },
@@ -197,6 +197,11 @@ impl Mesh {
             .collect()
     }
 
+    /// Whether an import's values may be lost on the way, as a best effort topic's are.
+    pub fn best_effort(&self, alias: &str) -> bool {
+        matches!(self.attached.get(alias).map(|a| &a.handle), Some(Handle::Topic { reliable: false, .. }))
+    }
+
     pub fn detach(&mut self, alias: &str) {
         self.attached.remove(alias);
     }
@@ -217,7 +222,7 @@ impl Mesh {
                     Intent::Write => Some(self.node.publisher::<Bytes>(&import.entity, qos).map_err(|e| e.to_string())?),
                     Intent::Read => None,
                 };
-                Handle::Topic { _subscription: sub.map_err(|e| e.to_string())?, publisher }
+                Handle::Topic { _subscription: sub.map_err(|e| e.to_string())?, publisher, reliable: entity.reliable }
             }
             Kind::Variable => {
                 let var = self

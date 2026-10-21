@@ -33,8 +33,13 @@ pub enum ServerMsg {
     Theme { tokens: Vec<Token> },
     /// Every entity on the mesh, whole, after the mesh changed.
     Mesh { entities: Vec<EntityInfo> },
-    /// The values that changed since the last batch.
-    Values { values: Vec<ValueUpdate> },
+    /// The values that changed since the last batch. `seq` counts the batches, as one may pass
+    /// another on the way, so a value never gives way to an older one.
+    Values {
+        values: Vec<ValueUpdate>,
+        #[ts(type = "number")]
+        seq: u64,
+    },
     /// The peers and how fast they answer, about once a second.
     Health { peers: Vec<PeerInfo> },
     /// Every page, whole, on connecting and when one is added or removed.
@@ -270,8 +275,9 @@ mod tests {
     fn a_backend_message_writes_as_cbor() {
         let msg = ServerMsg::Values {
             values: vec![ValueUpdate { alias: "Joints".into(), value: Some(value!([0.5, -1, "x"])), known: true }],
+            seq: 7,
         };
         let back: Value = ciborium::from_reader(&cbor(&msg)[..]).unwrap();
-        assert_eq!(back, value!({ "type": "values", "values": [{ "alias": "Joints", "value": [0.5, -1, "x"], "known": true }] }));
+        assert_eq!(back, value!({ "type": "values", "values": [{ "alias": "Joints", "value": [0.5, -1, "x"], "known": true }], "seq": 7 }));
     }
 }

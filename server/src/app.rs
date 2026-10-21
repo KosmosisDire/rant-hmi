@@ -22,7 +22,7 @@ use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Varia
 use crate::protocol::{ClientMsg, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
-use crate::rtc::{FromRtc, ToRtc};
+use crate::rtc::{FromRtc, MESSAGE_MAX, ToRtc};
 
 /// How often changed values go out and the mesh is checked.
 const TICK: Duration = Duration::from_millis(33);
@@ -171,6 +171,8 @@ pub struct App {
     /// The client script the backend serves.
     build: String,
     sessions: HashMap<u32, Session>,
+    /// The last batch of values sent.
+    seq: Cell<u64>,
     values: HashMap<String, Slot>,
     changed: BTreeSet<String>,
     /// The values of the variables every screen shares.
@@ -215,6 +217,7 @@ impl App {
             node,
             build,
             sessions: HashMap::new(),
+            seq: Cell::new(0),
             values: HashMap::new(),
             changed: BTreeSet::new(),
             shared,
@@ -320,7 +323,7 @@ impl App {
         }
         self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
         self.send(session, &ServerMsg::Theme { tokens: self.project.tokens.clone() });
-        self.send(session, &ServerMsg::Values { values: self.all_values(session) });
+        self.put_values(Some(session), self.all_values(session));
         self.send(session, &ServerMsg::Health { peers: self.mesh.peers() });
     }
 
@@ -577,7 +580,7 @@ impl App {
                 let value = kept_shared.unwrap_or_else(|| v.start.clone());
                 self.shared.insert(v.name.clone(), value.clone());
                 self.script.send(ToScript::Values(vec![(v.name.clone(), Some(value.clone()))]));
-                self.broadcast(&ServerMsg::Values { values: vec![known(&v.name, &value)] });
+                self.put_values(None, vec![known(&v.name, &value)]);
             }
             Per::Screen => {
                 let ids: Vec<u32> = self.sessions.keys().copied().collect();
@@ -587,7 +590,7 @@ impl App {
                         s.vars.insert(v.name.clone(), value.clone());
                     }
                     self.script.send(ToScript::Screen { session: id, values: vec![(v.name.clone(), value.clone())] });
-                    self.send(id, &ServerMsg::Values { values: vec![known(&v.name, &value)] });
+                    self.put_values(Some(id), vec![known(&v.name, &value)]);
                 }
             }
         }
@@ -898,11 +901,11 @@ impl App {
             match (per, session) {
                 (Per::Screen, Some(s)) => {
                     self.script.send(ToScript::Screen { session: s, values: vec![(alias.to_owned(), now.clone())] });
-                    self.send(s, &ServerMsg::Values { values: vec![known(alias, &now)] });
+                    self.put_values(Some(s), vec![known(alias, &now)]);
                 }
                 _ => {
                     self.script.send(ToScript::Values(vec![(alias.to_owned(), Some(now.clone()))]));
-                    self.broadcast(&ServerMsg::Values { values: vec![known(alias, &now)] });
+                    self.put_values(None, vec![known(alias, &now)]);
                 }
             }
             return Ok(());
@@ -1029,7 +1032,7 @@ impl App {
         if !self.changed.is_empty() {
             let values: Vec<ValueUpdate> = std::mem::take(&mut self.changed).iter().map(|a| self.update(a)).collect();
             self.script.send(ToScript::Values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known))).collect()));
-            self.broadcast(&ServerMsg::Values { values });
+            self.put_values(None, values);
             // the engine has the new values before it judges by them
             self.rethink();
         }
@@ -1054,7 +1057,7 @@ impl App {
         }
         let caught: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.out.caught_up()).map(|(id, _)| *id).collect();
         for session in caught {
-            self.send(session, &ServerMsg::Values { values: self.all_values(session) });
+            self.put_values(Some(session), self.all_values(session));
         }
         let silent: Vec<(u32, Duration)> = self.sessions.iter().map(|(id, s)| (*id, s.heard.elapsed())).filter(|(_, t)| *t > SILENCE).collect();
         for (session, silence) in silent {
@@ -1177,6 +1180,7 @@ impl App {
                 }
             }
             FromRtc::Message { session, msg } => self.inbound(Inbound::Message { session, msg }),
+            FromRtc::CaughtUp { session } => self.put_values(Some(session), self.all_values(session)),
             FromRtc::Answer { session, alias, sdp } => self.send(session, &ServerMsg::Play { alias, answer: sdp }),
             FromRtc::Failed { session, alias, text } => {
                 self.stop_playing(session, &alias);
@@ -1192,7 +1196,7 @@ impl App {
 
     fn send(&self, session: u32, msg: &ServerMsg) {
         if let Some(s) = self.sessions.get(&session) {
-            s.out.put(encode(msg), matches!(msg, ServerMsg::Values { .. }));
+            s.out.put(encode(msg), false);
         }
     }
 
@@ -1202,7 +1206,42 @@ impl App {
         }
         let text = encode(msg);
         for s in self.sessions.values() {
-            s.out.put(text.clone(), matches!(msg, ServerMsg::Values { .. }));
+            s.out.put(text.clone(), false);
+        }
+    }
+
+    /// Sends values to one screen, or with None to every screen. A screen with channels gets a
+    /// best effort topic's on the best effort channel and the rest on the reliable one, any too
+    /// big for a channel on its socket.
+    fn put_values(&self, to: Option<u32>, values: Vec<ValueUpdate>) {
+        let seq = self.seq.get() + 1;
+        self.seq.set(seq);
+        let sessions: Vec<(u32, &Session)> = match to {
+            Some(id) => self.sessions.get(&id).map(|s| (id, s)).into_iter().collect(),
+            None => self.sessions.iter().map(|(id, s)| (*id, s)).collect(),
+        };
+        let whole = sessions.iter().any(|(_, s)| !s.channels).then(|| encode(&ServerMsg::Values { values: values.clone(), seq }));
+        let mut split = Vec::new();
+        if sessions.iter().any(|(_, s)| s.channels) {
+            let (best_effort, reliable): (Vec<_>, Vec<_>) = values.into_iter().partition(|v| self.mesh.best_effort(&v.alias));
+            split = pieces(best_effort, seq, false);
+            split.extend(pieces(reliable, seq, true));
+        }
+        for (id, s) in sessions {
+            if !s.channels {
+                if let Some(whole) = &whole {
+                    s.out.put(whole.clone(), true);
+                }
+                continue;
+            }
+            for (way, bytes) in &split {
+                match way {
+                    Some(reliable) => {
+                        let _ = self.rtc.send(ToRtc::Send { session: id, reliable: *reliable, bytes: bytes.clone() });
+                    }
+                    None => s.out.put(bytes.clone(), true),
+                }
+            }
         }
     }
 }
@@ -1210,6 +1249,25 @@ impl App {
 /// A variable's value as a screen gets it: always known.
 fn known(name: &str, value: &Value) -> ValueUpdate {
     ValueUpdate { alias: name.to_owned(), value: Some(value.clone()), known: true }
+}
+
+/// Values as messages for a channel, `reliable` or not, one batch when it fits. Else each value
+/// is its own, and one too big for a channel goes by none, which is the socket.
+fn pieces(values: Vec<ValueUpdate>, seq: u64, reliable: bool) -> Vec<(Option<bool>, Bytes)> {
+    if values.is_empty() {
+        return Vec::new();
+    }
+    let batch = encode(&ServerMsg::Values { values: values.clone(), seq });
+    if batch.len() <= MESSAGE_MAX {
+        return vec![(Some(reliable), batch)];
+    }
+    values
+        .into_iter()
+        .map(|v| {
+            let bytes = encode(&ServerMsg::Values { values: vec![v], seq });
+            ((bytes.len() <= MESSAGE_MAX).then_some(reliable), bytes)
+        })
+        .collect()
 }
 
 fn encode(msg: &ServerMsg) -> Bytes {

@@ -34,6 +34,10 @@ export interface Notice {
   level: Level;
 }
 
+/** The batch each value last came in. The channels pass the socket and the best effort one
+ *  reorders, so a value never gives way to an older batch's. */
+const batches = new Map<string, number>();
+
 /** How long a notice stays, by how much it matters. */
 const STAYS: Record<Level, number> = { info: 4000, warn: 7000, fault: 10000 };
 
@@ -148,6 +152,7 @@ export function dismiss(n: number) {
 export function receive(msg: ServerMsg) {
   switch (msg.type) {
     case "hello":
+      batches.clear();
       setState({ project: msg.project, node: msg.node, version: msg.version });
       catchUp(msg.build);
       break;
@@ -199,6 +204,8 @@ export function receive(msg: ServerMsg) {
       break;
     case "values":
       for (const u of msg.values) {
+        if ((batches.get(u.alias) ?? 0) > msg.seq) continue;
+        batches.set(u.alias, msg.seq);
         setState("values", u.alias, reconcile({ value: u.value, known: u.known }));
       }
       break;
