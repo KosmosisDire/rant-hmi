@@ -1,5 +1,5 @@
 // A designer builds a Joystick in the editor alone: a base, a travel ring and a knob drawn in
-// one diagram. Only a press on the base works it. The knob follows the finger while it stays
+// one diagram, which keeps its round shape, its colours inputs that start at the theme's tokens. Only a press on the base works it. The knob follows the finger while it stays
 // within the ring, stops at the ring beyond it, and springs back on release. It sends move with
 // x and y from -1 to 1, up being positive, which the page keeps in two variables, and held with
 // the same on each beat while held, even a still one, and a last 0, 0 when let go.
@@ -12,13 +12,17 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addComponent("Joystick", 20, 20);
   await d.addInput("travel", "6.5");
   await d.addInput("repeatMs", "100");
+  await d.addInput("fill", "$panel");
+  await d.addInput("colour", "$accent");
+  await d.addInput("knobColour", "$panel3");
+  await d.addInput("lineColour", "$border2");
   await d.addVariable("kx", "0");
   await d.addVariable("ky", "0");
   await d.addSends("move");
   await d.addSends("held");
   await d.add("diagram", { Name: "pad", x: "0", y: "0", w: "20", h: "20" });
   // the base takes the presses, which the ring and the knob above it let through
-  await d.addShape("circle", { Name: "base", "Centre x": "10", "Centre y": "10", Radius: "9.5", Fill: "$panel", Stroke: "$border2", Thickness: "0.2" });
+  await d.addShape("circle", { Name: "base", "Centre x": "10", "Centre y": "10", Radius: "9.5", Fill: "fill", Stroke: "lineColour", Thickness: "0.2" });
   await d.handler("drag", [
     "// the knob goes where the finger is, as far as the ring, on a base 19 across",
     "const dx = (p.x - 0.5) * 19, dy = (p.y - 0.5) * 19;",
@@ -29,9 +33,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   ].join("\n"));
   await d.handler("release", 'kx = 0;\nky = 0;\nemit("move", { x: 0, y: 0 });\nemit("held", { x: 0, y: 0 });');
   await d.handler("repeat", 'emit("held", { x: kx, y: -ky });', "repeatMs");
-  await d.addShape("circle", { Name: "ring", "Centre x": "10", "Centre y": "10", Radius: "travel", Fill: '"none"', Stroke: "$border2", Thickness: "0.2", Dashes: '"0.4 0.6"' });
+  await d.addShape("circle", { Name: "ring", "Centre x": "10", "Centre y": "10", Radius: "travel", Fill: '"none"', Stroke: "lineColour", Thickness: "0.2", Dashes: '"0.4 0.6"' });
   await d.css('pointer-events: "none"');
-  await d.addShape("circle", { Name: "knob", "Centre x": "10 + kx * travel", "Centre y": "10 + ky * travel", Radius: "3", Fill: "base.pressed ? $accent : $panel3", Stroke: "$text", Thickness: "0.2" });
+  await d.addShape("circle", { Name: "knob", "Centre x": "10 + kx * travel", "Centre y": "10 + ky * travel", Radius: "3", Fill: "base.pressed ? colour : knobColour", Stroke: "$text", Thickness: "0.2" });
   await d.css('pointer-events: "none"');
 
   await d.addPage("Joystick");
