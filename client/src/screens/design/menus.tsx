@@ -6,7 +6,7 @@ import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { state } from "../../state/store";
 import { type MenuEntry, type MenuItem, openMenu } from "../../ui/Menu";
-import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Download, Group, Plus, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash, Ungroup } from "../../ui/icons";
+import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Download, Group, Plus, Rows3, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash, Ungroup } from "../../ui/icons";
 import { savePicture, showsPicture } from "../../ui/Picture";
 import { addElement, KINDS, STARTS } from "./add";
 import { duplicate, pasteHere } from "./clipboard";
@@ -14,7 +14,7 @@ import { makeComponent } from "./component";
 import type { Pick } from "./DesignScreen";
 import { addShape, SHAPE_KINDS } from "./ShapeFields";
 import { TagIcon } from "./TagIcon";
-import { absolute, find, group, isGroup, parentOf, remove, restack, tops, ungroup } from "./tree";
+import { absolute, find, group, isGroup, parentOf, remove, restack, tops, ungroup, wrap } from "./tree";
 
 /** A spot on the page, as the canvas was clicked. */
 type Spot = { x: number; y: number };
@@ -78,6 +78,13 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
     { label: "Duplicate", keys: "Ctrl D", icon: <CopyPlus size={13} />, run: () => duplicate(page, picked) },
     "-",
     { label: "Group", keys: "Ctrl G", icon: <Group size={13} />, disabled: picked.some((x) => parentOf(page, x.id) !== parentOf(page, picked[0].id)), run: () => group(page, ids) },
+    {
+      label: "Lay out in a new frame",
+      keys: "Shift A",
+      icon: <Rows3 size={13} />,
+      disabled: picked.some((x) => SHAPES.has(x.tag) || parentOf(page, x.id) !== parentOf(page, picked[0].id)),
+      run: () => wrap(page, ids),
+    },
   );
   if (picked.some(isGroup)) {
     entries.push({

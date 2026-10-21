@@ -273,6 +273,9 @@ pub enum Edit {
     Group { page: String, ids: Vec<String> },
     /// Puts what a group holds in its place and removes it.
     Ungroup { page: String, id: String },
+    /// Puts elements that share a holder into a new frame with `props` where the front most of
+    /// them stood, in the order given, as the frame's flow lays them out.
+    Wrap { page: String, ids: Vec<String>, props: BTreeMap<String, String> },
     /// Sets each property to its value, or removes it where the value is null.
     SetProps { page: String, id: String, props: BTreeMap<String, Option<String>> },
     /// Sets the code the element runs on `event`, or removes its handler where it is null.
@@ -647,24 +650,22 @@ impl Pages {
             }
             Edit::Group { page, ids } => {
                 let p = self.page_mut(&page)?;
-                let mut order = Vec::new();
-                for id in &ids {
-                    let (holder, at) = locate(&p.children, id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
-                    order.push((holder, at, id.clone()));
-                }
+                let (holder, mut order) = sharing(&p.children, &page, &ids, "group")?;
                 order.sort();
-                order.dedup();
-                let (Some(first), Some(front)) = (order.first(), order.last()) else { return Err("pick something to group".into()) };
-                if order.iter().any(|(holder, ..)| *holder != first.0) {
-                    return Err("pick elements that sit in one frame to group them".into());
-                }
-                let tag = if find(&p.children, &first.2).expect("located above").tag.is_shape() { Tag::G } else { Tag::Group };
-                // the group takes the next id, as AddElement gives it
-                let group = format!("e{}", highest(&p.children) + 1);
+                let tag = if find(&p.children, &order[0].1).expect("located above").tag.is_shape() { Tag::G } else { Tag::Group };
                 let element = Element { id: String::new(), tag, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: Vec::new() };
-                let mut edits = vec![Edit::AddElement { page: page.clone(), parent: first.0.clone(), index: Some(front.1 + 1), element }];
-                edits.extend(order.iter().enumerate().map(|(k, (.., id))| Edit::MoveElement { page: page.clone(), id: id.clone(), parent: Some(group.clone()), index: k }));
-                return self.change(Edit::Batch { edits }, touched, made);
+                let edits = into_new(&page, &p.children, holder, &order, element);
+                return self.change(edits, touched, made);
+            }
+            Edit::Wrap { page, ids, props } => {
+                let p = self.page_mut(&page)?;
+                let (holder, order) = sharing(&p.children, &page, &ids, "wrap")?;
+                if order.iter().any(|(_, id)| find(&p.children, id).expect("located above").tag.is_shape()) {
+                    return Err("a frame holds elements, and shapes stay in their diagram".into());
+                }
+                let element = Element { id: String::new(), tag: Tag::Div, component: None, props, handlers: Vec::new(), children: Vec::new() };
+                let edits = into_new(&page, &p.children, holder, &order, element);
+                return self.change(edits, touched, made);
             }
             Edit::Ungroup { page, id } => {
                 let p = self.page_mut(&page)?;
@@ -1082,6 +1083,38 @@ fn holder<'a>(page: &'a mut Page, parent: &Option<String>, tag: Tag) -> Result<&
 }
 
 /// Where an element sits: its frame, None for the page, and its index there.
+/// The holder elements share and where each sits in it, in the order given, each once. The
+/// error says to pick elements that share one, to `what` them.
+fn sharing(children: &[Element], page: &str, ids: &[String], what: &str) -> Result<(Option<String>, Vec<(usize, String)>), String> {
+    let mut holder = None;
+    let mut order: Vec<(usize, String)> = Vec::new();
+    for id in ids {
+        let (h, at) = locate(children, id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
+        if order.iter().any(|(_, seen)| seen == id) {
+            continue;
+        }
+        if !order.is_empty() && h != holder {
+            return Err(format!("pick elements that sit in one frame to {what} them"));
+        }
+        holder = h;
+        order.push((at, id.clone()));
+    }
+    if order.is_empty() {
+        return Err(format!("pick something to {what}"));
+    }
+    Ok((holder, order))
+}
+
+/// The edits that put `element` in `holder` in front of the front most of `order`, and move
+/// each of them into it in that order. It takes the next id, as AddElement gives it.
+fn into_new(page: &str, children: &[Element], holder: Option<String>, order: &[(usize, String)], element: Element) -> Edit {
+    let made = format!("e{}", highest(children) + 1);
+    let front = order.iter().map(|(at, _)| *at).max().expect("one at least");
+    let mut edits = vec![Edit::AddElement { page: page.to_owned(), parent: holder, index: Some(front + 1), element }];
+    edits.extend(order.iter().enumerate().map(|(k, (_, id))| Edit::MoveElement { page: page.to_owned(), id: id.clone(), parent: Some(made.clone()), index: k }));
+    Edit::Batch { edits }
+}
+
 fn locate(elements: &[Element], id: &str, parent: Option<&str>) -> Option<(Option<String>, usize)> {
     if let Some(at) = elements.iter().position(|e| e.id == id) {
         return Some((parent.map(str::to_owned), at));
@@ -1423,6 +1456,30 @@ mod tests {
         assert_eq!(pages.apply(Edit::Group { page: o(), ids: vec![frame, ids[0].clone()] }).unwrap_err(), "pick elements that sit in one frame to group them");
         pages.apply(Edit::SetProps { page: o(), id: group.clone(), props: [("repeat".to_string(), Some("3".to_string()))].into() }).unwrap();
         assert_eq!(pages.apply(Edit::Ungroup { page: o(), id: group }).unwrap_err(), "the group sets repeat, which ungrouping would lose");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn wrapping_lays_out_in_the_order_given_and_undoes_as_one() {
+        let dir = scratch("wrap");
+        let mut pages = Pages::open(&dir).unwrap();
+        let o = || "overview".to_string();
+        let ids: Vec<String> = (0..3).map(|_| pages.apply(add(o(), None, Tag::Div, props(&[]))).unwrap().made.unwrap().1).collect();
+        let tops = |pages: &Pages| pages.get("overview").unwrap().children.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+        let before = tops(&pages);
+        let wrap = Edit::Wrap { page: o(), ids: vec![ids[2].clone(), ids[0].clone()], props: [("layout".to_string(), "\"right\"".to_string())].into() };
+        let wrapped = pages.apply(wrap).unwrap();
+        let frame = wrapped.made.clone().unwrap().1;
+        let page = pages.get("overview").unwrap();
+        assert_eq!(tops(&pages), vec![ids[1].clone(), frame.clone()]);
+        assert_eq!(page.children[1].tag, Tag::Div);
+        assert_eq!(page.children[1].props.get("layout").map(String::as_str), Some("\"right\""));
+        assert_eq!(page.children[1].children.iter().map(|e| e.id.clone()).collect::<Vec<_>>(), vec![ids[2].clone(), ids[0].clone()]);
+        pages.apply(wrapped.undo).unwrap();
+        assert_eq!(tops(&pages), before);
+        let diagram = pages.apply(add(o(), None, Tag::Svg, props(&[]))).unwrap().made.unwrap().1;
+        let line = pages.apply(add(o(), Some(diagram), Tag::Line, props(&[]))).unwrap().made.unwrap().1;
+        assert_eq!(pages.apply(Edit::Wrap { page: o(), ids: vec![line], props: BTreeMap::new() }).unwrap_err(), "a frame holds elements, and shapes stay in their diagram");
         fs::remove_dir_all(&dir).unwrap();
     }
 

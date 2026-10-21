@@ -356,6 +356,30 @@ export function group(page: Page, ids: string[]) {
   send({ type: "edit", edit: { kind: "group", page: page.id, ids: picked.map((e) => e.id) } });
 }
 
+/** Puts elements that share a holder into a new frame that lays them out as they stand: in a
+ *  row when they spread more across than down, else a column, in that order, their average
+ *  gap apart. The frame hugs them where they began, and the screen then selects it. */
+export function wrap(page: Page, ids: string[]) {
+  const picked = tops(page, ids).filter((e) => !SHAPES.has(e.tag));
+  if (picked.length === 0) return;
+  const parent = parentOf(page, picked[0].id);
+  if (picked.some((e) => parentOf(page, e.id) !== parent)) return notify("Pick elements that sit in one frame to lay them out in a new one.", "warn");
+  const all = picked.flatMap((e) => {
+    const b = absolute(page, e.id);
+    return b ? [{ e, b }] : [];
+  });
+  const middles = (across: boolean) => all.map(({ b }) => (across ? b.x + b.w / 2 : b.y + b.h / 2));
+  const span = (across: boolean) => Math.max(...middles(across)) - Math.min(...middles(across));
+  const across = span(true) >= span(false);
+  all.sort((p, q) => (across ? p.b.x - q.b.x : p.b.y - q.b.y));
+  const gaps = all.slice(1).map(({ b }, i) => (across ? b.x - all[i].b.x - all[i].b.w : b.y - all[i].b.y - all[i].b.h));
+  const gap = gaps.length > 0 ? Math.max(0, Math.round(gaps.reduce((n, g) => n + g, 0) / gaps.length)) : 0;
+  const { at, room } = inside(page, parent);
+  const corner = (k: "x" | "y") => Number((Math.min(...all.map(({ b }) => b[k])) - at[k] - (room[k === "x" ? "ox" : "oy"] ?? 0)).toFixed(2));
+  const props = { name: "Frame", x: String(corner("x")), y: String(corner("y")), w: "hug", h: "hug", layout: across ? '"right"' : '"down"', gap: String(gap) };
+  send({ type: "edit", edit: { kind: "wrap", page: page.id, ids: all.map(({ e }) => e.id), props } });
+}
+
 /** Puts what each picked group holds in its place, as one undo. Gives back what they held. */
 export function ungroup(page: Page, ids: string[]): string[] {
   const groups = tops(page, ids).filter(isGroup);

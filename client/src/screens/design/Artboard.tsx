@@ -55,6 +55,7 @@ const KEYS: [string, string][] = [
   ["Delete", "remove"],
   ["Ctrl D", "duplicate"],
   ["Ctrl G", "group, Ctrl Shift G ungroups"],
+  ["Shift A", "lay out in a new frame"],
   ["Ctrl C, X, V", "copy, cut and paste"],
   ["Ctrl [ and ]", "send back, bring forward, Shift all the way"],
   ["Ctrl Z", "undo, Ctrl Shift Z or Ctrl Y redoes"],

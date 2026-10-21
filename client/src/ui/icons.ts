@@ -60,6 +60,7 @@ export { default as Plus } from "lucide-solid/icons/plus";
 export { default as Power } from "lucide-solid/icons/power";
 export { default as RectangleHorizontal } from "lucide-solid/icons/rectangle-horizontal";
 export { default as RotateCcw } from "lucide-solid/icons/rotate-ccw";
+export { default as Rows3 } from "lucide-solid/icons/rows-3";
 export { default as Rss } from "lucide-solid/icons/rss";
 export { default as Scissors } from "lucide-solid/icons/scissors";
 export { default as Search } from "lucide-solid/icons/search";

@@ -7,7 +7,7 @@ import { Artboard, GRID, STEP } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
-import { find, group, remove, restack, sendEdits, shiftBy, tops, ungroup } from "./tree";
+import { find, group, remove, restack, sendEdits, shiftBy, tops, ungroup, wrap } from "./tree";
 
 /** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
 export type Pick = (id: string | null, add?: boolean) => void;
@@ -118,6 +118,9 @@ export function DesignScreen(p: { shown: boolean }) {
           const held = ungroup(page, selection());
           if (held.length > 0) setSelection(held);
         }
+      } else if (!mod && e.shiftKey && letter === "a") {
+        e.preventDefault();
+        wrap(page, selection());
       } else if (mod && ["[", "]", "{", "}"].includes(e.key) && picked.length === 1) {
         e.preventDefault();
         const forward = e.key === "]" || e.key === "}";
