@@ -17,12 +17,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addSends("change");
   await d.add("frame", { Name: "slider", x: "0", y: "0", w: "100%", h: "100%", Fill: "", Radius: "" });
   await d.handler("drag", "value = Math.round((min + p.x * (max - min)) / step) * step;\nemit(\"change\", value);");
-  const centred = { y: "50%", Origin: '"0% 50%"', h: "0.8", Radius: "0.4" };
-  await d.add("frame", { Name: "track", x: "0", w: "100%", ...centred, Fill: "trackColour" });
+  // the origin first, so x and y place the point it names
+  const centred = { Origin: '"0% 50%"', x: "0", y: "50%", h: "0.8", Radius: "0.4" };
+  await d.add("frame", { Name: "track", ...centred, w: "100%", Fill: "trackColour" });
   await d.select("slider");
-  await d.add("frame", { Name: "fill", x: "0", w: "(value - min) / (max - min) * 100%", ...centred, Fill: "colour" });
+  await d.add("frame", { Name: "fill", ...centred, w: "(value - min) / (max - min) * 100%", Fill: "colour" });
   await d.select("slider");
-  await d.add("frame", { Name: "thumb", x: "(value - min) / (max - min) * 100%", y: "50%", Origin: '"50% 50%"', w: "2", h: "2", Fill: "root.pressed ? thumbColour.lighten(0.5) : thumbColour", Radius: "1" });
+  await d.add("frame", { Name: "thumb", Origin: '"50% 50%"', x: "(value - min) / (max - min) * 100%", y: "50%", w: "2", h: "2", Fill: "root.pressed ? thumbColour.lighten(0.5) : thumbColour", Radius: "1" });
   await d.css('box-shadow: "0 1px 4px #0008"');
 
   await d.addPage("Sliders");

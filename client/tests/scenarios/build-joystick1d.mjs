@@ -28,7 +28,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const lying = await d.place("Joystick1D", { x: "4", y: "4", w: "24", h: "6" });
   await d.handler("move", "lever = p.x;");
   await d.handler("held", "leverBeats = leverBeats + 1;\nleverHeld = p.x;");
-  const upright = await d.place("Joystick1D", { x: "16", y: "30", w: "24", h: "6", Origin: '"50% 50%"', Rotate: "-90" });
+  const upright = await d.place("Joystick1D", { Origin: '"50% 50%"', x: "16", y: "30", w: "24", h: "6", Rotate: "-90" });
   await d.handler("move", "lever = p.x;");
   await d.add("text", { Name: "readout", x: "32", y: "5", w: "20", h: "4", Text: '"x " + lever.toFixed(2)', Colour: "$text", Size: "2" });
 

@@ -16,7 +16,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.add("frame", { Name: "track", x: "0", y: "0", w: "100%", h: "100%", Fill: "value ? colour : trackColour", Radius: "$radiusPill" });
   await d.handler("tap", 'value = !value;\nemit("change", value);');
   // as high as the track and as wide as high, its colour drawn inside a clear border
-  await d.add("frame", { Name: "knob", x: "(value ? 100 : 0)%", y: "0", Origin: 'value ? "100% 0%" : "0% 0%"', w: "hug", h: "100%", Fill: "knobColour", Radius: '"50%"' });
+  await d.add("frame", { Name: "knob", Origin: 'value ? "100% 0%" : "0% 0%"', x: "(value ? 100 : 0)%", y: "0", w: "hug", h: "100%", Fill: "knobColour", Radius: '"50%"' });
   await page.locator('button[title="Edit the border"]').click();
   await d.set({ Width: "0.4", Colour: '"transparent"' });
   await page.keyboard.press("Escape");

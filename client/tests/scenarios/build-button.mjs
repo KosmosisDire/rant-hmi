@@ -22,7 +22,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.layOut("Left to right", "Center");
   await d.add("text", { Name: "label", w: "hug", h: "hug", Text: "text", Colour: "textColour", Size: "textSize", Weight: "600" });
   await d.select("face");
-  await d.add("frame", { Name: "bar", x: "0", y: "100%", Origin: '"0% 100%"', w: "(holdMs ? 100 * Math.min(root.heldFor / holdMs, 1) : 0)%", h: "0.5", Fill: "barColour", Radius: "" });
+  await d.add("frame", { Name: "bar", Origin: '"0% 100%"', x: "0", y: "100%", w: "(holdMs ? 100 * Math.min(root.heldFor / holdMs, 1) : 0)%", h: "0.5", Fill: "barColour", Radius: "" });
 
   await d.addPage("Hold buttons");
   const start = await d.place("Button", { x: "4", y: "4", w: "20", h: "6", text: '"Start"' });
