@@ -571,6 +571,10 @@ mod tests {
         let mut names: Vec<&str> = pages.list.iter().filter(|p| p.interface.is_some()).map(|p| p.name.as_str()).collect();
         names.sort();
         assert_eq!(names, ["Button", "Dropdown", "Gauge", "Joystick", "Joystick1D", "Knob", "ModeSwitch", "Plot", "Readout", "Slider", "Toggle"]);
+        // and Rant's palette, worked out as tokens
+        let theme = Project::open(&dir).unwrap().tokens;
+        assert!(theme.iter().any(|t| t.name == "accentBg" && t.dark == "$accent.alpha(0.15)"));
+        assert!(theme.iter().any(|t| t.name == "radius" && t.light.is_empty()));
         // a project that has its own leaves them be
         fs::remove_file(dir.join("components/button.html")).unwrap();
         Project::open(&dir).unwrap();
