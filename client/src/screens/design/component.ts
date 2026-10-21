@@ -36,10 +36,13 @@ function each(elements: Element[]): Element[] {
 
 /** Replaces the selected elements of a page with an instance of a new component holding them. */
 export function makeComponent(page: Page, ids: string[]) {
-  const picked = tops(page, ids);
+  const chosen = tops(page, ids);
+  // a group alone gives what it holds, and its instance takes the group's place
+  const group = chosen.length === 1 && chosen[0].tag === "group" ? chosen[0] : undefined;
+  const picked = group ? group.children : chosen;
   if (picked.length === 0) return;
-  const parent = parentOf(page, picked[0].id);
-  if (picked.some((e) => parentOf(page, e.id) !== parent)) return notify("Pick elements that sit in one frame to make a component of them.", "warn");
+  if (picked.some((e) => parentOf(page, e.id) !== parentOf(page, picked[0].id))) return notify("Pick elements that sit in one frame to make a component of them.", "warn");
+  const parent = parentOf(page, (group ?? picked[0]).id);
   if (!picked.every((e) => literal(e, ["x", "y", "w", "h"]))) return notify("A component is made of elements placed by plain numbers or percents.", "warn");
 
   const boxes = picked.map((e) => boxOf(e, roomOf(page, e.id)));
@@ -97,7 +100,7 @@ export function makeComponent(page: Page, ids: string[]) {
     });
   }
 
-  const name = free(joined(picked[0].props.name ?? "", (w) => w[0].toUpperCase() + w.slice(1)).replace(/^[^A-Z]+/, "") || "Part", (n) => state.pages.some((p) => p.interface !== null && p.name === n));
+  const name = free(joined((group ?? picked[0]).props.name ?? "", (w) => w[0].toUpperCase() + w.slice(1)).replace(/^[^A-Z]+/, "") || "Part", (n) => state.pages.some((p) => p.interface !== null && p.name === n));
   const id = free(slug(name), (n) => state.pages.some((p) => p.id === n));
   const component: Page = { id, name, width: right - left, height: bottom - top, shows: "full", fill: "", interface: { inputs, events, variables: [], sizing: "scale" }, children: parts };
   const instance: Element = {
@@ -112,12 +115,13 @@ export function makeComponent(page: Page, ids: string[]) {
   const box = { x: left, y: top, w: right - left, h: bottom - top };
   const frame = roomOf(page, picked[0].id);
   Object.assign(instance.props, { x: boxText(instance, "x", box, frame), y: boxText(instance, "y", box, frame) });
-  // the instance goes where the front most of them stood
-  const places = picked.map((e) => childrenOf(page, parent).findIndex((c) => c.id === e.id));
-  const index = Math.max(...places) - (picked.length - 1);
+  // the instance goes where the group or the front most of them stood
+  const gone = group ? [group] : picked;
+  const places = gone.map((e) => childrenOf(page, parent).findIndex((c) => c.id === e.id));
+  const index = Math.max(...places) - (gone.length - 1);
   const edits: Edit[] = [
     { kind: "put_page", page: component },
-    ...picked.map((e): Edit => ({ kind: "remove_element", page: page.id, id: e.id })),
+    ...gone.map((e): Edit => ({ kind: "remove_element", page: page.id, id: e.id })),
     { kind: "add_element", page: page.id, parent, index, element: instance },
   ];
   sendEdits(edits);

@@ -1,6 +1,7 @@
 // A user groups two frames from the right click menu: the group holds them where they were,
 // a click picks the group whole and another the part under the pointer, a drag on a part of
-// the selected group moves both, and Ctrl Shift G and Ctrl G ungroup and group again.
+// the selected group moves both, and Ctrl Shift G and Ctrl G ungroup and group again. Made a
+// component, a group gives what it holds, and its instance takes the group's place.
 
 import { props } from "../designer.mjs";
 
@@ -58,4 +59,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => top().length === 1 && top()[0].tag === "group", "Ctrl G to group again");
   await page.keyboard.press("Control+z");
   await eventually(() => top().length === 2, "one undo to take the group back");
+
+  await row("A").click();
+  await row("B").click({ modifiers: ["Shift"] });
+  await page.keyboard.press("Control+g");
+  await eventually(() => top().length === 1 && top()[0].tag === "group", "Ctrl G to group once more");
+  await hmi.setProps(pageId, top()[0].id, { name: "pair" });
+  await d.menu(d.el(a), "Convert to component");
+  await eventually(() => top().length === 1 && top()[0].tag === "use", "the instance to take the group's place");
+  const made = hmi.state.pages.find((p) => p.interface && p.name === top()[0].component);
+  check(made?.name === "Pair", `the component is named ${made?.name}, not after the group`);
+  check(made.children.map((e) => e.props.name).join() === "A,B", `the component holds ${made.children.map((e) => e.props.name)}, not what the group held`);
 }
