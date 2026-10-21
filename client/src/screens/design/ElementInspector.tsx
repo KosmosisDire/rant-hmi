@@ -1,11 +1,7 @@
 import { createMemo, createSignal, For, Show, useContext } from "solid-js";
-import { produce } from "solid-js/store";
-import { send } from "../../net/connection";
 import { cssFault, OWN, SHAPES } from "../../page/PageView";
-import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
-import type { Interface } from "../../protocol/Interface";
 import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
 import { COMPONENT, EVENT, INPUT } from "../../protocol/rules";
@@ -15,9 +11,11 @@ import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenVal
 import { complete, completeCss, componentNames, REPEAT, signature, signatureCss } from "../../state/complete";
 import { brings, offered } from "../../state/events";
 import { fits, freeName } from "../../state/names";
-import { component, page as pageOf, putIn, setState, state } from "../../state/store";
+import { edit, show } from "../../state/change";
+import { component, page as pageOf, state } from "../../state/store";
 import { paintCss } from "../../ui/highlight";
 import { openPage } from "../../state/view";
+import { chain, find } from "../../state/elements";
 import { DraftInput } from "../../ui/DraftInput";
 import { openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
@@ -45,7 +43,7 @@ import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, keysOf, kindOf, type Moving, PADDING, PartsField, Points, POINTS, RADIUS, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, ORIGINS, PAINT, ROTATE, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
-import { absolute, type Align, align, boxOf, boxText, chain, find, flowed, originEdits, roomOf, scopeOf, sendEdits, setHandler, setProps, showProps, spread, tops } from "./tree";
+import { absolute, type Align, align, boxOf, boxText, flowed, originEdits, roomOf, scopeOf, sendEdits, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
  *  the free CSS box. */
@@ -172,10 +170,7 @@ const SIZINGS: [Sizing, string, string][] = [
 const side = (t: string) => /^\d+$/.test(t.trim()) && Number(t) >= 1 && Number(t) <= 1600;
 
 function PageInspector(p: { page: Page }) {
-  // here at once too, since the other side is sent with it
-  const resize = (width: number, height: number) => {
-    if (send({ type: "edit", edit: { kind: "resize_page", page: p.page.id, width, height } })) setState("pages", (pg) => pg.id === p.page.id, { width, height });
-  };
+  const resize = (width: number, height: number) => edit({ kind: "resize_page", page: p.page.id, width, height });
   const isComponent = () => p.page.interface !== null;
   return (
     <>
@@ -190,7 +185,7 @@ function PageInspector(p: { page: Page }) {
           <DraftInput
             value={p.page.name}
             accept={(t) => (isComponent() ? fits(COMPONENT, t.trim()) : t.trim() !== "")}
-            onCommit={(name) => send({ type: "edit", edit: { kind: "rename_page", page: p.page.id, name } })}
+            onCommit={(name) => edit({ kind: "rename_page", page: p.page.id, name })}
           />
         </div>
         <div class="section">Size</div>
@@ -212,7 +207,7 @@ function PageInspector(p: { page: Page }) {
                 <div class="choice">
                   <For each={SIZINGS}>
                     {([sizing, label, title]) => (
-                      <button classList={{ on: i().sizing === sizing }} title={title} onClick={() => i().sizing !== sizing && send({ type: "edit", edit: { kind: "set_sizing", page: p.page.id, sizing } })}>
+                      <button classList={{ on: i().sizing === sizing }} title={title} onClick={() => i().sizing !== sizing && edit({ kind: "set_sizing", page: p.page.id, sizing })}>
                         {label}
                       </button>
                     )}
@@ -232,15 +227,15 @@ function PageInspector(p: { page: Page }) {
             kind="colour"
             value={p.page.fill}
             placeholder="$ground"
-            onWrite={(fill) => send({ type: "edit", edit: { kind: "set_fill", page: p.page.id, fill: fill ?? "" } }) && setState("pages", (pg) => pg.id === p.page.id, { fill: fill ?? "" })}
-            onShow={(fill) => setState("pages", (pg) => pg.id === p.page.id, { fill })}
+            onWrite={(fill) => edit({ kind: "set_fill", page: p.page.id, fill: fill ?? "" })}
+            onShow={(fill) => show({ kind: "set_fill", page: p.page.id, fill })}
           />
           <div class="field">
             <label>Shows</label>
             <div class="choice">
               <For each={SHOWS}>
                 {([shows, label]) => (
-                  <button classList={{ on: p.page.shows === shows }} onClick={() => p.page.shows !== shows && send({ type: "edit", edit: { kind: "set_shows", page: p.page.id, shows } })}>
+                  <button classList={{ on: p.page.shows === shows }} onClick={() => p.page.shows !== shows && edit({ kind: "set_shows", page: p.page.id, shows })}>
                     {label}
                   </button>
                 )}
@@ -667,7 +662,7 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
   const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
   let ghost!: HTMLButtonElement;
-  const write = (event: string, code: string | null, ms?: string) => setHandler(p.page, p.element.id, event, code, ms);
+  const write = (event: string, code: string | null, ms?: string) => edit({ kind: "set_handler", page: p.page, id: p.element.id, event, code, ms });
   const heard = () => offered(p.element);
   // a handler for an event no longer offered still shows, so none hides
   const events = () => [...new Set([...heard().map((o) => o.event), ...p.element.handlers.map((h) => h.event)])];
@@ -751,12 +746,6 @@ const constants = (text: string, caret: number) => complete(text, caret, "expres
 /** A name an input or a component's variable may take. */
 const localName = (t: string) => fits(INPUT, t.trim());
 
-/** Sends an edit of a component's interface and makes it here at once too, in place, so a
- *  change right after builds on this one. The backend sends the page back should it refuse. */
-function editInterface(edit: Edit & { page: string }, change: (i: Interface) => void) {
-  if (send({ type: "edit", edit })) setState("pages", (pg) => pg.id === edit.page, "interface", produce((i) => i && change(i)));
-}
-
 /** A component's interface list's head, with its add button. */
 function ListHead(p: { title: string; add: string; onAdd: () => void }) {
   return (
@@ -771,7 +760,7 @@ function ListHead(p: { title: string; add: string; onAdd: () => void }) {
 
 /** A component's inputs, each a box: its name, whether it may be written back, its default. */
 function Inputs(p: { page: string; inputs: Input[] }) {
-  const write = (name: string, input: Input | null) => editInterface({ kind: "set_input", page: p.page, name, input }, (i) => putIn(i.inputs, name, input, (x) => x.name));
+  const write = (name: string, input: Input | null) => edit({ kind: "set_input", page: p.page, name, input });
   const add = () => {
     const name = freeName("input", (n) => p.inputs.some((i) => i.name === n));
     write(name, { name, default: "0", bindable: false });
@@ -811,7 +800,7 @@ function Inputs(p: { page: string; inputs: Input[] }) {
 
 /** A component's own variables, each a box: its name and what each instance starts it at. */
 function Variables(p: { page: string; variables: Local[] }) {
-  const write = (name: string, local: Local | null) => editInterface({ kind: "set_local", page: p.page, name, local }, (i) => putIn(i.variables, name, local, (x) => x.name));
+  const write = (name: string, local: Local | null) => edit({ kind: "set_local", page: p.page, name, local });
   const add = () => {
     const name = freeName("state", (n) => p.variables.some((v) => v.name === n));
     write(name, { name, start: "0" });
@@ -847,7 +836,7 @@ function Variables(p: { page: string; variables: Local[] }) {
 
 /** The events a component sends with `emit`, which each instance may handle. */
 function Sends(p: { page: string; events: string[] }) {
-  const write = (name: string, to: string | null) => editInterface({ kind: "set_event", page: p.page, name, to }, (i) => putIn(i.events, name, to, (e) => e));
+  const write = (name: string, to: string | null) => edit({ kind: "set_event", page: p.page, name, to });
   const add = () => {
     const name = freeName("change", (n) => p.events.includes(n));
     write(name, name);

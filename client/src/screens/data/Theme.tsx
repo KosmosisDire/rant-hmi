@@ -2,12 +2,12 @@
 // light, which may read other tokens and the math, and a token's inspector.
 
 import { createMemo, Show } from "solid-js";
-import { send } from "../../net/connection";
 import type { Token } from "../../protocol/Token";
 import { TOKEN } from "../../protocol/rules";
+import { change } from "../../state/change";
 import { tokenScope, tokenValue } from "../../state/bind";
 import { freeName } from "../../state/names";
-import { putLocal, state } from "../../state/store";
+import { state } from "../../state/store";
 import { Field, kindOf, WhereContext } from "../design/Field";
 import type { Picking } from "./DataScreen";
 import { changing, ItemPane, ItemTable, type Kind, NameField } from "./Items";
@@ -48,7 +48,7 @@ export const TOKENS: Kind<Token> = {
   items: () => state.tokens,
   name: (t) => t.name,
   put: (name, token) => {
-    if (send({ type: "set_token", name, token })) putLocal("tokens", name, token);
+    change({ type: "set_token", name, token });
   },
 };
 

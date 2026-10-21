@@ -1,8 +1,8 @@
 // Adding elements: what each kind starts as, and where a new one lands.
 
-import { send } from "../../net/connection";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
+import { edit } from "../../state/change";
 import { number } from "../../state/bind";
 import { GRID } from "./Artboard";
 import { childrenOf } from "./tree";
@@ -52,5 +52,5 @@ export function addElement(page: Page, parent: string | null, tag: Tag, props: R
     spot = { x: n, y: n };
   }
   const element = { id: "", tag, component, props: { ...props, x: String(spot.x), y: String(spot.y) }, handlers: [], children: [] };
-  send({ type: "edit", edit: { kind: "add_element", page: page.id, parent, index: null, element } });
+  edit({ kind: "add_element", page: page.id, parent, index: null, element });
 }

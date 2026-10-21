@@ -890,22 +890,17 @@ impl App {
     /// that asked keeps its undo, and hears what it made, so it can select it.
     fn edit(&mut self, session: u32, edit: Edit, step: Step) {
         let rules = matches!(edit, Edit::SetRule { .. });
-        let shown = match &edit {
-            Edit::SetInput { page, .. }
-            | Edit::SetEvent { page, .. }
-            | Edit::ResizePage { page, .. }
-            | Edit::SetFill { page, .. }
-            | Edit::SetProps { page, .. } => Some(page.clone()),
-            _ => None,
-        };
+        let mut shown: Vec<String> = edit.pages().into_iter().map(str::to_owned).collect();
         let applied = match self.pages.apply(edit) {
             Ok(applied) => applied,
             Err(text) => {
-                // a screen shows these changes at once, so a refused one is set right
+                // a screen shows a change at once, so a refused one gets back what it named
                 if rules {
                     self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
                 }
-                if let Some(page) = shown.and_then(|id| self.pages.get(&id).cloned()) {
+                shown.sort();
+                shown.dedup();
+                for page in shown.iter().filter_map(|id| self.pages.get(id).cloned()).collect::<Vec<_>>() {
                     self.send(session, &ServerMsg::Page { page });
                 }
                 return self.refuse(session, text, None);

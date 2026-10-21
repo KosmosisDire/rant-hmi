@@ -98,26 +98,6 @@ export const [state, setState] = createStore<State>({
   notices: [],
 });
 
-/** The lists a screen changes a record of at a time, by the field that names a record. */
-const KEYS = { imports: "alias", variables: "name", records: "name", computed: "name", tokens: "name", rules: "id" } as const;
-type Keyed = { [L in keyof typeof KEYS]: State[L][number] };
-
-/** Writes a record here at once, in place, or removes it, so a change right after builds on
- *  this one. The backend sends the list back should it refuse. */
-export function putLocal<L extends keyof Keyed>(list: L, key: string, record: Keyed[L] | null) {
-  setState(produce((s: State) => putIn(s[list] as Keyed[L][], key, record, (r) => String((r as Record<string, unknown>)[KEYS[list]]))));
-}
-
-/** Puts `item` in place of the one `key` names in a list being produced, keeping that one's
- *  identity, or with null removes it. A new item waits for the backend to send it. */
-export function putIn<T>(all: T[], key: string, item: T | null, keyOf: (t: T) => string) {
-  const at = all.findIndex((t) => keyOf(t) === key);
-  if (at < 0) return;
-  if (item === null) all.splice(at, 1);
-  else if (typeof item === "object") Object.assign(all[at] as object, item);
-  else all[at] = item;
-}
-
 /** Loads the client the backend serves when this screen runs another, as after an update.
  *  Only once per build, so a screen that still differs never reloads for ever. */
 function catchUp(build: string) {

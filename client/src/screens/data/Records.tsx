@@ -1,13 +1,13 @@
 // Records on the Data screen: the table of each value's history and a record's inspector.
 
-import { send } from "../../net/connection";
 import type { Record } from "../../protocol/Record";
 import type { Sample } from "../../protocol/Sample";
 import type { Value } from "../../protocol/Value";
 import { LOCAL, EVERY_MS, KEEP_S } from "../../protocol/rules";
+import { change } from "../../state/change";
 import { complete } from "../../state/complete";
 import { freeLocal } from "../../state/names";
-import { live, putLocal, state } from "../../state/store";
+import { live, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { ChartSpline } from "../../ui/icons";
 import { Preview } from "../../ui/Preview";
@@ -21,7 +21,7 @@ export const RECORDS: Kind<Record> = {
   items: () => state.records,
   name: (r) => r.name,
   put: (name, record) => {
-    if (send({ type: "set_record", name, record })) putLocal("records", name, record);
+    change({ type: "set_record", name, record });
   },
 };
 

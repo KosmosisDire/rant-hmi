@@ -6,8 +6,9 @@ import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
 import { ALIAS } from "../../protocol/rules";
 import type { Value } from "../../protocol/Value";
+import { change } from "../../state/change";
 import { capital, choosesIntent, intentWords, typeLabel } from "../../state/format";
-import { entity, importOf, live, putLocal, setState, state } from "../../state/store";
+import { entity, importOf, live, setState, state } from "../../state/store";
 import { KindIcon } from "../../ui/marks";
 import { COMPUTED, ComputedView } from "./Computed";
 import type { Picking } from "./DataScreen";
@@ -90,7 +91,7 @@ export const IMPORTS: Kind<Import> = {
   put: (alias, imp) => {
     if (!imp) return void send({ type: "unimport", alias });
     setState("refused", null);
-    if (send({ type: "change_import", alias, import: imp })) putLocal("imports", alias, imp);
+    change({ type: "change_import", alias, import: imp });
   },
 };
 

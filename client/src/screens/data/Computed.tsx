@@ -2,12 +2,12 @@
 // inspector, its getter, setter, unit and note.
 
 import { For, Show } from "solid-js";
-import { send } from "../../net/connection";
 import type { Computed } from "../../protocol/Computed";
 import { LOCAL } from "../../protocol/rules";
+import { change } from "../../state/change";
 import { complete, type Suggestion } from "../../state/complete";
 import { freeLocal } from "../../state/names";
-import { live, putLocal, state } from "../../state/store";
+import { live, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Sigma } from "../../ui/icons";
 import { Preview } from "../../ui/Preview";
@@ -22,7 +22,7 @@ export const COMPUTED: Kind<Computed> = {
   items: () => state.computed,
   name: (c) => c.name,
   put: (name, computed) => {
-    if (send({ type: "set_computed", name, computed })) putLocal("computed", name, computed);
+    change({ type: "set_computed", name, computed });
   },
 };
 

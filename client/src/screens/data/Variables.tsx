@@ -6,8 +6,9 @@ import type { Per } from "../../protocol/Per";
 import type { Variable } from "../../protocol/Variable";
 import type { Value } from "../../protocol/Value";
 import { LOCAL } from "../../protocol/rules";
+import { change } from "../../state/change";
 import { freeLocal } from "../../state/names";
-import { live, putLocal, state } from "../../state/store";
+import { live, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { RotateCcw } from "../../ui/icons";
 import { LocalIcon } from "../../ui/marks";
@@ -37,7 +38,7 @@ export const VARIABLES: Kind<Variable> = {
   items: () => state.variables,
   name: (v) => v.name,
   put: (name, variable) => {
-    if (send({ type: "set_variable", name, variable })) putLocal("variables", name, variable);
+    change({ type: "set_variable", name, variable });
   },
 };
 

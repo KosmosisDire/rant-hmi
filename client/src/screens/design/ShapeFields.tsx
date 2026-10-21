@@ -2,16 +2,17 @@
 // and adding a shape sized to the diagram it goes in.
 
 import { createSignal, For, Show } from "solid-js";
-import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
+import { edit } from "../../state/change";
 import { number, resolve } from "../../state/bind";
+import { find } from "../../state/elements";
 import { Plus } from "../../ui/icons";
 import { Popover } from "../../ui/Popover";
 import type { FieldProps } from "./Field";
 import { TagIcon } from "./TagIcon";
-import { find, parentOf } from "./tree";
+import { parentOf } from "./tree";
 
 export type Spec = [string, string, Partial<FieldProps>];
 
@@ -103,7 +104,7 @@ export function addShape(page: Page, at: Element, tag: Tag) {
   const diagram = id ? find(page.children, id) : undefined;
   if (!diagram) return;
   const element: Element = { id: "", tag, component: null, props: start(tag, units(diagram)), handlers: [], children: [] };
-  send({ type: "edit", edit: { kind: "add_element", page: page.id, parent: holder, index: null, element } });
+  edit({ kind: "add_element", page: page.id, parent: holder, index: null, element });
 }
 
 /** The inspector's row that adds a shape into the diagram or group picked, or beside the

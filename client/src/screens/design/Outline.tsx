@@ -3,10 +3,12 @@ import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
+import { edit } from "../../state/change";
 import { remembered } from "../../state/remember";
 import { freeName } from "../../state/names";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
+import { chain, find } from "../../state/elements";
 import { ChevronDown, ChevronRight, Component, CopyPlus, File, Plus, Star, Trash } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
 import { addElement } from "./add";
@@ -14,7 +16,7 @@ import { ComponentCard } from "./ComponentCard";
 import type { Pick } from "./DesignScreen";
 import { addMenu, elementMenu, layersMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
-import { chain, childrenOf, find, holds, moveAll, parentOf, tops } from "./tree";
+import { childrenOf, holds, moveAll, parentOf, tops } from "./tree";
 import { follow } from "../../ui/press";
 import { closeDrawer } from "../../ui/Sidebars";
 
@@ -71,18 +73,18 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
   const addPage = () => {
     let n = pages().length + 1;
     while (pages().some((pg) => pg.name === `Page ${n}`)) n++;
-    send({ type: "edit", edit: { kind: "add_page", name: `Page ${n}` } });
+    edit({ kind: "add_page", name: `Page ${n}` });
   };
   const addComponent = () => {
     const name = freeName("Component", (n) => components().some((c) => c.name === n));
-    send({ type: "edit", edit: { kind: "add_component", name } });
+    edit({ kind: "add_component", name });
   };
   // a copy's name, free among the pages, spelled as a component's when it is one
   const copyPage = (pg: Page) => {
     const spell = (n: number) => (pg.interface ? `${pg.name}Copy${n > 1 ? n : ""}` : `${pg.name} copy${n > 1 ? ` ${n}` : ""}`);
     let n = 1;
     while (state.pages.some((other) => other.name === spell(n))) n++;
-    send({ type: "edit", edit: { kind: "copy_page", page: pg.id, name: spell(n) } });
+    edit({ kind: "copy_page", page: pg.id, name: spell(n) });
   };
   const pageMenu = (e: MouseEvent, pg: Page) => {
     const component = pg.interface !== null;
@@ -92,7 +94,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
       { label: "Duplicate", icon: <CopyPlus size={13} />, run: () => copyPage(pg) },
       ...(component ? [] : [{ label: "Make the start page", icon: <Star size={13} />, disabled: startPage() === pg.id, run: () => send({ type: "set_start", page: pg.id }) }]),
       "-",
-      { label: component ? "Delete component" : "Delete page", icon: <Trash size={13} />, disabled: last, run: () => send({ type: "edit", edit: { kind: "remove_page", page: pg.id } }) },
+      { label: component ? "Delete component" : "Delete page", icon: <Trash size={13} />, disabled: last, run: () => edit({ kind: "remove_page", page: pg.id }) },
     ]);
   };
 

@@ -1,29 +1,15 @@
 // Finding elements and their boxes in a page's tree.
 
-import { send } from "../../net/connection";
 import { type Box, leaves, type Overrides, SHAPES, union } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
-import { produce } from "solid-js/store";
 import { docScope, flowOf, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope, sizeWord, UNIT } from "../../state/bind";
-import { notify, setState } from "../../state/store";
+import { edit, show } from "../../state/change";
+import { chain, find } from "../../state/elements";
+import { notify } from "../../state/store";
 import { moving, reshape } from "./geometry";
-
-/** The element and every frame around it, outermost first. */
-export function chain(elements: Element[], id: string): Element[] | undefined {
-  for (const e of elements) {
-    if (e.id === id) return [e];
-    const inner = chain(e.children, id);
-    if (inner) return [e, ...inner];
-  }
-  return undefined;
-}
-
-export function find(elements: Element[], id: string): Element | undefined {
-  return chain(elements, id)?.at(-1);
-}
 
 /** The selected elements no other selected one holds, in page order, so a move or a removal
  *  takes each once. */
@@ -375,7 +361,7 @@ export function group(page: Page, ids: string[]) {
   const picked = tops(page, ids);
   if (picked.length === 0) return;
   if (picked.some((e) => parentOf(page, e.id) !== parentOf(page, picked[0].id))) return notify("Pick elements that sit in one frame to group them.", "warn");
-  send({ type: "edit", edit: { kind: "group", page: page.id, ids: picked.map((e) => e.id) } });
+  edit({ kind: "group", page: page.id, ids: picked.map((e) => e.id) });
 }
 
 /** Puts elements that share a holder into a new frame that lays them out as they stand: in a
@@ -399,7 +385,7 @@ export function wrap(page: Page, ids: string[]) {
   const { at, room } = inside(page, parent);
   const corner = (k: "x" | "y") => Number((Math.min(...all.map(({ b }) => b[k])) - at[k] - (room[k === "x" ? "ox" : "oy"] ?? 0)).toFixed(2));
   const props = { name: "Frame", x: String(corner("x")), y: String(corner("y")), w: "hug", h: "hug", layout: across ? '"right"' : '"down"', gap: String(gap) };
-  send({ type: "edit", edit: { kind: "wrap", page: page.id, ids: all.map(({ e }) => e.id), props } });
+  edit({ kind: "wrap", page: page.id, ids: all.map(({ e }) => e.id), props });
 }
 
 /** Puts what each picked group holds in its place, as one undo. Gives back what they held. */
@@ -466,49 +452,12 @@ export function spread(page: Page, ids: string[], across: boolean) {
 
 /** Sends edits as one, so one undo takes them all back. */
 export function sendEdits(edits: Edit[]) {
-  if (edits.length > 0) send({ type: "edit", edit: edits.length === 1 ? edits[0] : { kind: "batch", edits } });
+  if (edits.length > 0) edit(edits.length === 1 ? edits[0] : { kind: "batch", edits });
 }
 
 /** Sets props, here at once too, so a gesture right after reads what was just typed. */
-export function setProps(page: string, id: string, props: Record<string, string | null>) {
-  if (send({ type: "edit", edit: { kind: "set_props", page, id, props } })) showProps(page, id, props);
-}
-
-/** Sets one event's handler, here at once too, so a change right after builds on this one
- *  and never sends back the code it replaced. A null code takes the handler away. */
-export function setHandler(page: string, id: string, event: string, code: string | null, ms?: string) {
-  if (!send({ type: "edit", edit: { kind: "set_handler", page, id, event, code, ms } })) return;
-  setState(
-    "pages",
-    (pg) => pg.id === page,
-    produce((pg) => {
-      const e = find(pg.children, id);
-      const at = e?.handlers.findIndex((h) => h.event === event) ?? -1;
-      if (!e) return;
-      if (code === null) {
-        if (at >= 0) e.handlers.splice(at, 1);
-      } else if (at >= 0) {
-        Object.assign(e.handlers[at], { code, ms: ms ?? e.handlers[at].ms });
-      } else {
-        e.handlers.push({ event, code, ms: ms ?? "" });
-      }
-    }),
-  );
-}
+export const setProps = (page: string, id: string, props: Record<string, string | null>) => edit({ kind: "set_props", page, id, props });
 
 /** Shows props here only, as a gesture does before it lets go and keeps them with setProps.
  *  An empty or null value takes the prop away. */
-export function showProps(page: string, id: string, props: Record<string, string | null>) {
-  setState(
-    "pages",
-    (pg) => pg.id === page,
-    produce((pg) => {
-      const e = find(pg.children, id);
-      for (const [k, v] of Object.entries(props)) {
-        if (!e) return;
-        if (!v) delete e.props[k];
-        else e.props[k] = v;
-      }
-    }),
-  );
-}
+export const showProps = (page: string, id: string, props: Record<string, string | null>) => show({ kind: "set_props", page, id, props });

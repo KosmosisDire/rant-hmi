@@ -1,6 +1,6 @@
 // A user gives a Meter an input filled per instance from live data: a rename reaches its code
 // and instances, completion offers inputs only, no note reads the input as CSS, and a rename
-// then a quick click is one change.
+// then a quick click is one change, and a refused variable rename comes back.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const meter = await hmi.addComponent("Meter");
@@ -62,4 +62,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
     const inputs = hmi.page(meter).interface.inputs;
     return inputs.length === 1 && inputs[0].name === "amount" && inputs[0].bindable;
   }, "one two way input named amount");
+
+  // a variable renamed to the input's name shows the rename at once, then the refusal undoes it
+  await side("right").locator('button[title="Add a variable"]').click();
+  await eventually(() => hmi.page(meter).interface.variables.length === 1, "a variable");
+  const varBox = side("right").locator("[data-var] .input-name");
+  await varBox.fill("amount");
+  await varBox.press("Enter");
+  await eventually(async () => (await varBox.inputValue()) === "state", "the refused rename to read state again");
+  check(hmi.page(meter).interface.variables[0].name === "state", "the variable kept its name");
 }

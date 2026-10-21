@@ -5,6 +5,7 @@ import { SHAPES } from "../../page/PageView";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { state } from "../../state/store";
+import { find } from "../../state/elements";
 import { type MenuEntry, type MenuItem, openMenu } from "../../ui/Menu";
 import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Download, Group, Plus, Rows3, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash, Ungroup } from "../../ui/icons";
 import { savePicture, showsPicture } from "../../ui/Picture";
@@ -14,7 +15,7 @@ import { makeComponent } from "./component";
 import type { Pick } from "./DesignScreen";
 import { addShape, SHAPE_KINDS } from "./ShapeFields";
 import { TagIcon } from "./TagIcon";
-import { absolute, find, group, isGroup, parentOf, remove, restack, tops, ungroup, wrap } from "./tree";
+import { absolute, group, isGroup, parentOf, remove, restack, tops, ungroup, wrap } from "./tree";
 
 /** A spot on the page, as the canvas was clicked. */
 type Spot = { x: number; y: number };

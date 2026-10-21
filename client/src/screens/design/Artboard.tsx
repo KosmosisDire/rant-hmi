@@ -12,10 +12,11 @@ import { Keyboard } from "../../ui/icons";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
 import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
+import { chain, find } from "../../state/elements";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
 import { leaves } from "../../page/PageView";
-import { absolute, boxOf, boxText, chain, childrenOf, find, flowed, isGroup, laidOut, literal, moveTo, originOf, parentOf, pickAt, roomOf, scopeOf, sendEdits, setProps, showProps, tops } from "./tree";
+import { absolute, boxOf, boxText, childrenOf, flowed, isGroup, laidOut, literal, moveTo, originOf, parentOf, pickAt, roomOf, scopeOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 /** Places snap to whole units. A finer one is typed as a fraction, or dragged with Alt, which
  *  lands on pixels, a tenth of a unit. */

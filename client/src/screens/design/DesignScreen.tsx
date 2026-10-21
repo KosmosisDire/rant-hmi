@@ -2,12 +2,13 @@ import { batch, createEffect, createSignal, on, onCleanup, onMount, Show, untrac
 import { UNIT } from "../../state/bind";
 import { onMoved, state } from "../../state/store";
 import { currentPage, openPage, tookWanted, wanted } from "../../state/view";
+import { find } from "../../state/elements";
 import { Edge, reveal, Sidebar } from "../../ui/Sidebars";
 import { Artboard, GRID, STEP } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
-import { find, group, remove, restack, sendEdits, shiftBy, tops, ungroup, wrap } from "./tree";
+import { group, remove, restack, sendEdits, shiftBy, tops, ungroup, wrap } from "./tree";
 
 /** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
 export type Pick = (id: string | null, add?: boolean) => void;

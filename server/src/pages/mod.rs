@@ -321,6 +321,31 @@ pub struct Applied {
     pub undo: Edit,
 }
 
+/// Every edit that names a page or component by its id, binding the id to `$page`.
+macro_rules! on_page {
+    ($page:ident) => {
+        Edit::CopyPage { page: $page, .. }
+            | Edit::RenamePage { page: $page, .. }
+            | Edit::ResizePage { page: $page, .. }
+            | Edit::SetShows { page: $page, .. }
+            | Edit::SetSizing { page: $page, .. }
+            | Edit::SetFill { page: $page, .. }
+            | Edit::RemovePage { page: $page }
+            | Edit::AddElement { page: $page, .. }
+            | Edit::RemoveElement { page: $page, .. }
+            | Edit::PutElement { page: $page, .. }
+            | Edit::MoveElement { page: $page, .. }
+            | Edit::Group { page: $page, .. }
+            | Edit::Ungroup { page: $page, .. }
+            | Edit::Wrap { page: $page, .. }
+            | Edit::SetProps { page: $page, .. }
+            | Edit::SetHandler { page: $page, .. }
+            | Edit::SetInput { page: $page, .. }
+            | Edit::SetEvent { page: $page, .. }
+            | Edit::SetLocal { page: $page, .. }
+    };
+}
+
 impl Edit {
     /// Names the page `to` wherever this edit names the page `from`, as after a rename moved
     /// its id. The id a rename's undo puts back stays.
@@ -329,28 +354,20 @@ impl Edit {
             Edit::AddPage { .. } | Edit::AddComponent { .. } | Edit::SetRule { .. } => return,
             Edit::Batch { edits } => return edits.iter_mut().for_each(|e| e.repage(from, to)),
             Edit::PutPage { page } => &mut page.id,
-            Edit::CopyPage { page, .. }
-            | Edit::RenamePage { page, .. }
-            | Edit::ResizePage { page, .. }
-            | Edit::SetShows { page, .. }
-            | Edit::SetSizing { page, .. }
-            | Edit::SetFill { page, .. }
-            | Edit::RemovePage { page }
-            | Edit::AddElement { page, .. }
-            | Edit::RemoveElement { page, .. }
-            | Edit::PutElement { page, .. }
-            | Edit::MoveElement { page, .. }
-            | Edit::Group { page, .. }
-            | Edit::Ungroup { page, .. }
-            | Edit::Wrap { page, .. }
-            | Edit::SetProps { page, .. }
-            | Edit::SetHandler { page, .. }
-            | Edit::SetInput { page, .. }
-            | Edit::SetEvent { page, .. }
-            | Edit::SetLocal { page, .. } => page,
+            on_page!(page) => page,
         };
         if page == from {
             *page = to.to_owned();
+        }
+    }
+
+    /// The ids of the pages and components the edit names, a batch's all.
+    pub fn pages(&self) -> Vec<&str> {
+        match self {
+            Edit::AddPage { .. } | Edit::AddComponent { .. } | Edit::SetRule { .. } => vec![],
+            Edit::Batch { edits } => edits.iter().flat_map(Edit::pages).collect(),
+            Edit::PutPage { page } => vec![&page.id],
+            on_page!(page) => vec![page],
         }
     }
 }
@@ -862,13 +879,7 @@ impl Pages {
             }
             Edit::Batch { .. } => unreachable!("taken above"),
         };
-        let page = match &undo {
-            Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::SetShows { page, .. } | Edit::SetSizing { page, .. } | Edit::SetFill { page, .. } => page,
-            Edit::RemoveElement { page, .. } => page,
-            Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } | Edit::SetHandler { page, .. } => page,
-            Edit::SetInput { page, .. } | Edit::SetEvent { page, .. } | Edit::SetLocal { page, .. } => page,
-            _ => unreachable!("page edits return early"),
-        };
+        let on_page!(page) = &undo else { unreachable!("the edits of no one page return early") };
         touched.push(page.clone());
         Ok(undo)
     }

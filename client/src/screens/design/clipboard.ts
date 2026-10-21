@@ -6,9 +6,10 @@ import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import { SHAPES } from "../../page/PageView";
+import { find } from "../../state/elements";
 import { GRID } from "./Artboard";
 import { moving, reshape } from "./geometry";
-import { boxOf, childrenOf, find, holds, literal, parentOf, roomOf, sendEdits, shiftCopy } from "./tree";
+import { boxOf, childrenOf, holds, literal, parentOf, roomOf, sendEdits, shiftCopy } from "./tree";
 
 const MARK = "rant-hmi elements";
 

@@ -3,14 +3,14 @@
 // right what it reads and writes and where it runs.
 
 import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
-import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Rule } from "../../protocol/Rule";
 import type { When } from "../../protocol/When";
 import { complete, componentNames, REPEAT } from "../../state/complete";
 import { brings, flat, offered, ruleBrings } from "../../state/events";
-import { putLocal, state } from "../../state/store";
+import { edit } from "../../state/change";
+import { state } from "../../state/store";
 import { uses } from "../../state/uses";
 import { currentPage, openElement } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
@@ -18,7 +18,6 @@ import { closeDrawer, Edge, Sidebar } from "../../ui/Sidebars";
 import { painted } from "../../ui/highlight";
 import { Activity, CopyPlus, Monitor, MonitorOff, PenTool, Plus, Power, Search, Timer, Trash, X, Zap } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
-import { setHandler } from "../design/tree";
 import { EventCard, EventIcon } from "./EventCard";
 
 /** Each kind of trigger, as the picker names it, and what it starts from. */
@@ -74,9 +73,7 @@ function TriggerIcon(p: { kind: When["kind"] }) {
 const ms = (t: string) => /^\d+$/.test(t.trim());
 
 /** Sets a rule, here at once too unless it is new. */
-function setRule(id: string, rule: Rule | null) {
-  if (send({ type: "edit", edit: { kind: "set_rule", id, rule } }) && id) putLocal("rules", id, rule && { ...rule, id });
-}
+const setRule = (id: string, rule: Rule | null) => edit({ kind: "set_rule", id, rule });
 
 /** True when the element `id`, or one holding it, repeats. */
 function repeats(elements: Element[], id: string): boolean {
@@ -154,7 +151,7 @@ export function LogicScreen(p: { shown: boolean }) {
     openMenu(e, [
       { label: "Open in Design", icon: <PenTool size={13} />, run: () => openElement({ page: pg.id, element: el.id, event }) },
       "-",
-      { label: "Delete", icon: <Trash size={13} />, run: () => setHandler(pg.id, el.id, event, null) },
+      { label: "Delete", icon: <Trash size={13} />, run: () => edit({ kind: "set_handler", page: pg.id, id: el.id, event, code: null }) },
     ]);
   };
   const shownUses = () => {
@@ -246,10 +243,10 @@ export function LogicScreen(p: { shown: boolean }) {
                     icon={<EventIcon from={offered(h().e).find((o) => o.event === h().h.event)?.from} />}
                     brings={brings(h().e, h().h.event)}
                     code={h().h.code}
-                    onCode={(code) => setHandler(h().pg.id, h().e.id, h().h.event, code)}
-                    onRemove={() => setHandler(h().pg.id, h().e.id, h().h.event, null)}
+                    onCode={(code) => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code })}
+                    onRemove={() => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code: null })}
                     ms={h().h.ms}
-                    onMs={(ms) => setHandler(h().pg.id, h().e.id, h().h.event, h().h.code, ms)}
+                    onMs={(ms) => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code: h().h.code, ms })}
                     removeTitle={`Remove the ${h().h.event} handler`}
                     place={h().pg.interface ? "component" : "handler"}
                     names={namesOf(h().pg)}
