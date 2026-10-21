@@ -2,7 +2,7 @@
 // each on a fresh page, as `docs/testing.md` says. A console error fails a scenario.
 
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { designer } from "./designer.mjs";
 import { ROOT, startBrowser, startSystem } from "./harness.mjs";
@@ -30,7 +30,7 @@ export async function eventually(fn, what, timeoutMs = 4000) {
 const only = process.argv[2] ?? "";
 const files = readdirSync(join(here, "scenarios")).filter((f) => f.endsWith(".mjs") && f.includes(only)).sort();
 // with --into a folder, the scenarios start on a new project and it becomes that folder
-const into = process.argv.includes("--into") ? join(ROOT, process.argv[process.argv.indexOf("--into") + 1]) : null;
+const into = process.argv.includes("--into") ? resolve(ROOT, process.argv[process.argv.indexOf("--into") + 1]) : null;
 const sys = await startSystem({ empty: into });
 const browser = await startBrowser();
 let failed = 0;
