@@ -4,6 +4,7 @@
 import { createMemo, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Token } from "../../protocol/Token";
+import { TOKEN } from "../../protocol/rules";
 import { tokenScope, tokenValue } from "../../state/bind";
 import { freeName } from "../../state/names";
 import { putLocal, state } from "../../state/store";
@@ -93,7 +94,7 @@ export function TokenView(p: { token: Token; picking: Picking }) {
     <WhereContext.Provider value={WHERE}>
       <ItemPane mark={swatch} name={`$${p.token.name}`} tag="token">
         <div class="section">Token</div>
-        <NameField value={p.token.name} rule={/^[a-z][A-Za-z0-9]*$/} onCommit={(name) => change({ name })} />
+        <NameField value={p.token.name} shape={TOKEN} onCommit={(name) => change({ name })} />
         <Field label="Dark" kind={kind(p.token.dark, dark())} value={p.token.dark} onWrite={(t) => t !== null && change({ dark: t.trim() })} />
         <Field label="Light" kind={kind(p.token.light || p.token.dark, worked(p.token, "light"))} value={p.token.light} placeholder="as dark" onWrite={(t) => change({ light: (t ?? "").trim() })} />
       </ItemPane>

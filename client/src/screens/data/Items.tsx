@@ -2,6 +2,8 @@
 // its table and its inspector are built on that.
 
 import { batch, For, type JSX, Show } from "solid-js";
+import type { Shape } from "../../protocol/rules";
+import { fits } from "../../state/names";
 import { DraftInput } from "../../ui/DraftInput";
 import { Grid } from "../../ui/Grid";
 import { Copy, Plus, Trash } from "../../ui/icons";
@@ -143,12 +145,12 @@ export function ItemPane(p: { mark?: JSX.Element; name: string; tag: string; wri
   );
 }
 
-/** An item's name, which a commit renames it to, when it keeps to `rule`. */
-export function NameField(p: { label?: string; value: string; rule: RegExp; onCommit: (name: string) => void }) {
+/** An item's name, which a commit renames it to, when it fits `shape`. */
+export function NameField(p: { label?: string; value: string; shape: Shape; onCommit: (name: string) => void }) {
   return (
     <div class="field">
       <label>{p.label ?? "Name"}</label>
-      <DraftInput value={p.value} accept={(t) => p.rule.test(t.trim())} onCommit={(t) => p.onCommit(t.trim())} />
+      <DraftInput value={p.value} accept={(t) => fits(p.shape, t.trim())} onCommit={(t) => p.onCommit(t.trim())} />
     </div>
   );
 }

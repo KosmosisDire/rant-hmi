@@ -1205,7 +1205,7 @@ impl App {
             self.script.send(ToScript::Forms(forms));
         }
         let mut enums = self.mesh.enums();
-        enums.retain(|e| !self.project.imports.iter().any(|i| i.alias == e.name) && !crate::script::taken_global(&e.name));
+        enums.retain(|e| !self.project.imports.iter().any(|i| i.alias == e.name) && !crate::script::reserved(&e.name));
         if enums != self.enums {
             self.enums = enums.clone();
             self.script.send(ToScript::Enums(enums.clone()));

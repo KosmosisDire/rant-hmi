@@ -15,6 +15,7 @@ use ts_rs::TS;
 
 use crate::files;
 use crate::list::{self, named};
+use crate::rules;
 use logic::Rule;
 
 /// A page: an artboard of `width` by `height` pixels holding elements. With an interface it
@@ -145,15 +146,6 @@ pub fn time_word(event: &str) -> Option<&'static str> {
 /// Where a handler goes in an element's list: the pointer's events first, then by name.
 fn rank(event: &str) -> (usize, &str) {
     (POINTER.iter().position(|e| *e == event).unwrap_or(POINTER.len()), event)
-}
-
-/// An event is named in camelCase.
-fn check_event(event: &str) -> Result<(), String> {
-    let mut chars = event.chars();
-    if chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric()) {
-        return Ok(());
-    }
-    Err(format!("\"{event}\" cannot name an event: start with a small letter, then use letters and digits"))
 }
 
 /// What an element renders as. A frame is a div, a text a span, and an instance of a
@@ -762,7 +754,7 @@ impl Pages {
                 Edit::SetProps { page: page.clone(), id, props: old }
             }
             Edit::SetHandler { page, id, event, code, ms } => {
-                check_event(&event)?;
+                rules::EVENT.check(&event, "an event")?;
                 let p = self.page_mut(&page)?;
                 let e = find_mut(&mut p.children, &id).ok_or_else(|| format!("{id} is not on {page}"))?;
                 let at = e.handlers.partition_point(|h| rank(&h.event) < rank(&event));
@@ -784,7 +776,7 @@ impl Pages {
                 };
                 let component = p.name.clone();
                 if let Some(new) = &input {
-                    check_input_name(&new.name)?;
+                    rules::INPUT.check(&new.name, "an input")?;
                     if list::taken(&i.inputs, &new.name, &name) {
                         return Err(format!("{component} already has an input {}", new.name));
                     }
@@ -813,7 +805,7 @@ impl Pages {
                 let component = p.name.clone();
                 let events = &mut p.interface.as_mut().ok_or_else(|| format!("{component} is a page, and only a component sends events"))?.events;
                 if let Some(to) = &to {
-                    check_event(to)?;
+                    rules::EVENT.check(to, "an event")?;
                     if list::taken(events, to, &name) {
                         return Err(format!("{component} already sends {to}"));
                     }
@@ -840,7 +832,7 @@ impl Pages {
                 };
                 let component = p.name.clone();
                 if let Some(new) = &local {
-                    check_input_name(&new.name)?;
+                    rules::INPUT.check(&new.name, "an input")?;
                     if list::taken(&i.variables, &new.name, &name) || i.inputs.iter().any(|x| x.name == new.name) {
                         return Err(format!("{component} already has {}", new.name));
                     }
@@ -885,10 +877,7 @@ impl Pages {
     /// component's id when it is renamed.
     fn component_name(&self, name: &str, own: Option<&str>) -> Result<String, String> {
         let name = name.trim();
-        let mut chars = name.chars();
-        if !(chars.next().is_some_and(|c| c.is_ascii_uppercase()) && chars.all(|c| c.is_ascii_alphanumeric())) {
-            return Err(format!("\"{name}\" cannot name a component: start with a capital letter, then use letters and digits"));
-        }
+        rules::COMPONENT.check(name, "a component")?;
         if self.component(name).is_some_and(|p| Some(p.id.as_str()) != own) {
             return Err(format!("{name} is already a component"));
         }
@@ -1014,19 +1003,6 @@ fn instance_events(elements: &mut [Element], component: &str, from: &str, to: &s
         changed |= instance_events(&mut e.children, component, from, to);
     }
     changed
-}
-
-/// What an instance is placed and repeated by, which no input or variable may be called.
-const PLACING: [&str; 8] = ["name", "repeat", "x", "y", "w", "h", "origin", "rotate"];
-
-/// An input or a component's variable is named in camelCase, apart from what places it.
-fn check_input_name(name: &str) -> Result<(), String> {
-    let mut chars = name.chars();
-    let shaped = chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric());
-    if !shaped || PLACING.contains(&name) {
-        return Err(format!("\"{name}\" cannot name an input: start with a small letter, use letters and digits, and keep clear of name, repeat, x, y, w, h, origin and rotate"));
-    }
-    Ok(())
 }
 
 /// True when an element here is an instance of the component called `name`.

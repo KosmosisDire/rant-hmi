@@ -4,6 +4,7 @@ import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
+import { ALIAS } from "../../protocol/rules";
 import type { Value } from "../../protocol/Value";
 import { capital, choosesIntent, intentWords, typeLabel } from "../../state/format";
 import { entity, importOf, live, putLocal, setState, state } from "../../state/store";
@@ -108,7 +109,7 @@ function ImportView(p: { imp: Import; picking: Picking }) {
   return (
     <ItemPane mark={<KindIcon kind={p.imp.kind} />} name={p.imp.alias} tag={intentWords(p.imp.kind, p.imp.intent)} write={p.imp.intent === "write"}>
       <div class="section">Import</div>
-      <NameField label="Alias" value={p.imp.alias} rule={/^[A-Z][A-Za-z0-9_]*$/} onCommit={(alias) => change({ alias })} />
+      <NameField label="Alias" value={p.imp.alias} shape={ALIAS} onCommit={(alias) => change({ alias })} />
       <div class="field" hidden={!choosesIntent(p.imp.kind)}>
         <label>Intent</label>
         <div class="choice">

@@ -4,6 +4,7 @@ import { send } from "../../net/connection";
 import type { Record } from "../../protocol/Record";
 import type { Sample } from "../../protocol/Sample";
 import type { Value } from "../../protocol/Value";
+import { LOCAL, EVERY_MS, KEEP_S } from "../../protocol/rules";
 import { complete } from "../../state/complete";
 import { freeLocal } from "../../state/names";
 import { live, putLocal, state } from "../../state/store";
@@ -67,24 +68,25 @@ export function RecordsTable(p: Picking) {
 }
 
 const whole = (t: string) => /^\d+$/.test(t.trim());
+const within = ([low, high]: readonly [number, number], n: number) => n >= low && n <= high;
 
 export function RecordView(p: { record: Record; picking: Picking }) {
   const change = changing(RECORDS, () => p.record, p.picking);
   return (
     <ItemPane mark={<Mark />} name={p.record.name} tag="record">
       <div class="section">Record</div>
-      <NameField value={p.record.name} rule={/^[a-z][A-Za-z0-9_]*$/} onCommit={(name) => change({ name })} />
+      <NameField value={p.record.name} shape={LOCAL} onCommit={(name) => change({ name })} />
       <div class="field">
         <label>Records</label>
         <DraftInput value={p.record.source} placeholder="Speed" accept={(t) => t.trim() !== ""} onCommit={(source) => change({ source: source.trim() })} complete={(t, c) => complete(t, c, "expression")} />
       </div>
       <div class="field">
         <label>Every ms</label>
-        <DraftInput value={String(p.record.every_ms)} accept={(t) => whole(t) && Number(t) >= 50} onCommit={(t) => change({ every_ms: Number(t) })} />
+        <DraftInput value={String(p.record.every_ms)} accept={(t) => whole(t) && within(EVERY_MS, Number(t))} onCommit={(t) => change({ every_ms: Number(t) })} />
       </div>
       <div class="field">
         <label>Keeps s</label>
-        <DraftInput value={String(p.record.keep_s)} accept={(t) => whole(t) && Number(t) >= 1 && Number(t) <= 86400} onCommit={(t) => change({ keep_s: Number(t) })} />
+        <DraftInput value={String(p.record.keep_s)} accept={(t) => whole(t) && within(KEEP_S, Number(t))} onCommit={(t) => change({ keep_s: Number(t) })} />
       </div>
       <div class="section">Now</div>
       <div class="field">

@@ -11,6 +11,7 @@ use crate::value::Value;
 use ts_rs::TS;
 
 use crate::list::{self, Named, named};
+use crate::rules::{self, EVERY_MS, KEEP_S};
 use crate::{files, library};
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
@@ -204,10 +205,7 @@ impl Project {
     /// rename it. The error is for the user.
     pub fn set_token(&mut self, name: &str, to: Option<Token>) -> Result<(), String> {
         if let Some(t) = &to {
-            let mut chars = t.name.chars();
-            if !(chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric())) {
-                return Err(format!("\"{}\" cannot name a token: start with a small letter, then use letters and digits", t.name));
-            }
+            rules::TOKEN.check(&t.name, "a token")?;
             if list::taken(&self.tokens, &t.name, name) {
                 return Err(format!("${} is already a token", t.name));
             }
@@ -224,7 +222,7 @@ impl Project {
     /// may rename it. The error is for the user.
     pub fn set_variable(&mut self, name: &str, to: Option<Variable>) -> Result<(), String> {
         if let Some(v) = &to {
-            check_local(&v.name)?;
+            check_local(&v.name, "a variable")?;
             if v.start.is_null() {
                 return Err(format!("{} needs a start value", v.name));
             }
@@ -242,12 +240,13 @@ impl Project {
     /// rename it. The error is for the user.
     pub fn set_record(&mut self, name: &str, to: Option<Record>) -> Result<(), String> {
         if let Some(r) = &to {
-            check_local(&r.name)?;
+            check_local(&r.name, "a record")?;
             if r.source.trim().is_empty() {
                 return Err(format!("{} needs a value to record", r.name));
             }
-            if !(MIN_EVERY_MS..=86_400_000).contains(&r.every_ms) || !(1..=86_400).contains(&r.keep_s) {
-                return Err(format!("{} samples every {MIN_EVERY_MS} ms or more, and keeps from 1 s to a day", r.name));
+            let within = |(low, high): (u32, u32), n: u32| (low..=high).contains(&n);
+            if !within(EVERY_MS, r.every_ms) || !within(KEEP_S, r.keep_s) {
+                return Err(format!("{} samples every {} ms or more, and keeps from 1 s to a day", r.name, EVERY_MS.0));
             }
             self.free(&r.name, "record", name)?;
         }
@@ -263,7 +262,7 @@ impl Project {
     /// change may rename it. The error is for the user.
     pub fn set_computed(&mut self, name: &str, to: Option<Computed>) -> Result<(), String> {
         if let Some(c) = &to {
-            check_local(&c.name)?;
+            check_local(&c.name, "a computed value")?;
             self.free(&c.name, "computed value", name)?;
             if c.get.trim().is_empty() {
                 return Err(format!("{} needs an expression to work its value out", c.name));
@@ -455,59 +454,30 @@ fn names_in(code: &str) -> Vec<String> {
     out
 }
 
-/// The fastest a record samples, a little slower than the backend's tick.
-const MIN_EVERY_MS: u32 = 50;
-
 fn theme_file(root: &Path) -> PathBuf {
     root.join("data").join("theme.toml")
 }
 
-/// Names code already has or keeps, which a variable would hide.
-const TAKEN_LOCAL: [&str; 47] = [
-    "await", "break", "case", "catch", "class", "close", "const", "continue", "default", "delete", "do", "else", "export", "extends", "false",
-    "finally", "for", "force", "function", "hold", "if", "import", "in", "instanceof", "let", "log", "new", "notify", "null", "of", "open",
-    "page", "return", "screen", "sleep", "status", "super", "switch", "this", "throw", "true", "try", "typeof", "undefined", "unforce",
-    "until", "while",
-];
-
-/// A name of the math library's, such as sqrt or PI, which a variable or import would hide.
-fn taken_by_math(name: &str) -> bool {
-    crate::script::library_names().iter().any(|n| n == name)
+/// A variable, a computed value or a record, `what` says which. Its name hides nothing code has.
+fn check_local(name: &str, what: &str) -> Result<(), String> {
+    rules::LOCAL.check(name, what)?;
+    unreserved(name)
 }
 
-/// Local names are camelCase, which is what tells them from imports.
-fn check_local(name: &str) -> Result<(), String> {
-    if TAKEN_LOCAL.contains(&name) || taken_by_math(name) {
-        return Err(format!("{name} is a name code already uses, so pick another"));
+fn unreserved(name: &str) -> Result<(), String> {
+    match crate::script::reserved(name) {
+        true => Err(format!("{name} is a name code already uses, so pick another")),
+        false => Ok(()),
     }
-    let mut chars = name.chars();
-    if chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Ok(());
-    }
-    Err(format!("\"{name}\" cannot name a variable: start with a small letter, then use letters, digits or _"))
 }
 
 fn read(path: &Path) -> Result<String> {
     fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
 }
 
-/// Names code already has, which an import would hide.
-const TAKEN: [&str; 22] = [
-    "Array", "BigInt", "Boolean", "Date", "Error", "Infinity", "Intl", "JSON", "Map", "Math", "NaN", "Number", "Object", "Pages", "Promise",
-    "Proxy", "Reflect", "RegExp", "Set", "String", "Symbol", "TypeError",
-];
-
-/// An import is named in PascalCase, which is what tells mesh names from local ones.
 fn check_alias(alias: &str) -> Result<(), String> {
-    if TAKEN.contains(&alias) || taken_by_math(alias) {
-        return Err(format!("{alias} is a name code already uses, so pick another"));
-    }
-    let mut chars = alias.chars();
-    let first_ok = chars.next().is_some_and(|c| c.is_ascii_uppercase());
-    if first_ok && chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Ok(());
-    }
-    Err(format!("\"{alias}\" cannot be an alias: start with a capital letter, then use letters, digits or _"))
+    rules::ALIAS.check(alias, "an import")?;
+    unreserved(alias)
 }
 
 #[cfg(test)]

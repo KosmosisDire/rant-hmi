@@ -3,6 +3,7 @@
 
 import { createMemo, createRoot } from "solid-js";
 import type { Kind } from "../protocol/Kind";
+import type { Shape } from "../protocol/rules";
 import { state } from "./store";
 
 export interface Named {
@@ -44,6 +45,9 @@ export const names = (...of: Named["of"][]): Named[] => [...index().values()].fi
 
 /** The HMI's own names, which share one space: a variable, a computed value, a record. */
 const OWN: Named["of"][] = ["variable", "computed", "record"];
+
+/** Whether `name` is spelled as `shape` asks and is none it keeps clear of. */
+export const fits = (shape: Shape, name: string) => shape.pattern.test(name) && !shape.except.includes(name);
 
 /** `base`, or it with the first number from 2 that `taken` leaves free. */
 export function freeName(base: string, taken: (name: string) => boolean): string {

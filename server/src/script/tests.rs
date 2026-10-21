@@ -294,7 +294,8 @@ fn an_enum_reads_by_its_type_name_as_a_fresh_list_of_its_options() {
     script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None });
     let said = until_done(&mut rx, 1);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == r#"["None","Pick","Place"] 2 true"#)), "the log was not the options");
-    assert!(taken_global("Math") && taken_global("Pages") && taken_global("sqrt") && !taken_global("Job"));
+    assert!(reserved("Math") && reserved("Pages") && reserved("sqrt") && reserved("emit") && !reserved("Job"));
+    assert!(reserved("class") && reserved("await") && reserved("let") && reserved("undefined") && !reserved("speed"));
 }
 
 #[test]
@@ -394,7 +395,6 @@ fn a_setter_that_does_not_undo_its_getter_is_caught_on_a_try() {
 
 #[test]
 fn a_handler_reads_what_the_api_lists_and_nothing_more() {
-    const API: (&str, &str) = ("api.js", include_str!("../../../client/src/lang/api.js"));
     // what JavaScript has without the HMI, and what the list says a page's handler reads
     let rt = Runtime::new().unwrap();
     let ctx = Context::full(&rt).unwrap();

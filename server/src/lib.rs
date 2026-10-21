@@ -11,6 +11,7 @@ pub mod pages;
 pub mod project;
 pub mod protocol;
 pub mod rtc;
+pub mod rules;
 pub mod script;
 pub mod status;
 pub mod value;

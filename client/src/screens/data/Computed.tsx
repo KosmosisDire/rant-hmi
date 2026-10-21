@@ -4,6 +4,7 @@
 import { For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Computed } from "../../protocol/Computed";
+import { LOCAL } from "../../protocol/rules";
 import { complete, type Suggestion } from "../../state/complete";
 import { freeLocal } from "../../state/names";
 import { live, putLocal, state } from "../../state/store";
@@ -75,7 +76,7 @@ export function ComputedView(p: { computed: Computed; picking: Picking }) {
   return (
     <ItemPane mark={<Mark />} name={p.computed.name} tag="computed">
       <div class="section">Computed</div>
-      <NameField value={p.computed.name} rule={/^[a-z][A-Za-z0-9_]*$/} onCommit={(name) => change({ name })} />
+      <NameField value={p.computed.name} shape={LOCAL} onCommit={(name) => change({ name })} />
       {/* the field says why the getter gives nothing, as a property's does; one left empty keeps what it had */}
       <Field label="Is" value={p.computed.get} placeholder="Duty / 40 * 100" onWrite={(get) => get !== null && change({ get: get.trim() })} />
       <div class="field">

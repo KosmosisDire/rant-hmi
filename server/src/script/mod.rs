@@ -114,6 +114,8 @@ type Reader = (Context, Vec<(String, Persistent<Function<'static>>)>);
 const ACORN: (&str, &str) = ("acorn/acorn.mjs", include_str!("../../../client/src/lang/acorn/acorn.mjs"));
 const MATH: (&str, &str) = ("math.js", include_str!("../../../client/src/lang/math.js"));
 const ARITH: (&str, &str) = ("arith.js", include_str!("../../../client/src/lang/arith.js"));
+/// Every name code reads besides the project's own, as completion lists them.
+const API: (&str, &str) = ("api.js", include_str!("../../../client/src/lang/api.js"));
 
 /// Runs a module in `ctx` and gives its exports. One it imports must have run there first.
 fn module<'js>(ctx: &Ctx<'js>, (name, source): (&str, &str)) -> rquickjs::Result<Object<'js>> {
@@ -122,30 +124,34 @@ fn module<'js>(ctx: &Ctx<'js>, (name, source): (&str, &str)) -> rquickjs::Result
     module.namespace()
 }
 
-/// The math library's names code reads, which no import or variable may take.
-pub fn library_names() -> &'static [String] {
+/// Whether code already has `name` or cannot bind it: JavaScript's words and globals, the math
+/// library's names and every name api.js lists. No import, variable or enum may take one.
+pub fn reserved(name: &str) -> bool {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    NAMES.get_or_init(|| {
+    let names = NAMES.get_or_init(|| {
         let rt = Runtime::new().expect("QuickJS starts");
         let ctx = Context::full(&rt).expect("QuickJS makes a context");
         ctx.with(|ctx| {
+            let mut names: Vec<String> = ctx.eval("Object.getOwnPropertyNames(globalThis)")?;
             let library: Object = module(&ctx, MATH)?.get("LIBRARY")?;
-            library.keys::<String>().filter(|k| !k.as_ref().is_ok_and(|k| k.starts_with("__"))).collect::<rquickjs::Result<Vec<_>>>()
+            names.extend(library.keys::<String>().collect::<rquickjs::Result<Vec<_>>>()?);
+            let api: Vec<Object> = module(&ctx, API)?.get("API")?;
+            names.extend(api.iter().map(|a| a.get::<_, String>("name")).collect::<rquickjs::Result<Vec<_>>>()?);
+            Ok::<_, rquickjs::Error>(names)
         })
-        .expect("the math library loads")
-    })
+        .expect("the math library and the API load")
+    });
+    names.iter().any(|n| n == name) || !binds(name)
 }
 
-/// Whether code already has `name` before the project's own: one of JavaScript's, the math
-/// library's or `Pages`.
-pub fn taken_global(name: &str) -> bool {
-    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    let javascript = NAMES.get_or_init(|| {
-        let rt = Runtime::new().expect("QuickJS starts");
-        let ctx = Context::full(&rt).expect("QuickJS makes a context");
-        ctx.with(|ctx| ctx.eval::<Vec<String>, _>("Object.getOwnPropertyNames(globalThis)")).expect("QuickJS lists its globals")
-    });
-    name == "Pages" || javascript.iter().any(|n| n == name) || library_names().iter().any(|n| n == name)
+/// Whether a handler can declare `name`, which strict and async code asks the most of.
+fn binds(name: &str) -> bool {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {
+        return false;
+    }
+    let rt = Runtime::new().expect("QuickJS starts");
+    let ctx = Context::full(&rt).expect("QuickJS makes a context");
+    ctx.with(|ctx| ctx.eval::<(), _>(format!("(async function () {{ \"use strict\"; let {name}; }});")).is_ok())
 }
 
 /// The operator rewrite, in a context of its own, the only one that holds acorn. Each text is

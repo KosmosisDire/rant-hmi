@@ -5,6 +5,7 @@ import { send } from "../../net/connection";
 import type { Per } from "../../protocol/Per";
 import type { Variable } from "../../protocol/Variable";
 import type { Value } from "../../protocol/Value";
+import { LOCAL } from "../../protocol/rules";
 import { freeLocal } from "../../state/names";
 import { live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
@@ -73,7 +74,7 @@ export function VariableView(p: { variable: Variable; picking: Picking }) {
   return (
     <ItemPane mark={<LocalIcon />} name={p.variable.name} tag="variable">
       <div class="section">Variable</div>
-      <NameField value={p.variable.name} rule={/^[a-z][A-Za-z0-9_]*$/} onCommit={(name) => change({ name })} />
+      <NameField value={p.variable.name} shape={LOCAL} onCommit={(name) => change({ name })} />
       <div class="field">
         <label>Kept</label>
         <div class="choice">

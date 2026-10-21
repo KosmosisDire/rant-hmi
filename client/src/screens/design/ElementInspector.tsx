@@ -8,12 +8,13 @@ import type { Input } from "../../protocol/Input";
 import type { Interface } from "../../protocol/Interface";
 import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
+import { COMPONENT, EVENT, INPUT } from "../../protocol/rules";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
 import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
 import { complete, completeCss, componentNames, REPEAT, signature, signatureCss } from "../../state/complete";
 import { brings, offered } from "../../state/events";
-import { freeName } from "../../state/names";
+import { fits, freeName } from "../../state/names";
 import { component, page as pageOf, putIn, setState, state } from "../../state/store";
 import { paintCss } from "../../ui/highlight";
 import { openPage } from "../../state/view";
@@ -188,7 +189,7 @@ function PageInspector(p: { page: Page }) {
           <label>Name</label>
           <DraftInput
             value={p.page.name}
-            accept={(t) => (isComponent() ? /^[A-Z][A-Za-z0-9]*$/.test(t.trim()) : t.trim() !== "")}
+            accept={(t) => (isComponent() ? fits(COMPONENT, t.trim()) : t.trim() !== "")}
             onCommit={(name) => send({ type: "edit", edit: { kind: "rename_page", page: p.page.id, name } })}
           />
         </div>
@@ -744,14 +745,11 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
   );
 }
 
-/** What places an instance, which no input or variable may be called, as the backend says. */
-const PLACING = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "rotate"]);
-
 /** What an input's default and a variable's start complete: the theme's tokens and the math. */
 const constants = (text: string, caret: number) => complete(text, caret, "expression", []);
 
 /** A name an input or a component's variable may take. */
-const localName = (t: string) => /^[a-z][A-Za-z0-9]*$/.test(t.trim()) && !PLACING.has(t.trim());
+const localName = (t: string) => fits(INPUT, t.trim());
 
 /** Sends an edit of a component's interface and makes it here at once too, in place, so a
  *  change right after builds on this one. The backend sends the page back should it refuse. */
@@ -860,7 +858,7 @@ function Sends(p: { page: string; events: string[] }) {
       <For each={p.events}>
         {(e) => (
           <div class="handler-head sends-row" data-sends={e}>
-            <DraftInput class="editor input-name" value={e} accept={(t) => /^[a-z][A-Za-z0-9]*$/.test(t.trim())} onCommit={(to) => write(e, to.trim())} />
+            <DraftInput class="editor input-name" value={e} accept={(t) => fits(EVENT, t.trim())} onCommit={(to) => write(e, to.trim())} />
             <button class="icon-btn" title={`Stop sending ${e}`} onClick={() => write(e, null)}>
               <X size={13} />
             </button>
