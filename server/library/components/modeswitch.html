@@ -1,14 +1,20 @@
-<component name="ModeSwitch" size="24x4">
+<component name="ModeSwitch" size="24x4" sizing="fill">
   <prop name="value" default='"Auto"' bindable="true"/>
   <prop name="options" default='["Auto", "Manual"]'/>
+  <prop name="fill" default="$panel"/>
+  <prop name="colour" default="$accent"/>
+  <prop name="textColour" default="$text"/>
+  <prop name="pickedTextColour" default="$onFill"/>
+  <prop name="textSize" default="1.5"/>
+  <prop name="radius" default="$radiusPill"/>
   <event name="change"/>
-  <div id="e1" name="track" x="0" y="0" w="24" h="4" style="background: $panel; border-radius: 2">
-    <div id="e2" name="segment" repeat="options" x="index * 24 / options.length" y="0" w="24 / options.length" h="4" style='background: item === value ? $accent : "transparent"; border-radius: 2'>
+  <div id="e1" name="track" x="0" y="0" w="100%" h="100%" style='background: fill; border-radius: radius; gap: 0; layout: "right"'>
+    <div id="e2" name="segment" repeat="options" x="1" y="1" w="fill" h="fill" style='align: "center"; background: item === value ? colour : "transparent"; border-radius: radius; gap: $space; layout: "right"'>
       <on event="tap">
         value = item;
         emit("change", item);
       </on>
-      <span id="e3" name="segmentLabel" x="0" y="0" w="24 / options.length" h="4" style='color: item === value ? $onFill : $text; font-size: 1.5; line-height: "40px"; text-align: "center"'>item</span>
+      <span id="e3" name="segmentLabel" x="1" y="1" w="hug" h="hug" style="color: item === value ? pickedTextColour : textColour; font-size: textSize">item</span>
     </div>
   </div>
 </component>
