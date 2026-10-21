@@ -1,6 +1,7 @@
 //! HTTP and WebSocket: the built client from one folder, and one socket per screen at `/ws`.
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::io;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -10,12 +11,12 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::extract::connect_info::Connected;
 use axum::extract::{ConnectInfo, State};
-use axum::serve::IncomingStream;
+use axum::serve::{IncomingStream, Listener};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::time::{MissedTickBehavior, interval};
 use axum::http::{HeaderValue, header};
@@ -45,8 +46,29 @@ pub async fn serve(listener: TcpListener, client: PathBuf, inbound: UnboundedSen
         .route("/ws", get(upgrade))
         .fallback_service(pages)
         .with_state(Shared { inbound, next: Arc::new(AtomicU32::new(1)) });
-    if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<Reached>()).await {
+    if let Err(e) = axum::serve(NoDelay(listener), app.into_make_service_with_connect_info::<Reached>()).await {
         error!("the web server stopped: {e}");
+    }
+}
+
+/// The listener, each connection sending at once. Nagle's wait for an ack would hold a small
+/// message, a ping or a value, until the screen's delayed ack, up to tens of ms.
+struct NoDelay(TcpListener);
+
+impl Listener for NoDelay {
+    type Io = TcpStream;
+    type Addr = SocketAddr;
+
+    async fn accept(&mut self) -> (TcpStream, SocketAddr) {
+        let (io, addr) = Listener::accept(&mut self.0).await;
+        if let Err(e) = io.set_nodelay(true) {
+            warn!("could not send at once to {addr}: {e}");
+        }
+        (io, addr)
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.0.local_addr()
     }
 }
 
@@ -58,8 +80,8 @@ struct Reached {
     remote: IpAddr,
 }
 
-impl Connected<IncomingStream<'_, TcpListener>> for Reached {
-    fn connect_info(stream: IncomingStream<'_, TcpListener>) -> Reached {
+impl Connected<IncomingStream<'_, NoDelay>> for Reached {
+    fn connect_info(stream: IncomingStream<'_, NoDelay>) -> Reached {
         let local = stream.io().local_addr().map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |a| a.ip().to_canonical());
         Reached { local, remote: stream.remote_addr().ip().to_canonical() }
     }
