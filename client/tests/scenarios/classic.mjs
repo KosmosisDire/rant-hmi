@@ -2,8 +2,7 @@
 // standard components and two of its own, a conveyor and a pusher. Its robot runs a job held
 // to confirm, halts, homes and jogs while JOG is held with a second finger, its conveyor carries
 // a box on a moving belt and pushes, its alarm blinks, and its safety stops, resets and slows
-// the cell. Run alone with
-// `--into examples/classic`, it starts from a new project and becomes that example.
+// the cell. Run alone with `--into <folder>`, it starts from a new project and leaves it there.
 
 /** The chirp the safety relay gives as a command lands. */
 const CHIRP = "SafetyCmd.chirp = true;\nawait sleep(100);\nSafetyCmd.chirp = false;";

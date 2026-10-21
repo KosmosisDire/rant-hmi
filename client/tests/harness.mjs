@@ -1,11 +1,11 @@
 // Starts what a test needs: the demo line, the cage cell, the transcoder and a backend on their
-// own loopback domain and port, with a fresh copy of the demo project, and a headless Chrome to
+// own loopback domain and port, with a fresh copy of the test project, and a headless Chrome to
 // drive.
 
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
@@ -41,16 +41,11 @@ function run(path, args) {
   return child;
 }
 
-/** The demo project as committed, never the working copy someone may be trying things in.
- *  Its pages stay out, as each scenario makes its own. */
-function demoProject(into) {
-  const git = (...args) => execFileSync("git", args, { cwd: ROOT });
-  const files = git("ls-tree", "-r", "--name-only", "HEAD", "examples/demo").toString().split("\n");
-  for (const file of files.filter((f) => f && !f.includes("/pages/"))) {
-    const to = join(into, relative("examples/demo", file));
-    mkdirSync(dirname(to), { recursive: true });
-    writeFileSync(to, git("show", `HEAD:${file}`));
-  }
+/** The project each scenario starts from: the demo line's imports in the library's theme, with
+ *  no pages, as each scenario makes its own. */
+function testProject(into) {
+  cpSync(join(here, "project"), into, { recursive: true });
+  cpSync(join(ROOT, "server", "library", "theme.toml"), join(into, "data", "theme.toml"));
 }
 
 /** With `empty` named, the backend starts a new project in a folder of that name, as it would
@@ -58,7 +53,7 @@ function demoProject(into) {
 export async function startSystem({ empty } = {}) {
   const temp = mkdtempSync(join(tmpdir(), "rant-hmi-test-"));
   const project = empty ? join(temp, basename(empty)) : temp;
-  if (!empty) demoProject(project);
+  if (!empty) testProject(project);
   const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
   const cage = run(join(BUILD, "examples", `cage${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
   const transcoding = transcoder();

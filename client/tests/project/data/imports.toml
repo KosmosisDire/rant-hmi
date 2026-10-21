@@ -1,0 +1,23 @@
+[[import]]
+alias = "Speed"
+entity = "Line1/Speed"
+kind = "variable"
+intent = "write"
+
+[[import]]
+alias = "Running"
+entity = "Line1/Running"
+kind = "variable"
+intent = "write"
+
+[[import]]
+alias = "Settings"
+entity = "Line1/Settings"
+kind = "variable"
+intent = "write"
+
+[[import]]
+alias = "Joints"
+entity = "Robot/Joints"
+kind = "topic"
+intent = "read"
