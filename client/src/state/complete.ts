@@ -1,6 +1,7 @@
 // What may be typed next at the caret: names, then after a dot the fields with their type and
 // live value. It reads only the text before the caret, so the code need not parse.
 
+import { apiIn } from "../lang/api.js";
 import { kind, LIBRARY, METHODS_OF } from "../lang/math.js";
 import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Import } from "../protocol/Import";
@@ -43,53 +44,9 @@ function tokens(): Suggestion[] {
   return state.tokens.map((t) => ({ label: `$${t.name}`, insert: `$${t.name}`, icon: "token", type: "token", value: mode() === "light" ? t.light : t.dark, known: true }));
 }
 
-const API: Record<Place, Suggestion[]> = {
-  expression: [],
-  handler: [
-    { label: "notify", insert: "notify(", icon: "api", type: "tell this screen" },
-    { label: "log", insert: "log(", icon: "api", type: "write to the log" },
-    { label: "sleep", insert: "await sleep(", icon: "api", type: "wait ms" },
-    { label: "open", insert: "open(", icon: "api", type: "open a page" },
-    { label: "close", insert: "close()", icon: "api", type: "close the top page" },
-  ],
-  component: [{ label: "emit", insert: "emit(", icon: "api", type: "send an event out" }],
-};
-
-/** What each of the math library's names does, in a few words. */
-const MATH_WORDS: Record<string, string> = {
-  sqrt: "square root",
-  abs: "without its sign",
-  sign: "-1, 0 or 1",
-  min: "the least",
-  max: "the most",
-  clamp: "x kept between low and high",
-  lerp: "from a toward b by t",
-  round: "the nearest whole number",
-  floor: "the whole number at or below",
-  ceil: "the whole number at or above",
-  trunc: "the whole part",
-  pow: "x to the power y",
-  exp: "e to the power x",
-  ln: "natural log",
-  sin: "of radians",
-  cos: "of radians",
-  tan: "of radians",
-  asin: "in radians",
-  acos: "in radians",
-  atan: "in radians",
-  atan2: "the angle of y and x, in radians",
-  hypot: "the length of its arguments",
-  degrees: "radians as degrees",
-  radians: "degrees as radians",
-  PI: "half a turn, in radians",
-  vec: "a 2D or 3D vector",
-  fromEuler: "a rotation from roll, pitch and yaw",
-};
-
-/** The math library's names, which every place reads, a function's typed with its bracket. */
-const MATH: Suggestion[] = Object.keys(LIBRARY)
-  .filter((name) => !name.startsWith("__"))
-  .map((name) => ({ label: name, insert: typeof LIBRARY[name] === "function" ? `${name}(` : name, icon: "api", type: MATH_WORDS[name] ?? "" }));
+/** The language's own names in `place`, from the one list of them, a function's typed with
+ *  its bracket. */
+const own = (place: Place): Suggestion[] => apiIn(place).map((a) => ({ label: a.name, insert: a.insert ?? (a.takes ? `${a.name}(` : a.name), icon: "api", type: a.words }));
 
 /** How each math method is typed in, and what it gives. */
 const METHOD_WORDS: Record<string, [string, string]> = {
@@ -138,7 +95,7 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   const items =
     before[from - 1] === "."
       ? given(chain(before.slice(0, from - 1)), place, names, also)
-      : [...(names ?? top(place)), ...(also ?? []), ...(place === "handler" ? [] : tokens()), ...API[place], ...MATH];
+      : [...(names ?? top(place)), ...(also ?? []), ...(place === "handler" ? [] : tokens()), ...own(place)];
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
   const inside = items.filter((s) => !s.label.toLowerCase().startsWith(q) && s.label.toLowerCase().includes(q));
@@ -166,16 +123,23 @@ export interface Signature {
   unknown?: string;
 }
 
-/** The send or function call the caret is inside, in a handler that reaches the mesh. */
+/** The call the caret is inside: one of the language's own functions, or in a handler that
+ *  reaches the mesh a send or a function import. */
 export function signature(text: string, caret: number, place: Place): Signature | null {
-  if (place !== "handler") return null;
   const open = opened(text.slice(0, caret));
   if (!open) return null;
   const head = text.slice(0, open.at).trimEnd();
   const path = chain(head);
-  const imp = state.imports.find((i) => i.alias === path[0]);
   const call = path.join(".");
   const from = head.length - call.length;
+  const fn = path.length === 1 ? apiIn(place).find((a) => a.name === path[0] && a.takes) : undefined;
+  if (fn?.takes) {
+    // the rest of the values all fall to a last `...` one
+    const rest = fn.takes.at(-1)?.startsWith("...") ? fn.takes.length - 1 : Infinity;
+    return { from, call, params: fn.takes.map((name) => ({ name, type: "" })), at: Math.min(open.commas, rest) };
+  }
+  if (place !== "handler") return null;
+  const imp = state.imports.find((i) => i.alias === path[0]);
   const sends = imp?.kind === "topic" && path.length === 2 && path[1] === "send";
   if (!imp || !(sends || (imp.kind === "function" && path.length === 1))) return null;
   const e = entity(imp.entity);
@@ -313,11 +277,14 @@ function chain(before: string): string[] {
 const SEND: Suggestion = { label: "send", insert: "send(", icon: "api", type: "publish a message" };
 
 /** A value's fields, from its schema where the root is an import, else from the value. A
- *  handler's topic imported to write offers send first. */
+ *  handler's topic imported to write offers send first, and one of JavaScript's own, such as
+ *  Math, what it holds. */
 function members(path: string[], place: Place): Suggestion[] {
   if (path.length === 0) return [];
   const [root, ...rest] = path;
   const imp = state.imports.find((i) => i.alias === root);
+  const standard = apiIn(place).find((a) => a.name === root && a.standard);
+  if (standard && !imp && rest.length === 0) return held((globalThis as Record<string, unknown>)[root]);
   if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && rest.length === 0) return [SEND, ...members(path, "expression")];
   let value: Value | null = live(root).value;
   const known = live(root).known;
@@ -346,11 +313,27 @@ function members(path: string[], place: Place): Suggestion[] {
   return methods(value, known);
 }
 
-/** What a plain value offers: a number its format, a list or text its length. */
+/** What a plain value offers: a list or text its length, and every method JavaScript gives its
+ *  kind, read from the kind itself so none is left out. A number's format comes first. */
 function methods(value: Value | null, known: boolean): Suggestion[] {
-  if (typeof value === "number") return [{ label: "toFixed", insert: "toFixed(1)", icon: "member", type: "digits after the point", value: Number(value.toFixed(1)), known }];
-  if (typeof value === "string" || Array.isArray(value) || value instanceof Uint8Array) return [{ label: "length", insert: "length", icon: "member", type: "number", value: value.length, known }];
-  return [];
+  const out: Suggestion[] = [];
+  if (typeof value === "number") out.push({ label: "toFixed", insert: "toFixed(1)", icon: "member", type: "digits after the point", value: Number(value.toFixed(1)), known });
+  if (typeof value === "string" || Array.isArray(value) || value instanceof Uint8Array) out.push({ label: "length", insert: "length", icon: "member", type: "number", value: value.length, known });
+  const proto = typeof value === "number" ? Number.prototype : typeof value === "string" ? String.prototype : typeof value === "boolean" ? Boolean.prototype : Array.isArray(value) ? Array.prototype : value instanceof Uint8Array ? Uint8Array.prototype : null;
+  return proto ? [...out, ...held(proto).filter((m) => !out.some((o) => o.label === m.label))] : out;
+}
+
+/** What an object holds, read from it: each function, typed with its bracket, then each value. */
+function held(o: unknown): Suggestion[] {
+  if (o === null || (typeof o !== "object" && typeof o !== "function")) return [];
+  const names = Object.getOwnPropertyNames(o).filter((n) => n !== "constructor" && !n.startsWith("_") && /^[A-Za-z]/.test(n));
+  const value = (n: string) => Object.getOwnPropertyDescriptor(o, n)?.value;
+  const calls = names.filter((n) => typeof value(n) === "function").sort();
+  const values = names.filter((n) => typeof value(n) === "number" || typeof value(n) === "string").sort();
+  return [
+    ...calls.map((n): Suggestion => ({ label: n, insert: `${n}(`, icon: "member", type: "" })),
+    ...values.map((n): Suggestion => ({ label: n, insert: n, icon: "member", type: typeof value(n), value: value(n) as Value, known: true })),
+  ];
 }
 
 function at(v: Value | null, step: string): Value | null {

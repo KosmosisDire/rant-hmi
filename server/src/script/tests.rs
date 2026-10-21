@@ -380,3 +380,44 @@ fn a_setter_that_does_not_undo_its_getter_is_caught_on_a_try() {
     let warning = next(&mut rx, |m| if let FromScript::Tried { warning, .. } = m { Some(warning) } else { None });
     assert!(warning.starts_with("bad's setter does not undo it: writing 1 reads back as 400"), "{warning}");
 }
+
+#[test]
+fn a_handler_reads_what_the_api_lists_and_nothing_more() {
+    const API: (&str, &str) = ("api.js", include_str!("../../../client/src/lang/api.js"));
+    // what JavaScript has without the HMI, and what the list says a page's handler reads
+    let rt = Runtime::new().unwrap();
+    let ctx = Context::full(&rt).unwrap();
+    let (standard, listed, theirs) = ctx
+        .with(|ctx| {
+            let standard: Vec<String> = ctx.eval("Object.getOwnPropertyNames(globalThis)")?;
+            let api_in: Function = module(&ctx, API)?.get("apiIn")?;
+            let listed: Vec<Object> = api_in.call(("handler",))?;
+            let name = |a: &Object| a.get::<_, String>("name");
+            let theirs = listed.iter().filter(|a| a.get::<_, Option<bool>>("standard").ok().flatten() == Some(true)).map(name).collect::<rquickjs::Result<Vec<_>>>()?;
+            let listed = listed.iter().filter(|a| a.get::<_, Option<bool>>("standard").ok().flatten() != Some(true)).map(name).collect::<rquickjs::Result<Vec<_>>>()?;
+            Ok::<_, rquickjs::Error>((standard, listed, theirs))
+        })
+        .unwrap();
+    for name in &theirs {
+        assert!(standard.contains(name), "{name} is listed as JavaScript's own, which it is not");
+    }
+    let (script, mut rx) = engine();
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(Object.getOwnPropertyNames(globalThis).join(\" \"));".into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 1);
+    let all = said.iter().find_map(|m| if let FromScript::Log { text, .. } = m { Some(text.clone()) } else { None }).unwrap();
+    let project = ["p", "Speed", "Running", "Settings", "Joints", "Jog", "Target", "Peek", "Reset", "jogMode", "count"];
+    let mut own: Vec<&str> = all.split(' ').filter(|n| !n.starts_with("__") && !project.contains(n) && !standard.iter().any(|s| s == n)).collect();
+    own.sort();
+    let mut listed: Vec<&str> = listed.iter().map(String::as_str).collect();
+    listed.sort();
+    assert_eq!(own, listed, "a handler reads names the list leaves out, or the list names one it does not read");
+}
+
+#[test]
+fn colours_lighten_darken_fade_mix_and_scale() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(\"#224493\".lighten(0), \"#224493\".lighten(0.2), \"#224493\".lighten(1), \"#224493\".darken(1), \"#808080\" * 0.5, \"#229834\" * 1.2, 0.8 * \"#229834\", \"#ffffff\" * \"#ff8000\", \"#f00\".alpha(0.5), \"#ff000080\".fade(0.5), mix(\"#000000\", \"#ffffff\", 1), \"#ff0000\".mix(\"#0000ff\"), \"#808080\" / 2);".into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 1);
+    let text = said.iter().find_map(|m| if let FromScript::Log { text, .. } = m { Some(text.as_str()) } else { None });
+    assert_eq!(text, Some("#224493 #4a69aa #ffffff #000000 #404040 #29b63e #1b7a2a #ff8000 #ff000080 #ff000040 #ffffff #8c53a2 #404040"));
+}

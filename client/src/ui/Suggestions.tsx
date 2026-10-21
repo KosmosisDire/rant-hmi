@@ -117,7 +117,10 @@ export function SignatureHint(p: { sign: Signature; at: () => Spot }) {
             {(param, n) => (
               <>
                 <span classList={{ "sign-at": n() === p.sign.at }}>
-                  {param.name}: <span class="sign-type">{param.type}</span>
+                  {param.name}
+                  <Show when={param.type}>
+                    : <span class="sign-type">{param.type}</span>
+                  </Show>
                 </span>
                 {n() < p.sign.params.length - 1 ? ", " : ""}
               </>

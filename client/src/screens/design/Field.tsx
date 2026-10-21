@@ -5,7 +5,7 @@
 
 import { createContext, createMemo, createSignal, For, type JSX, Match, Show, Switch, useContext } from "solid-js";
 import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope, sizeWord } from "../../state/bind";
-import { complete, type Place, type Suggestion } from "../../state/complete";
+import { complete, type Place, signature, type Suggestion } from "../../state/complete";
 import { mode } from "../../state/mode";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
@@ -135,6 +135,7 @@ function ValueBox(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => 
         focus={p.focus}
         onCommit={p.onWrite}
         complete={p.plain ? undefined : (t, c) => complete(t, c, "expression", where().names, where().also)}
+        hint={p.plain ? undefined : (t, c) => signature(t, c, "expression")}
       />
       <Show when={!p.plain}>
         <Lead {...p} field={field} />
