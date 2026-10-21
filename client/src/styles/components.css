@@ -207,7 +207,7 @@
 }
 
 .choice button {
-  height: 22px;
+  height: calc(var(--hit) - 2px);
   padding: 0 10px;
   font-size: 12px;
   color: var(--dim);
@@ -494,7 +494,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 26px;
+  height: var(--item);
   padding: 0 8px;
   border-radius: 4px;
   cursor: pointer;
@@ -531,7 +531,7 @@
 .editor {
   width: 100%;
   min-width: 0;
-  height: 22px;
+  height: calc(var(--field) - 8px);
   padding: 0 6px;
   font: 12px var(--mono);
   color: var(--text);
@@ -703,7 +703,7 @@
   align-self: stretch;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  width: calc(var(--hit) - 2px);
   margin: 0 -3px;
   cursor: pointer;
 }
@@ -714,8 +714,8 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  width: calc(var(--hit) - 2px);
+  height: calc(var(--hit) - 2px);
   margin-left: auto;
   color: var(--dim);
   border-radius: 4px;
@@ -738,7 +738,7 @@
   display: flex;
   align-items: center;
   gap: var(--gap);
-  min-height: 30px;
+  min-height: var(--field);
   padding: 5px var(--pad);
   border-bottom: 1px solid var(--border);
 }
@@ -866,7 +866,7 @@ table.grid td.name > span {
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 26px;
+  height: var(--item);
   padding: 0 8px;
   font-size: 12px;
   color: var(--text);
@@ -1041,7 +1041,7 @@ table.grid td.name > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 24px;
+  height: var(--hit);
   padding: 0 8px 0 6px;
   font-size: 11px;
   color: var(--text);

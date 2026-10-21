@@ -73,7 +73,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 42px;
+  height: max(42px, var(--bar));
   padding: 0 10px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -138,8 +138,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: max(30px, var(--hit));
+  height: max(30px, var(--hit));
   border-radius: var(--radius);
   color: var(--dim);
 }
@@ -176,6 +176,10 @@
 
 .statusbar .right {
   margin-left: auto;
+}
+
+.statusbar .nodes {
+  display: none;
 }
 
 /* ------------------------------------------------------------------ screens */
@@ -319,6 +323,45 @@
 
 .later .hero {
   color: var(--dim);
+}
+
+/* ------------------------------------------------------------------ phones */
+
+/* A phone gives the four tabs equal room, each its icon over its name, and counts the
+   nodes in place of naming them. */
+@media (max-width: 600px) {
+  .topbar {
+    gap: 2px;
+    padding: 0 4px;
+  }
+
+  .logo,
+  .tab .count,
+  .statusbar .node {
+    display: none;
+  }
+
+  .tabs {
+    flex: 1;
+    margin-right: 0;
+  }
+
+  .tab {
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 0 2px;
+    font-size: 10px;
+  }
+
+  .tab:not(:last-child) {
+    border-right: 0;
+  }
+
+  .statusbar .nodes {
+    display: inline-flex;
+  }
 }
 
 /* ------------------------------------------------------------------ narrow screens */

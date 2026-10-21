@@ -2,21 +2,29 @@ import { For, Show } from "solid-js";
 import { number } from "../state/format";
 import { state } from "../state/store";
 
-/** How this screen reaches the system, and how fast each node on the mesh answers. */
+/** How this screen reaches the system, and how fast each node on the mesh answers, or on a
+ *  phone how many answer. */
 export function StatusBar() {
   const link = () => {
     if (state.link === "open") return state.rttMs === null ? "System" : `System ${Math.round(state.rttMs)} ms`;
     return state.link === "connecting" ? "Connecting" : "Reconnecting";
   };
+  const active = () => state.peers.filter((p) => p.active);
   return (
     <footer class="statusbar">
       <span class="stat" title={state.channels ? "Reached over WebRTC data channels" : "Reached over the socket alone"}>
         <span class="dot" classList={{ ok: state.link === "open", warn: state.link === "connecting", bad: state.link === "closed" }} />
         {link()}
       </span>
-      <For each={state.peers.filter((p) => p.active)}>
+      <Show when={active().length > 0}>
+        <span class="stat nodes">
+          <span class="dot ok" />
+          {active().length === 1 ? "1 node" : `${active().length} nodes`}
+        </span>
+      </Show>
+      <For each={active()}>
         {(peer) => (
-          <span class="stat" title={peer.address}>
+          <span class="stat node" title={peer.address}>
             <span class="dot ok" />
             {peer.name}
             <Show when={peer.rtt_ms !== null}>

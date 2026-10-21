@@ -42,12 +42,29 @@
   --gap: 8px;
   --pad: 12px;
   --radius: 5px;
+  --scrollbar: 8px;
+
+  /* what a finger needs more room for: a table row, a list row, a button, a field, a menu
+     line and a head */
   --row: 28px;
   --list: 32px;
   --hit: 24px;
   --field: 30px;
+  --item: 26px;
   --bar: 40px;
-  --scrollbar: 8px;
+}
+
+/* The main pointer sizes the app, never the last one used, so a laptop's touch screen keeps
+   the mouse's sizes. */
+@media (pointer: coarse) {
+  :root {
+    --row: 38px;
+    --list: 44px;
+    --hit: 40px;
+    --field: 38px;
+    --item: 40px;
+    --bar: 56px;
+  }
 }
 
 :root[data-theme="light"] {
