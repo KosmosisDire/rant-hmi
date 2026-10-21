@@ -11,10 +11,11 @@ This also writes `client/src/protocol` from the Rust types.
 ## Scenarios
 
 Each scenario in `client/tests/scenarios` is a new user's task, driven in headless Chrome
-against the demo line, rant-transcoder and a backend on loopback, domain 153 and port 6761.
+against the demo line, the cage cell, rant-transcoder and a backend on loopback, domain 153 and
+port 6761.
 
 ```sh
-cargo build -p rant-hmi --bin rant-hmi --example demo
+cargo build -p rant-hmi --bin rant-hmi --examples
 cd client && npm run build
 node tests/run.mjs          # every scenario
 node tests/run.mjs drag     # those whose file name holds "drag"
@@ -28,6 +29,16 @@ node tests/run.mjs drag     # those whose file name holds "drag"
 - A console error fails a scenario, as does a check.
 - A failure names the scenario line that threw and prints the backend's last words.
 - Screenshots and the backend's whole log land in `client/tests/out`.
+
+## Examples made in the editor
+
+- `node tests/run.mjs build- --library` makes the standard components a new project starts
+  with, in `server/library/components`.
+- `node tests/run.mjs classic --into examples/classic` makes the cage cell's first HMI anew,
+  from a new project. `--into` replaces that folder with what the scenarios made.
+- The classic example runs against the cage cell, `server/examples/cage.rs`, which has the
+  real cell's names and types: `cargo run --example cage` beside
+  `cargo run -p rant-hmi -- examples/classic --port 6738`.
 
 ## Driving the HMI from code
 
