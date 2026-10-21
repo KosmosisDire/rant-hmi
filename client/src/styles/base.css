@@ -11,6 +11,11 @@ body,
   margin: 0;
 }
 
+/* a tap draws no flash of the browser's own, the pressed styles already show it */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
   font: 13px/1.4 var(--sans);
   color: var(--text);

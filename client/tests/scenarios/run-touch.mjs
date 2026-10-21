@@ -1,6 +1,7 @@
 // A touch screen holds what a finger holds. The browser's own menu never comes up anywhere,
 // a long press on a button stays a press with no menu, letting go releases it and leaves no
-// hover behind, and in the editor a long press that opens the menu moves nothing.
+// hover behind, a tap never flashes the browser's highlight, and in the editor a long press
+// that opens the menu moves nothing.
 
 export default async function ({ page, hmi, sys, check, eventually }) {
   const pageId = await hmi.addPage("Touch");
@@ -55,5 +56,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await finger("touchEnd");
   await eventually(() => hmi.state.values.Speed?.value === 0, "lifting the finger to release");
   check((await button.evaluate((el) => getComputedStyle(el).filter)) === "none", "the button stayed lit as if hovered");
+  const flash = await touch.evaluate(() => [...document.querySelectorAll("button, .el, .list-row")].map((el) => getComputedStyle(el).webkitTapHighlightColor).find((c) => c !== "rgba(0, 0, 0, 0)"));
+  check(flash === undefined, `a tap flashes ${flash}`);
   await touch.close();
 }
