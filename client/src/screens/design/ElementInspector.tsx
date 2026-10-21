@@ -207,7 +207,7 @@ function PageInspector(p: { page: Page }) {
             label="Fill"
             kind="colour"
             value={p.page.fill}
-            placeholder="#15171a"
+            placeholder="$ground"
             onWrite={(fill) => send({ type: "edit", edit: { kind: "set_fill", page: p.page.id, fill: fill ?? "" } }) && setState("pages", (pg) => pg.id === p.page.id, { fill: fill ?? "" })}
             onShow={(fill) => setState("pages", (pg) => pg.id === p.page.id, { fill })}
           />

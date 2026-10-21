@@ -29,7 +29,7 @@ pub struct Page {
     pub height: u32,
     #[serde(default)]
     pub shows: Shows,
-    /// A page's ground, an expression such as `$ground`. Empty draws the default.
+    /// A page's ground, an expression. Empty is the theme's `$ground`.
     #[serde(default)]
     pub fill: String,
     #[serde(default)]

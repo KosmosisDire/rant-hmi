@@ -17,6 +17,6 @@ id: string,
  */
 name: string, width: number, height: number, shows: Shows, 
 /**
- * A page's ground, an expression such as `$ground`. Empty draws the default.
+ * A page's ground, an expression. Empty is the theme's `$ground`.
  */
 fill: string, interface: Interface | null, children: Array<Element>, };

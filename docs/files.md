@@ -167,7 +167,8 @@ component placed on a page is a tag named after it.
 - `<input value="Speed"/>` is a field an operator types into. A bare name as its value takes
   the entry, and its `change` handler reads it as `p.value`.
 - `shows="over"` on a page opens it over the page beneath, as a dialog.
-- `fill` is a page's ground, an expression too, so `fill="$ground"` follows light and dark.
+- `fill` is a page's ground, an expression too. Left out it is `$ground`, the theme's, so it
+  follows light and dark.
 
 A component has the same body, with its inputs, the events it sends and its own variables
 first.

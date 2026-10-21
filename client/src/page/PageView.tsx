@@ -79,10 +79,11 @@ const QUICKEST = 50;
 /** CSS lengths that read a bare number as pixels. */
 const LENGTHS = new Set(["font-size", "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "border-width", "padding", "margin", "gap", "letter-spacing", "outline-width"]);
 
-/** A page's ground from its fill, none for the default or a component. */
+/** A page's ground from its fill, the theme's `$ground` when it has none. None for a component,
+ *  or a project without that token, which take the default. */
 export function pageGround(page: Page): string | undefined {
-  if (page.interface || !page.fill) return undefined;
-  const r = resolve(page.fill, pageScope);
+  if (page.interface) return undefined;
+  const r = resolve(page.fill || "$ground", pageScope);
   return r.ok && r.value !== undefined && r.value !== null && r.value !== "" ? String(r.value) : undefined;
 }
 

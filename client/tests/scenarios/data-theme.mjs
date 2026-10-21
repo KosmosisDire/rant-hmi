@@ -70,7 +70,21 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Data");
   await page.locator(".data-detail tr", { hasText: "$ringA" }).getByText("cannot be worked out").first().waitFor();
 
-  // a page's fill reads the theme too, so the ground follows light and dark
+  // a page's fill reads the theme too, so the ground follows light and dark, and a page with
+  // none shows the theme's $ground
+  const ground = () =>
+    page.evaluate(() => {
+      const c = document.querySelector(".artboard-grid");
+      const [sheet, host] = [document.querySelector(".artboard .page").getBoundingClientRect(), c.getBoundingClientRect()];
+      const at = (v) => Math.round((v + 3) * devicePixelRatio);
+      return [...c.getContext("2d").getImageData(at(sheet.left - host.left), at(sheet.top - host.top), 1, 1).data.slice(0, 3)].join();
+    });
+  await d.openPage("Themed");
+  await eventually(async () => (await ground()) === "10,10,10", "the artboard to draw $ground");
+  await page.locator('button[title="Switch the theme"]').click();
+  await eventually(async () => (await ground()) === "236,236,236", "the artboard to draw the light $ground");
+  await page.locator('button[title="Switch the theme"]').click();
+  await d.tab("Data");
   await page.locator("button", { hasText: "Add a token" }).click();
   await right.locator(".head-title", { hasText: "$color" }).waitFor();
   await set("Name", "floor");
@@ -81,13 +95,6 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Escape");
   await d.setField("Fill", "$floor");
   await eventually(() => hmi.page(pageId).fill === "$floor", "the page's fill");
-  const ground = () =>
-    page.evaluate(() => {
-      const c = document.querySelector(".artboard-grid");
-      const [sheet, host] = [document.querySelector(".artboard .page").getBoundingClientRect(), c.getBoundingClientRect()];
-      const at = (v) => Math.round((v + 3) * devicePixelRatio);
-      return [...c.getContext("2d").getImageData(at(sheet.left - host.left), at(sheet.top - host.top), 1, 1).data.slice(0, 3)].join();
-    });
   await eventually(async () => (await ground()) === "16,20,24", "the artboard to draw the dark fill");
   await page.locator('button[title="Switch the theme"]').click();
   await eventually(async () => (await ground()) === "244,244,244", "the artboard to draw the light fill");
