@@ -526,7 +526,9 @@
   opacity: 0;
 }
 
-.vbox:hover .tail {
+/* a finger has no hover to find it by */
+:root:not([data-pointer="touch"]) .vbox:hover .tail,
+:root[data-pointer="touch"] .vbox .tail {
   opacity: 1;
 }
 

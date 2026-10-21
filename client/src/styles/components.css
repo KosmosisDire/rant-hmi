@@ -158,7 +158,7 @@
   color: var(--dim);
 }
 
-.icon-btn:hover,
+:root:not([data-pointer="touch"]) .icon-btn:hover,
 .icon-btn.on {
   color: var(--text);
   background: var(--panel3);
@@ -180,7 +180,7 @@
   border-radius: 4px;
 }
 
-.button:hover {
+:root:not([data-pointer="touch"]) .button:not(.primary):hover {
   border-color: var(--dim);
 }
 
@@ -214,7 +214,7 @@
   border-radius: 4px;
 }
 
-.choice button:hover {
+:root:not([data-pointer="touch"]) .choice button:hover {
   color: var(--text);
 }
 
@@ -541,7 +541,7 @@
   outline: 0;
 }
 
-.editor:hover {
+:root:not([data-pointer="touch"]) .editor:not(:focus, .bad):hover {
   border-color: var(--dim);
 }
 
@@ -721,7 +721,7 @@
   border-radius: 4px;
 }
 
-.row-add:hover {
+:root:not([data-pointer="touch"]) .row-add:hover {
   color: var(--text);
   background: var(--panel3);
 }
@@ -832,7 +832,7 @@ table.grid tr.row {
   cursor: pointer;
 }
 
-table.grid tr.row:hover td {
+:root:not([data-pointer="touch"]) table.grid tr.row:not(.selected):hover td {
   background: var(--cell-hover);
 }
 
@@ -1123,7 +1123,7 @@ table.grid td.name > span {
   cursor: pointer;
 }
 
-.cp-token:hover {
+:root:not([data-pointer="touch"]) .cp-token:hover {
   border-color: var(--dim);
 }
 
