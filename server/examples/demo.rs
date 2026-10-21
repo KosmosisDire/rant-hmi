@@ -1,6 +1,6 @@
 //! A small line to try the HMI on: a conveyor, a jog topic, a reset function, a moving robot,
-//! a camera with the boxes a detector finds in its frames and a home it counts, and the same
-//! view as MJPEG video.
+//! a camera with the boxes a detector finds in its frames and a home it counts, the same view
+//! as MJPEG video, and a label camera showing a real conveyor shot with a parcel and its labels.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
@@ -60,6 +60,8 @@ fn main() -> Result<(), rant::Error> {
     let _exposure = node.variable_definition::<f64>("Cell/Camera/Exposure", VariableOptions::new().initial(8.0))?;
     let inspection = node.publisher::<VideoFrame>("Cell/Inspection", Qos::new())?;
     let detections = node.publisher::<Detections>("Cell/Detections", Qos::new())?;
+    let label_cam = node.publisher::<VideoFrame>("Line1/LabelCam", Qos::new())?;
+    let labels = node.publisher::<Detections>("Line1/LabelCam/Detections", Qos::new())?;
     let jog = Arc::new(Mutex::new(None::<f64>));
     let heard = jog.clone();
     let _jog = node.subscriber::<f64>("Line1/Jog", Qos::new(), move |m| *heard.lock().unwrap() = Some(m.into_inner()))?;
@@ -115,9 +117,18 @@ fn main() -> Result<(), rant::Error> {
             camera.send(&image)?;
             detections.send(&Detections { boxes: vec![found] })?;
         }
+        if frame.is_multiple_of(4) {
+            label_cam.send(&VideoFrame { codec: VideoCodec::Mjpeg, width: 960, height: 540, keyframe: true, pts: Timestamp::now(), data: SHOT.to_vec() })?;
+            labels.send(&Detections { boxes: SHOT_FINDS.iter().map(|&[x0, y0, x1, y1]| AlignedBox2D { min: Double2 { x: x0, y: y0 }, max: Double2 { x: x1, y: y1 } }).collect() })?;
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+/// A real conveyor shot for the label camera, 960 by 540, and what a detector finds in it, in
+/// its pixels: the parcel, then its two labels.
+const SHOT: &[u8] = include_bytes!("conveyor.jpg");
+const SHOT_FINDS: [[f64; 4]; 3] = [[349.0, 114.0, 695.0, 399.0], [419.0, 210.0, 569.0, 292.0], [549.0, 247.0, 693.0, 334.0]];
 
 /// A camera frame of a part on a shaded belt, and the box around the part, in its pixels.
 fn camera_frame(t: f64) -> (Image, AlignedBox2D) {
