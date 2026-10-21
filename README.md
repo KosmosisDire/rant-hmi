@@ -4,9 +4,9 @@ A GUI for designing safe, fast and powerful HMIs and apps easily. Design and dep
 interface in the web while the logic runs reliably in a native backend. Supports streaming
 data over WebSocket or WebRTC.
 
-![The editor, designing a robot cell's overview page](docs/editor.png)
+![The editor, designing the packing line example's overview page](docs/editor.png)
 
-![The finished page on an operator's screen, a job running](docs/page.png)
+![The finished page on an operator's screen, the line running](docs/page.png)
 
 ## Install
 
