@@ -50,6 +50,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await rows()).join("") === "CBA", "the list to show A at the back");
   await page.keyboard.press("Control+BracketRight");
   await eventually(() => order() === "BAC", "A to come forward one");
+  await eventually(async () => (await rows()).join("") === "CAB", "the list to show A forward");
   check((await page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-row.selected .list-label").textContent()) === "A", "a click on a row no longer selects it");
 
   // the bottom of one row and the top of the next mark one place, with one line
