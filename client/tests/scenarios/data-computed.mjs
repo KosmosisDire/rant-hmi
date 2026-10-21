@@ -41,8 +41,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.locator(".notice", { hasText: "reads itself" }).waitFor();
   check(percent().get === "Speed * 100", "a getter reading itself was kept");
 
+  // picking the target warned already, of its first setter v, so this looks for its own words
   await write("As", "v * 4");
-  await page.locator(".notice.warn", { hasText: "does not undo it" }).waitFor();
+  await page.locator(".notice.warn", { hasText: "does not undo it: writing 1 reads back as 400" }).waitFor();
   await write("As", "v / 100");
   await eventually(() => percent()?.set?.value === "v / 100", "the setter put right");
 }
