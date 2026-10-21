@@ -2,7 +2,7 @@ import { batch, createEffect, createSignal, on, onCleanup, onMount, Show, untrac
 import { state } from "../../state/store";
 import { currentPage, openPage, tookWanted, wanted } from "../../state/view";
 import { Edge } from "../../ui/Sidebars";
-import { Artboard, GRID } from "./Artboard";
+import { Artboard, GRID, STEP } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
 import { Outline } from "./Outline";
@@ -126,7 +126,7 @@ export function DesignScreen(p: { shown: boolean }) {
       } else if (e.key === "Escape") {
         setSelection([]);
       } else if (e.key.startsWith("Arrow")) {
-        const step = GRID * (e.shiftKey ? 4 : 1);
+        const step = e.shiftKey ? STEP : GRID;
         const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
         const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
         const edits = picked.flatMap((el) => shiftBy(page, el, dx, dy));

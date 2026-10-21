@@ -27,7 +27,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Control+d");
   await eventually(() => roots().length === 4, "the duplicate");
   const dup = roots()[2];
-  check(dup.props.x === "55" && dup.props.y === "55", `the duplicate sits at ${dup.props.x}, ${dup.props.y}`);
+  check(dup.props.x === "54" && dup.props.y === "54", `the duplicate sits at ${dup.props.x}, ${dup.props.y}`);
 
   await eventually(async () => dup.id === (await page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-row.selected").getAttribute("data-id")), "the duplicate to be selected");
   await page.keyboard.press("Control+x");

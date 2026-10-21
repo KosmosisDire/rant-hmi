@@ -11,7 +11,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   const moved = async (what, before, keys) => {
     await eventually(() => keys.some((k) => at()[k] !== before[k]), what);
-    for (const k of keys) check(Number(at()[k]) % 11 === 0, `${k} ${at()[k]} is off the grid after ${what}`);
+    for (const k of keys) check(Number.isInteger(Number(at()[k])), `${k} ${at()[k]} is off the whole pixels after ${what}`);
   };
 
   let before = { ...at() };

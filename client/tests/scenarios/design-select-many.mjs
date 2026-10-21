@@ -39,7 +39,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await drawn(a)) === "44px 44px" && (await drawn(b)) === "220px 44px", "the page to draw both back", 1500);
 
   await page.keyboard.press("ArrowRight");
-  await eventually(() => x(a) === "55" && x(b) === "231", "the arrows to nudge both");
+  await eventually(() => x(a) === "45" && x(b) === "221", "the arrows to nudge both");
 
   await row("C").click({ modifiers: ["Control"] });
   await eventually(async () => (await head.textContent()) === "3 elements", "a layer row to join the selection");
@@ -56,7 +56,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await tool("Spread evenly across").click();
   const gaps = () => {
     const [xa, xb, xc] = [a, b, c].map((id) => Number(x(id)));
-    return xa === 55 && xc === 500 && Math.abs(xb - xa - (xc - xb)) <= 1;
+    return xa === 45 && xc === 500 && Math.abs(xb - xa - (xc - xb)) <= 1;
   };
   await eventually(gaps, "even gaps across");
   await page.keyboard.press("Delete");

@@ -17,7 +17,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.el(panel).click({ position: { x: 8, y: 8 } });
   check((await d.field("Origin").inputValue()) === '"50% 50%"', "the inspector does not show the origin under Placement");
   await page.keyboard.press("ArrowRight");
-  await eventually(() => props(hmi, pageId, panel).x === "611", () => `a nudge to move x by its step of 11, x is ${props(hmi, pageId, panel).x}`);
+  await eventually(() => props(hmi, pageId, panel).x === "601", () => `a nudge to move x by its step of 1, x is ${props(hmi, pageId, panel).x}`);
   check(props(hmi, pageId, panel).y === "200", "a nudge across moved y");
 
   // a drag moves x and y by the pointer's travel, and the page's own numbers take over after
@@ -30,7 +30,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.mouse.move(at.x + 8 + 44 * k, at.y + 8 + 22 * k, { steps: 5 });
   await page.mouse.up();
   await page.keyboard.up("Alt");
-  await eventually(() => props(hmi, pageId, panel).x === "655" && props(hmi, pageId, panel).y === "222", () => `the drag to land at 655, 222, not ${props(hmi, pageId, panel).x}, ${props(hmi, pageId, panel).y}`);
+  await eventually(() => props(hmi, pageId, panel).x === "645" && props(hmi, pageId, panel).y === "222", () => `the drag to land at 645, 222, not ${props(hmi, pageId, panel).x}, ${props(hmi, pageId, panel).y}`);
   await hmi.setProps(pageId, panel, { x: "700" });
   await eventually(async () => (await left(panel))[0] === 600, async () => `a later x to move it, it stays at ${await left(panel)}`);
 

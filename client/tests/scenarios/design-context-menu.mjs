@@ -53,7 +53,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Enter");
   const inner = () => hmi.page(pageId).children.find((e) => e.id === box).children.find((c) => c.tag === "div");
   await eventually(inner, "a frame inside the box");
-  check(Number(inner().props.x) === 121 && Number(inner().props.y) === 55, `the frame sits at ${inner().props.x}, ${inner().props.y} in the box, not where the menu opened`);
+  check(Number(inner().props.x) === 120 && Number(inner().props.y) === 50, `the frame sits at ${inner().props.x}, ${inner().props.y} in the box, not where the menu opened`);
 
   // the layers tree adds into the frame its row is
   const row = page.locator(`.screen:not([hidden]) .sidebar.left .list-row[data-id="${box}"]`);

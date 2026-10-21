@@ -14,13 +14,16 @@ import { canvasMenu, elementMenu } from "./menus";
 import { leaves } from "../../page/PageView";
 import { absolute, boxOf, boxText, find, isGroup, literal, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
 
-export const GRID = 11;
+/** Places snap to whole pixels. A finer one is typed as a fraction, or dragged with Alt. */
+export const GRID = 1;
+/** A coarse step: Shift's nudge, and how far a copy lands from what it copies. */
+export const STEP = 10;
 /** Grid lines every so many units and how strong each set is. A set fades out as its lines
  *  close up on screen, so zoomed out the grid thins instead of turning grey. */
 const LEVELS = [
   [GRID, 0.045],
-  [GRID * 4, 0.06],
-  [GRID * 16, 0.06],
+  [STEP, 0.06],
+  [STEP * 10, 0.06],
 ] as const;
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 type Handle = (typeof HANDLES)[number];
@@ -34,8 +37,8 @@ const KEYS: [string, string][] = [
   ["Shift or Ctrl click", "add to the selection or take away"],
   ["Shift drag on empty space", "add what lies wholly inside"],
   ["Ctrl A", "select everything on the page"],
-  ["Drag", "move on the grid, Alt off it"],
-  ["Arrows", "nudge a grid step, Shift four"],
+  ["Drag", "move by whole pixels, Alt by hundredths"],
+  ["Arrows", "nudge a pixel, Shift ten"],
   ["Double click", "type into the element's field"],
   ["Delete", "remove"],
   ["Ctrl D", "duplicate"],
@@ -69,7 +72,7 @@ function keysFor(kind: "move" | Handle): (keyof Box)[] {
 }
 
 function snap(v: number, free: boolean) {
-  return free ? Math.round(v) : Math.round(v / GRID) * GRID;
+  return free ? Number(v.toFixed(2)) : Math.round(v / GRID) * GRID;
 }
 
 function dragged(kind: "move" | Handle, b: Box, dx: number, dy: number, free: boolean): Box {

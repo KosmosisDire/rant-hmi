@@ -4,7 +4,7 @@ import { send } from "../../net/connection";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { number } from "../../state/bind";
-import { GRID } from "./Artboard";
+import { GRID, STEP } from "./Artboard";
 import { childrenOf } from "./tree";
 
 /** What a new element starts as: visible, on the grid, and plainly named. A drawing starts
@@ -47,8 +47,8 @@ export function addElement(page: Page, parent: string | null, tag: Tag, props: R
   if (at) {
     spot = { x: Math.round(at.x / GRID) * GRID, y: Math.round(at.y / GRID) * GRID };
   } else {
-    let n = parent ? GRID : 4 * GRID;
-    while (childrenOf(page, parent).some((e) => number(e.props.x) === n && number(e.props.y) === n)) n += 2 * GRID;
+    let n = parent ? STEP : 4 * STEP;
+    while (childrenOf(page, parent).some((e) => number(e.props.x) === n && number(e.props.y) === n)) n += 2 * STEP;
     spot = { x: n, y: n };
   }
   const element = { id: "", tag, component, props: { ...props, x: String(spot.x), y: String(spot.y) }, handlers: [], children: [] };
