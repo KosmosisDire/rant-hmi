@@ -1,8 +1,8 @@
 // A designer builds a Joystick in the editor alone: a base, a travel ring and a knob drawn in
-// one drawing. The knob follows the finger while it stays within the ring, stops at the ring
-// beyond it, and springs back on release. It sends move with x and y from -1 to 1, up being
-// positive, which the page keeps in two variables, and held with the same on each beat while
-// held, even a still one, and a last 0, 0 when let go.
+// one drawing. Only a press on the base works it. The knob follows the finger while it stays
+// within the ring, stops at the ring beyond it, and springs back on release. It sends move with
+// x and y from -1 to 1, up being positive, which the page keeps in two variables, and held with
+// the same on each beat while held, even a still one, and a last 0, 0 when let go.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   for (const name of ["jogX", "jogY"]) hmi.send({ type: "set_variable", name, variable: { name, start: 0, per: "screen" } });
@@ -17,9 +17,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addSends("move");
   await d.addSends("held");
   await d.add("drawing", { Name: "pad", x: "0", y: "0", w: "220", h: "220" });
+  // the base takes the presses, which the ring and the knob above it let through
+  await d.addShape("circle", { Name: "base", "Centre x": "110", "Centre y": "110", Radius: "104", Fill: "#1e2125", Stroke: "#3a4046", Thickness: "2" });
   await d.handler("drag", [
-    "// the knob goes where the finger is, as far as the ring",
-    "const dx = (p.x - 0.5) * 220, dy = (p.y - 0.5) * 220;",
+    "// the knob goes where the finger is, as far as the ring, on a base 208 across",
+    "const dx = (p.x - 0.5) * 208, dy = (p.y - 0.5) * 208;",
     "const k = Math.min(1, travel / Math.max(Math.hypot(dx, dy), 1));",
     "kx = (dx * k) / travel;",
     "ky = (dy * k) / travel;",
@@ -27,9 +29,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   ].join("\n"));
   await d.handler("release", 'kx = 0;\nky = 0;\nemit("move", { x: 0, y: 0 });\nemit("held", { x: 0, y: 0 });');
   await d.handler("repeat", 'emit("held", { x: kx, y: -ky });', "repeatMs");
-  await d.addShape("circle", { Name: "base", "Centre x": "110", "Centre y": "110", Radius: "104", Fill: "#1e2125", Stroke: "#3a4046", Thickness: "2" });
   await d.addShape("circle", { Name: "ring", "Centre x": "110", "Centre y": "110", Radius: "travel", Fill: '"none"', Stroke: "#2f3540", Thickness: "2", Dashes: '"4 6"' });
-  await d.addShape("circle", { Name: "knob", "Centre x": "110 + kx * travel", "Centre y": "110 + ky * travel", Radius: "34", Fill: 'root.pressed ? "#4a8fd6" : "#3a4046"', Stroke: "#e4e6e8", Thickness: "2" });
+  await d.css('pointer-events: "none"');
+  await d.addShape("circle", { Name: "knob", "Centre x": "110 + kx * travel", "Centre y": "110 + ky * travel", Radius: "34", Fill: 'base.pressed ? "#4a8fd6" : "#3a4046"', Stroke: "#e4e6e8", Thickness: "2" });
+  await d.css('pointer-events: "none"');
 
   await d.addPage("Joystick");
   const stick = await d.place("Joystick", { x: "44", y: "44", w: "220", h: "220" });
@@ -46,6 +49,19 @@ export default async function ({ page, hmi, d, check, eventually }) {
   };
   const [cx, cy] = await centre(inst);
   const scale = (await inst.boundingBox()).width / 220;
+  const shared = (name) => hmi.state.values[name]?.value;
+  const beats = () => shared("beats");
+
+  // a press in the box's corner, outside the base, does nothing
+  const corner = await inst.boundingBox();
+  const idle = beats();
+  await page.mouse.move(corner.x + 4, corner.y + 4);
+  await page.mouse.down();
+  await page.mouse.move(corner.x + 30, corner.y + 30, { steps: 4 });
+  await page.waitForTimeout(300);
+  const [ix, iy] = await centre(knob);
+  check(Math.abs(ix - cx) < 2 && Math.abs(iy - cy) < 2 && beats() === idle, "a press outside the base worked the stick");
+  await page.mouse.up();
 
   // within the ring the knob sits under the finger
   await page.mouse.move(cx, cy);
@@ -65,8 +81,6 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await reads("x 1.00  y 0.00", "a full push right");
 
   // held still, it keeps sending where it is, about once each 100 ms
-  const shared = (name) => hmi.state.values[name]?.value;
-  const beats = () => shared("beats");
   const from = beats();
   await page.waitForTimeout(600);
   const counted = beats() - from;

@@ -1,0 +1,26 @@
+<component name="Joystick1D" size="264x66">
+  <prop name="travel" default="99"/>
+  <prop name="repeatMs" default="100"/>
+  <event name="move"/>
+  <event name="held"/>
+  <var name="kx" start="0"/>
+  <svg id="e1" name="pad" x="0" y="0" w="264" h="66">
+    <rect id="e2" name="track" fill="#1e2125" height="60" rx="30" stroke="#3a4046" stroke-width="2" width="258" x="3" y="3">
+      <on event="release">
+        kx = 0;
+        emit("move", { x: 0 });
+        emit("held", { x: 0 });
+      </on>
+      <on event="repeat" every="repeatMs">
+        emit("held", { x: kx });
+      </on>
+      <on event="drag">
+        // the knob goes where the finger is along a track 258 across, as far as the travel
+        kx = Math.max(-1, Math.min(1, ((p.x - 0.5) * 258) / travel));
+        emit("move", { x: kx });
+      </on>
+    </rect>
+    <line id="e3" name="span" fill='"none"' pointer-events='"none"' stroke="#2f3540" stroke-dasharray='"4 6"' stroke-linecap='"round"' stroke-width="2" x1="132 - travel" x2="132 + travel" y1="33" y2="33"/>
+    <circle id="e4" name="knob" cx="132 + kx * travel" cy="33" fill='track.pressed ? "#4a8fd6" : "#3a4046"' pointer-events='"none"' r="24" stroke="#e4e6e8" stroke-width="2"/>
+  </svg>
+</component>
