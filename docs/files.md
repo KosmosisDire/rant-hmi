@@ -188,6 +188,8 @@ first.
 - `sizing="fill"` lays the component out in the box each instance is placed at, so what it
   places in percents stretches with it. Without it an instance scales the component whole to
   fit its box, keeping its shape.
+- A `<prop>`'s `default` and a `<var>`'s `start` read constants and the theme's tokens, so
+  `default="$accent"` follows the theme until an instance gives its own.
 - `bindable` lets the component write the input back to what the instance binds it to.
 - Each instance keeps its own `<var>` on each screen, from `start`. Its code reads and sets
   it by name.

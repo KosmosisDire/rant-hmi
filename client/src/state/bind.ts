@@ -204,7 +204,9 @@ export function bareRef(value: string | undefined): { name: string; fields: stri
   return ref ? { name: ref[1], fields: ref[2].slice(1) } : null;
 }
 
-const nothing: Scope = { has: () => false, get: () => undefined, set: () => {}, writes: () => false, missing: (name) => `${name} cannot be read here` };
+/** What an input's default and a variable's start read: the theme's tokens and the math, the
+ *  same on every screen and instance. */
+const constants: Scope = { ...tokenScope, missing: (name) => `${name} cannot be read here, only the theme's tokens` };
 
 /** What an instance shows of its own while held, over what its bindings say. */
 export interface Own {
@@ -264,11 +266,11 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
     has: (name) => input(name) !== undefined || variable(name) !== undefined || part(name),
     get: (name) => {
       const v = variable(name);
-      if (v) return instance?.kept?.get(name) ?? read(resolve(v.start, nothing), name);
+      if (v) return instance?.kept?.get(name) ?? read(resolve(v.start, constants), name);
       if (!input(name)) return instance?.kept?.part(name) ?? STILL;
       if (instance?.own?.has(name)) return instance.own.get(name);
       const given = instance?.props[name];
-      return read(given !== undefined ? resolve(given, instance!.outer) : resolve(input(name)!.default, nothing), name);
+      return read(given !== undefined ? resolve(given, instance!.outer) : resolve(input(name)!.default, constants), name);
     },
     // a write goes through the instance's binding when that is a bare name, and is dropped
     // otherwise, so a control bound one way reads as a display

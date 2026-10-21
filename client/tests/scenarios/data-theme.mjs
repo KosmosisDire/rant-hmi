@@ -23,14 +23,18 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Themed");
   const frame = await hmi.addElement(pageId, "div", { name: "Box", x: "44", y: "44", w: "176", h: "88", background: "$signal" });
   const badge = await hmi.addComponent("Badge");
-  await hmi.addElement(badge, "div", { name: "Dot", x: "0", y: "0", w: "88", h: "88", background: "$signal" });
+  // its colour an input whose default is the theme's, so an instance may give its own
+  await hmi.edit({ kind: "set_input", page: badge, name: "tone", input: { name: "tone", default: "$signal", bindable: false } });
+  await hmi.addElement(badge, "div", { name: "Dot", x: "0", y: "0", w: "88", h: "88", background: "tone" });
   const inst = await hmi.addElement(pageId, "use", { name: "Badge", x: "264", y: "44", w: "88", h: "88" }, null, "Badge");
+  const own = await hmi.addElement(pageId, "use", { name: "Own", x: "400", y: "44", w: "88", h: "88", tone: "#00ff00" }, null, "Badge");
 
   await d.openPage("Themed");
   const colour = (loc) => loc.evaluate((e) => getComputedStyle(e).backgroundColor);
   const dot = d.el(inst).locator(".instance .el");
   await eventually(async () => (await colour(d.el(frame))) === "rgb(255, 136, 0)", "the page to read the dark value");
-  check((await colour(dot)) === "rgb(255, 136, 0)", "a component cannot read the theme");
+  check((await colour(dot)) === "rgb(255, 136, 0)", "a component's default cannot read the theme");
+  check((await colour(d.el(own).locator(".instance .el"))) === "rgb(0, 255, 0)", "an instance's own colour did not win over the default");
 
   await page.locator('button[title="Switch the theme"]').click();
   await eventually(async () => (await colour(d.el(frame))) === "rgb(0, 136, 255)", "the light value in light mode");
@@ -48,7 +52,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.locator(".data-detail tr", { hasText: "$signal" }).click();
   await set("Name", "brand");
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === frame)?.props.background === "$brand", "the page to follow the rename");
-  await eventually(() => hmi.page(badge).children[0].props.background === "$brand", "the component to follow the rename");
+  await eventually(() => hmi.page(badge).interface.inputs[0].default === "$brand", "the component's default to follow the rename");
 
   // worked out from another, the light value the dark one's own working out
   await page.locator("button", { hasText: "Add a token" }).click();

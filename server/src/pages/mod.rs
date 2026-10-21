@@ -64,7 +64,7 @@ pub enum Sizing {
 }
 
 /// A component's own variable, camelCase. Each instance starts it at `start`, an expression of
-/// constants, and its code sets it.
+/// constants and theme tokens, and its code sets it.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct Local {
@@ -77,7 +77,7 @@ pub struct Local {
 #[ts(export)]
 pub struct Input {
     pub name: String,
-    /// The expression it reads while an instance gives none.
+    /// The expression it reads while an instance gives none, of constants and theme tokens.
     pub default: String,
     /// The component may write it back through the instance's binding.
     #[serde(default)]
@@ -425,8 +425,16 @@ impl Pages {
         let mut touched = Vec::new();
         for p in self.list.iter_mut().filter(|p| components || p.interface.is_none()) {
             let fill = js::rename(&p.fill, from, to);
-            let changed = fill != p.fill;
+            let mut changed = fill != p.fill;
             p.fill = fill;
+            // a component's input defaults and variable starts may read a theme token
+            if let Some(i) = p.interface.as_mut() {
+                for code in i.inputs.iter_mut().map(|i| &mut i.default).chain(i.variables.iter_mut().map(|v| &mut v.start)) {
+                    let renamed = js::rename(code, from, to);
+                    changed |= renamed != *code;
+                    *code = renamed;
+                }
+            }
             if p.children.iter_mut().fold(changed, |c, e| rename_in(e, from, to) | c) {
                 touched.push(p.id.clone());
             }
@@ -1194,7 +1202,15 @@ mod tests {
         assert_eq!(pages.rename("$ground", "$base", true).unwrap(), ["overview"]);
         assert_eq!(Pages::open(&dir).unwrap().get("overview").unwrap().fill, "$base");
         let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into() }).unwrap().made.unwrap().1;
-        assert_eq!(pages.apply(Edit::SetFill { page: gauge, fill: "#000".into() }).err().unwrap(), "Gauge draws on what holds it, so it has no fill");
+        assert_eq!(pages.apply(Edit::SetFill { page: gauge.clone(), fill: "#000".into() }).err().unwrap(), "Gauge draws on what holds it, so it has no fill");
+        // a default and a start read the theme too, so they follow its renames
+        let input = Some(Input { name: "tone".into(), default: "$base".into(), bindable: false });
+        pages.apply(Edit::SetInput { page: gauge.clone(), name: "tone".into(), input }).unwrap();
+        let local = Some(Local { name: "soft".into(), start: "$base.alpha(0.5)".into() });
+        pages.apply(Edit::SetLocal { page: gauge.clone(), name: "soft".into(), local }).unwrap();
+        assert_eq!(pages.rename("$base", "$floor", true).unwrap(), [gauge.as_str(), "overview"]);
+        let i = Pages::open(&dir).unwrap().get(&gauge).unwrap().interface.clone().unwrap();
+        assert_eq!((i.inputs[0].default.as_str(), i.variables[0].start.as_str()), ("$floor", "$floor.alpha(0.5)"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

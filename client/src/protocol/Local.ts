@@ -2,6 +2,6 @@
 
 /**
  * A component's own variable, camelCase. Each instance starts it at `start`, an expression of
- * constants, and its code sets it.
+ * constants and theme tokens, and its code sets it.
  */
 export type Local = { name: string, start: string, };

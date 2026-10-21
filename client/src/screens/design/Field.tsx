@@ -34,7 +34,17 @@ export type Kind = "number" | "colour" | "choice" | "flag" | "text" | "any";
 export function kindOf(text: string): Kind {
   const t = text.trim();
   if (isNumber(t)) return "number";
-  if (/^#[0-9a-f]{3,8}$/i.test(t) || /^\$[\w]+$/.test(t)) return "colour";
+  if (/^#[0-9a-f]{3,8}$/i.test(t)) return "colour";
+  // a token is what it works out to
+  const token = state.tokens.find((k) => `$${k.name}` === t);
+  if (token) {
+    try {
+      const v = tokenValue(token);
+      return typeof v === "number" ? "number" : typeof v === "string" && CSS.supports("color", v) ? "colour" : "any";
+    } catch {
+      return "any";
+    }
+  }
   if (t === "true" || t === "false") return "flag";
   if (/^"(?:[^"\\]|\\.)*"$/.test(t)) return "text";
   return "any";

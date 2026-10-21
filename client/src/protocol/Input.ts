@@ -5,7 +5,7 @@
  */
 export type Input = { name: string, 
 /**
- * The expression it reads while an instance gives none.
+ * The expression it reads while an instance gives none, of constants and theme tokens.
  */
 default: string, 
 /**
