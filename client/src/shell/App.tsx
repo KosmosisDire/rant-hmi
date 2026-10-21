@@ -5,7 +5,7 @@ import { DesignScreen } from "../screens/design/DesignScreen";
 import { LogicScreen } from "../screens/logic/LogicScreen";
 import { RunScreen } from "../screens/run/RunScreen";
 import { currentTab, followHistory, openPage, openTab } from "../state/view";
-import { closeDrawer, sidebarsClosed, sidebarWidths } from "../ui/Sidebars";
+import { putAway, sidebarsClosed, sidebarWidths } from "../ui/Sidebars";
 import { MenuHost } from "../ui/Menu";
 import { Notices } from "../ui/Notices";
 import { StatusBar } from "./StatusBar";
@@ -27,8 +27,7 @@ export function App() {
     window.addEventListener("keydown", undo);
   });
   onCleanup(() => window.removeEventListener("keydown", undo));
-  // a phone's drawer holds one screen's list, so another tab puts it away
-  createEffect(on(tab, closeDrawer, { defer: true }));
+  createEffect(on(tab, putAway, { defer: true }));
   // every screen stays mounted, so a tab switch keeps what each one was showing
   return (
     <div class="app" classList={sidebarsClosed()} style={sidebarWidths()}>

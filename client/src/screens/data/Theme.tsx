@@ -7,6 +7,7 @@ import type { Token } from "../../protocol/Token";
 import { tokenScope, tokenValue } from "../../state/bind";
 import { putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
+import { Grid } from "../../ui/Grid";
 import { Copy, Plus, Trash } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Field, kindOf, WhereContext } from "../design/Field";
@@ -66,38 +67,29 @@ export function ThemeTable(p: Picking) {
       <div class="hint">Design values every page and component reads as $name: colours, numbers in units and text. Each may be worked out from other tokens, as $accent.alpha(0.15), and may differ on light screens.</div>
       <div class="detail-body">
         <Show when={state.tokens.length > 0} fallback={<div class="placeholder">No tokens yet.</div>}>
-          <table class="grid">
-            <thead>
-              <tr>
-                <th>Token</th>
-                <th>Dark</th>
-                <th>Light</th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={state.tokens}>
-                {(t) => (
-                  <tr
-                    class="row"
-                    classList={{ selected: p.selection?.kind === "token" && p.selection.name === t.name }}
-                    onClick={() => p.onSelect({ kind: "token", name: t.name })}
-                    onContextMenu={(e) => {
-                      p.onSelect({ kind: "token", name: t.name });
-                      openMenu(e, [{ label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(`$${t.name}`) }, "-", { label: "Delete", icon: <Trash size={13} />, run: () => setToken(t.name, null) }]);
-                    }}
-                  >
-                    <td class="name mono">${t.name}</td>
-                    <td>
-                      <Value token={t} mode="dark" />
-                    </td>
-                    <td>
-                      <Value token={t} mode="light" />
-                    </td>
-                  </tr>
-                )}
-              </For>
-            </tbody>
-          </table>
+          <Grid cols={["Token", "Dark", "Light"]}>
+            <For each={state.tokens}>
+              {(t) => (
+                <tr
+                  class="row"
+                  classList={{ selected: p.selection?.kind === "token" && p.selection.name === t.name }}
+                  onClick={() => p.onSelect({ kind: "token", name: t.name })}
+                  onContextMenu={(e) => {
+                    p.onSelect({ kind: "token", name: t.name });
+                    openMenu(e, [{ label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(`$${t.name}`) }, "-", { label: "Delete", icon: <Trash size={13} />, run: () => setToken(t.name, null) }]);
+                  }}
+                >
+                  <td class="name mono">${t.name}</td>
+                  <td>
+                    <Value token={t} mode="dark" />
+                  </td>
+                  <td>
+                    <Value token={t} mode="light" />
+                  </td>
+                </tr>
+              )}
+            </For>
+          </Grid>
         </Show>
       </div>
     </>

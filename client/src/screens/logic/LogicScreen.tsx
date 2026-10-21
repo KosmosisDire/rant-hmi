@@ -14,7 +14,7 @@ import { putLocal, state } from "../../state/store";
 import { uses } from "../../state/uses";
 import { currentPage, openElement } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
-import { Edge, Sidebar } from "../../ui/Sidebars";
+import { closeDrawer, Edge, Sidebar } from "../../ui/Sidebars";
 import { painted } from "../../ui/highlight";
 import { Activity, CopyPlus, Monitor, MonitorOff, PenTool, Plus, Power, Search, Timer, Trash, X, Zap } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
@@ -94,6 +94,11 @@ export function LogicScreen(p: { shown: boolean }) {
   const [filter, setFilter] = createSignal("");
   const [chosen, setChosen] = createSignal("");
   const [wanted, setWanted] = createSignal("");
+  // a pick or a new one puts a phone's drawer away, so its code shows
+  const choose = (key: string) => {
+    setChosen(key);
+    closeDrawer();
+  };
   const q = () => filter().trim().toLowerCase();
   const fits = (...words: string[]) => !q() || words.some((w) => w.toLowerCase().includes(q()));
   const rules = () => state.rules.filter((r) => fits(r.name, phrase(r.when)));
@@ -132,6 +137,7 @@ export function LogicScreen(p: { shown: boolean }) {
     const named = (k: number) => (from && k === 1 ? base : `${base} ${k}`);
     while (state.rules.some((r) => r.name === named(n))) n++;
     setFilter("");
+    closeDrawer();
     setWanted(named(n));
     setRule("", { id: "", name: named(n), when: from?.when ?? { kind: "every", ms: 1000 }, code: from?.code ?? "" });
   };
@@ -187,7 +193,7 @@ export function LogicScreen(p: { shown: boolean }) {
           </Show>
           <For each={rules()}>
             {(r) => (
-              <button class="list-row" classList={{ selected: current() === ruleKey(r) }} onClick={() => setChosen(ruleKey(r))} onContextMenu={(e) => ruleMenu(e, r)}>
+              <button class="list-row" classList={{ selected: current() === ruleKey(r) }} onClick={() => choose(ruleKey(r))} onContextMenu={(e) => ruleMenu(e, r)}>
                 <TriggerIcon kind={r.when.kind} />
                 <span class="list-label">{phrase(r.when)}</span>
                 <span class="list-trail">{r.name}</span>
@@ -206,7 +212,7 @@ export function LogicScreen(p: { shown: boolean }) {
                     <button
                       class="list-row"
                       classList={{ selected: current() === onKey(d().pg, e, event) }}
-                      onClick={() => setChosen(onKey(d().pg, e, event))}
+                      onClick={() => choose(onKey(d().pg, e, event))}
                       onContextMenu={(ev) => handlerMenu(ev, d().pg, e, event)}
                     >
                       <EventIcon from={offered(e).find((o) => o.event === event)?.from} size={14} />
@@ -222,7 +228,7 @@ export function LogicScreen(p: { shown: boolean }) {
       </Sidebar>
       <Edge side="left" />
       <section class="detail">
-        <Switch fallback={<div class="later">Pick a handler on the left.</div>}>
+        <Switch fallback={<div class="later">Pick a handler from the list, or add one with +.</div>}>
           <Match when={rule()}>{(r) => <RuleDetail rule={r()} />}</Match>
           <Match when={handler()}>
             {(h) => (

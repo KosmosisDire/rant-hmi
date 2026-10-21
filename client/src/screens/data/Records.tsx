@@ -8,6 +8,7 @@ import type { Value } from "../../protocol/Value";
 import { complete } from "../../state/complete";
 import { freeLocal, live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
+import { Grid } from "../../ui/Grid";
 import { ChartSpline, Copy, Plus, Trash } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
@@ -48,50 +49,39 @@ export function RecordsTable(p: Picking) {
       <div class="hint">A value's history, sampled on the system whether or not a screen watches. Pages read it as a list of t and v, to plot.</div>
       <div class="detail-body">
         <Show when={state.records.length > 0} fallback={<div class="placeholder">No records yet.</div>}>
-          <table class="grid">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Records</th>
-                <th>Every</th>
-                <th>Keeps</th>
-                <th>Latest</th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={state.records}>
-                {(r) => {
-                  const picked = () => p.selection?.kind === "record" && p.selection.name === r.name;
-                  return (
-                    <tr
-                      class="row"
-                      classList={{ selected: picked() }}
-                      onClick={() => p.onSelect({ kind: "record", name: r.name })}
-                      onContextMenu={(e) => {
-                        p.onSelect({ kind: "record", name: r.name });
-                        openMenu(e, [{ label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(r.name) }, "-", { label: "Delete", icon: <Trash size={13} />, run: () => setRecord(r.name, null) }]);
-                      }}
-                    >
-                      <td class="name">
-                        <span>
-                          <span class="kind kind-local">
-                            <ChartSpline size={14} />
-                          </span>
-                          <span class="mono">{r.name}</span>
+          <Grid cols={["Name", "Records", "Every", "Keeps", "Latest"]}>
+            <For each={state.records}>
+              {(r) => {
+                const picked = () => p.selection?.kind === "record" && p.selection.name === r.name;
+                return (
+                  <tr
+                    class="row"
+                    classList={{ selected: picked() }}
+                    onClick={() => p.onSelect({ kind: "record", name: r.name })}
+                    onContextMenu={(e) => {
+                      p.onSelect({ kind: "record", name: r.name });
+                      openMenu(e, [{ label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(r.name) }, "-", { label: "Delete", icon: <Trash size={13} />, run: () => setRecord(r.name, null) }]);
+                    }}
+                  >
+                    <td class="name">
+                      <span>
+                        <span class="kind kind-local">
+                          <ChartSpline size={14} />
                         </span>
-                      </td>
-                      <td class="mono">{r.source}</td>
-                      <td>{r.every_ms} ms</td>
-                      <td>{span(r.keep_s)}</td>
-                      <td class="cell-value">
-                        <Preview value={recent(r.name)} known={live(r.name).known} />
-                      </td>
-                    </tr>
-                  );
-                }}
-              </For>
-            </tbody>
-          </table>
+                        <span class="mono">{r.name}</span>
+                      </span>
+                    </td>
+                    <td class="mono">{r.source}</td>
+                    <td>{r.every_ms} ms</td>
+                    <td>{span(r.keep_s)}</td>
+                    <td class="cell-value">
+                      <Preview value={recent(r.name)} known={live(r.name).known} />
+                    </td>
+                  </tr>
+                );
+              }}
+            </For>
+          </Grid>
         </Show>
       </div>
     </>

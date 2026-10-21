@@ -7,6 +7,7 @@ import type { Computed } from "../../protocol/Computed";
 import { complete, type Suggestion } from "../../state/complete";
 import { freeLocal, live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
+import { Grid } from "../../ui/Grid";
 import { Copy, Plus, Sigma, Trash } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
@@ -48,51 +49,41 @@ export function ComputedTable(p: Picking) {
       <div class="hint">Values worked out from others, as a property is: a scale, a unit, one bit of a status word. One with a setter takes writes back.</div>
       <div class="detail-body">
         <Show when={state.computed.length > 0} fallback={<div class="placeholder">No computed values yet.</div>}>
-          <table class="grid">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Is</th>
-                <th>Writes</th>
-                <th>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={state.computed}>
-                {(c) => {
-                  const picked = () => p.selection?.kind === "computed" && p.selection.name === c.name;
-                  return (
-                    <tr
-                      class="row"
-                      classList={{ selected: picked() }}
-                      onClick={() => p.onSelect({ kind: "computed", name: c.name })}
-                      onContextMenu={(e) => {
-                        p.onSelect({ kind: "computed", name: c.name });
-                        openMenu(e, [{ label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(c.name) }, "-", { label: "Delete", icon: <Trash size={13} />, run: () => setComputed(c.name, null) }]);
-                      }}
-                    >
-                      <td class="name">
-                        <span>
-                          <span class="kind kind-local">
-                            <Sigma size={14} />
-                          </span>
-                          <span class="mono">{c.name}</span>
+          <Grid cols={["Name", "Is", "Writes", "Value"]}>
+            <For each={state.computed}>
+              {(c) => {
+                const picked = () => p.selection?.kind === "computed" && p.selection.name === c.name;
+                return (
+                  <tr
+                    class="row"
+                    classList={{ selected: picked() }}
+                    onClick={() => p.onSelect({ kind: "computed", name: c.name })}
+                    onContextMenu={(e) => {
+                      p.onSelect({ kind: "computed", name: c.name });
+                      openMenu(e, [{ label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(c.name) }, "-", { label: "Delete", icon: <Trash size={13} />, run: () => setComputed(c.name, null) }]);
+                    }}
+                  >
+                    <td class="name">
+                      <span>
+                        <span class="kind kind-local">
+                          <Sigma size={14} />
                         </span>
-                      </td>
-                      <td class="mono">{c.get}</td>
-                      <td class="mono">{c.set ? c.set.target : ""}</td>
-                      <td class="cell-value">
-                        <Preview value={live(c.name).value} known={live(c.name).known} />
-                        <Show when={c.unit}>
-                          <span class="pv-none"> {c.unit}</span>
-                        </Show>
-                      </td>
-                    </tr>
-                  );
-                }}
-              </For>
-            </tbody>
-          </table>
+                        <span class="mono">{c.name}</span>
+                      </span>
+                    </td>
+                    <td class="mono">{c.get}</td>
+                    <td class="mono">{c.set ? c.set.target : ""}</td>
+                    <td class="cell-value">
+                      <Preview value={live(c.name).value} known={live(c.name).known} />
+                      <Show when={c.unit}>
+                        <span class="pv-none"> {c.unit}</span>
+                      </Show>
+                    </td>
+                  </tr>
+                );
+              }}
+            </For>
+          </Grid>
         </Show>
       </div>
     </>

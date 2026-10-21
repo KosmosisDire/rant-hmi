@@ -7,6 +7,7 @@ import type { Variable } from "../../protocol/Variable";
 import type { Value } from "../../protocol/Value";
 import { freeLocal, live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
+import { Grid } from "../../ui/Grid";
 import { Copy, Plus, RotateCcw, Trash } from "../../ui/icons";
 import { LocalIcon } from "../../ui/marks";
 import { copyText, openMenu } from "../../ui/Menu";
@@ -62,49 +63,39 @@ export function VariablesTable(p: Picking) {
       <div class="hint">The HMI's own state, shared by every screen or kept for each one. Handlers set them, pages read them.</div>
       <div class="detail-body">
         <Show when={state.variables.length > 0} fallback={<div class="placeholder">No variables yet.</div>}>
-          <table class="grid">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Kept</th>
-                <th>Starts</th>
-                <th>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={state.variables}>
-                {(v) => {
-                  const now = () => live(v.name);
-                  const picked = () => p.selection?.kind === "variable" && p.selection.name === v.name;
-                  return (
-                    <tr
-                      class="row"
-                      classList={{ selected: picked() }}
-                      onClick={() => p.onSelect({ kind: "variable", name: v.name })}
-                      onContextMenu={(e) => {
-                        p.onSelect({ kind: "variable", name: v.name });
-                        variableMenu(e, v);
-                      }}
-                    >
-                      <td class="name">
-                        <span>
-                          <LocalIcon />
-                          <span class="mono">{v.name}</span>
-                        </span>
-                      </td>
-                      <td>{PER.find(([k]) => k === v.per)?.[1]}</td>
-                      <td class="cell-value">
-                        <Preview value={v.start} known />
-                      </td>
-                      <td class="cell-value">
-                        <Preview value={now().value} known={now().known} />
-                      </td>
-                    </tr>
-                  );
-                }}
-              </For>
-            </tbody>
-          </table>
+          <Grid cols={["Name", "Kept", "Starts", "Value"]}>
+            <For each={state.variables}>
+              {(v) => {
+                const now = () => live(v.name);
+                const picked = () => p.selection?.kind === "variable" && p.selection.name === v.name;
+                return (
+                  <tr
+                    class="row"
+                    classList={{ selected: picked() }}
+                    onClick={() => p.onSelect({ kind: "variable", name: v.name })}
+                    onContextMenu={(e) => {
+                      p.onSelect({ kind: "variable", name: v.name });
+                      variableMenu(e, v);
+                    }}
+                  >
+                    <td class="name">
+                      <span>
+                        <LocalIcon />
+                        <span class="mono">{v.name}</span>
+                      </span>
+                    </td>
+                    <td>{PER.find(([k]) => k === v.per)?.[1]}</td>
+                    <td class="cell-value">
+                      <Preview value={v.start} known />
+                    </td>
+                    <td class="cell-value">
+                      <Preview value={now().value} known={now().known} />
+                    </td>
+                  </tr>
+                );
+              }}
+            </For>
+          </Grid>
         </Show>
       </div>
     </>

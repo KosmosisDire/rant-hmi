@@ -832,11 +832,11 @@ table.grid tr.row {
   cursor: pointer;
 }
 
-:root:not([data-pointer="touch"]) table.grid tr.row:not(.selected):hover td {
+:root:not([data-pointer="touch"]) table.grid tr.row:not(.selected):hover {
   background: var(--cell-hover);
 }
 
-table.grid tr.row.selected td {
+table.grid tr.row.selected {
   background: var(--accent-bg);
 }
 
@@ -848,6 +848,64 @@ table.grid td.name > span {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+}
+
+/* On a phone a row wraps under its name, each other cell under its column's head. */
+@media (max-width: 600px) {
+  table.grid thead {
+    display: none;
+  }
+
+  table.grid,
+  table.grid tbody {
+    display: block;
+  }
+
+  table.grid tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  table.grid td {
+    height: auto;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+  }
+
+  table.grid td.name {
+    flex: 1 0 100%;
+  }
+
+  table.grid td:not(:first-child)::before {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  table.grid td:nth-child(2)::before {
+    content: var(--col-2);
+  }
+
+  table.grid td:nth-child(3)::before {
+    content: var(--col-3);
+  }
+
+  table.grid td:nth-child(4)::before {
+    content: var(--col-4);
+  }
+
+  table.grid td:nth-child(5)::before {
+    content: var(--col-5);
+  }
 }
 
 /* A panel floating under the control that opened it. */

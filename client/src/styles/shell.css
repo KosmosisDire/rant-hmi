@@ -310,6 +310,15 @@
   overflow: visible;
 }
 
+.data-card {
+  flex: none;
+}
+
+/* A phone's strip that picks which table shows. */
+.data-cards {
+  display: none;
+}
+
 /* A screen that is not built yet says what comes there. */
 .later {
   display: flex;
@@ -450,5 +459,56 @@
     border: 0;
     box-shadow: none;
     transition: none;
+  }
+
+  /* one table at a time, picked from the strip or paged by a sideways swipe */
+  .data-detail {
+    touch-action: pan-y;
+    scroll-padding-bottom: var(--sheet, 0px);
+  }
+
+  .data-cards {
+    display: flex;
+    flex: none;
+    margin: 14px 18px 0;
+  }
+
+  .data-cards button {
+    flex: 1 1 0;
+    padding: 0 4px;
+  }
+
+  .data-card:not(.on) {
+    display: none;
+  }
+
+  .data-card.on {
+    transition: transform 0.2s ease-out;
+  }
+
+  .data-card.shifted {
+    transition: none;
+  }
+
+  .data-detail[data-enter="next"] .data-card.on {
+    animation: card-next 0.2s ease-out;
+  }
+
+  .data-detail[data-enter="back"] .data-card.on {
+    animation: card-back 0.2s ease-out;
+  }
+}
+
+@keyframes card-next {
+  from {
+    opacity: 0;
+    transform: translateX(30%);
+  }
+}
+
+@keyframes card-back {
+  from {
+    opacity: 0;
+    transform: translateX(-30%);
   }
 }

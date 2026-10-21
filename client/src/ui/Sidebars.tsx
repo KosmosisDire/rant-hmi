@@ -32,8 +32,14 @@ export const sidebarsClosed = () => ({
   "drawer-open": phone() && drawer(),
 });
 
-/** Puts a phone's drawer away, as a pick from it or another tab does. */
+/** Puts a phone's drawer away, as a pick from it does. */
 export const closeDrawer = () => setDrawer(false);
+
+/** Puts a phone's drawer away and lowers its sheet, since another tab holds other lists. */
+export function putAway() {
+  setDrawer(false);
+  setSheetStop(0);
+}
 
 /** On a phone, shows what was just picked: the drawer goes and the sheet rises to show it. */
 export function reveal() {
