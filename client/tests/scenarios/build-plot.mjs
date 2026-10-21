@@ -1,7 +1,9 @@
 // A designer records Speed on the Data tab and builds a Plot in the editor alone: a diagram in
 // units of 0 to 100 stretched over its box, clipping what falls outside, and a line through the
 // record's samples, the newest at the right edge. As Speed changes, the line grows and ends at
-// its value, and a window shorter than the record keeps the older samples inside the card.
+// its value, and a window shorter than the record keeps the older samples inside the card. The
+// card lays its chart out in whatever box it gets, and its look is inputs that start at the
+// theme's tokens.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Data");
@@ -11,22 +13,30 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => hmi.state.records?.some((r) => r.name === "speedHistory" && r.source === "Speed" && r.keep_s === 10), "the record");
 
   await d.addComponent("Plot", 40, 16);
+  await d.sizing("Fill");
   await d.addInput("values", "[]");
   await d.addInput("min", "0");
   await d.addInput("max", "1");
   await d.addInput("seconds", "10");
-  await d.add("frame", { Name: "card", x: "0", y: "0", w: "40", h: "16", Fill: "$panel", Radius: "$radius" });
-  await d.add("diagram", { Name: "chart", x: "1", y: "1", w: "38", h: "14", "View box": '"0 0 100 100"', Fit: '"stretch"', Overflow: '"hidden"' });
+  await d.addInput("colour", "$accent");
+  await d.addInput("thickness", "2");
+  await d.addInput("fill", "$panel");
+  await d.addInput("radius", "$radius");
+  await d.add("frame", { Name: "card", x: "0", y: "0", w: "100%", h: "100%", Fill: "fill", Radius: "radius" });
+  await d.layOut("Top to bottom");
+  await d.setField("Padding", "1");
+  await d.add("diagram", { Name: "chart", w: "fill", h: "fill", "View box": '"0 0 100 100"', Fit: '"stretch"', Overflow: '"hidden"' });
   await d.addShape("polyline", {
     Name: "line",
     Points: 'values.length ? values.map((s) => ((s.t - values[values.length - 1].t) / (seconds * 1000) + 1) * 100 + "," + (100 - ((s.v - min) / (max - min)) * 100)).join(" ") : ""',
-    Stroke: "$accent",
-    Thickness: "2",
+    Stroke: "colour",
+    Thickness: "thickness",
   });
   await d.css('vector-effect: "non-scaling-stroke"\nstroke-linejoin: "round"');
 
   await d.addPage("Trend");
   const plot = await d.place("Plot", { x: "4", y: "4", w: "40", h: "16", values: "speedHistory", max: "2" });
+  const big = await d.place("Plot", { x: "4", y: "24", w: "80", h: "30", values: "speedHistory", max: "2" });
 
   await d.tab("Run");
   for (const v of [0.2, 0.8, 1.4, 1.9, 1.0]) {
@@ -38,6 +48,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await points()).length >= 10, "the line to have a point a sample");
   const last = (await points()).at(-1).split(",").map(Number);
   check(Math.abs(last[0] - 100) < 0.01 && Math.abs(last[1] - 50) < 0.01, `the line ends at ${last}, not at Speed 1.0 on the right edge`);
+  // a bigger card's chart fills it inside its padding
+  const [card, chart] = [await page.locator(`.run-layer:not([hidden]) .el[data-id="${big}"]`).boundingBox(), await page.locator(`.run-layer:not([hidden]) .el[data-id="${big}"] .el[data-name="chart"]`).boundingBox()];
+  const pad = (card.width - chart.width) / 2;
+  check(pad > 0 && Math.abs(card.height - chart.height - 2 * pad) < 1 && Math.abs(chart.x - card.x - pad) < 1, `the big chart is ${chart.width} by ${chart.height} in a card ${card.width} by ${card.height}`);
   const first = (await points())[0].split(",").map(Number);
   check(first[0] >= 0 && first[0] < 100, `the oldest sample sits at ${first[0]}`);
 
