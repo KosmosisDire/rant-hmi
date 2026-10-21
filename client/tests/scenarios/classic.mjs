@@ -1,7 +1,8 @@
 // A designer rebuilds the first HMI made for the cage cell, in the editor alone, from the
 // standard components and two of its own, a conveyor and a pusher. Its robot runs a job held
 // to confirm, halts, homes and jogs while JOG is held with a second finger, its conveyor carries
-// a box and pushes, and its safety stops, resets and slows the cell. Run alone with
+// a box on a moving belt and pushes, its alarm blinks, and its safety stops, resets and slows
+// the cell. Run alone with
 // `--into examples/classic`, it starts from a new project and becomes that example.
 
 /** The chirp the safety relay gives as a command lands. */
@@ -49,11 +50,14 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await d.addInput("leftPos", "0");
   await d.addInput("rightPos", "0");
   await d.addInput("length", "1000");
+  await d.addInput("running", "false");
+  await d.addInput("speed", "0.25");
   await d.addInput("beltColour", "$surface");
   await d.addInput("railColour", "$gray");
   await d.addInput("boxColour", "#5e4a35");
   await d.add("frame", { Name: "belt", x: "0", y: "10%", w: "100%", h: "80%", Fill: "beltColour", Radius: "", Overflow: '"hidden"' });
-  await d.add("frame", { Name: "slat", Repeat: "20", x: "(index * 5)%", y: "0", w: "0.1", h: "100%", Fill: "$panel3", Radius: "" });
+  // the slats move along at speed, a share of its length a second, while it runs
+  await d.add("frame", { Name: "slat", Repeat: "21", x: "((index - 1) * 5 + (running ? (time.now / 10 * speed % 5 + 5) % 5 : 0))%", y: "0", w: "0.1", h: "100%", Fill: "$panel3", Radius: "" });
   for (const [name, y] of [["topRail", "0"], ["bottomRail", "90%"]]) {
     await d.deselect();
     await d.add("frame", { Name: name, x: "0", y, w: "100%", h: "10%", Fill: "railColour", Radius: "" });
@@ -110,7 +114,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const plus = await inside("Jog pad", "Button", { Name: "Plus", Repeat: "6", x: column(15), y: row, w: "6", h: "6", text: '"+"', textSize: "3" });
   await handlers([["press", "jogVel[index] = 1;"], ["release", "jogVel[index] = 0;"]]);
   await inside("Robot panel", "frame", { Name: "Divider", x: "1", y: "32", w: "45", h: "0.2", Fill: "$border", Radius: "" });
-  await inside("Robot panel", "Dropdown", { Name: "Job", x: "1", y: "33", w: "17", h: "4", value: "selectedJob", options: '["Home249", "Jog", "Pick", "Place"]' });
+  await inside("Robot panel", "Dropdown", { Name: "Job", x: "1", y: "33", w: "17", h: "4", value: "selectedJob", options: 'JobName.options.filter((j) => j != "None")' });
   await inside("Robot panel", "frame", { Name: "State", x: "19", y: "33", w: "27", h: "4", Fill: "$panel3", Radius: "$radius" });
   await inside("State", "text", {
     Name: "State text",
@@ -139,7 +143,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const servos = await inside("Robot panel", "Toggle", { Name: "Servos", x: "27", y: "39", w: "7", h: "4", value: "Robot.servo_power === true", colour: "$green", trackColour: "servoPending ? $amber : $panel3" });
   await handlers([["change", "await SetServo(p);\nif (p) {\n  servoPending = true;\n  await sleep(800);\n  servoPending = false;\n}"]]);
   await label("Robot panel", "Alarm label", '"Alarm"', "20", "43", "6", "5");
-  const alarm = await inside("Robot panel", "Button", { Name: "Alarm", x: "27", y: "44", w: "7", h: "3", text: 'Robot.alarm ? String(Robot.alarm_no[0]) : "OK"', textSize: "1.4", fill: "Robot.alarm ? $red : $panel3" });
+  const alarm = await inside("Robot panel", "Button", { Name: "Alarm", x: "27", y: "44", w: "7", h: "3", text: 'Robot.alarm ? String(Robot.alarm_no[0]) : "OK"', textSize: "1.4", fill: "Robot.alarm && floor(time.now / 500) % 2 ? $red : $panel3" });
   await handlers([["press", "await ResetAlarm(true, false);"]]);
   // home waits while a job runs
   await inside("Robot panel", "frame", { Name: "Home holder", x: "36", y: "38", w: "10", h: "10", Fill: "", Radius: "", Opacity: "Robot.start ? 0.4 : 1" });
@@ -153,7 +157,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   // the conveyor and its pusher, and the buttons that drive them while held
   await panel("Conveyor panel", "80", "51", "47", "20");
   await title("Conveyor panel", "Conveyors", "37");
-  const belt = await inside("Conveyor panel", "Conveyor", { Name: "Belt", x: "1", y: "4", w: "35", h: "15", leftPos: "DistanceD - 455", rightPos: "DistanceA - 621", length: "1485" });
+  const belt = await inside("Conveyor panel", "Conveyor", { Name: "Belt", x: "1", y: "4", w: "35", h: "15", leftPos: "DistanceD - 455", rightPos: "DistanceA - 621", length: "1485", running: "ConveyorGo", speed: "-0.25" });
   await handlers([["press", "ConveyorGo = true;"], ["release", "ConveyorGo = false;"]]);
   const pusher = await inside("Conveyor panel", "Pusher", { Name: "Pusher", x: "1", y: "6", w: "13", h: "13", push: "PusherOut ? 1 : 0", colour: "#804c4c", sweepMs: "900" });
   const held = [
@@ -231,8 +235,16 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
 
   // the conveyor runs only while Convey is held, carrying its box left
   const before = value("DistanceD");
-  await hold(buttons.Convey, 600, () => eventually(() => value("ConveyorGo") === true && value("DistanceD") < before, "the box to move while Convey is held"));
+  const slat = async () => (await el(belt).locator('.el[data-name="slat"]').nth(1).boundingBox()).x;
+  await hold(buttons.Convey, 600, async () => {
+    await eventually(() => value("ConveyorGo") === true && value("DistanceD") < before, "the box to move while Convey is held");
+    const from = await slat();
+    await eventually(async () => (await slat()) < from, "the belt to move left while the conveyor runs");
+  });
   await eventually(() => value("ConveyorGo") === false, "the conveyor to stop at the release");
+  const stopped = await slat();
+  await page.waitForTimeout(200);
+  check((await slat()) === stopped, "the belt still once the conveyor stops");
   const box = await el(belt).locator('.el[data-name="box"]').boundingBox();
   const whole = await el(belt).boundingBox();
   check(box.x > whole.x && box.x + box.width <= whole.x + whole.width + 1, `the box sits on the belt: ${JSON.stringify(box)} in ${JSON.stringify(whole)}`);
@@ -304,6 +316,11 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await eventually(() => value("Robot")?.servo_power === true, "the servos on again");
   await hold(stop, 100);
   await eventually(async () => value("Robot")?.alarm === true && (await el(alarm).textContent()) === "4000", async () => `the alarm, it reads ${await el(alarm).textContent()}`);
+  const fills = new Set();
+  await eventually(async () => {
+    fills.add(await el(alarm).locator('.el[data-name="face"]').evaluate((e) => getComputedStyle(e).backgroundColor));
+    return fills.size === 2;
+  }, () => `the alarm to blink, its fills ${[...fills]}`);
   await eventually(() => value("SafetyCmd")?.stop === false, "the stop let go");
   await el(reset).click();
   await eventually(() => value("SafetyStatus")?.estop === true, "the cell safe again");
