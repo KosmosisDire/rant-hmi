@@ -140,6 +140,21 @@ export function designer(page) {
       await right().locator(`[data-sends="${event}"]`).waitFor();
     },
 
+    /** Sets the open component's sizing, "Scale" or "Fill", from its inspector. */
+    async sizing(word) {
+      await right().locator(".field", { has: page.locator("label", { hasText: /^Sizing$/ }) }).locator("button", { hasText: new RegExp(`^${word}$`) }).click();
+    },
+
+    /** Lays out what the selected frame holds, toward `title` ("Left to right"), its parts
+     *  sitting at `point` ("Center"), a gap `gap` apart. */
+    async layOut(title, point, gap) {
+      const start = right().locator(".ghost", { hasText: "Lay out what it holds" });
+      if (await start.count()) await start.click();
+      await right().locator(`button[title="${title}"]`).click();
+      if (point) await right().locator(`.point[title="${point}"]`).click();
+      if (gap !== undefined) await d.setField("Gap", gap);
+    },
+
     /** Picks nothing, so the inspector shows the page or component. */
     async deselect() {
       await page.keyboard.press("Escape");
