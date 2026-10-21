@@ -26,9 +26,10 @@ use tracing::{error, warn};
 use crate::app::{Inbound, Outbox};
 use crate::protocol::ClientMsg;
 
-/// How often the socket pings its screen. The browser answers by itself, even in a hidden tab
-/// whose timers run slow, so a screen is lost only when its link is.
-const PING_EVERY: Duration = Duration::from_millis(100);
+/// How often the socket pings its screen, so its round trip is new 20 times a second. The
+/// browser answers by itself, even in a hidden tab whose timers run slow, so a screen is lost
+/// only when its link is.
+const PING_EVERY: Duration = Duration::from_millis(50);
 
 #[derive(Clone)]
 struct Shared {

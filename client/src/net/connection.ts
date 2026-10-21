@@ -6,7 +6,8 @@ import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import { notify, receive, setState, state } from "../state/store";
 
-const ROUND_TRIP_EVERY_MS = 1000;
+/** 20 times a second, so the round trip shown is a fresh one. */
+const ROUND_TRIP_EVERY_MS = 50;
 const RETRY_MAX_MS = 2000;
 
 // plain CBOR maps as objects, none of cbor-x's own record extension, so Rust reads it

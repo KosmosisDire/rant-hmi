@@ -1,7 +1,8 @@
 # Status
 
 The HMI publishes two read only variables about itself. Other nodes read them, and pages
-import them like any entity. Each is set once a second, when it changed.
+import them like any entity. Each is set only when it changed: the clients as each screen's
+round trip is measured, 20 times a second, and the status once a second.
 
 ## Hmi/Clients
 

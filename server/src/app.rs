@@ -1034,6 +1034,8 @@ impl App {
         }
         self.fire_turned();
         self.sample();
+        // each screen's round trip goes out as it is measured, the rest once a second
+        self.publish_clients();
         if self.health_at.elapsed() >= HEALTH_EVERY {
             self.health_at = Instant::now();
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
@@ -1067,8 +1069,8 @@ impl App {
         }
     }
 
-    /// Publishes the screens connected and the HMI's own state on the mesh.
-    fn publish_status(&mut self) {
+    /// Publishes the screens connected on the mesh, once that changed.
+    fn publish_clients(&mut self) {
         let mut clients: Vec<Client> = self
             .sessions
             .iter()
@@ -1080,9 +1082,13 @@ impl App {
             })
             .collect();
         clients.sort_by_key(|c| c.id);
-        let missing = self.project.imports.iter().filter(|i| !self.mesh.live(i)).filter_map(|i| i.entity.as_str().try_into().ok()).collect();
-        let status = HmiStatus { version: env!("CARGO_PKG_VERSION").into(), project: self.project.info.name.clone(), started_at: self.started_at, clients: clients.len() as u32, missing };
         self.mesh.publish_clients(clients);
+    }
+
+    /// Publishes the HMI's own state on the mesh, once that changed.
+    fn publish_status(&mut self) {
+        let missing = self.project.imports.iter().filter(|i| !self.mesh.live(i)).filter_map(|i| i.entity.as_str().try_into().ok()).collect();
+        let status = HmiStatus { version: env!("CARGO_PKG_VERSION").into(), project: self.project.info.name.clone(), started_at: self.started_at, clients: self.sessions.len() as u32, missing };
         self.mesh.publish_status(status);
     }
 
