@@ -1,7 +1,7 @@
 // The page on its artboard: the wheel zooms, a drag on empty space pans, elements move and
 // resize on the grid (Alt slips it), and a drag writes when it ends.
 
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from "solid-js";
 import { type Box, PageView, pageGround, SHAPES } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
@@ -437,9 +437,11 @@ export function Artboard(p: {
   // how the one picked element turns as drawn, each frame while it is picked, as live values
   // may turn it: its angle, the point it turns about from its corner, and that point on screen
   const [turn, setTurn] = createSignal<{ id: string; angle: number; room: number; ox: number; oy: number; at: { x: number; y: number } } | null>(null);
+  const one = createMemo(() => (p.selected.length === 1 ? p.selected[0] : null));
   createEffect(() => {
-    const id = p.selected.length === 1 ? p.selected[0] : null;
-    setTurn(null);
+    const id = one();
+    // measured at once too, so its ring and grips never show a frame unturned
+    setTurn(id ? untrack(() => turnOf(id)) : null);
     if (!id) return;
     let frame = requestAnimationFrame(function measure() {
       setTurn(turnOf(id));
