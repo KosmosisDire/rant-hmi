@@ -93,13 +93,15 @@ component placed on a page is a tag named after it.
 </page>
 ```
 
-- `name`, `x`, `y`, `w` and `h` are attributes. A span's text is its body. Every other
-  property goes in `style`.
+- `name`, `x`, `y`, `w`, `h` and `origin` are attributes. A span's text is its body. Every
+  other property goes in `style`.
 - `x`, `y`, `w` and `h` are pixels, or with a trailing `%` a share of what holds the element:
   its width for `x` and `w`, its height for `y` and `h`. `w="50%"`, `x="(Speed * 10)%"`.
-- `rotate`, in degrees clockwise, and `transform-origin`, the point it turns about, are CSS
-  on every element, shapes too: `rotate: Speed * 90; transform-origin: "50% 100%"`. A
-  shape's point is on its own outline's box, as a frame's is.
+- `origin` is a point of the element's box, a pair of percents of it or pixels such as
+  `origin='"50% 100%"'`, the top left when unset. `x` and `y` place it, counted from the
+  origin of what holds the element, and the element turns about it. A shape's origin is a
+  point of its own outline's box, only what it turns about, and its middle when unset.
+- `rotate`, in degrees clockwise, is CSS on every element, shapes too: `rotate: Speed * 90`.
 - Every value but the name is an expression, kept raw: text goes in quotes, and `a < b`
   needs no escaping. Expressions and code share the math in [math.md](math.md).
 - `<on>` holds a handler's code, first inside its element. A `hold` handler runs once a

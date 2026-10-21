@@ -8,7 +8,7 @@ import type { Page } from "../../protocol/Page";
 import { isPercent } from "../../state/bind";
 import { notify, state } from "../../state/store";
 import { paint } from "../../ui/highlight";
-import { boxOf, childrenOf, literal, parentOf, roomOf, sendEdits, tops } from "./tree";
+import { boxOf, boxText, childrenOf, literal, parentOf, roomOf, sendEdits, tops } from "./tree";
 
 /** A name's words joined, each after the first with a capital: "Start stop" gives startStop. */
 function joined(text: string, first: (w: string) => string): string {
@@ -46,11 +46,14 @@ export function makeComponent(page: Page, ids: string[]) {
   const [right, bottom] = [Math.max(...boxes.map((b) => b.x + b.w)), Math.max(...boxes.map((b) => b.y + b.h))];
   const parts: Element[] = JSON.parse(JSON.stringify(picked));
   // in pixels, since a percent of the page would mean a share of the component instead
+  const room = { w: right - left, h: bottom - top };
   parts.forEach((e, i) => {
-    e.props.x = String(boxes[i].x - left);
-    e.props.y = String(boxes[i].y - top);
     if (isPercent(e.props.w)) e.props.w = String(boxes[i].w);
     if (isPercent(e.props.h)) e.props.h = String(boxes[i].h);
+    if (isPercent(e.props.x)) e.props.x = "0";
+    if (isPercent(e.props.y)) e.props.y = "0";
+    const there = { ...boxes[i], x: boxes[i].x - left, y: boxes[i].y - top };
+    Object.assign(e.props, { x: boxText(e, "x", there, room), y: boxText(e, "y", there, room) });
   });
 
   // each page name a value reads becomes an input, two way when an input element takes it
@@ -97,10 +100,14 @@ export function makeComponent(page: Page, ids: string[]) {
     id: "",
     tag: "use",
     component: name,
-    props: { name, x: String(left), y: String(top), w: String(right - left), h: String(bottom - top), ...Object.fromEntries([...renamed].map(([from, to]) => [to, from])) },
+    props: { name, w: String(right - left), h: String(bottom - top), ...Object.fromEntries([...renamed].map(([from, to]) => [to, from])) },
     handlers,
     children: [],
   };
+  // where they stood, counted from the origin of their frame
+  const box = { x: left, y: top, w: right - left, h: bottom - top };
+  const frame = roomOf(page, picked[0].id);
+  Object.assign(instance.props, { x: boxText(instance, "x", box, frame), y: boxText(instance, "y", box, frame) });
   // the instance goes where the front most of them stood
   const places = picked.map((e) => childrenOf(page, parent).findIndex((c) => c.id === e.id));
   const index = Math.max(...places) - (picked.length - 1);

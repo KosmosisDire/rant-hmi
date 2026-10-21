@@ -11,7 +11,7 @@ import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
-import { absolute, boxOf, find, literal, parentOf, placementText, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
+import { absolute, boxOf, boxText, find, literal, parentOf, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 export const GRID = 11;
 /** Grid lines every so many units and how strong each set is. A set fades out as its lines
@@ -305,7 +305,9 @@ export function Artboard(p: {
       const props: Record<string, string> = {};
       const [e, room] = [find(p.page.children, id), roomOf(p.page, id)];
       for (const k of ["x", "y", "w", "h"] as (keyof Box)[]) {
-        if (d.boxes[id][k] !== d.bases[id][k]) props[k] = placementText(e?.props[k], k, d.boxes[id][k], room);
+        // a new size moves the origin, so x and y follow w and h
+        const changed = (key: keyof Box) => d.boxes[id][key] !== d.bases[id][key];
+        if (e && (changed(k) || (k === "x" && changed("w")) || (k === "y" && changed("h")))) props[k] = boxText(e, k, d.boxes[id], room);
       }
       if (Object.keys(props).length > 0) edits.push({ kind: "set_props", page: p.page.id, id, props });
       else release(id, d.n);
@@ -410,7 +412,7 @@ export function Artboard(p: {
   // the point shows once the element says how it turns
   const turns = (id: string) => {
     const e = find(p.page.children, id);
-    return !!e && (e.props.rotate !== undefined || e.props["transform-origin"] !== undefined);
+    return !!e && (e.props.rotate !== undefined || e.props.origin !== undefined);
   };
 
   /** Where an element's ring goes on screen, on whole pixels so its thin line stays crisp. */

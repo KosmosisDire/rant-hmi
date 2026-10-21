@@ -7,7 +7,7 @@ import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Kept, pageScope, percentOf, placement, repeatScope, resolve, type Scope } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Kept, originAt, pageScope, percentOf, placement, repeatScope, resolve, type Scope } from "../state/bind";
 import { fields, short } from "../state/format";
 import { play, stopPlaying } from "../net/video";
 import { component, entity, live, notify, state } from "../state/store";
@@ -27,14 +27,17 @@ export interface Box {
 /** A box the editor shows in place of an element's own while a drag lands. */
 export type Overrides = (id: string) => Box | undefined;
 
-/** The size of what holds an element, which a percent in its placement is a share of. */
+/** The size of what holds an element, which a percent in its placement is a share of, and
+ *  its origin, the point its children's x and y count from, the corner when unset. */
 export interface Room {
   w: number;
   h: number;
+  ox?: number;
+  oy?: number;
 }
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "text", "value", "viewbox", "src", "fit", "markup"]);
+export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "text", "value", "viewbox", "src", "fit", "markup"]);
 
 /** What a drawing holds: SVG shapes, whose every property but the name is an attribute. */
 export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
@@ -112,9 +115,9 @@ function css(key: string, v: unknown): string {
   return LENGTHS.has(key) ? `${text}px` : key === "rotate" ? `${text}deg` : text;
 }
 
-/** How a shape turns, as CSS: about a point of its own box, as a frame does, never the
- *  drawing's corner. SVG's own rotate attribute turns a text's letters instead. */
-const TURNS = new Set(["rotate", "transform-origin"]);
+/** How a shape turns, as CSS: about its origin, a point of its own box, never the drawing's
+ *  corner. SVG's own rotate attribute turns a text's letters instead. */
+const TURNS: Record<string, string> = { rotate: "rotate", origin: "transform-origin" };
 
 function words(v: unknown): string {
   if (v === undefined || v === null) return "";
@@ -265,19 +268,23 @@ function ElementView(p: ElementProps & { at?: At }) {
       const whole = k === "x" || k === "w" ? p.room.w : p.room.h;
       return Number.isFinite(n) ? (percent ? (n * whole) / 100 : n) : 0;
     };
-    style.left = `${at("x")}px`;
-    style.top = `${at("y")}px`;
-    style.width = `${at("w")}px`;
-    style.height = `${at("h")}px`;
+    // x and y place its origin, counted from the origin of what holds it, and it turns about it
+    const [w, h] = [at("w"), at("h")];
+    const own = originAt(take("origin"), w, h);
+    style.left = `${o ? o.x : (p.room.ox ?? 0) + at("x") - own.x}px`;
+    style.top = `${o ? o.y : (p.room.oy ?? 0) + at("y") - own.y}px`;
+    style.width = `${w}px`;
+    style.height = `${h}px`;
+    style["transform-origin"] = `${own.x}px ${own.y}px`;
     const text = p.element.tag === "span" ? words(take("text")) : "";
     const value = p.element.tag === "input" ? take("value") : undefined;
     const drawing = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
     const media = p.element.tag === "media" ? { alias: playable(p.element.props.src, () => take("src")), src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
-    return { style, unknown, faults, text, value, drawing, markup, media, w: at("w"), h: at("h") };
+    return { style, unknown, faults, text, value, drawing, markup, media, w, h, ox: own.x, oy: own.y };
   });
   const press = usePress(p);
-  const inner = (c: Element) => <Placed element={c} scope={p.scope} room={{ w: look().w, h: look().h }} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
+  const inner = (c: Element) => <Placed element={c} scope={p.scope} room={{ w: look().w, h: look().h, ox: look().ox, oy: look().oy }} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
   return (
     <div
       data-id={p.inside ? undefined : p.element.id}
@@ -347,7 +354,7 @@ function ShapeView(p: ElementProps & { at?: At }) {
       } else if (key === "text") {
         text = words(r.value);
       } else if (r.value !== undefined && r.value !== null && r.value !== "") {
-        if (TURNS.has(key)) style[key] = css(key, r.value);
+        if (key in TURNS) style[TURNS[key]] = css(key, r.value);
         else attrs[CASED[key] ?? key] = String(r.value);
       }
     }

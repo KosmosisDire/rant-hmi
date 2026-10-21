@@ -8,7 +8,7 @@ import type { Page } from "../../protocol/Page";
 import { SHAPES } from "../../page/PageView";
 import { GRID } from "./Artboard";
 import { moving, reshape } from "./geometry";
-import { boxOf, childrenOf, find, holds, literal, parentOf, placementText, roomOf, sendEdits } from "./tree";
+import { boxOf, boxText, childrenOf, find, holds, literal, parentOf, roomOf, sendEdits } from "./tree";
 
 const MARK = "rant-hmi elements";
 
@@ -79,7 +79,10 @@ function moveCorner(page: Page, elements: Element[], spot: { x: number; y: numbe
   if (movable.length === 0) return;
   const boxes = movable.map((e) => boxOf(e, room));
   const [dx, dy] = [Math.round(spot.x / GRID) * GRID - Math.min(...boxes.map((b) => b.x)), Math.round(spot.y / GRID) * GRID - Math.min(...boxes.map((b) => b.y))];
-  movable.forEach((e, i) => Object.assign(e.props, { x: placementText(e.props.x, "x", boxes[i].x + dx, room), y: placementText(e.props.y, "y", boxes[i].y + dy, room) }));
+  movable.forEach((e, i) => {
+    const there = { ...boxes[i], x: boxes[i].x + dx, y: boxes[i].y + dy };
+    Object.assign(e.props, { x: boxText(e, "x", there, room), y: boxText(e, "y", there, room) });
+  });
 }
 
 /** A copy of each element just in front of it, one grid step down and right. */
@@ -94,7 +97,8 @@ export function duplicate(page: Page, elements: Element[]) {
     else if (literal(copy, ["x", "y"])) {
       const room = roomOf(page, element.id);
       const b = boxOf(element, room);
-      Object.assign(copy.props, { x: placementText(copy.props.x, "x", b.x + GRID, room), y: placementText(copy.props.y, "y", b.y + GRID, room) });
+      const there = { ...b, x: b.x + GRID, y: b.y + GRID };
+      Object.assign(copy.props, { x: boxText(copy, "x", there, room), y: boxText(copy, "y", there, room) });
     }
     const shift = before.get(parent) ?? 0;
     before.set(parent, shift + 1);

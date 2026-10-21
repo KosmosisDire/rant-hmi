@@ -13,7 +13,7 @@ import type { FieldProps } from "./Field";
 import { TagIcon } from "./TagIcon";
 import { find, parentOf } from "./tree";
 
-type Spec = [string, string, Partial<FieldProps>];
+export type Spec = [string, string, Partial<FieldProps>];
 
 const n = (placeholder: string): Partial<FieldProps> => ({ kind: "number", placeholder });
 
@@ -41,13 +41,15 @@ export const PAINT: Spec[] = [
   ["Transform", "transform", { placeholder: '`rotate(${angle} 50 50)`' }],
 ];
 
-/** The attributes a shape's fields name, so the rest show as more attributes. */
-/** How any element turns: by degrees, clockwise, about a point of its own box. */
-export const TURN: Spec[] = [
-  ["Rotate", "rotate", n("0")],
-  ["Turns about", "transform-origin", { kind: "choice", options: ['"50% 50%"', '"50% 100%"', '"50% 0%"', '"0% 50%"', '"100% 50%"', '"0% 0%"'], placeholder: '"50% 50%"' }],
-];
+/** The points of a box an origin may name at once, row by row. */
+export const ORIGINS = ['"0% 0%"', '"50% 0%"', '"100% 0%"', '"0% 50%"', '"50% 50%"', '"100% 50%"', '"0% 100%"', '"50% 100%"', '"100% 100%"'];
 
+/** How a shape turns: by degrees, clockwise, about its origin, a point of its own box, by
+ *  default its middle. */
+export const ROTATE: Spec = ["Rotate", "rotate", n("0")];
+export const TURN: Spec[] = [ROTATE, ["Origin", "origin", { kind: "choice", options: ORIGINS, placeholder: '"50% 50%"' }]];
+
+/** The attributes a shape's fields name, so the rest show as more attributes. */
 export function shapeKeys(tag: Tag): Set<string> {
   return new Set([...(GEOMETRY[tag] ?? []), ...PAINT, ...TURN].map(([, key]) => key));
 }

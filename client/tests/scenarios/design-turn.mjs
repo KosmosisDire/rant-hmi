@@ -1,6 +1,6 @@
-// A designer turns a gauge's needle about its foot and a frame about its middle. The canvas
-// marks the point each turns about, a frame's ring turns with it, and the run turns them
-// as the editor does.
+// A designer turns a gauge's needle about its foot and a frame about its middle, each by its
+// origin. The canvas marks the point each turns about, a frame's ring turns with it, and the
+// run turns them as the editor does.
 
 export default async function ({ page, d, check, eventually }) {
   const middle = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
@@ -11,7 +11,7 @@ export default async function ({ page, d, check, eventually }) {
   const dial = await d.add("drawing", { Name: "dial", x: "44", y: "44", w: "176", h: "176" });
   const needle = await d.addShape("line", { Name: "needle", "From x": "88", "From y": "88", "To x": "88", "To y": "22", Stroke: "#e4e6e8", Thickness: "4" });
   check((await origin.count()) === 0, "the point shows on a shape that does not turn");
-  await d.set({ "Turns about": '"50% 100%"', Rotate: "90" });
+  await d.set({ Origin: '"50% 100%"', Rotate: "90" });
   await origin.waitFor();
   const centre = middle(await d.el(dial).boundingBox());
   near(middle(await origin.boundingBox()), centre, "the needle's point is not its foot");
@@ -22,7 +22,7 @@ export default async function ({ page, d, check, eventually }) {
   }, "the needle to point right");
 
   await d.deselect();
-  const card = await d.add("frame", { Name: "card", x: "308", y: "44", w: "176", h: "88", Rotate: "45" });
+  const card = await d.add("frame", { Name: "card", x: "396", y: "88", w: "176", h: "88", Origin: '"50% 50%"', Rotate: "45" });
   await eventually(async () => (await page.locator(".screen:not([hidden]) .artboard .ring").evaluate((r) => r.style.transform)) === "rotate(45deg)", "the ring to turn with the card");
   near(middle(await origin.boundingBox()), middle(await d.el(card).boundingBox()), "the card's point is not its middle");
 

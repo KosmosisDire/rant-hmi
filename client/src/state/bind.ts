@@ -34,6 +34,17 @@ export function placement(value: string | undefined, whole: number, scope: Scope
   return percent ? (n * whole) / 100 : n;
 }
 
+/** Where an origin puts its point in a box `w` by `h`, from its top left: a pair such as
+ *  "50% 100%", each a percent of the box or pixels. Unset, or not such a pair, is the corner. */
+export function originAt(value: unknown, w: number, h: number): { x: number; y: number } {
+  const [a, b] = typeof value === "string" ? value.trim().split(/\s+/) : [];
+  const one = (t: string | undefined, whole: number) => {
+    const n = parseFloat(t ?? "");
+    return !Number.isFinite(n) ? 0 : t!.endsWith("%") ? (n * whole) / 100 : n;
+  };
+  return { x: one(a, w), y: one(b, h) };
+}
+
 /** True when the value reads nothing live: a number, a quoted text, a colour or a word
  *  such as true. */
 export function isConstant(value: string | undefined): boolean {

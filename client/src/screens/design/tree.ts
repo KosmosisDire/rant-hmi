@@ -7,7 +7,7 @@ import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { produce } from "solid-js/store";
-import { docScope, isNumber, isPercent, pageScope, placement, repeatScope, resolve, type Scope } from "../../state/bind";
+import { docScope, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope } from "../../state/bind";
 import { setState } from "../../state/store";
 
 /** The element and every frame around it, outermost first. */
@@ -49,23 +49,50 @@ export function childrenOf(page: Page, parent: string | null): Element[] {
   return parent ? (find(page.children, parent)?.children ?? []) : page.children;
 }
 
-/** An element's box within what holds it, `room`, in pixels. */
-export function boxOf(e: Element, room: Room, overrides?: Overrides, scope: Scope = pageScope): Box {
-  const at = (k: keyof Box) => placement(e.props[k], k === "x" || k === "w" ? room.w : room.h, scope);
-  return overrides?.(e.id) ?? { x: at("x"), y: at("y"), w: at("w"), h: at("h") };
+/** Where an element's origin sits in its own box of `w` by `h`, from the box's corner. */
+function originOf(e: Element, w: number, h: number, scope: Scope = pageScope) {
+  const r = e.props.origin === undefined ? undefined : resolve(e.props.origin, scope);
+  return originAt(r?.ok ? r.value : undefined, w, h);
 }
 
-/** The room an element sits in: its frame's size, or the page's. */
+/** An element's box within what holds it, `room`, in pixels from the room's corner. Its x and
+ *  y place its origin, counted from the room's. */
+export function boxOf(e: Element, room: Room, overrides?: Overrides, scope: Scope = pageScope): Box {
+  const kept = overrides?.(e.id);
+  if (kept) return kept;
+  const at = (k: keyof Box) => placement(e.props[k], k === "x" || k === "w" ? room.w : room.h, scope);
+  const [w, h] = [at("w"), at("h")];
+  const own = originOf(e, w, h, scope);
+  return { x: (room.ox ?? 0) + at("x") - own.x, y: (room.oy ?? 0) + at("y") - own.y, w, h };
+}
+
+/** The room the children of a frame, or of the page for null, sit in, and where it sits on
+ *  the page. */
+export function inside(page: Page, frame: string | null): { at: Box; room: Room } {
+  const e = frame ? find(page.children, frame) : undefined;
+  const b = frame ? absolute(page, frame) : undefined;
+  if (!e || !b) return { at: { x: 0, y: 0, w: page.width, h: page.height }, room: { w: page.width, h: page.height } };
+  const o = originOf(e, b.w, b.h, scopeOf(page, frame!));
+  return { at: b, room: { w: b.w, h: b.h, ox: o.x, oy: o.y } };
+}
+
+/** The room an element sits in: its frame's, or the page's. */
 export function roomOf(page: Page, id: string): Room {
-  const parent = parentOf(page, id);
-  const b = parent ? absolute(page, parent) : undefined;
-  return b ? { w: b.w, h: b.h } : { w: page.width, h: page.height };
+  return inside(page, parentOf(page, id)).room;
 }
 
 /** How to write `px` into a placement value that was `old`: a percent of `room` stays one. */
-export function placementText(old: string | undefined, key: keyof Box, px: number, room: Room): string {
+function placementText(old: string | undefined, key: keyof Box, px: number, room: Room): string {
   const whole = key === "x" || key === "w" ? room.w : room.h;
-  return isPercent(old) && whole > 0 ? `${Number(((px / whole) * 100).toFixed(2))}%` : String(px);
+  return isPercent(old) && whole > 0 ? `${Number(((px / whole) * 100).toFixed(2))}%` : String(Number(px.toFixed(2)));
+}
+
+/** The text of one of `e`'s placement values that puts it at `box` in `room`: x and y place
+ *  its origin, which moves with its size. */
+export function boxText(e: Element, key: keyof Box, box: Box, room: Room): string {
+  const own = originOf(e, box.w, box.h);
+  const px = key === "x" ? box.x - (room.ox ?? 0) + own.x : key === "y" ? box.y - (room.oy ?? 0) + own.y : box[key];
+  return placementText(e.props[key], key, px, room);
 }
 
 /** What each element along a path reads in the editor, outermost first: the page's or
@@ -96,7 +123,8 @@ export function absolute(page: Page, id: string, overrides?: Overrides): Box | u
   let room: Room = { w: page.width, h: page.height };
   const boxes = path.map((e, i) => {
     const b = boxOf(e, room, overrides, reads[i]);
-    room = { w: b.w, h: b.h };
+    const o = originOf(e, b.w, b.h, reads[i]);
+    room = { w: b.w, h: b.h, ox: o.x, oy: o.y };
     return b;
   });
   const own = boxes[boxes.length - 1];
@@ -127,11 +155,10 @@ export function moveTo(page: Page, id: string, parent: string | null, index: num
   if (from === parent && childrenOf(page, from).findIndex((c) => c.id === id) === index) return;
   const edits: Edit[] = [{ kind: "move_element", page: page.id, id, parent, index }];
   if (from !== parent && literal(e, ["x", "y"])) {
-    const origin = (f: string | null) => (f ? absolute(page, f) : undefined) ?? { x: 0, y: 0, w: page.width, h: page.height };
-    const [a, b] = [origin(from), origin(parent)];
-    const own = boxOf(e, a);
-    const props = { x: placementText(e.props.x, "x", own.x + a.x - b.x, b), y: placementText(e.props.y, "y", own.y + a.y - b.y, b) };
-    edits.push({ kind: "set_props", page: page.id, id, props });
+    const [a, b] = [inside(page, from), inside(page, parent)];
+    const own = boxOf(e, a.room);
+    const there = { ...own, x: own.x + a.at.x - b.at.x, y: own.y + a.at.y - b.at.y };
+    edits.push({ kind: "set_props", page: page.id, id, props: { x: boxText(e, "x", there, b.room), y: boxText(e, "y", there, b.room) } });
   }
   sendEdits(edits);
 }
@@ -181,7 +208,8 @@ export function align(page: Page, ids: string[], how: Align) {
       const at = how === "left" || how === "top" ? start : how === "right" || how === "bottom" ? end - size : Math.round((start + end - size) / 2);
       const key = across ? "x" : "y";
       const local = at - (across ? origin.x : origin.y);
-      return local === (across ? b.x - origin.x : b.y - origin.y) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: placementText(e.props[key], key, local, room) } } as Edit];
+      const moved = { ...b, x: across ? local : b.x - origin.x, y: across ? b.y - origin.y : local };
+      return local === (across ? b.x - origin.x : b.y - origin.y) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: boxText(e, key, moved, room) } } as Edit];
     }),
   );
 }
@@ -201,7 +229,8 @@ export function spread(page: Page, ids: string[], across: boolean) {
       const key = across ? "x" : "y";
       const local = Math.round(at) - (across ? origin.x : origin.y);
       at += size(b) + gap;
-      return local === (across ? b.x - origin.x : b.y - origin.y) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: placementText(e.props[key], key, local, room) } } as Edit];
+      const moved = { ...b, x: across ? local : b.x - origin.x, y: across ? b.y - origin.y : local };
+      return local === (across ? b.x - origin.x : b.y - origin.y) ? [] : [{ kind: "set_props", page: page.id, id: e.id, props: { [key]: boxText(e, key, moved, room) } } as Edit];
     }),
   );
 }

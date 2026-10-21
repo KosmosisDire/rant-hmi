@@ -31,20 +31,19 @@ import {
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, kindOf, RADII, RadiusField, type Where, WhereContext } from "./Field";
-import { AddShape, GEOMETRY, PAINT, shapeKeys, TURN } from "./ShapeFields";
+import { AddShape, GEOMETRY, ORIGINS, PAINT, ROTATE, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { type Align, align, chain, find, remove, scopeOf, setHandler, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
  *  the free CSS box. */
-type Look = [string, string, Partial<FieldProps>];
-const LOOK: Look[] = [
+const LOOK: Spec[] = [
   ["Fill", "background", { kind: "colour", placeholder: "#2a2f35" }],
   ["Opacity", "opacity", { kind: "number", min: 0, max: 1, step: 0.01, placeholder: "1" }],
   // hidden clips what it holds to its box, as a card or a chart wants
   ["Overflow", "overflow", { kind: "choice", options: ['"visible"', '"hidden"'], placeholder: '"visible"' }],
 ];
-const TEXT_LOOK: Look[] = [
+const TEXT_LOOK: Spec[] = [
   ["Colour", "color", { kind: "colour", placeholder: "#e4e6e8" }],
   ["Size", "font-size", { kind: "number", min: 1, placeholder: "16" }],
   ["Weight", "font-weight", { kind: "choice", options: ["300", "400", "500", "600", "700"], placeholder: "400" }],
@@ -281,7 +280,9 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="placement">
             <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} />}</For>
           </div>
-          <Turn prop={prop} />
+          {/* the point x and y place, its children count from and it turns about */}
+          <Field {...prop("origin")} label="Origin" kind="choice" options={ORIGINS} placeholder='"0% 0%"' />
+          <Turn prop={prop} specs={[ROTATE]} />
         </Show>
         <Show when={p.element.tag === "media"}>
           <div class="section">Media</div>
@@ -308,7 +309,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={shape()}>
           <div class="section">{TAG_WORDS[p.element.tag]}</div>
           <For each={GEOMETRY[p.element.tag] ?? []}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} focus={typed(key)} />}</For>
-          <Turn prop={prop} />
+          <Turn prop={prop} specs={TURN} />
           <div class="section">Paint</div>
           <For each={PAINT.filter(([, key]) => !(p.element.tag === "g" && key === "transform"))}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More attributes</div>
@@ -371,12 +372,12 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   );
 }
 
-/** How the element turns, the same section for a frame and a shape. */
-function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" | "onShow"> }) {
+/** How the element turns: a frame by its rotation, a shape about its origin too. */
+function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" | "onShow">; specs: Spec[] }) {
   return (
     <>
       <div class="section">Turn</div>
-      <For each={TURN}>{([label, key, more]) => <Field {...p.prop(key)} {...more} label={label} />}</For>
+      <For each={p.specs}>{([label, key, more]) => <Field {...p.prop(key)} {...more} label={label} />}</For>
     </>
   );
 }
@@ -466,7 +467,7 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
 }
 
 /** What places an instance, which no input or variable may be called, as the backend says. */
-const PLACING = new Set(["name", "repeat", "x", "y", "w", "h"]);
+const PLACING = new Set(["name", "repeat", "x", "y", "w", "h", "origin"]);
 
 /** A name an input or a component's variable may take. */
 const localName = (t: string) => /^[a-z][A-Za-z0-9]*$/.test(t.trim()) && !PLACING.has(t.trim());
