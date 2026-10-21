@@ -109,13 +109,59 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
     before[from - 1] === "."
       ? given(chain(before.slice(0, from - 1)), place, names, also)
       : [...(names ?? top(place)), ...(also ?? []), ...(place === "handler" ? [] : tokens()), ...own(place)];
+  return matching(items, word, from);
+}
+
+/** The items that start with the word, then those that hold it, or null where none fits or
+ *  the word is typed out in full. */
+function matching(items: Suggestion[], word: string, from: number): Completion | null {
   const q = word.toLowerCase();
   const starts = items.filter((s) => s.label.toLowerCase().startsWith(q));
   const inside = items.filter((s) => !s.label.toLowerCase().startsWith(q) && s.label.toLowerCase().includes(q));
   const found = [...starts, ...inside].slice(0, MOST);
-  // a word typed out in full needs no list
   if (found.length === 0 || (found.length === 1 && found[0].label === word)) return null;
   return { from, items: found };
+}
+
+let cssNames: Suggestion[] | undefined;
+
+/** Every CSS property this browser knows, read from it, without the vendors' own. */
+function cssProperties(): Suggestion[] {
+  cssNames ??= [...getComputedStyle(document.documentElement)]
+    .filter((n) => !n.startsWith("-"))
+    .sort()
+    .map((n) => ({ label: n, insert: `${n}: `, icon: "member", type: "CSS" }));
+  return cssNames;
+}
+
+/** Where the caret stands in a box of CSS lines, `key: value`: in a key, or in a value's
+ *  expression, which starts at `at`. */
+function cssSpot(text: string, caret: number): { key: true; start: number } | { key: false; at: number } {
+  const start = text.lastIndexOf("\n", caret - 1) + 1;
+  const colon = text.indexOf(":", start);
+  const end = text.indexOf("\n", start);
+  return colon < 0 || colon >= caret || (end >= 0 && colon > end) ? { key: true, start } : { key: false, at: colon + 1 };
+}
+
+/** The completion in a box of CSS lines: a property before a line's colon, after it what an
+ *  expression reads, the theme's tokens among them. */
+export function completeCss(text: string, caret: number, names?: Suggestion[], also?: Suggestion[]): Completion | null {
+  const spot = cssSpot(text, caret);
+  if (!spot.key) {
+    const c = complete(text.slice(spot.at, caret), caret - spot.at, "expression", names, also);
+    return c && { from: c.from + spot.at, items: c.items };
+  }
+  let from = caret;
+  while (from > spot.start && /[A-Za-z-]/.test(text[from - 1])) from--;
+  return matching(cssProperties(), text.slice(from, caret), from);
+}
+
+/** The call the caret is inside, in a CSS line's value. */
+export function signatureCss(text: string, caret: number): Signature | null {
+  const spot = cssSpot(text, caret);
+  if (spot.key) return null;
+  const s = signature(text.slice(spot.at, caret), caret - spot.at, "expression");
+  return s && { ...s, from: s.from + spot.at };
 }
 
 /** What a call takes, shown while the caret is inside its brackets. */

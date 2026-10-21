@@ -447,6 +447,10 @@
   color: var(--blue);
 }
 
+.hl-prop {
+  color: var(--dim);
+}
+
 /* Above any popover, since a field inside one opens it too. */
 .suggest {
   position: fixed;

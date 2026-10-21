@@ -9,10 +9,11 @@ import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
-import { docScope, type Flow, pageScope, resolve, sizeWord } from "../../state/bind";
-import { complete, componentNames, REPEAT } from "../../state/complete";
+import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
+import { complete, completeCss, componentNames, REPEAT, signature, signatureCss } from "../../state/complete";
 import { brings, offered } from "../../state/events";
-import { component, page as pageOf, setState } from "../../state/store";
+import { component, page as pageOf, setState, state } from "../../state/store";
+import { paintCss } from "../../ui/highlight";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
 import { openMenu } from "../../ui/Menu";
@@ -344,52 +345,6 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const named = () => (shape() ? shapeKeys(p.element.tag) : instance() ? BOX_NAMED : NAMED);
   const inputs = () => new Set(component(p.element.component ?? "")?.interface?.inputs.map((i) => i.name));
   const loose = (k: string) => !OWN.has(k) && !named().has(k) && !(instance() && inputs().has(k));
-  const other = () =>
-    Object.entries(p.element.props)
-      .filter(([k]) => loose(k))
-      .map(([k, v]) => `${k}: ${v}`)
-      .join("\n");
-  // why each of those would not show, and for words without quotes a way to make them text
-  const otherFaults = () =>
-    Object.entries(p.element.props).flatMap(([k, v]) => {
-      if (!loose(k) || v === undefined) return [];
-      const r = resolve(v, where().scope);
-      if (!r.ok) return r.unknown ? [] : [{ key: k, text: `${k}: ${r.error}`, quote: /["'`]/.test(v) ? undefined : JSON.stringify(v.trim()) }];
-      const bad = !shape() && r.value !== undefined && r.value !== null && r.value !== "" ? cssFault(k, r.value) : undefined;
-      return bad ? [{ key: k, text: bad, quote: undefined }] : [];
-    });
-  const faultNotes = () => (
-    <For each={otherFaults()}>
-      {(f) => (
-        <span class="field-note">
-          {f.text}
-          <Show when={f.quote}>
-            {(q) => (
-              <>
-                {" "}
-                <button class="field-fix" onClick={() => setProps(p.page, p.element.id, { [f.key]: q() })}>
-                  Make it text
-                </button>
-              </>
-            )}
-          </Show>
-        </span>
-      )}
-    </For>
-  );
-  const setOther = (body: string) => {
-    const next = new Map<string, string>();
-    for (const line of body.split("\n")) {
-      const at = line.indexOf(":");
-      if (at > 0) next.set(line.slice(0, at).trim(), line.slice(at + 1).trim());
-    }
-    const props: Record<string, string | null> = {};
-    for (const [k] of Object.entries(p.element.props)) {
-      if (loose(k) && !next.has(k)) props[k] = null;
-    }
-    for (const [k, v] of next) props[k] = v;
-    setProps(p.page, p.element.id, props);
-  };
   return (
     <WhereContext.Provider value={where}>
       <div class="pane-head">
@@ -465,8 +420,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">Paint</div>
           <For each={PAINT.filter(([, key]) => !(p.element.tag === "g" && key === "transform"))}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More attributes</div>
-          <DraftInput multiline class="editor css" value={other()} placeholder={'stroke-linejoin: "round"'} onCommit={setOther} />
-          {faultNotes()}
+          <LooseProps page={p.page} element={p.element} loose={loose} placeholder="stroke-linejoin: round" css={false} />
         </Show>
         <Show when={(diagram() || shape()) && pageOf(p.page)}>{(pg) => <AddShape page={pg()} element={p.element} />}</Show>
         <Show when={instance()}>
@@ -496,8 +450,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         {/* CSS on the instance's box, as dimming or hiding it whole */}
         <Show when={instance() && component(p.element.component ?? "")}>
           <div class="section">More CSS</div>
-          <DraftInput multiline class="editor css" value={other()} placeholder={"opacity: Running ? 1 : 0.4"} onCommit={setOther} />
-          {faultNotes()}
+          <LooseProps page={p.page} element={p.element} loose={loose} placeholder="opacity: Running ? 1 : 0.4" css />
         </Show>
         <Show when={text()}>
           <div class="section">Text</div>
@@ -517,14 +470,102 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <PartsField of={RADIUS} props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} motion={moving("border-radius")} />
           <For each={LOOK.slice(1)}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
-          <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
-          {faultNotes()}
+          <LooseProps page={p.page} element={p.element} loose={loose} placeholder="box-shadow: 0 0.2 0.8 $border" css />
         </Show>
         <Show when={!grouped()}>
           <Events page={p.page} element={p.element} focus={(event) => typed(`on:${event}`)} />
         </Show>
       </div>
     </WhereContext.Provider>
+  );
+}
+
+/** A theme token as code names it, `$accent`. */
+const TOKEN = /\$[A-Za-z_]\w*/g;
+
+const tokenOf = (name: string) => state.tokens.find((t) => `$${t.name}` === name);
+
+/** A value typed as plain CSS, as `0 0.2 0.8 $border`, where no expression reads: text the
+ *  browser takes, a template where it names tokens so they stay live. Else as it was typed. */
+function asCss(key: string, value: string, scope: Scope): string {
+  const v = value.trim();
+  const r = resolve(v, scope);
+  if (r.ok || r.unknown || /^["'`]/.test(v)) return value;
+  let now: string;
+  try {
+    now = v.replace(TOKEN, (name) => {
+      const t = tokenOf(name);
+      return t ? String(tokenValue(t)) : name;
+    });
+  } catch {
+    return value;
+  }
+  if (cssFault(key, now)) return value;
+  if (![...v.matchAll(TOKEN)].some(([name]) => tokenOf(name))) return JSON.stringify(v);
+  const escaped = v.replace(/[`\\]|\$\{/g, (c) => `\\${c}`);
+  return `\`${escaped.replace(TOKEN, (name) => (tokenOf(name) ? `\${${name}}` : name))}\``;
+}
+
+/** The properties no field names, as lines of `key: value` in one box: CSS on a frame's or an
+ *  instance's box, or a shape's attributes. Each value is an expression, or plain CSS kept as
+ *  text, and what would not show is said under the box. */
+function LooseProps(p: { page: string; element: Element; loose: (key: string) => boolean; placeholder: string; css: boolean }) {
+  const where = useContext(WhereContext);
+  const lines = () =>
+    Object.entries(p.element.props)
+      .filter(([k]) => p.loose(k))
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\n");
+  // why each would not show, and for words without quotes a way to make them text
+  const faults = () =>
+    Object.entries(p.element.props).flatMap(([k, v]) => {
+      if (!p.loose(k) || v === undefined) return [];
+      const r = resolve(v, where().scope);
+      if (!r.ok) return r.unknown ? [] : [{ key: k, text: `${k}: ${r.error}`, quote: /["'`]/.test(v) ? undefined : JSON.stringify(v.trim()) }];
+      const bad = p.css && r.value !== undefined && r.value !== null && r.value !== "" ? cssFault(k, r.value) : undefined;
+      return bad ? [{ key: k, text: bad, quote: undefined }] : [];
+    });
+  const commit = (body: string) => {
+    const next = new Map<string, string>();
+    for (const line of body.split("\n")) {
+      const at = line.indexOf(":");
+      if (at > 0) next.set(line.slice(0, at).trim(), asCss(line.slice(0, at).trim(), line.slice(at + 1).trim(), where().scope));
+    }
+    const props: Record<string, string | null> = {};
+    for (const k of Object.keys(p.element.props)) if (p.loose(k) && !next.has(k)) props[k] = null;
+    for (const [k, v] of next) props[k] = v;
+    setProps(p.page, p.element.id, props);
+  };
+  return (
+    <>
+      <DraftInput
+        multiline
+        class="editor css"
+        value={lines()}
+        placeholder={p.placeholder}
+        onCommit={commit}
+        complete={(t, c) => completeCss(t, c, where().names, where().also)}
+        hint={signatureCss}
+        paint={paintCss}
+      />
+      <For each={faults()}>
+        {(f) => (
+          <span class="field-note">
+            {f.text}
+            <Show when={f.quote}>
+              {(q) => (
+                <>
+                  {" "}
+                  <button class="field-fix" onClick={() => setProps(p.page, p.element.id, { [f.key]: q() })}>
+                    Make it text
+                  </button>
+                </>
+              )}
+            </Show>
+          </span>
+        )}
+      </For>
+    </>
   );
 }
 
@@ -704,6 +745,9 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
 /** What places an instance, which no input or variable may be called, as the backend says. */
 const PLACING = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "rotate"]);
 
+/** What an input's default and a variable's start complete: the theme's tokens and the math. */
+const constants = (text: string, caret: number) => complete(text, caret, "expression", []);
+
 /** A name an input or a component's variable may take. */
 const localName = (t: string) => /^[a-z][A-Za-z0-9]*$/.test(t.trim()) && !PLACING.has(t.trim());
 
@@ -757,7 +801,7 @@ function Inputs(p: { page: string; inputs: Input[] }) {
             </div>
             <div class="field input-default">
               <label>Default</label>
-              <DraftInput value={i.default} onCommit={(d) => write(i.name, { ...i, default: d })} />
+              <DraftInput value={i.default} onCommit={(d) => write(i.name, { ...i, default: d })} complete={constants} hint={(t, c) => signature(t, c, "expression")} />
             </div>
           </div>
         )}
@@ -806,7 +850,7 @@ function Variables(p: { page: string; variables: Local[] }) {
             </div>
             <div class="field input-default">
               <label>Start</label>
-              <DraftInput value={v.start} onCommit={(start) => write(v.name, { ...v, start })} />
+              <DraftInput value={v.start} onCommit={(start) => write(v.name, { ...v, start })} complete={constants} hint={(t, c) => signature(t, c, "expression")} />
             </div>
           </div>
         )}

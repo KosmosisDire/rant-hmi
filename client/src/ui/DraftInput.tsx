@@ -1,7 +1,7 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { Completion, Signature, Suggestion } from "../state/complete";
-import { painted } from "./highlight";
+import { type Paint, painted } from "./highlight";
 import { SignatureHint, type Spot, Suggestions } from "./Suggestions";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
@@ -28,6 +28,8 @@ export function DraftInput(p: {
   complete?: (text: string, caret: number) => Completion | null;
   /** What the call at the caret takes, shown over its line. */
   hint?: (text: string, caret: number) => Signature | null;
+  /** How the text is coloured, as code unless it holds lines of CSS. */
+  paint?: (src: string) => [string, Paint][];
   class?: string;
   placeholder?: string;
   title?: string;
@@ -183,7 +185,7 @@ export function DraftInput(p: {
   // a last empty line still takes its height, as it does in the field
   const shown = () => {
     const text = draft() ?? p.value;
-    return painted(p.multiline && text.endsWith("\n") ? `${text} ` : text);
+    return painted(p.multiline && text.endsWith("\n") ? `${text} ` : text, p.paint);
   };
 
   const input = (

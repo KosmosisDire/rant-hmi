@@ -4,7 +4,7 @@
 import type { Kind } from "../protocol/Kind";
 import { state } from "../state/store";
 
-export type Paint = "kw" | "str" | "com" | Kind | "local" | null;
+export type Paint = "kw" | "str" | "com" | Kind | "local" | "prop" | null;
 
 const KEYWORDS = new Set([
   "async", "await", "break", "case", "catch", "const", "continue", "default", "do", "else", "false", "finally", "for", "function", "if",
@@ -68,11 +68,20 @@ export function paint(src: string): [string, Paint][] {
   return out;
 }
 
+/** Lines of CSS as a box of them holds it, `key: value`: each key a property, each value code. */
+export function paintCss(src: string): [string, Paint][] {
+  return src.split(/(?<=\n)/).flatMap((line): [string, Paint][] => {
+    const colon = line.indexOf(":");
+    if (colon < 0) return [[line, "prop"]];
+    return [[line.slice(0, colon), "prop"], [":", null], ...paint(line.slice(colon + 1))];
+  });
+}
+
 const ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
 
-/** The coloured runs as HTML for a `pre`. */
-export function painted(src: string): string {
-  return paint(src)
+/** The coloured runs as HTML for a `pre`, code's unless another painter is given. */
+export function painted(src: string, by: (src: string) => [string, Paint][] = paint): string {
+  return by(src)
     .map(([text, p]) => {
       const safe = text.replace(/[&<>]/g, (ch) => ESCAPES[ch]);
       return p ? `<span class="hl-${p}">${safe}</span>` : safe;

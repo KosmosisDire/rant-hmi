@@ -13,11 +13,17 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const notes = right.locator(".field-note");
   const faulty = () => d.el(card).evaluate((el) => el.classList.contains("faulty"));
 
+  // plain CSS the browser takes is kept as text, and words it does not take stay as typed
   await d.css("box-shadow: 0 2px 8px #0008");
+  await eventually(() => props(hmi, pageId, card)["box-shadow"] === '"0 2px 8px #0008"', "the shadow kept as text");
+  check((await notes.count()) === 0 && !(await faulty()), "a shadow the browser takes is marked");
+  await d.css("box-shadow: 0 2px 8px blah");
   await eventually(async () => (await notes.allTextContents()).some((t) => t.startsWith("box-shadow: ")), "a note on the shadow");
   check(await faulty(), "the canvas does not mark the element");
   await right.locator(".field-fix", { hasText: "Make it text" }).click();
-  await eventually(() => props(hmi, pageId, card)["box-shadow"] === '"0 2px 8px #0008"', "the fix to quote the shadow");
+  await eventually(() => props(hmi, pageId, card)["box-shadow"] === '"0 2px 8px blah"', "the fix to quote the shadow");
+  await eventually(async () => (await notes.allTextContents()).includes("0 2px 8px blah is not a box-shadow the browser takes"), "the note to name what the browser drops");
+  await d.css("");
   await eventually(async () => (await notes.count()) === 0 && !(await faulty()), "the note and the mark to go");
 
   await d.css('colr: "red"');

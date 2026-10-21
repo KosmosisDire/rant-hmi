@@ -165,8 +165,11 @@ export function PageView(p: { page: Page; overrides?: Overrides; size?: { width:
 
 function css(key: string, v: unknown): string {
   const text = String(v);
-  if (!/^-?\d+(\.\d+)?$/.test(text)) return text;
-  return LENGTHS.has(key) ? `${Number(text) * UNIT}px` : key === "rotate" ? `${text}deg` : text;
+  if (/^-?\d+(\.\d+)?$/.test(text)) return LENGTHS.has(key) ? `${Number(text) * UNIT}px` : key === "rotate" ? `${text}deg` : text;
+  // CSS text whose bare numbers the browser refuses reads them in units, as a token's are
+  if (CSS.supports(key, text)) return text;
+  const units = text.replace(/(^|[\s(,])(-?\d*\.?\d+)(?=$|[\s),])/g, (_, before: string, n: string) => `${before}${Number(n) * UNIT}px`);
+  return units !== text && CSS.supports(key, units) ? units : text;
 }
 
 /** Why the browser would drop a CSS value, as for a misspelt property or a colour it cannot
