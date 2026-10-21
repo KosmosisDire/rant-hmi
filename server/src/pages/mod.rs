@@ -251,7 +251,15 @@ pub enum Edit {
     AddComponent { name: String },
     /// A page or component made as a copy of another, under a name of its own.
     CopyPage { page: String, name: String },
-    RenamePage { page: String, name: String },
+    /// Renames a page or component, whose id and file follow the name. `id` is the id it takes
+    /// instead, as an undo puts the old one back.
+    RenamePage {
+        page: String,
+        name: String,
+        #[serde(default)]
+        #[ts(optional)]
+        id: Option<String>,
+    },
     ResizePage { page: String, width: u32, height: u32 },
     SetShows { page: String, shows: Shows },
     /// How a component's instances draw it.
@@ -306,14 +314,50 @@ pub enum Edit {
 }
 
 /// What an edit changed: the pages to send out, what it made, if anything, as a page and an
-/// id (a page's own for a page), and the edit that undoes it.
+/// id (a page's own for a page), the ids a rename moved, from and to, and the edit that undoes
+/// it.
 #[derive(Debug)]
 pub struct Applied {
     pub pages: Vec<String>,
     /// The rules changed.
     pub rules: bool,
     pub made: Option<(String, String)>,
+    pub moved: Vec<(String, String)>,
     pub undo: Edit,
+}
+
+impl Edit {
+    /// Names the page `to` wherever this edit names the page `from`, as after a rename moved
+    /// its id. The id a rename's undo puts back stays.
+    pub fn repage(&mut self, from: &str, to: &str) {
+        let page = match self {
+            Edit::AddPage { .. } | Edit::AddComponent { .. } | Edit::SetRule { .. } => return,
+            Edit::Batch { edits } => return edits.iter_mut().for_each(|e| e.repage(from, to)),
+            Edit::PutPage { page } => &mut page.id,
+            Edit::CopyPage { page, .. }
+            | Edit::RenamePage { page, .. }
+            | Edit::ResizePage { page, .. }
+            | Edit::SetShows { page, .. }
+            | Edit::SetSizing { page, .. }
+            | Edit::SetFill { page, .. }
+            | Edit::RemovePage { page }
+            | Edit::AddElement { page, .. }
+            | Edit::RemoveElement { page, .. }
+            | Edit::PutElement { page, .. }
+            | Edit::MoveElement { page, .. }
+            | Edit::Group { page, .. }
+            | Edit::Ungroup { page, .. }
+            | Edit::Wrap { page, .. }
+            | Edit::SetProps { page, .. }
+            | Edit::SetHandler { page, .. }
+            | Edit::SetInput { page, .. }
+            | Edit::SetEvent { page, .. }
+            | Edit::SetLocal { page, .. } => page,
+        };
+        if page == from {
+            *page = to.to_owned();
+        }
+    }
 }
 
 pub struct Pages {
@@ -324,6 +368,8 @@ pub struct Pages {
     pub rules: Vec<Rule>,
     /// Set by an edit that changed the rules, until it is saved.
     rules_changed: bool,
+    /// The ids renames moved during an edit, until it is applied.
+    moved: Vec<(String, String)>,
 }
 
 /// A new page, in units of 10 px: 1280 by 720 pixels.
@@ -364,7 +410,7 @@ impl Pages {
             true => logic::parse(&fs::read_to_string(&file).context("reading logic/handlers.html")?).map_err(|e| anyhow::anyhow!("logic/handlers.html, {e}"))?,
             false => Vec::new(),
         };
-        let mut pages = Pages { root: root.to_path_buf(), list, rules, rules_changed: false };
+        let mut pages = Pages { root: root.to_path_buf(), list, rules, rules_changed: false, moved: Vec::new() };
         if !pages.list.iter().any(|p| p.interface.is_none()) {
             pages.apply(Edit::AddPage { name: "Overview".into() }).map_err(anyhow::Error::msg)?;
         }
@@ -480,7 +526,7 @@ impl Pages {
         if rules {
             self.save_rules()?;
         }
-        Ok(Applied { pages, rules, made, undo })
+        Ok(Applied { pages, rules, made, moved: std::mem::take(&mut self.moved), undo })
     }
 
     fn change(&mut self, edit: Edit, touched: &mut Vec<String>, made: &mut Option<(String, String)>) -> Result<Edit, String> {
@@ -503,7 +549,7 @@ impl Pages {
         let undo = match edit {
             Edit::AddPage { name } => {
                 let name = named(&name)?;
-                let id = self.free_id(&slug(&name));
+                let id = self.free_id(&slug(&name), None);
                 self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, fill: String::new(), interface: None, children: Vec::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
@@ -511,7 +557,7 @@ impl Pages {
             }
             Edit::AddComponent { name } => {
                 let name = self.component_name(&name, None)?;
-                let id = self.free_id(&slug(&name));
+                let id = self.free_id(&slug(&name), None);
                 let interface = Some(Interface::default());
                 self.insert_page(Page { id: id.clone(), name, width: COMPONENT_WIDTH, height: COMPONENT_HEIGHT, shows: Shows::Full, fill: String::new(), interface, children: Vec::new() });
                 *made = Some((id.clone(), id.clone()));
@@ -521,16 +567,21 @@ impl Pages {
             Edit::CopyPage { page, name } => {
                 let from = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?.clone();
                 let name = if from.interface.is_some() { self.component_name(&name, None)? } else { named(&name)? };
-                let id = self.free_id(&slug(&name));
+                let id = self.free_id(&slug(&name), None);
                 self.insert_page(Page { id: id.clone(), name, ..from });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
             }
-            Edit::RenamePage { page, name } => {
+            Edit::RenamePage { page, name, id } => {
                 let old = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?.name.clone();
                 let component = self.get(&page).is_some_and(|p| p.interface.is_some());
                 let name = if component { self.component_name(&name, Some(&page))? } else { named(&name)? };
+                // its id and file follow the name
+                let to = id.unwrap_or_else(|| self.free_id(&slug(&name), Some(&page)));
+                if to != page && self.get(&to).is_some() {
+                    return Err(format!("{to} is already the id of another page"));
+                }
                 self.page_mut(&page)?.name = name.clone();
                 // every instance of a renamed component follows it
                 if component {
@@ -540,7 +591,16 @@ impl Pages {
                         }
                     }
                 }
-                Edit::RenamePage { page: page.clone(), name: old }
+                if to != page {
+                    let at = self.list.iter().position(|p| p.id == page).expect("renamed above");
+                    let mut p = self.list.remove(at);
+                    p.id = to.clone();
+                    self.insert_page(p);
+                    // its old file goes
+                    touched.push(page.clone());
+                    self.moved.push((page.clone(), to.clone()));
+                }
+                Edit::RenamePage { page: to, name: old, id: Some(page) }
             }
             Edit::ResizePage { page, width, height } => {
                 if !(1..=LARGEST).contains(&width) || !(1..=LARGEST).contains(&height) {
@@ -895,11 +955,12 @@ impl Pages {
         self.list.iter_mut().find(|p| p.id == id).ok_or_else(|| format!("there is no page {id}"))
     }
 
-    fn free_id(&self, base: &str) -> String {
+    /// `base`, or it with a number, an id no page but `own` has.
+    fn free_id(&self, base: &str, own: Option<&str>) -> String {
         let base = if base.is_empty() { "page" } else { base };
         let mut id = base.to_owned();
         let mut n = 2;
-        while self.get(&id).is_some() {
+        while self.get(&id).is_some_and(|p| Some(p.id.as_str()) != own) {
             id = format!("{base}{n}");
             n += 1;
         }
@@ -1268,11 +1329,11 @@ mod tests {
         let o = || "overview".to_string();
         let edits = vec![
             Edit::AddPage { name: "Line two".into() },
-            Edit::RenamePage { page: "line-two".into(), name: "Line 2".into() },
-            Edit::ResizePage { page: "line-two".into(), width: 390, height: 844 },
-            Edit::SetShows { page: "line-two".into(), shows: Shows::Over },
-            Edit::SetFill { page: "line-two".into(), fill: "$ground".into() },
-            Edit::CopyPage { page: "line-two".into(), name: "Line 3".into() },
+            Edit::RenamePage { page: "line-two".into(), name: "Line 2".into(), id: None },
+            Edit::ResizePage { page: "line-2".into(), width: 390, height: 844 },
+            Edit::SetShows { page: "line-2".into(), shows: Shows::Over },
+            Edit::SetFill { page: "line-2".into(), fill: "$ground".into() },
+            Edit::CopyPage { page: "line-2".into(), name: "Line 3".into() },
             add(o(), None, Tag::Div, props(&[("x", "44"), ("background", "#222")])),
             add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"a\"")])),
             add(o(), None, Tag::Span, props(&[("text", "Speed")])),
@@ -1288,7 +1349,7 @@ mod tests {
                     Edit::SetProps { page: o(), id: "e1".into(), props: [("y".to_string(), Some("11".to_string()))].into() },
                 ],
             },
-            Edit::RemovePage { page: "line-two".into() },
+            Edit::RemovePage { page: "line-2".into() },
         ];
         let mut states = vec![(pages.list.clone(), files(&dir))];
         let mut undos = Vec::new();
@@ -1349,8 +1410,16 @@ mod tests {
         assert_eq!(pages.apply(add(&o(), "Dial")).err().unwrap(), "there is no component Dial");
         assert_eq!(pages.apply(Edit::RemovePage { page: gauge.clone() }).err().unwrap(), "Gauge is placed on Card, so it stays");
 
-        let renamed = pages.apply(Edit::RenamePage { page: gauge.clone(), name: "Dial".into() }).unwrap();
-        assert_eq!(renamed.pages, [card.clone(), gauge.clone()]);
+        // its id and file follow the name, and an undo kept from before follows the id
+        let renamed = pages.apply(Edit::RenamePage { page: gauge.clone(), name: "Dial".into(), id: None }).unwrap();
+        let dial = "dial".to_string();
+        assert_eq!(renamed.pages, [card.clone(), dial.clone(), gauge.clone()]);
+        assert_eq!(renamed.moved, [(gauge.clone(), dial.clone())]);
+        assert!(dir.join("components").join("dial.html").exists() && !dir.join("components").join("gauge.html").exists());
+        let mut kept = Edit::Batch { edits: vec![Edit::SetFill { page: gauge.clone(), fill: String::new() }, renamed.undo.clone()] };
+        kept.repage(&gauge, &dial);
+        let back = Edit::RenamePage { page: dial.clone(), name: "Gauge".into(), id: Some(gauge.clone()) };
+        assert_eq!(kept, Edit::Batch { edits: vec![Edit::SetFill { page: dial.clone(), fill: String::new() }, back] });
         let again = Pages::open(&dir).unwrap();
         assert_eq!(again.get(&card).unwrap().children[0].component.as_deref(), Some("Dial"));
         assert!(fs::read_to_string(dir.join("components").join(format!("{card}.html"))).unwrap().contains("<Dial id=\"e1\" x=\"0\"/>"));

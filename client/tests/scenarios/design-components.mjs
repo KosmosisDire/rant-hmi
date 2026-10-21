@@ -1,5 +1,6 @@
 // A new user makes a Lamp component and places it twice: instances draw it scaled and pick as
-// one piece, a rename reaches them, a placed component stays, and Open it goes to it.
+// one piece, a rename reaches them and its file, a placed component stays, and Open it goes
+// to it.
 
 import { props } from "../designer.mjs";
 
@@ -57,5 +58,6 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.el(first.id).click({ position: { x: 5, y: 5 } });
   await side("right").locator("button", { hasText: "Open it" }).click();
   await eventually(async () => (await page.locator(".pages :is(.list-row, .card).selected").first().textContent()).includes("Light"), "Open it to open the component");
-  check(props(hmi, lamp.id, hmi.page(lamp.id).children[0].id) !== undefined, "the component lost its parts");
+  const light = hmi.state.pages.find((p) => p.name === "Light");
+  check(light.id === "light" && props(hmi, light.id, light.children[0].id) !== undefined, `the component is ${light.id} and holds ${light.children.length} parts`);
 }

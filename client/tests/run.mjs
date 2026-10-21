@@ -1,7 +1,7 @@
 // Runs the scenarios in tests/scenarios against one backend, the demo line and the cage cell,
 // each on a fresh page, as `docs/testing.md` says. A console error fails a scenario.
 
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { designer } from "./designer.mjs";
@@ -66,26 +66,15 @@ for (const file of files) {
   await context.close();
 }
 await browser.close();
-/** Puts the components the scenarios made in `to`, in place of what it held, each file named
- *  for its component, which is all an instance refers to it by. */
-function keepComponents(to) {
-  const made = join(sys.project, "components");
-  rmSync(to, { recursive: true, force: true });
-  mkdirSync(to, { recursive: true });
-  for (const file of readdirSync(made)) {
-    const text = readFileSync(join(made, file), "utf8");
-    writeFileSync(join(to, `${/^<component name="(\w+)"/.exec(text)[1].toLowerCase()}.html`), text);
-  }
-}
 // with --library, the components the scenarios made by hand become those a new project starts with
 if (process.argv.includes("--library") && !failed) {
-  keepComponents(join(ROOT, "server", "library", "components"));
+  rmSync(join(ROOT, "server", "library", "components"), { recursive: true, force: true });
+  cpSync(join(sys.project, "components"), join(ROOT, "server", "library", "components"), { recursive: true });
   console.log(`kept ${readdirSync(join(ROOT, "server", "library", "components")).length} components in server/library/components`);
 }
 if (into && !failed) {
   rmSync(into, { recursive: true, force: true });
   cpSync(sys.project, into, { recursive: true });
-  keepComponents(join(into, "components"));
   console.log(`kept the project in ${relative(ROOT, into)}`);
 }
 writeFileSync(join(out, "backend.log"), sys.backend.log);

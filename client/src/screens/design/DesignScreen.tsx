@@ -1,6 +1,6 @@
 import { batch, createEffect, createSignal, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import { UNIT } from "../../state/bind";
-import { state } from "../../state/store";
+import { onMoved, state } from "../../state/store";
 import { currentPage, openPage, tookWanted, wanted } from "../../state/view";
 import { Edge } from "../../ui/Sidebars";
 import { Artboard, GRID, STEP } from "./Artboard";
@@ -63,6 +63,7 @@ export function DesignScreen(p: { shown: boolean }) {
   // another page opened starts with nothing selected, since ids repeat across pages, unless
   // an element on it was asked for, as the Logic tab asks for a handler's, once this shows
   let at = currentPage()?.id;
+  onCleanup(onMoved((from, to) => at === from && (at = to)));
   createEffect(() => {
     const id = currentPage()?.id;
     const w = p.shown ? wanted() : null;

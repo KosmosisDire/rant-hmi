@@ -11,8 +11,8 @@ data/variables.toml
 data/records.toml
 data/computed.toml
 data/theme.toml
-pages/<id>.html
-components/<id>.html
+pages/<name>.html
+components/<name>.html
 logic/handlers.html
 ```
 
@@ -23,7 +23,10 @@ name = "Demo line"
 start = "overview"
 ```
 
-- `start` is the page operators' screens open on. Without it they open on the first page.
+- `start` is the page operators' screens open on, by its file's name. Without it they open
+  on the first page.
+- A page's or a component's file is named after it in small letters and dashes, `Robot cell`
+  in `pages/robot-cell.html`, and a rename in the designer renames the file too.
 
 ## data
 

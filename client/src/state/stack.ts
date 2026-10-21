@@ -71,6 +71,11 @@ export function closeWith(value: Value) {
   back();
 }
 
+/** Keeps a page open under its new id when a rename moved it. */
+export function follow(from: string, to: string) {
+  setStack((s) => s.map((o) => (o.id === from ? { ...o, id: to } : o)));
+}
+
 /** Closes the pages that no longer exist, their waits hearing nothing. */
 export function prune(exists: (id: string) => boolean) {
   const s = stack();

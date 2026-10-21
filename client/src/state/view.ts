@@ -4,7 +4,7 @@
 
 import { createSignal } from "solid-js";
 import { remembered } from "./remember";
-import { page, state } from "./store";
+import { onMoved, page, state } from "./store";
 
 export const TABS = ["data", "design", "logic", "run"] as const;
 export type Tab = (typeof TABS)[number];
@@ -86,6 +86,18 @@ export function openElement(w: Wanted) {
 
 /** Design took what was asked for. */
 export const tookWanted = () => setWanted(null);
+
+// what is open here follows a rename that moved its id, in this tab's history too
+onMoved((from, to) => {
+  if (chosen() === from) {
+    setChosen(to);
+    keep(to);
+  }
+  const spot = spotOf(window.history.state);
+  if (spot?.page === from) window.history.replaceState({ hmi: { ...spot, page: to } satisfies Spot }, "");
+  const w = wanted();
+  if (w?.page === from) setWanted({ ...w, page: to });
+});
 
 /** Follows the browser's back and forward from here on. The editor's alone: an operator's
  *  screen keeps its own page stack in the history. */

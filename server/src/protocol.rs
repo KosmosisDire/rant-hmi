@@ -56,6 +56,9 @@ pub enum ServerMsg {
     Channels { answer: Option<String> },
     /// The computed values, whole, after a change.
     Computed { computed: Vec<Computed> },
+    /// A rename moved a page's or component's id, so a screen holding the old one follows. It
+    /// comes before the pages that show the new one.
+    Moved { from: String, to: String },
     /// The mesh's enums code names, whole, after a change.
     Enums { enums: Vec<EnumInfo> },
     /// An action that was not done, and why, for the screen that asked.

@@ -277,6 +277,8 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const touch = await (await page.context().browser().newContext({ hasTouch: true, viewport: { width: 1600, height: 1000 } })).newPage();
   await touch.goto(sys.url);
   await touch.locator(".statusbar", { hasText: "System" }).waitFor();
+  await touch.locator(".tab", { hasText: "Design" }).click();
+  await touch.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Overview/ }).click();
   await touch.locator(".tab", { hasText: "Run" }).click();
   const at = (id, n = 0) => touch.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`).nth(n);
   await at(jog).waitFor();

@@ -881,6 +881,18 @@ impl App {
                 s.undo.remove(0);
             }
         }
+        for (from, to) in &applied.moved {
+            for e in self.sessions.values_mut().flat_map(|s| s.undo.iter_mut().chain(s.redo.iter_mut())) {
+                e.repage(from, to);
+            }
+            if self.project.info.start.as_deref() == Some(from) {
+                match self.project.set_start(to.clone()) {
+                    Ok(()) => self.broadcast(&ServerMsg::Project { project: self.project.info.clone() }),
+                    Err(e) => warn!("could not keep {to} the start page: {e}"),
+                }
+            }
+            self.broadcast(&ServerMsg::Moved { from: from.clone(), to: to.clone() });
+        }
         // a page added or removed changes the list, otherwise each page goes out alone
         let touched: Vec<_> = applied.pages.iter().map(|id| self.pages.get(id)).collect();
         if touched.iter().any(Option::is_none) || applied.pages.iter().any(|id| matches!(&applied.made, Some((p, m)) if p == id && m == id)) {

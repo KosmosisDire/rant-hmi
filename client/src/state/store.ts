@@ -1,6 +1,7 @@
 // What the backend told this screen, in one store. Every server message lands through
 // receive(), and reconcile keeps object identity so only what changed redraws.
 
+import { batch } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 import type { Computed } from "../protocol/Computed";
 import type { EntityInfo } from "../protocol/EntityInfo";
@@ -17,7 +18,7 @@ import type { ServerMsg } from "../protocol/ServerMsg";
 import type { Rule } from "../protocol/Rule";
 import type { Token } from "../protocol/Token";
 import type { Variable } from "../protocol/Variable";
-import { closeWith, push } from "./stack";
+import { closeWith, follow, push } from "./stack";
 
 export interface Live {
   value: Value | null;
@@ -219,6 +220,14 @@ export function receive(msg: ServerMsg) {
     case "pages":
       setState("pages", reconcile(msg.pages, { key: "id" }));
       break;
+    case "moved":
+      // the page takes its new id here at once, so nothing showing it loses it before its list comes
+      batch(() => {
+        setState("pages", (p) => p.id === msg.from, "id", msg.to);
+        follow(msg.from, msg.to);
+        for (const f of movers) f(msg.from, msg.to);
+      });
+      break;
     case "page": {
       const at = state.pages.findIndex((p) => p.id === msg.page.id);
       if (at < 0) setState("pages", state.pages.length, msg.page);
@@ -260,6 +269,14 @@ export function entity(name: string): EntityInfo | undefined {
 
 export function importOf(entityName: string): Import | undefined {
   return state.imports.find((i) => i.entity === entityName);
+}
+
+const movers = new Set<(from: string, to: string) => void>();
+
+/** Calls `f` with each page or component id a rename moves, until what it returns is called. */
+export function onMoved(f: (from: string, to: string) => void): () => void {
+  movers.add(f);
+  return () => movers.delete(f);
 }
 
 export function page(id: string): Page | undefined {
