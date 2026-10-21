@@ -2,7 +2,8 @@ description = "An HMI project, edited and run in a browser"
 restart     = "on-failure"
 
 param "project" {
-  description = "The project folder as a full path, started empty when it holds none"
+  type        = path
+  description = "The project folder, started empty when it holds none"
 }
 
 param "port" {

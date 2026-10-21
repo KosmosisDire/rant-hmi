@@ -17,7 +17,7 @@ rant install hmi
 ## Usage
 
 ```
-rant run Hmi project=C:/path/to/my-hmi    # a folder, made into a project when empty
+rant run Hmi project=my-hmi    # a folder, made into a project when empty
 ```
 
 Open http://localhost:6739 to design it, and http://localhost:6739/run on an operator's
