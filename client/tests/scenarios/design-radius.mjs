@@ -1,6 +1,7 @@
 // A designer rounds a frame's corners: a drag on the radius's lead scrubs every corner, a click
-// on it opens a field per corner, a first corner of its own starts the others at the one for
-// all and takes its place, and one radius for every corner again takes the top left's.
+// on it opens a field per corner, two by two where each corner sits, a first corner of its own
+// starts the others at the one for all and takes its place, and one radius for every corner
+// again takes the top left's.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Corners");
@@ -22,8 +23,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => now()["border-radius"] === "8", "the radius typed back to 8");
 
   await lead.click();
-  const labels = await page.locator(".popover.parts .field label").allTextContents();
-  check(labels.join() === "Top left,Top right,Bottom right,Bottom left", `the corners offered are ${labels}`);
+  // each corner's field sits where the corner does, two by two
+  const cells = await page.locator(".popover.parts .lead.inside").evaluateAll((ls) => ls.map((l) => [l.getAttribute("aria-label"), Math.round(l.getBoundingClientRect().x), Math.round(l.getBoundingClientRect().y)]));
+  const at = Object.fromEntries(cells.map(([name, x, y]) => [name, { x, y }]));
+  const [tl, tr, bl, br] = ["Top left", "Top right", "Bottom left", "Bottom right"].map((n) => at[n]);
+  check(cells.length === 4 && tl.y === tr.y && bl.y === br.y && tl.y < bl.y && tl.x === bl.x && tr.x === br.x && tl.x < tr.x, `the corners sit at ${JSON.stringify(at)}`);
   await d.setField("Top left", "20");
   await eventually(() => now()["border-top-left-radius"] === "20" && now()["border-radius"] === undefined, "the corner to take the place of the one for all");
   const others = ["border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius"].map((k) => now()[k]);

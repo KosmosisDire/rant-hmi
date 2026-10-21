@@ -523,6 +523,18 @@
   padding: 8px 10px;
 }
 
+/* corners where they sit on the box, two by two */
+.popover.parts.corners {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 10px;
+  width: 200px;
+}
+
+.turned {
+  display: inline-flex;
+}
+
 .section-row {
   display: flex;
   align-items: center;

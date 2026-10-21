@@ -64,9 +64,9 @@ export interface FieldProps {
   focus?: number;
   /** Why a value the code gives would not show, as CSS the browser drops, or nothing. */
   check?: (value: unknown) => string | undefined;
-  /** A lead of its own: its icon, its title and what a click on it does, while a drag on it
-   *  still scrubs a number. */
-  lead?: { icon: JSX.Element; title: string; onClick: () => void };
+  /** A lead of its own: its icon, its title and what a click on it does, else what any does,
+   *  while a drag on it still scrubs a number. */
+  lead?: { icon: JSX.Element; title: string; onClick?: () => void };
 }
 
 /** One property, an expression unless `plain`. Under it, what stops it showing, and for
@@ -171,7 +171,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   // a number that scrubs takes its click when the drag ends without moving
   const click = () => {
     if (scrubs()) return;
-    if (p.lead) p.lead.onClick();
+    if (p.lead?.onClick) p.lead.onClick();
     else if (kind() === "colour" || kind() === "choice") setOpened(!opened());
     else if (kind() === "flag" && literal()) p.onWrite(p.value.trim() === "true" ? "false" : "true");
     else focusText();
@@ -240,11 +240,12 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
         class="lead"
         classList={{ scrub: scrubs(), linked: !literal() && kind() !== "colour", inside: p.inside }}
         title={title()}
+        aria-label={p.inside ? p.label : undefined}
         onPointerDown={down}
         onClick={click}
       >
         <Switch fallback={<Braces size={12} />}>
-          <Match when={p.inside}>{p.label}</Match>
+          <Match when={p.inside}>{p.lead?.icon ?? p.label}</Match>
           <Match when={kind() === "colour"}>
             <span class="swatch lead-swatch" classList={{ none: !parseColour(shown()) && shown() !== "none", empty: shown() === "none" }}>
               <Show when={parseColour(shown())}>
@@ -375,7 +376,17 @@ interface Parts {
   icon: () => JSX.Element;
   /** What the parts are, as the field's titles say: "corner", "side". */
   each: string;
+  /** The parts are corners, shown two by two where each sits. */
+  corners?: boolean;
 }
+
+/** Each corner in CSS's order: its cell two by two, and how far the corner icon turns to it. */
+const CORNERS = [
+  { cell: 1, turn: -90 },
+  { cell: 2, turn: 0 },
+  { cell: 4, turn: 90 },
+  { cell: 3, turn: 180 },
+];
 
 export const RADIUS: Parts = {
   label: "Radius",
@@ -388,6 +399,7 @@ export const RADIUS: Parts = {
   ],
   icon: () => <SquareRoundCorner size={12} />,
   each: "corner",
+  corners: true,
 };
 
 export const PADDING: Parts = {
@@ -460,9 +472,31 @@ export function PartsField(p: { of: Parts; props: Record<string, string | undefi
         </div>
       </Show>
       <Show when={opened()}>
-        <Popover anchor={host} onClose={() => setOpened(false)} class="parts">
+        <Popover anchor={host} onClose={() => setOpened(false)} class={p.of.corners ? "parts corners" : "parts"}>
           <For each={p.of.parts}>
-            {([label, key]) => <Field label={label} kind="number" min={0} step={0.1} placeholder={part(p.of.all) || "0"} value={part(key)} onWrite={(t) => one(key, t)} onShow={(t) => p.show({ [key]: t })} />}
+            {([label, key], i) => {
+              const field = {
+                label,
+                kind: "number" as const,
+                min: 0,
+                step: 0.1,
+                get placeholder() {
+                  return part(p.of.all) || "0";
+                },
+                get value() {
+                  return part(key);
+                },
+                onWrite: (t: string | null) => one(key, t),
+                onShow: (t: string) => p.show({ [key]: t }),
+              };
+              if (!p.of.corners) return <Field {...field} />;
+              const icon = <span class="turned" style={{ rotate: `${CORNERS[i()].turn}deg` }}>{p.of.icon()}</span>;
+              return (
+                <div style={{ order: CORNERS[i()].cell }}>
+                  <Field {...field} inside lead={{ icon, title: `${label}: drag to change it, Shift for finer steps` }} />
+                </div>
+              );
+            }}
           </For>
         </Popover>
       </Show>

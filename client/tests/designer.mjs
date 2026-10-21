@@ -76,7 +76,7 @@ export function designer(page) {
 
     /** A field by its label, or by the label inside its box as placement's x and y have. */
     field(label) {
-      const named = page.locator("label, .lead.inside", { hasText: new RegExp(`^${label}$`) });
+      const named = page.locator("label", { hasText: new RegExp(`^${label}$`) }).or(page.locator(`.lead.inside[aria-label="${label}"]`));
       return page.locator(".screen:not([hidden]) .sidebar.right .field, .popover .field", { has: named }).locator("input, textarea");
     },
 
