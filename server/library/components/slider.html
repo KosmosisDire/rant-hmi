@@ -1,16 +1,19 @@
-<component name="Slider" size="27x4">
+<component name="Slider" size="27x4" sizing="fill">
   <prop name="value" default="0" bindable="true"/>
   <prop name="min" default="0"/>
   <prop name="max" default="100"/>
   <prop name="step" default="1"/>
+  <prop name="colour" default="$accent"/>
+  <prop name="trackColour" default="$panel3"/>
+  <prop name="thumbColour" default="$text"/>
   <event name="change"/>
-  <div id="e1" name="slider" x="0" y="0" w="27" h="4">
+  <div id="e1" name="slider" x="0" y="0" w="100%" h="100%">
     <on event="drag">
       value = Math.round((min + p.x * (max - min)) / step) * step;
       emit("change", value);
     </on>
-    <div id="e2" name="track" x="0" y="1.6" w="27" h="0.8" style="background: $panel3; border-radius: 0.4"/>
-    <div id="e3" name="fill" x="0" y="1.6" w="(value - min) / (max - min) * 27" h="0.8" style="background: $accent; border-radius: 0.4"/>
-    <div id="e4" name="thumb" x="(value - min) / (max - min) * 27 - 1" y="1" w="2" h="2" style='background: root.pressed ? $onFill : $text; border-radius: 1; box-shadow: "0 1px 4px #0008"'/>
+    <div id="e2" name="track" x="0" y="50%" w="100%" h="0.8" origin='"0% 50%"' style="background: trackColour; border-radius: 0.4"/>
+    <div id="e3" name="fill" x="0" y="50%" w="(value - min) / (max - min) * 100%" h="0.8" origin='"0% 50%"' style="background: colour; border-radius: 0.4"/>
+    <div id="e4" name="thumb" x="(value - min) / (max - min) * 100%" y="50%" w="2" h="2" origin='"50% 50%"' style='background: root.pressed ? thumbColour.lighten(0.5) : thumbColour; border-radius: 1; box-shadow: "0 1px 4px #0008"'/>
   </div>
 </component>
