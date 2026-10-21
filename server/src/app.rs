@@ -18,7 +18,8 @@ use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
-use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Token, Variable};
+use crate::project::{Computed, Import, Kind, Per, Project, Record, Target, Token, Variable};
+use crate::rules;
 use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
@@ -956,23 +957,18 @@ impl App {
     /// Writes a variable, the screen's own for one each screen has, or sets a variable import
     /// on the mesh.
     fn set(&mut self, session: Option<u32>, alias: &str, path: &str, value: Value) -> Result<(), String> {
+        let target = self.project.look_up(alias).target(alias, path, session.is_some()).map_err(|u| u.text)?;
         // a computed value's setter works out what its target takes, then that is set
-        if let Some(c) = self.project.computed(alias) {
-            if c.set.is_none() {
-                return Err(format!("{alias} is worked out from other values, and has no setter to write it"));
-            }
-            if !path.is_empty() {
-                return Err(format!("{alias} is worked out whole, so it is set whole"));
-            }
+        if let Target::Computed = target {
             self.script.send(ToScript::Invert { session, name: alias.to_owned(), v: value });
             return Ok(());
         }
-        if let Some(per) = self.project.variable(alias).map(|v| v.per) {
+        if let Target::Variable(per) = target {
             let held = match per {
                 Per::Hmi => self.shared.get_mut(alias),
                 Per::Screen => session.and_then(|s| self.sessions.get_mut(&s)).and_then(|s| s.vars.get_mut(alias)),
             };
-            let held = held.ok_or_else(|| format!("{alias} is each screen's own, and this has no screen"))?;
+            let held = held.ok_or_else(|| rules::say(rules::NO_SCREEN, alias))?;
             let before = held.clone();
             match path.is_empty() {
                 true => *held = value,
@@ -991,13 +987,6 @@ impl App {
                 }
             }
             return Ok(());
-        }
-        let import = self.project.find(alias).ok_or_else(|| format!("{alias} is not an import"))?;
-        if import.intent != Intent::Write {
-            return Err(format!("{alias} is imported to read. Import it to write to change it."));
-        }
-        if import.kind != Kind::Variable {
-            return Err(format!("{alias} is not a variable, so it cannot be set"));
         }
         let last = self.values.get(alias).and_then(|s| s.value.as_ref());
         let whole = self.mesh.set(alias, path, value, last)?;

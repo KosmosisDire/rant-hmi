@@ -7,10 +7,11 @@ import { isHex, tokens } from "../lang/lex";
 import { LIBRARY, setClock } from "../lang/math.js";
 import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
+import { MISSING, TOKEN_FIXED, WHOLE } from "../protocol/rules";
 import type { Token } from "../protocol/Token";
 import type { Value } from "../protocol/Value";
 import { mode } from "./mode";
-import { named } from "./names";
+import { named, say } from "./names";
 import { live, notify, state } from "./store";
 
 /** One unit of every length, in CSS pixels: placement, sizes, diagrams, spacing, radii, borders
@@ -163,7 +164,7 @@ function themed(s: Scope): Scope {
       return t ? tokenValue(t) : s.get(name);
     },
     set: (name, path, value) => {
-      if (token(name)) throw new TypeError(`${name} is the theme's, so it cannot be set`);
+      if (token(name)) throw new TypeError(say(TOKEN_FIXED, name));
       s.set(name, path, value);
     },
     writes: (name) => !token(name) && s.writes(name),
@@ -187,14 +188,14 @@ export const pageScope: Scope = themed({
     const n = named(name);
     if (!n || n.of === "token") throw new ReferenceError(pageScope.missing(name));
     if (n.fixed) throw new TypeError(n.fixed);
-    if (n.of === "computed" && path !== "") throw new TypeError(`${name} is worked out whole, so it is set whole`);
+    if (n.of === "computed" && path !== "") throw new TypeError(say(WHOLE, name));
     send({ type: "set", alias: name, path, value: value as Value });
   },
   writes: (name) => {
     const n = named(name);
     return !!n && n.of !== "token" && !n.fixed;
   },
-  missing: (name) => `${name} names no mesh import, variable or record`,
+  missing: (name) => say(MISSING, name),
 });
 
 /** A bare name and the fields after it, as a two way binding is written: `Settings.target`. */

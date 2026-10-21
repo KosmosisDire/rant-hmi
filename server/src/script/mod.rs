@@ -14,7 +14,7 @@ use rquickjs::{Context, Ctx, Exception, Function, Module, Object, Persistent, Pr
 use crate::value::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::project::{Computed, Import, Intent, Kind, Per, Variable};
+use crate::project::{Computed, Found, Import, Intent, Kind, Per, Variable};
 use crate::protocol::EnumInfo;
 
 /// How long code may run without waiting before it is stopped.
@@ -256,6 +256,17 @@ struct Shared {
 impl Shared {
     fn send(&self, msg: FromScript) {
         let _ = self.out.send(msg);
+    }
+
+    /// What `name` names among the project's names the engine was told.
+    fn look_up(&self, name: &str) -> Found<'_> {
+        if let Some(c) = self.computed.get(name) {
+            return Found::Computed(c);
+        }
+        if let Some(v) = self.variables.get(name) {
+            return Found::Variable(v);
+        }
+        self.imports.get(name).map_or(Found::Nothing, Found::Import)
     }
 
     /// What the run sees: its own write not sent yet, else the latest value, its screen's
@@ -746,22 +757,9 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let s = shared.clone();
     let write = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
         let mut st = s.borrow_mut();
-        if let Some(c) = st.computed.get(&alias) {
-            if c.set.is_none() {
-                return Err(Exception::throw_type(&ctx, &format!("{alias} is worked out from other values, and has no setter to write it")));
-            }
-        } else if let Some(v) = st.variables.get(&alias) {
-            if v.per == Per::Screen && st.sessions.get(&run).copied().flatten().is_none() {
-                return Err(Exception::throw_type(&ctx, &format!("{alias} is each screen's own, and this handler runs for no screen")));
-            }
-        } else {
-            let import = st.imports.get(&alias).ok_or_else(|| Exception::throw_reference(&ctx, &format!("{alias} names no mesh import, variable or record")))?;
-            if import.kind != Kind::Variable {
-                return Err(Exception::throw_type(&ctx, &format!("{alias} is not a variable, so it cannot be set")));
-            }
-            if import.intent != Intent::Write {
-                return Err(Exception::throw_type(&ctx, &format!("{alias} is imported to read. Import it to write to change it.")));
-            }
+        let screen = st.sessions.get(&run).copied().flatten().is_some();
+        if let Err(u) = st.look_up(&alias).target(&alias, "", screen) {
+            return Err(if u.unknown { Exception::throw_reference(&ctx, &u.text) } else { Exception::throw_type(&ctx, &u.text) });
         }
         let value = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
         st.stage(run, alias, value);

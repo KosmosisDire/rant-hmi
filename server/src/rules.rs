@@ -28,6 +28,22 @@ pub const EVERY_MS: (u32, u32) = (50, 86_400_000);
 /// How long a record keeps its samples, in seconds.
 pub const KEEP_S: (u32, u32) = (1, 86_400);
 
+/// Why code cannot write a name, `{name}` standing for it. The engine and the editor say the same.
+pub const MISSING: &str = "{name} names no mesh import, variable or record";
+pub const NO_SETTER: &str = "{name} is worked out from other values, and has no setter to write it";
+pub const WHOLE: &str = "{name} is worked out whole, so it is set whole";
+pub const NO_SCREEN: &str = "{name} is each screen's own, and this handler runs for no screen";
+pub const NOT_VARIABLE: &str = "{name} is not a variable, so it cannot be set";
+pub const READ_ONLY: &str = "{name} is imported to read. Import it to write to change it.";
+pub const RECORD: &str = "{name} is a record, which only its source fills";
+pub const TOKEN_FIXED: &str = "{name} is the theme's, so it cannot be set";
+pub const ENUM_FIXED: &str = "{name} is an enum of the mesh's, so it cannot be set";
+
+/// A reason with the name in it.
+pub fn say(why: &str, name: &str) -> String {
+    why.replace("{name}", name)
+}
+
 impl Shape {
     pub fn fits(&self, name: &str) -> bool {
         let mut chars = name.chars();
@@ -64,7 +80,21 @@ mod tests {
         for (name, s) in shapes {
             ts += &format!("export const {name}: Shape = {{ pattern: {}, except: {:?} }};\n", pattern(s), s.except);
         }
-        ts += &format!("\nexport const EVERY_MS = [{}, {}] as const;\nexport const KEEP_S = [{}, {}] as const;\n", EVERY_MS.0, EVERY_MS.1, KEEP_S.0, KEEP_S.1);
+        ts += &format!("\nexport const EVERY_MS = [{}, {}] as const;\nexport const KEEP_S = [{}, {}] as const;\n\n", EVERY_MS.0, EVERY_MS.1, KEEP_S.0, KEEP_S.1);
+        let reasons = [
+            ("MISSING", MISSING),
+            ("NO_SETTER", NO_SETTER),
+            ("WHOLE", WHOLE),
+            ("NO_SCREEN", NO_SCREEN),
+            ("NOT_VARIABLE", NOT_VARIABLE),
+            ("READ_ONLY", READ_ONLY),
+            ("RECORD", RECORD),
+            ("TOKEN_FIXED", TOKEN_FIXED),
+            ("ENUM_FIXED", ENUM_FIXED),
+        ];
+        for (name, why) in reasons {
+            ts += &format!("export const {name} = {why:?};\n");
+        }
         let path = std::path::Path::new(&std::env::var("TS_RS_EXPORT_DIR").unwrap()).join("rules.ts");
         if std::fs::read_to_string(&path).ok() != Some(ts.clone()) {
             std::fs::write(&path, ts).unwrap();

@@ -310,6 +310,20 @@ impl Project {
         }
     }
 
+    /// What `name` names among the project's own names and imports.
+    pub fn look_up(&self, name: &str) -> Found<'_> {
+        if let Some(c) = self.computed(name) {
+            return Found::Computed(c);
+        }
+        if let Some(v) = self.variable(name) {
+            return Found::Variable(v);
+        }
+        if let Some(i) = self.find(name) {
+            return Found::Import(i);
+        }
+        if self.record(name).is_some() { Found::Record } else { Found::Nothing }
+    }
+
     pub fn find(&self, alias: &str) -> Option<&Import> {
         self.imports.iter().find(|i| i.alias == alias)
     }
@@ -421,6 +435,50 @@ fn cycle(all: &[Computed]) -> Option<Vec<String>> {
             path[start..].to_vec()
         })
     })
+}
+
+/// What a name names, as the HMI and its engine each look it up.
+pub enum Found<'a> {
+    Computed(&'a Computed),
+    Variable(&'a Variable),
+    Import(&'a Import),
+    Record,
+    Nothing,
+}
+
+/// What code writing a name writes: a computed value through its setter, a variable of the
+/// HMI's, shared or each screen's, or a mesh import.
+pub enum Target {
+    Computed,
+    Variable(Per),
+    Import,
+}
+
+/// Why code cannot write a name, for the user. `unknown` when the name names nothing.
+pub struct Unwritable {
+    pub text: String,
+    pub unknown: bool,
+}
+
+impl Found<'_> {
+    /// What code writing `name` writes, or why it cannot: the one rule the HMI and its engine
+    /// share. `path` is the field written, empty for all of it, and `screen` says whether the
+    /// write is a screen's.
+    pub fn target(&self, name: &str, path: &str, screen: bool) -> Result<Target, Unwritable> {
+        let no = |why: &str| Err(Unwritable { text: rules::say(why, name), unknown: false });
+        match self {
+            Found::Computed(c) if c.set.is_none() => no(rules::NO_SETTER),
+            Found::Computed(_) if !path.is_empty() => no(rules::WHOLE),
+            Found::Computed(_) => Ok(Target::Computed),
+            Found::Variable(v) if v.per == Per::Screen && !screen => no(rules::NO_SCREEN),
+            Found::Variable(v) => Ok(Target::Variable(v.per)),
+            Found::Import(i) if i.kind != Kind::Variable => no(rules::NOT_VARIABLE),
+            Found::Import(i) if i.intent != Intent::Write => no(rules::READ_ONLY),
+            Found::Import(_) => Ok(Target::Import),
+            Found::Record => no(rules::RECORD),
+            Found::Nothing => Err(Unwritable { text: rules::say(rules::MISSING, name), unknown: true }),
+        }
+    }
 }
 
 fn theme_file(root: &Path) -> PathBuf {
@@ -594,5 +652,22 @@ mod tests {
         p.unimport("Speed").unwrap();
         assert!(p.imports.is_empty());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn code_writes_what_it_may_and_hears_why_not() {
+        let why = |found: Found, path: &str, screen: bool| found.target("X", path, screen).err().map(|u| (u.text, u.unknown));
+        let read = Import { intent: Intent::Read, ..speed() };
+        let call = Import { kind: Kind::Function, ..speed() };
+        let own = Variable { name: "x".into(), start: value!(0), per: Per::Screen };
+        let worked = Computed { name: "x".into(), get: "1".into(), set: None, unit: None, note: None };
+        assert_eq!(why(Found::Import(&speed()), "a", false), None);
+        assert_eq!(why(Found::Import(&read), "", true).unwrap().0, "X is imported to read. Import it to write to change it.");
+        assert_eq!(why(Found::Import(&call), "", true).unwrap().0, "X is not a variable, so it cannot be set");
+        assert_eq!(why(Found::Variable(&own), "", true), None);
+        assert_eq!(why(Found::Variable(&own), "", false).unwrap().0, "X is each screen's own, and this handler runs for no screen");
+        assert_eq!(why(Found::Computed(&worked), "", true).unwrap().0, "X is worked out from other values, and has no setter to write it");
+        assert_eq!(why(Found::Record, "", true).unwrap().0, "X is a record, which only its source fills");
+        assert_eq!(why(Found::Nothing, "", true), Some(("X names no mesh import, variable or record".into(), true)));
     }
 }

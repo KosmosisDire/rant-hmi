@@ -3,7 +3,7 @@
 
 import { createMemo, createRoot } from "solid-js";
 import type { Kind } from "../protocol/Kind";
-import type { Shape } from "../protocol/rules";
+import { ENUM_FIXED, NO_SETTER, NOT_VARIABLE, READ_ONLY, RECORD, type Shape, TOKEN_FIXED } from "../protocol/rules";
 import { state } from "./store";
 
 export interface Named {
@@ -23,17 +23,17 @@ const index = createRoot(() =>
     const all = new Map<string, Named>();
     const put = (n: Named) => all.has(n.name) || all.set(n.name, n);
     for (const i of state.imports) {
-      const fixed = i.kind === "variable" && i.intent === "write" ? undefined : `${i.alias} cannot be set from here`;
+      const fixed = i.kind !== "variable" ? say(NOT_VARIABLE, i.alias) : i.intent !== "write" ? say(READ_ONLY, i.alias) : undefined;
       put({ name: i.alias, of: "import", kind: i.kind, words: `${i.kind}, ${i.intent}`, fixed });
     }
     for (const v of state.variables) put({ name: v.name, of: "variable", words: v.per === "screen" ? "variable, per screen" : "variable, shared" });
     for (const c of state.computed) {
-      const fixed = c.set ? undefined : `${c.name} is worked out from other values, and has no setter to write it`;
+      const fixed = c.set ? undefined : say(NO_SETTER, c.name);
       put({ name: c.name, of: "computed", words: c.unit ? `computed, ${c.unit}` : "computed", fixed });
     }
-    for (const r of state.records) put({ name: r.name, of: "record", words: `record of ${r.source}`, fixed: `${r.name} is a record, which only its source fills` });
-    for (const e of state.enums) put({ name: e.name, of: "enum", words: "enum", fixed: `${e.name} is an enum of the mesh's, so it cannot be set` });
-    for (const t of state.tokens) put({ name: `$${t.name}`, of: "token", words: "token", fixed: `$${t.name} is the theme's, so it cannot be set` });
+    for (const r of state.records) put({ name: r.name, of: "record", words: `record of ${r.source}`, fixed: say(RECORD, r.name) });
+    for (const e of state.enums) put({ name: e.name, of: "enum", words: "enum", fixed: say(ENUM_FIXED, e.name) });
+    for (const t of state.tokens) put({ name: `$${t.name}`, of: "token", words: "token", fixed: say(TOKEN_FIXED, `$${t.name}`) });
     return all;
   }),
 );
@@ -45,6 +45,9 @@ export const names = (...of: Named["of"][]): Named[] => [...index().values()].fi
 
 /** The HMI's own names, which share one space: a variable, a computed value, a record. */
 const OWN: Named["of"][] = ["variable", "computed", "record"];
+
+/** A reason from the rules with the name in it. */
+export const say = (why: string, name: string) => why.replaceAll("{name}", name);
 
 /** Whether `name` is spelled as `shape` asks and is none it keeps clear of. */
 export const fits = (shape: Shape, name: string) => shape.pattern.test(name) && !shape.except.includes(name);
