@@ -43,6 +43,7 @@ export { default as ImagePlay } from "lucide-solid/icons/image-play";
 export { default as Info } from "lucide-solid/icons/info";
 export { default as Keyboard } from "lucide-solid/icons/keyboard";
 export { default as Link } from "lucide-solid/icons/link";
+export { default as List } from "lucide-solid/icons/list";
 export { default as ListClock } from "lucide-solid/icons/list-clock";
 export { default as Minus } from "lucide-solid/icons/minus";
 export { default as Monitor } from "lucide-solid/icons/monitor";

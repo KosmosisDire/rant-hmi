@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { Signature, Suggestion } from "../state/complete";
-import { Dot, Parentheses } from "./icons";
+import { Dot, List, Parentheses } from "./icons";
 import { KindIcon, LocalIcon } from "./marks";
 import { Preview } from "./Preview";
 
@@ -80,6 +80,11 @@ export function Suggestions(p: { items: Suggestion[]; chosen: number; onTake: (s
                 </Match>
                 <Match when={s.icon === "token"}>
                   <span class="swatch" style={{ background: String(s.value) }} />
+                </Match>
+                <Match when={s.icon === "enum"}>
+                  <span class="kind">
+                    <List size={13} />
+                  </span>
                 </Match>
                 <Match when={s.icon === "member"}>
                   <span class="kind">

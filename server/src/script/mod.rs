@@ -15,6 +15,7 @@ use crate::value::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::project::{Computed, Import, Intent, Kind, Per, Variable};
+use crate::protocol::EnumInfo;
 
 /// How long code may run without waiting before it is stopped.
 const BUDGET: Duration = Duration::from_millis(250);
@@ -27,6 +28,8 @@ pub enum ToScript {
     /// What each topic's message and function's request on the mesh is made of, by alias,
     /// whole, after any change.
     Forms(HashMap<String, Form>),
+    /// The mesh's enums code names, whole, after any change.
+    Enums(Vec<EnumInfo>),
     /// Every variable, whole, after any change.
     Variables(Vec<Variable>),
     /// Mesh imports and shared variables whose value changed, None while unknown.
@@ -133,6 +136,18 @@ pub fn library_names() -> &'static [String] {
     })
 }
 
+/// Whether code already has `name` before the project's own: one of JavaScript's, the math
+/// library's or `Pages`.
+pub fn taken_global(name: &str) -> bool {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let javascript = NAMES.get_or_init(|| {
+        let rt = Runtime::new().expect("QuickJS starts");
+        let ctx = Context::full(&rt).expect("QuickJS makes a context");
+        ctx.with(|ctx| ctx.eval::<Vec<String>, _>("Object.getOwnPropertyNames(globalThis)")).expect("QuickJS lists its globals")
+    });
+    name == "Pages" || javascript.iter().any(|n| n == name) || library_names().iter().any(|n| n == name)
+}
+
 /// The operator rewrite, in a context of its own, the only one that holds acorn. Each text is
 /// rewritten once.
 struct Rewriter {
@@ -213,6 +228,7 @@ struct Shared {
     out: UnboundedSender<FromScript>,
     imports: HashMap<String, Import>,
     forms: HashMap<String, Form>,
+    enums: Vec<EnumInfo>,
     variables: HashMap<String, Variable>,
     computed: HashMap<String, Computed>,
     values: HashMap<String, Value>,
@@ -302,6 +318,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         out,
         imports: HashMap::new(),
         forms: HashMap::new(),
+        enums: Vec::new(),
         variables: HashMap::new(),
         computed: HashMap::new(),
         values: HashMap::new(),
@@ -456,7 +473,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                     shared.borrow().send(FromScript::Tried { session, warning });
                 }
             }
-            Ok(msg @ (ToScript::Imports(_) | ToScript::Variables(_))) => {
+            Ok(msg @ (ToScript::Imports(_) | ToScript::Enums(_) | ToScript::Variables(_))) => {
                 (judge, sampler, computer, inverter) = (None, None, None, None);
                 handle(&rt, &rw, &home, &shared, &deadline, msg);
             }
@@ -584,6 +601,7 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
     match msg {
         ToScript::Imports(list) => shared.borrow_mut().imports = list.into_iter().map(|i| (i.alias.clone(), i)).collect(),
         ToScript::Forms(forms) => shared.borrow_mut().forms = forms,
+        ToScript::Enums(enums) => shared.borrow_mut().enums = enums,
         // the loop takes these itself, since they need the readers it keeps
         ToScript::Conditions(_) | ToScript::Judge | ToScript::Records(_) | ToScript::Sample(_) | ToScript::Computed(_) | ToScript::Compute | ToScript::Invert { .. } | ToScript::Try { .. } => {}
         ToScript::Pages(list) => shared.borrow_mut().pages = list,
@@ -814,8 +832,10 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     imports.extend(st.variables.keys().chain(st.computed.keys()).map(|name| entry(name, "variable".into())));
     drop(st);
     let pages: Vec<Value> = shared.borrow().pages.iter().map(|(key, id)| Value::map([("key", key.as_str().into()), ("id", id.as_str().into())])).collect();
+    let options = |e: &EnumInfo| Value::List(e.options.iter().map(|o| o.as_str().into()).collect());
+    let enums: Vec<Value> = shared.borrow().enums.iter().map(|e| Value::map([("name", e.name.as_str().into()), ("options", options(e))])).collect();
     let prelude: Function = ctx.eval(PRELUDE)?;
-    prelude.call::<_, ()>((to_js(ctx, &Value::List(imports))?, to_js(ctx, &Value::List(pages))?))
+    prelude.call::<_, ()>((to_js(ctx, &Value::List(imports))?, to_js(ctx, &Value::List(pages))?, to_js(ctx, &Value::List(enums))?))
 }
 
 /// A value as JS reads it: bytes as a Uint8Array, and a whole number past JS's safe ones as a

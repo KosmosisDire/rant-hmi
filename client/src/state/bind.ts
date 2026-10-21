@@ -168,12 +168,19 @@ function themed(s: Scope): Scope {
   };
 }
 
-/** A page reads its mesh imports, variables, records and computed values, live, and writes
- *  those it may on the backend. */
+/** A page reads its mesh imports, variables, records and computed values, live, and the mesh's
+ *  enums, and writes those it may on the backend. */
 export const pageScope: Scope = themed({
   has: (name) =>
-    state.imports.some((i) => i.alias === name) || state.variables.some((v) => v.name === name) || state.records.some((r) => r.name === name) || state.computed.some((c) => c.name === name),
+    state.imports.some((i) => i.alias === name) ||
+    state.variables.some((v) => v.name === name) ||
+    state.records.some((r) => r.name === name) ||
+    state.computed.some((c) => c.name === name) ||
+    state.enums.some((e) => e.name === name),
   get: (name) => {
+    // its options a fresh list at each read, as a value's are
+    const kind = state.enums.find((e) => e.name === name);
+    if (kind) return { options: [...kind.options] };
     const v = live(name);
     if (!v.known) throw new Unknown(name);
     return v.value;
@@ -182,6 +189,7 @@ export const pageScope: Scope = themed({
     const imp = state.imports.find((i) => i.alias === name);
     if (imp && (imp.kind !== "variable" || imp.intent !== "write")) throw new TypeError(`${name} cannot be set from here`);
     if (state.records.some((r) => r.name === name)) throw new TypeError(`${name} is a record, which only its source fills`);
+    if (state.enums.some((e) => e.name === name)) throw new TypeError(`${name} is an enum of the mesh's, so it cannot be set`);
     const worked = state.computed.find((c) => c.name === name);
     if (worked && !worked.set) throw new TypeError(`${name} is worked out from other values, and has no setter to write it`);
     if (worked && path !== "") throw new TypeError(`${name} is worked out whole, so it is set whole`);

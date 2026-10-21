@@ -1,6 +1,6 @@
 // What handler code sees, built in each run's context from the host's `__` functions: the
-// imports as plain names, `Pages`, open and close, notify, log and sleep.
-(imports, pages) => {
+// imports as plain names, the mesh's enums, `Pages`, open and close, notify, log and sleep.
+(imports, pages, enums) => {
   class Unknown extends Error {
     constructor(alias) {
       super(`${alias} is unknown`);
@@ -79,6 +79,11 @@
         enumerable: true,
       });
     }
+  }
+
+  // an enum by its type's name, its options a fresh list at each read as a value's are
+  for (const { name, options } of enums) {
+    Object.defineProperty(globalThis, name, { value: Object.freeze({ get options() { return [...options]; } }), enumerable: true });
   }
 
   // a value as words for a notice or the log: bytes by their count, the rest as code writes it

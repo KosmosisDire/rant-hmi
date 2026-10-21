@@ -287,6 +287,17 @@ fn a_message_is_passed_whole_or_by_its_fields() {
 }
 
 #[test]
+fn an_enum_reads_by_its_type_name_as_a_fresh_list_of_its_options() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Enums(vec![EnumInfo { name: "Job".into(), options: vec!["None".into(), "Pick".into()] }]));
+    let code = r#"const o = Job.options; o.push("Place"); log(o, Job.options.length, Job.options.includes("Pick"));"#;
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 1);
+    assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == r#"["None","Pick","Place"] 2 true"#)), "the log was not the options");
+    assert!(taken_global("Math") && taken_global("Pages") && taken_global("sqrt") && !taken_global("Job"));
+}
+
+#[test]
 fn runs_do_not_share_names() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "globalThis.mine = 1;".into(), p: Value::Null, at: None });

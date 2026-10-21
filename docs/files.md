@@ -77,6 +77,9 @@ dark = "0.5"
   `await Reset(...)`. Either takes one value of its type, or the type's fields in order:
   `Jog.send({ x: 1, y: 0 })` or `Jog.send(1, 0)`. A function with an untyped request, as
   many devices' commands are, takes nothing: `await Home()`.
+- An enum an import's type holds reads in code by its type's name, its options a list:
+  `JogMode.options`. Its values are its option names. Only a named enum reads so, and an
+  import or a name code already has, as `Math`, hides one of the same name.
 - `per` is `hmi` for one value every screen shares, `screen` for one per screen.
 - A record samples `source`, an expression, every `every_ms` (50 or more) and keeps each
   sample `keep_s` seconds, in memory, whether or not a screen watches.

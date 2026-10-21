@@ -56,6 +56,8 @@ pub enum ServerMsg {
     Channels { answer: Option<String> },
     /// The computed values, whole, after a change.
     Computed { computed: Vec<Computed> },
+    /// The mesh's enums code names, whole, after a change.
+    Enums { enums: Vec<EnumInfo> },
     /// An action that was not done, and why, for the screen that asked.
     Refused { text: String, alias: Option<String> },
     /// Something for the person at this screen: what a handler said, or why it stopped.
@@ -168,6 +170,14 @@ pub struct EntityInfo {
     pub schema: Option<TypeInfo>,
     /// A function's or task's answer.
     pub response: Option<TypeInfo>,
+}
+
+/// An enum the imports' types hold, which code names by its type: `Job.options`.
+#[derive(Serialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct EnumInfo {
+    pub name: String,
+    pub options: Vec<String>,
 }
 
 /// A message type, its fields in schema order.

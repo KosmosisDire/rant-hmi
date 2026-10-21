@@ -4,7 +4,7 @@
 use rant::{Field, FieldType, FieldView, MessageBuilder, Schema};
 
 
-use crate::protocol::{FieldInfo, FieldKind, TypeInfo};
+use crate::protocol::{EnumInfo, FieldInfo, FieldKind, TypeInfo};
 use crate::value::Value;
 
 /// A schema field with its members, built from Rant's flat depth first table.
@@ -48,6 +48,17 @@ fn bare(shapes: &[Shape]) -> Option<&Shape> {
 /// The names of the top level's fields, none for a bare type.
 pub fn top_fields(shapes: &[Shape]) -> Vec<String> {
     if bare(shapes).is_some() { Vec::new() } else { shapes.iter().map(|s| s.field.name.clone()).collect() }
+}
+
+/// Adds each named enum the shapes hold at any depth, unless one of that name is there.
+pub fn enums(shapes: &[Shape], out: &mut Vec<EnumInfo>) {
+    for s in shapes {
+        let name = s.field.type_name.as_deref().filter(|n| !n.is_empty());
+        if let Some(name) = name.filter(|n| s.field.kind == FieldType::Enum && !out.iter().any(|e| e.name == *n)) {
+            out.push(EnumInfo { name: name.to_owned(), options: s.options.clone() });
+        }
+        enums(&s.members, out);
+    }
 }
 
 fn join(prefix: &str, name: &str) -> String {
@@ -387,6 +398,16 @@ mod tests {
     #[test]
     fn enums_by_name() {
         round_trip("Line { mode: enum<u8> { Auto, Manual } }", value!({ "mode": "Manual" }));
+    }
+
+    #[test]
+    fn named_enums_are_listed_once_and_unnamed_ones_left_out() {
+        let node = node();
+        let schema = node.schema("LineMode = enum<u8> { Auto, Manual }
+Line { mode: LineMode, part: { side: enum<u8> { Left, Right } }, last: LineMode }").unwrap();
+        let mut out = Vec::new();
+        enums(&shapes(&schema), &mut out);
+        assert_eq!(out, [EnumInfo { name: "LineMode".into(), options: vec!["Auto".into(), "Manual".into()] }]);
     }
 
     #[test]

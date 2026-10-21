@@ -4,6 +4,7 @@
 import { createStore, produce, reconcile } from "solid-js/store";
 import type { Computed } from "../protocol/Computed";
 import type { EntityInfo } from "../protocol/EntityInfo";
+import type { EnumInfo } from "../protocol/EnumInfo";
 import type { Import } from "../protocol/Import";
 import type { Page } from "../protocol/Page";
 import type { Level } from "../protocol/Level";
@@ -56,6 +57,8 @@ export interface State {
   records: History[];
   /** Values the backend works out from others. */
   computed: Computed[];
+  /** The mesh's enums code names, each by its type. */
+  enums: EnumInfo[];
   /** The HMI's own handlers. */
   rules: Rule[];
   tokens: Token[];
@@ -82,6 +85,7 @@ export const [state, setState] = createStore<State>({
   variables: [],
   records: [],
   computed: [],
+  enums: [],
   rules: [],
   tokens: [],
   entities: [],
@@ -170,6 +174,9 @@ export function receive(msg: ServerMsg) {
       break;
     case "computed":
       setState("computed", reconcile(msg.computed, { key: "name" }));
+      break;
+    case "enums":
+      setState("enums", reconcile(msg.enums, { key: "name" }));
       break;
     case "records":
       setState("records", reconcile(msg.records, { key: "name" }));

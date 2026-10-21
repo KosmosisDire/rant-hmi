@@ -17,7 +17,7 @@ export interface Suggestion {
   label: string;
   /** What replaces the word being typed. */
   insert: string;
-  icon: Kind | "local" | "api" | "member" | "token";
+  icon: Kind | "local" | "api" | "member" | "token" | "enum";
   type?: string;
   value?: Value | null;
   known?: boolean;
@@ -245,7 +245,13 @@ function top(place: Place): Suggestion[] {
     const v = live(c.name);
     return { label: c.name, insert: c.name, icon: "local", type: c.unit ? `computed, ${c.unit}` : "computed", value: v.value, known: v.known };
   });
-  return [...imports, ...variables, ...computed, ...records];
+  const enums = state.enums.map((e): Suggestion => ({ label: e.name, insert: e.name, icon: "enum", type: "enum", members: [options(e.options)] }));
+  return [...imports, ...variables, ...computed, ...records, ...enums];
+}
+
+/** What an enum offers after a dot: its option names, as a list. */
+function options(names: string[]): Suggestion {
+  return { label: "options", insert: "options", icon: "member", type: "its names, a list", value: [...names], known: true };
 }
 
 function bareType(fields: FieldInfo[] | undefined): string | undefined {
@@ -297,6 +303,8 @@ const SEND: Suggestion = { label: "send", insert: "send(", icon: "api", type: "p
 function members(path: string[], place: Place): Suggestion[] {
   if (path.length === 0) return [];
   const [root, ...rest] = path;
+  const kind = state.enums.find((e) => e.name === root);
+  if (kind) return rest.length === 0 ? [options(kind.options)] : rest.join() === "options" ? methods([...kind.options], true) : [];
   const imp = state.imports.find((i) => i.alias === root);
   const standard = apiIn(place).find((a) => a.name === root && a.standard);
   if (standard && !imp && rest.length === 0) return held((globalThis as Record<string, unknown>)[root]);

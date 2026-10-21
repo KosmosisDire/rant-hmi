@@ -19,7 +19,7 @@ use crate::mesh::{Delivery, Mesh};
 use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
 use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Variable};
-use crate::protocol::{ClientMsg, Level, Sample, ServerMsg, ValueUpdate};
+use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
 use crate::value::Value;
@@ -199,6 +199,8 @@ pub struct App {
     started_at: Timestamp,
     /// What the engine was last told each import's message is made of.
     forms: HashMap<String, Form>,
+    /// The mesh's enums code names, as the engine and the screens were last told.
+    enums: Vec<EnumInfo>,
     health_at: Instant,
     /// When a project file last changed outside the HMI, until it is read.
     edited: Option<Instant>,
@@ -240,6 +242,7 @@ impl App {
             epoch: None,
             started_at: Timestamp::now(),
             forms: HashMap::new(),
+            enums: Vec::new(),
             health_at: Instant::now(),
             edited: None,
         }
@@ -331,6 +334,7 @@ impl App {
         self.send(session, &ServerMsg::Variables { variables: self.project.variables.clone() });
         self.send(session, &ServerMsg::Records { records: self.project.records.clone() });
         self.send(session, &ServerMsg::Computed { computed: self.project.computed.clone() });
+        self.send(session, &ServerMsg::Enums { enums: self.enums.clone() });
         for r in &self.project.records {
             let samples = self.history.get(&r.name).map(|h| h.iter().cloned().collect()).unwrap_or_default();
             self.send(session, &ServerMsg::Samples { name: r.name.clone(), samples, whole: true });
@@ -646,7 +650,7 @@ impl App {
     fn imports_changed(&mut self) {
         self.refresh_known();
         self.script.send(ToScript::Imports(self.project.imports.clone()));
-        self.forms_changed();
+        self.types_changed();
         self.broadcast(&ServerMsg::Imports { imports: self.project.imports.clone() });
     }
 
@@ -1037,7 +1041,7 @@ impl App {
                 self.mesh.attach(&import);
             }
             self.refresh_known();
-            self.forms_changed();
+            self.types_changed();
             // a camera's Video child can come or go, which changes where its video comes from
             for alias in self.playing.keys().cloned().collect::<Vec<_>>() {
                 if let Some(import) = self.project.find(&alias).cloned() {
@@ -1133,12 +1137,20 @@ impl App {
         self.mesh.publish_status(status);
     }
 
-    /// Tells the engine what each import's message is made of, once that changed.
-    fn forms_changed(&mut self) {
+    /// Tells the engine what each import's message is made of, and it and every screen the
+    /// enums code names, once those changed. A name code already has hides an enum's.
+    fn types_changed(&mut self) {
         let forms = self.mesh.forms();
         if forms != self.forms {
             self.forms = forms.clone();
             self.script.send(ToScript::Forms(forms));
+        }
+        let mut enums = self.mesh.enums();
+        enums.retain(|e| !self.project.imports.iter().any(|i| i.alias == e.name) && !crate::script::taken_global(&e.name));
+        if enums != self.enums {
+            self.enums = enums.clone();
+            self.script.send(ToScript::Enums(enums.clone()));
+            self.broadcast(&ServerMsg::Enums { enums });
         }
     }
 

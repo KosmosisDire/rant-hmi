@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
 use crate::project::{Import, Intent, Kind};
-use crate::protocol::{EntityInfo, PeerInfo};
+use crate::protocol::{EntityInfo, EnumInfo, PeerInfo};
 use crate::script::{CallFailure, Form};
 use crate::status::{self, Client, HmiStatus};
 use codec::Shape;
@@ -195,6 +195,21 @@ impl Mesh {
             .filter(|(_, a)| matches!(a.handle, Handle::Topic { .. } | Handle::Function { .. }))
             .filter_map(|(alias, a)| Some((alias.clone(), Form { name: a.schema.as_ref()?.name(), fields: codec::top_fields(&a.shapes) })))
             .collect()
+    }
+
+    /// Each enum the attached imports' messages and answers hold, by its type's name, the
+    /// first import's by alias where two hold one of the same name.
+    pub fn enums(&self) -> Vec<EnumInfo> {
+        let mut attached: Vec<(&String, &Attached)> = self.attached.iter().collect();
+        attached.sort_by_key(|(alias, _)| *alias);
+        let mut out = Vec::new();
+        for (_, a) in attached {
+            codec::enums(&a.shapes, &mut out);
+            if let Handle::Function { answer: Some((_, shapes)), .. } = &a.handle {
+                codec::enums(shapes, &mut out);
+            }
+        }
+        out
     }
 
     /// Whether an import's values may be lost on the way, as a best effort topic's are.
