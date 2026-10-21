@@ -18,7 +18,7 @@ use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
-use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Variable};
+use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Token, Variable};
 use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
@@ -151,6 +151,16 @@ type HandlerKey = (String, String, Option<u32>, String);
 struct Turned {
     since: Option<Instant>,
     fired: bool,
+}
+
+/// The project's named lists, each told to the engine and every screen whole.
+#[derive(Clone, Copy)]
+enum List {
+    Imports,
+    Variables,
+    Records,
+    Computed,
+    Theme,
 }
 
 #[derive(Default)]
@@ -328,19 +338,19 @@ impl App {
             build: self.build.clone(),
         };
         self.send(session, &hello);
-        self.send(session, &ServerMsg::Imports { imports: self.project.imports.clone() });
+        self.send(session, &self.whole(List::Imports));
         self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
         self.send(session, &ServerMsg::Mesh { entities: self.mesh.entities() });
-        self.send(session, &ServerMsg::Variables { variables: self.project.variables.clone() });
-        self.send(session, &ServerMsg::Records { records: self.project.records.clone() });
-        self.send(session, &ServerMsg::Computed { computed: self.project.computed.clone() });
+        for list in [List::Variables, List::Records, List::Computed] {
+            self.send(session, &self.whole(list));
+        }
         self.send(session, &ServerMsg::Enums { enums: self.enums.clone() });
         for r in &self.project.records {
             let samples = self.history.get(&r.name).map(|h| h.iter().cloned().collect()).unwrap_or_default();
             self.send(session, &ServerMsg::Samples { name: r.name.clone(), samples, whole: true });
         }
         self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
-        self.send(session, &ServerMsg::Theme { tokens: self.project.tokens.clone() });
+        self.send(session, &self.whole(List::Theme));
         self.put_values(Some(session), self.all_values(session));
         self.send(session, &ServerMsg::Health { peers: self.mesh.peers() });
     }
@@ -391,7 +401,7 @@ impl App {
                 Ok(()) => {
                     info!("imported {} as {}", import.entity, import.alias);
                     self.mesh.attach(&import);
-                    self.imports_changed();
+                    self.list_changed(List::Imports);
                 }
                 Err(text) => self.refuse(session, text, Some(import.alias)),
             },
@@ -401,7 +411,7 @@ impl App {
                     self.mesh.detach(&alias);
                     self.values.remove(&alias);
                     self.changed.remove(&alias);
-                    self.imports_changed();
+                    self.list_changed(List::Imports);
                 }
                 Err(text) => self.refuse(session, text, Some(alias)),
             },
@@ -409,17 +419,7 @@ impl App {
             ClientMsg::SetVariable { name, variable } => self.set_variable(session, name, variable),
             ClientMsg::SetRecord { name, record } => self.set_record(session, name, record),
             ClientMsg::SetComputed { name, computed } => self.set_computed(session, name, computed),
-            ClientMsg::SetToken { name, token } => {
-                let renamed = token.as_ref().filter(|t| t.name != name).map(|t| t.name.clone());
-                if let Err(text) = self.project.set_token(&name, token) {
-                    self.send(session, &ServerMsg::Theme { tokens: self.project.tokens.clone() });
-                    return self.refuse(session, text, None);
-                }
-                self.broadcast(&ServerMsg::Theme { tokens: self.project.tokens.clone() });
-                if let Some(to) = renamed {
-                    self.follow_rename(session, &format!("${name}"), &format!("${to}"), true);
-                }
-            }
+            ClientMsg::SetToken { name, token } => self.set_token(session, name, token),
             ClientMsg::Set { alias, path, value } => {
                 if let Err(text) = self.set(Some(session), &alias, &path, value) {
                     self.refuse(session, text, Some(alias));
@@ -463,69 +463,129 @@ impl App {
         }
     }
 
+    /// Changes one of the project's lists by `change`, which checks it. A refusal sends the
+    /// screen the list as it stands, so what it showed goes back.
+    fn change_list(&mut self, session: u32, list: List, alias: Option<String>, change: impl FnOnce(&mut Project) -> Result<(), String>) -> bool {
+        let Err(text) = change(&mut self.project) else { return true };
+        self.send(session, &self.whole(list));
+        self.refuse(session, text, alias);
+        false
+    }
+
+    /// A list as it stands, as every screen hears it.
+    fn whole(&self, list: List) -> ServerMsg {
+        let p = &self.project;
+        match list {
+            List::Imports => ServerMsg::Imports { imports: p.imports.clone() },
+            List::Variables => ServerMsg::Variables { variables: p.variables.clone() },
+            List::Records => ServerMsg::Records { records: p.records.clone() },
+            List::Computed => ServerMsg::Computed { computed: p.computed.clone() },
+            List::Theme => ServerMsg::Theme { tokens: p.tokens.clone() },
+        }
+    }
+
+    /// Tells the engine and every screen a list, whole, after it changed. A change to the
+    /// computed values works them out anew.
+    fn list_changed(&mut self, list: List) {
+        match list {
+            List::Imports => {
+                self.refresh_known();
+                self.script.send(ToScript::Imports(self.project.imports.clone()));
+                self.types_changed();
+            }
+            List::Variables => self.script.send(ToScript::Variables(self.project.variables.clone())),
+            List::Records => self.script.send(ToScript::Records(sources(&self.project.records))),
+            List::Computed => {
+                self.script.send(ToScript::Computed(self.project.computed.clone()));
+                self.script.send(ToScript::Compute);
+            }
+            List::Theme => {}
+        }
+        self.broadcast(&self.whole(list));
+    }
+
     /// Adds, changes or removes a variable. A rename carries its values and every use of its
     /// name along, a new start or scope starts its values over.
     fn set_variable(&mut self, session: u32, name: String, to: Option<Variable>) {
         let old = self.project.variable(&name).cloned();
-        if let Err(text) = self.project.set_variable(&name, to.clone()) {
-            self.send(session, &ServerMsg::Variables { variables: self.project.variables.clone() });
-            return self.refuse(session, text, None);
+        if !self.change_list(session, List::Variables, None, |p| p.set_variable(&name, to.clone())) {
+            return;
         }
-        let mut kept_shared = self.shared.remove(&name);
-        let mut kept_own: HashMap<u32, Value> = self.sessions.iter_mut().filter_map(|(id, s)| s.vars.remove(&name).map(|v| (*id, v))).collect();
+        let (mut kept_shared, mut kept_own) = self.take_variable(&name);
         if old.as_ref().zip(to.as_ref()).is_none_or(|(o, n)| o.start != n.start || o.per != n.per) {
             kept_shared = None;
             kept_own.clear();
         }
-        self.script.send(ToScript::Variables(self.project.variables.clone()));
-        self.broadcast(&ServerMsg::Variables { variables: self.project.variables.clone() });
+        self.list_changed(List::Variables);
         let Some(v) = to else { return };
         if v.name != name {
-            info!("renamed the variable {name} to {}", v.name);
-            self.follow_rename(session, &name, &v.name, false);
+            self.follow_rename(session, "variable", &name, &v.name, false);
         }
         self.start_variable(&v, kept_shared, kept_own);
+    }
+
+    /// Takes a variable's values off the HMI and every screen: the shared one and each screen's.
+    fn take_variable(&mut self, name: &str) -> (Option<Value>, HashMap<u32, Value>) {
+        let own = self.sessions.iter_mut().filter_map(|(id, s)| s.vars.remove(name).map(|v| (*id, v))).collect();
+        (self.shared.remove(name), own)
     }
 
     /// Adds, changes or removes a record. A rename carries its history and every use of its
     /// name along, a new source starts the history over.
     fn set_record(&mut self, session: u32, name: String, to: Option<Record>) {
         let old = self.project.record(&name).cloned();
-        if let Err(text) = self.project.set_record(&name, to.clone()) {
-            self.send(session, &ServerMsg::Records { records: self.project.records.clone() });
-            return self.refuse(session, text, None);
+        if !self.change_list(session, List::Records, None, |p| p.set_record(&name, to.clone())) {
+            return;
         }
-        let kept = self.history.remove(&name).filter(|_| old.as_ref().zip(to.as_ref()).is_some_and(|(o, n)| o.source == n.source));
-        self.sample_at.remove(&name);
-        self.records_changed();
+        let kept = self.take_history(&name).filter(|_| old.as_ref().zip(to.as_ref()).is_some_and(|(o, n)| o.source == n.source));
+        self.list_changed(List::Records);
         let Some(r) = to else { return };
         if r.name != name {
-            info!("renamed the record {name} to {}", r.name);
-            self.follow_rename(session, &name, &r.name, false);
+            self.follow_rename(session, "record", &name, &r.name, false);
         }
         let samples: VecDeque<Sample> = kept.unwrap_or_default();
         self.broadcast(&ServerMsg::Samples { name: r.name.clone(), samples: samples.iter().cloned().collect(), whole: true });
         self.history.insert(r.name, samples);
     }
 
+    /// Takes a record's samples, and forgets when it samples next.
+    fn take_history(&mut self, name: &str) -> Option<VecDeque<Sample>> {
+        self.sample_at.remove(name);
+        self.history.remove(name)
+    }
+
     fn set_computed(&mut self, session: u32, name: String, to: Option<Computed>) {
-        if let Err(text) = self.project.set_computed(&name, to.clone()) {
-            self.send(session, &ServerMsg::Computed { computed: self.project.computed.clone() });
-            return self.refuse(session, text, None);
+        if !self.change_list(session, List::Computed, None, |p| p.set_computed(&name, to.clone())) {
+            return;
         }
-        // a name no longer worked out reads as unknown on every screen
         if to.as_ref().is_none_or(|c| c.name != name) {
-            self.values.remove(&name);
-            self.changed.insert(name.clone());
+            self.unknown(&name);
         }
         if let Some(c) = to.as_ref().filter(|c| c.name != name) {
-            info!("renamed the computed value {name} to {}", c.name);
-            self.follow_rename(session, &name, &c.name, false);
+            self.follow_rename(session, "computed value", &name, &c.name, false);
         }
-        self.computed_changed();
+        self.list_changed(List::Computed);
         // worked out first, so the trial starts from what it reads now
         if let Some(c) = to.filter(|c| c.set.is_some()) {
             self.script.send(ToScript::Try { session, name: c.name });
+        }
+    }
+
+    /// A name no longer worked out reads as unknown on every screen.
+    fn unknown(&mut self, name: &str) {
+        self.values.remove(name);
+        self.changed.insert(name.to_owned());
+    }
+
+    /// Adds, changes or removes a token. Pages and components follow a rename.
+    fn set_token(&mut self, session: u32, name: String, to: Option<Token>) {
+        let renamed = to.as_ref().filter(|t| t.name != name).map(|t| t.name.clone());
+        if !self.change_list(session, List::Theme, None, |p| p.set_token(&name, to)) {
+            return;
+        }
+        self.list_changed(List::Theme);
+        if let Some(to) = renamed {
+            self.follow_rename(session, "token", &format!("${name}"), &format!("${to}"), true);
         }
     }
 
@@ -536,13 +596,6 @@ impl App {
         if !self.project.computed.is_empty() {
             self.script.send(ToScript::Compute);
         }
-    }
-
-    /// Tells the engine and every screen the computed values, whole, and works them out anew.
-    fn computed_changed(&mut self) {
-        self.script.send(ToScript::Computed(self.project.computed.clone()));
-        self.script.send(ToScript::Compute);
-        self.broadcast(&ServerMsg::Computed { computed: self.project.computed.clone() });
     }
 
     /// Takes what the engine worked out as values, which go out as any value does.
@@ -559,12 +612,6 @@ impl App {
             }
             self.changed.insert(name);
         }
-    }
-
-    /// Tells the engine and every screen the records, whole.
-    fn records_changed(&mut self) {
-        self.script.send(ToScript::Records(sources(&self.project.records)));
-        self.broadcast(&ServerMsg::Records { records: self.project.records.clone() });
     }
 
     /// Asks the engine for each record that is due, and keeps when it is due next.
@@ -628,35 +675,26 @@ impl App {
     /// Renames an import or changes its intent. A rename moves its handle, its value and every
     /// use of the alias in pages and handlers.
     fn change_import(&mut self, session: u32, alias: String, import: Import) {
-        if let Err(text) = self.project.change(&alias, import.clone()) {
-            self.send(session, &ServerMsg::Imports { imports: self.project.imports.clone() });
-            return self.refuse(session, text, Some(alias));
+        if !self.change_list(session, List::Imports, Some(alias.clone()), |p| p.change(&alias, import.clone())) {
+            return;
         }
         if import.alias != alias {
-            info!("renamed the import {alias} to {}", import.alias);
             self.mesh.detach(&alias);
             if let Some(slot) = self.values.remove(&alias) {
                 self.values.insert(import.alias.clone(), slot);
             }
             self.changed.remove(&alias);
             self.changed.insert(import.alias.clone());
-            self.follow_rename(session, &alias, &import.alias, false);
+            self.follow_rename(session, "import", &alias, &import.alias, false);
         }
         self.mesh.attach(&import);
-        self.imports_changed();
+        self.list_changed(List::Imports);
     }
 
-    /// Tells the engine and every screen the imports, after they changed.
-    fn imports_changed(&mut self) {
-        self.refresh_known();
-        self.script.send(ToScript::Imports(self.project.imports.clone()));
-        self.types_changed();
-        self.broadcast(&ServerMsg::Imports { imports: self.project.imports.clone() });
-    }
-
-    /// Writes every use of `from` as `to` in the pages, components too where they read it,
-    /// and sends the pages out when any changed.
-    fn follow_rename(&mut self, session: u32, from: &str, to: &str, components: bool) {
+    /// Writes every use of `from`, a renamed `what`, as `to` in the pages, components too where
+    /// they read it, and sends the pages out when any changed.
+    fn follow_rename(&mut self, session: u32, what: &str, from: &str, to: &str, components: bool) {
+        info!("renamed the {what} {from} to {to}");
         match self.pages.rename(from, to, components) {
             Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
             Ok(_) => {}
@@ -994,7 +1032,7 @@ impl App {
         if old.imports != self.project.imports {
             for gone in old.imports.iter().filter(|i| !self.project.imports.contains(i)) {
                 self.mesh.detach(&gone.alias);
-                if !self.project.imports.iter().any(|i| i.alias == gone.alias) {
+                if self.project.find(&gone.alias).is_none() {
                     self.values.remove(&gone.alias);
                     self.changed.remove(&gone.alias);
                 }
@@ -1002,38 +1040,34 @@ impl App {
             for import in self.project.imports.clone() {
                 self.mesh.attach(&import);
             }
-            self.imports_changed();
+            self.list_changed(List::Imports);
         }
         if old.variables != self.project.variables {
-            for v in old.variables.iter().filter(|v| !self.project.variables.contains(v)) {
-                self.shared.remove(&v.name);
-                self.sessions.values_mut().for_each(|s| drop(s.vars.remove(&v.name)));
+            for name in old.variables.iter().filter(|v| !self.project.variables.contains(v)).map(|v| v.name.clone()).collect::<Vec<_>>() {
+                self.take_variable(&name);
             }
-            self.script.send(ToScript::Variables(self.project.variables.clone()));
-            self.broadcast(&ServerMsg::Variables { variables: self.project.variables.clone() });
+            self.list_changed(List::Variables);
             for v in self.project.variables.clone().iter().filter(|v| !old.variables.contains(v)) {
                 self.start_variable(v, None, HashMap::new());
             }
         }
         if old.records != self.project.records {
-            for r in old.records.iter().filter(|r| !self.project.records.contains(r)) {
-                self.history.remove(&r.name);
-                self.sample_at.remove(&r.name);
+            for name in old.records.iter().filter(|r| !self.project.records.contains(r)).map(|r| r.name.clone()).collect::<Vec<_>>() {
+                self.take_history(&name);
             }
-            self.records_changed();
+            self.list_changed(List::Records);
             for r in self.project.records.iter().filter(|r| !old.records.contains(r)) {
                 self.broadcast(&ServerMsg::Samples { name: r.name.clone(), samples: Vec::new(), whole: true });
             }
         }
         if old.computed != self.project.computed {
-            for c in old.computed.iter().filter(|c| self.project.computed(&c.name).is_none()) {
-                self.values.remove(&c.name);
-                self.changed.insert(c.name.clone());
+            for name in old.computed.iter().filter(|c| self.project.computed(&c.name).is_none()).map(|c| c.name.clone()).collect::<Vec<_>>() {
+                self.unknown(&name);
             }
-            self.computed_changed();
+            self.list_changed(List::Computed);
         }
         if old.tokens != self.project.tokens {
-            self.broadcast(&ServerMsg::Theme { tokens: self.project.tokens.clone() });
+            self.list_changed(List::Theme);
         }
         let (pages_moved, rules_moved) = (pages.list != self.pages.list, pages.rules != self.pages.rules);
         if pages_moved || rules_moved {

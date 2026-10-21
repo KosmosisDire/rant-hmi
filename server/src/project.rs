@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::value::Value;
 use ts_rs::TS;
 
+use crate::list::{self, Named, named};
 use crate::{files, library};
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
@@ -50,6 +51,12 @@ pub struct Import {
     pub entity: String,
     pub kind: Kind,
     pub intent: Intent,
+}
+
+impl Named for Import {
+    fn name(&self) -> &str {
+        &self.alias
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -155,6 +162,8 @@ struct ThemeFile {
     tokens: Vec<Token>,
 }
 
+named!(Variable, Record, Computed, Token);
+
 pub struct Project {
     root: PathBuf,
     pub info: ProjectInfo,
@@ -194,24 +203,16 @@ impl Project {
     /// Adds, changes or with None removes the token called `name`, and saves. A change may
     /// rename it. The error is for the user.
     pub fn set_token(&mut self, name: &str, to: Option<Token>) -> Result<(), String> {
-        let at = self.tokens.iter().position(|t| t.name == name);
-        match (to, at) {
-            (None, Some(at)) => drop(self.tokens.remove(at)),
-            (None, None) => return Err(format!("${name} is not a token")),
-            (Some(t), at) => {
-                let mut chars = t.name.chars();
-                if !(chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric())) {
-                    return Err(format!("\"{}\" cannot name a token: start with a small letter, then use letters and digits", t.name));
-                }
-                if t.name != name && self.tokens.iter().any(|x| x.name == t.name) {
-                    return Err(format!("${} is already a token", t.name));
-                }
-                match at {
-                    Some(at) => self.tokens[at] = t,
-                    None => self.tokens.push(t),
-                }
+        if let Some(t) = &to {
+            let mut chars = t.name.chars();
+            if !(chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric())) {
+                return Err(format!("\"{}\" cannot name a token: start with a small letter, then use letters and digits", t.name));
+            }
+            if list::taken(&self.tokens, &t.name, name) {
+                return Err(format!("${} is already a token", t.name));
             }
         }
+        list::put(&mut self.tokens, name, to, || format!("${name} is not a token"))?;
         files::write_toml(&theme_file(&self.root), &ThemeFile { tokens: self.tokens.clone() })
     }
 
@@ -222,24 +223,14 @@ impl Project {
     /// Adds, changes or with None removes the variable called `name`, and saves. A change
     /// may rename it. The error is for the user.
     pub fn set_variable(&mut self, name: &str, to: Option<Variable>) -> Result<(), String> {
-        let at = self.variables.iter().position(|v| v.name == name);
-        match (to, at) {
-            (None, Some(at)) => {
-                self.variables.remove(at);
+        if let Some(v) = &to {
+            check_local(&v.name)?;
+            if v.start.is_null() {
+                return Err(format!("{} needs a start value", v.name));
             }
-            (None, None) => return Err(format!("{name} is not a variable")),
-            (Some(v), at) => {
-                check_local(&v.name)?;
-                if v.start.is_null() {
-                    return Err(format!("{} needs a start value", v.name));
-                }
-                self.free(&v.name, "variable", name)?;
-                match at {
-                    Some(at) => self.variables[at] = v,
-                    None => self.variables.push(v),
-                }
-            }
+            self.free(&v.name, "variable", name)?;
         }
+        list::put(&mut self.variables, name, to, || format!("{name} is not a variable"))?;
         files::write_toml(&variables_file(&self.root), &VariablesFile { variables: self.variables.clone() })
     }
 
@@ -250,25 +241,17 @@ impl Project {
     /// Adds, changes or with None removes the record called `name`, and saves. A change may
     /// rename it. The error is for the user.
     pub fn set_record(&mut self, name: &str, to: Option<Record>) -> Result<(), String> {
-        let at = self.records.iter().position(|r| r.name == name);
-        match (to, at) {
-            (None, Some(at)) => drop(self.records.remove(at)),
-            (None, None) => return Err(format!("{name} is not a record")),
-            (Some(r), at) => {
-                check_local(&r.name)?;
-                if r.source.trim().is_empty() {
-                    return Err(format!("{} needs a value to record", r.name));
-                }
-                if !(MIN_EVERY_MS..=86_400_000).contains(&r.every_ms) || !(1..=86_400).contains(&r.keep_s) {
-                    return Err(format!("{} samples every {MIN_EVERY_MS} ms or more, and keeps from 1 s to a day", r.name));
-                }
-                self.free(&r.name, "record", name)?;
-                match at {
-                    Some(at) => self.records[at] = r,
-                    None => self.records.push(r),
-                }
+        if let Some(r) = &to {
+            check_local(&r.name)?;
+            if r.source.trim().is_empty() {
+                return Err(format!("{} needs a value to record", r.name));
             }
+            if !(MIN_EVERY_MS..=86_400_000).contains(&r.every_ms) || !(1..=86_400).contains(&r.keep_s) {
+                return Err(format!("{} samples every {MIN_EVERY_MS} ms or more, and keeps from 1 s to a day", r.name));
+            }
+            self.free(&r.name, "record", name)?;
         }
+        list::put(&mut self.records, name, to, || format!("{name} is not a record"))?;
         files::write_toml(&records_file(&self.root), &RecordsFile { records: self.records.clone() })
     }
 
@@ -279,33 +262,25 @@ impl Project {
     /// Adds, changes or with None removes the computed value called `name`, and saves. A
     /// change may rename it. The error is for the user.
     pub fn set_computed(&mut self, name: &str, to: Option<Computed>) -> Result<(), String> {
-        let at = self.computed.iter().position(|c| c.name == name);
-        match (to, at) {
-            (None, Some(at)) => drop(self.computed.remove(at)),
-            (None, None) => return Err(format!("{name} is not a computed value")),
-            (Some(c), at) => {
-                check_local(&c.name)?;
-                self.free(&c.name, "computed value", name)?;
-                if c.get.trim().is_empty() {
-                    return Err(format!("{} needs an expression to work its value out", c.name));
+        if let Some(c) = &to {
+            check_local(&c.name)?;
+            self.free(&c.name, "computed value", name)?;
+            if c.get.trim().is_empty() {
+                return Err(format!("{} needs an expression to work its value out", c.name));
+            }
+            if let Some(s) = &c.set {
+                if s.value.trim().is_empty() {
+                    return Err(format!("{} needs the value its setter gives {}", c.name, s.target));
                 }
-                if let Some(s) = &c.set {
-                    if s.value.trim().is_empty() {
-                        return Err(format!("{} needs the value its setter gives {}", c.name, s.target));
-                    }
-                    self.takes_writes(&s.target, &c.name)?;
-                }
-                let mut next = self.computed.clone();
-                match at {
-                    Some(at) => next[at] = c,
-                    None => next.push(c),
-                }
-                if let Some(cycle) = cycle(&next) {
-                    return Err(format!("{} reads itself through {}", cycle[0], cycle.join(", ")));
-                }
-                self.computed = next;
+                self.takes_writes(&s.target, &c.name)?;
+            }
+            let mut next = self.computed.clone();
+            list::put(&mut next, name, Some(c.clone()), String::new)?;
+            if let Some(cycle) = cycle(&next) {
+                return Err(format!("{} reads itself through {}", cycle[0], cycle.join(", ")));
             }
         }
+        list::put(&mut self.computed, name, to, || format!("{name} is not a computed value"))?;
         files::write_toml(&computed_file(&self.root), &ComputedFile { computed: self.computed.clone() })
     }
 
@@ -370,7 +345,7 @@ impl Project {
         }
         if to.alias != alias {
             check_alias(&to.alias)?;
-            if self.find(&to.alias).is_some() {
+            if list::taken(&self.imports, &to.alias, alias) {
                 return Err(format!("{} is already an import", to.alias));
             }
         }
@@ -380,8 +355,7 @@ impl Project {
 
     /// Removes an import and saves. The error is for the user.
     pub fn unimport(&mut self, alias: &str) -> Result<(), String> {
-        let at = self.imports.iter().position(|i| i.alias == alias).ok_or_else(|| format!("{alias} is not an import"))?;
-        self.imports.remove(at);
+        list::put(&mut self.imports, alias, None, || format!("{alias} is not an import"))?;
         self.save()
     }
 

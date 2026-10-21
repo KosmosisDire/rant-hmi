@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::files;
+use crate::list::{self, named};
 use logic::Rule;
 
 /// A page: an artboard of `width` by `height` pixels holding elements. With an interface it
@@ -83,6 +84,8 @@ pub struct Input {
     #[serde(default)]
     pub bindable: bool,
 }
+
+named!(Local, Input);
 
 /// How an open page shows: covering what is beneath, or floating over it while the page
 /// beneath stays in sight and keeps running, as a dialog does.
@@ -776,28 +779,19 @@ impl Pages {
             }
             Edit::SetInput { page, name, input } => {
                 let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
-                let (component, inputs) = match &p.interface {
-                    Some(i) => (p.name.clone(), &i.inputs),
-                    None => return Err(format!("{} is a page, and only a component has inputs", p.name)),
+                let Some(i) = &p.interface else {
+                    return Err(format!("{} is a page, and only a component has inputs", p.name));
                 };
-                let at = inputs.iter().position(|i| i.name == name);
-                let old = at.map(|at| inputs[at].clone());
+                let component = p.name.clone();
                 if let Some(new) = &input {
                     check_input_name(&new.name)?;
-                    if new.name != name && inputs.iter().any(|i| i.name == new.name) {
+                    if list::taken(&i.inputs, &new.name, &name) {
                         return Err(format!("{component} already has an input {}", new.name));
                     }
-                } else if old.is_none() {
-                    return Err(format!("{component} has no input {name}"));
                 }
                 let to = input.as_ref().map(|i| i.name.clone());
-                let list = &mut self.page_mut(&page)?.interface.as_mut().expect("a component, checked above").inputs;
-                match (at, input) {
-                    (Some(at), Some(new)) => list[at] = new,
-                    (Some(at), None) => drop(list.remove(at)),
-                    (None, Some(new)) => list.push(new),
-                    (None, None) => unreachable!("refused above"),
-                }
+                let inputs = &mut self.page_mut(&page)?.interface.as_mut().expect("a component, checked above").inputs;
+                let old = list::put(inputs, &name, input, || format!("{component} has no input {name}"))?;
                 // the component's code and its instances follow a rename, instances drop a removal
                 if to.as_deref() != Some(name.as_str()) && old.is_some() {
                     let p = self.page_mut(&page)?;
@@ -818,37 +812,26 @@ impl Pages {
                 let p = self.page_mut(&page)?;
                 let component = p.name.clone();
                 let events = &mut p.interface.as_mut().ok_or_else(|| format!("{component} is a page, and only a component sends events"))?.events;
-                let at = events.iter().position(|e| *e == name);
                 if let Some(to) = &to {
                     check_event(to)?;
-                    if *to != name && events.contains(to) {
+                    if list::taken(events, to, &name) {
                         return Err(format!("{component} already sends {to}"));
                     }
+                    // a new event comes under its own name
+                    if *to != name && !events.contains(&name) {
+                        return Err(format!("{component} sends no {name}"));
+                    }
                 }
-                let undo = match (at, &to) {
-                    (Some(at), Some(to)) => {
-                        events[at] = to.clone();
-                        Edit::SetEvent { page: page.clone(), name: to.clone(), to: Some(name.clone()) }
-                    }
-                    (Some(at), None) => {
-                        events.remove(at);
-                        Edit::SetEvent { page: page.clone(), name: name.clone(), to: Some(name.clone()) }
-                    }
-                    (None, Some(to)) if *to == name => {
-                        events.push(name.clone());
-                        Edit::SetEvent { page: page.clone(), name: name.clone(), to: None }
-                    }
-                    _ => return Err(format!("{component} sends no {name}")),
-                };
+                let old = list::put(events, &name, to.clone(), || format!("{component} sends no {name}"))?;
                 // instances' handlers for a renamed event follow it
-                if let (Some(_), Some(to)) = (at, &to) {
+                if let (Some(_), Some(to)) = (&old, &to) {
                     for p in &mut self.list {
                         if instance_events(&mut p.children, &component, &name, to) {
                             touched.push(p.id.clone());
                         }
                     }
                 }
-                undo
+                Edit::SetEvent { page: page.clone(), name: to.unwrap_or(name), to: old }
             }
             Edit::SetLocal { page, name, local } => {
                 let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
@@ -856,26 +839,16 @@ impl Pages {
                     return Err(format!("{} is a page, and only a component has variables of its own", p.name));
                 };
                 let component = p.name.clone();
-                let at = i.variables.iter().position(|v| v.name == name);
-                let old = at.map(|at| i.variables[at].clone());
                 if let Some(new) = &local {
                     check_input_name(&new.name)?;
-                    let taken = (new.name != name && i.variables.iter().any(|v| v.name == new.name)) || i.inputs.iter().any(|x| x.name == new.name);
-                    if taken {
+                    if list::taken(&i.variables, &new.name, &name) || i.inputs.iter().any(|x| x.name == new.name) {
                         return Err(format!("{component} already has {}", new.name));
                     }
-                } else if old.is_none() {
-                    return Err(format!("{component} has no variable {name}"));
                 }
                 let to = local.as_ref().map(|v| v.name.clone());
                 let p = self.page_mut(&page)?;
-                let list = &mut p.interface.as_mut().expect("a component, checked above").variables;
-                match (at, local) {
-                    (Some(at), Some(new)) => list[at] = new,
-                    (Some(at), None) => drop(list.remove(at)),
-                    (None, Some(new)) => list.push(new),
-                    (None, None) => unreachable!("refused above"),
-                }
+                let variables = &mut p.interface.as_mut().expect("a component, checked above").variables;
+                let old = list::put(variables, &name, local, || format!("{component} has no variable {name}"))?;
                 if let (Some(_), Some(to)) = (&old, &to) {
                     if *to != name {
                         for e in &mut p.children {
@@ -885,30 +858,15 @@ impl Pages {
                 }
                 Edit::SetLocal { page: page.clone(), name: to.unwrap_or(name), local: old }
             }
-            Edit::SetRule { id, rule } => {
-                let at = self.rules.iter().position(|r| r.id == id);
-                let old = at.map(|at| self.rules[at].clone());
+            Edit::SetRule { id, mut rule } => {
                 self.rules_changed = true;
-                return Ok(match (at, rule) {
-                    (Some(at), Some(mut rule)) => {
-                        logic::check(&rule)?;
-                        rule.id = id.clone();
-                        self.rules[at] = rule;
-                        Edit::SetRule { id, rule: old }
-                    }
-                    (Some(at), None) => {
-                        self.rules.remove(at);
-                        Edit::SetRule { id, rule: old }
-                    }
-                    (None, Some(mut rule)) => {
-                        logic::check(&rule)?;
-                        rule.id = if id.is_empty() { self.free_rule_id() } else { id };
-                        let id = rule.id.clone();
-                        self.rules.push(rule);
-                        Edit::SetRule { id, rule: None }
-                    }
-                    (None, None) => return Err(format!("there is no handler {id}")),
-                });
+                if let Some(rule) = &mut rule {
+                    logic::check(rule)?;
+                    rule.id = if id.is_empty() { self.free_rule_id() } else { id.clone() };
+                }
+                let made = rule.as_ref().map(|r| r.id.clone());
+                let old = list::put(&mut self.rules, &id, rule, || format!("there is no handler {id}"))?;
+                return Ok(Edit::SetRule { id: made.unwrap_or(id), rule: old });
             }
             Edit::Batch { .. } => unreachable!("taken above"),
         };

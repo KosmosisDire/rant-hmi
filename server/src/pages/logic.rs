@@ -18,6 +18,13 @@ pub struct Rule {
     pub code: String,
 }
 
+/// A rule is held under its id, since its name is free text.
+impl crate::list::Named for Rule {
+    fn name(&self) -> &str {
+        &self.id
+    }
+}
+
 /// What starts a rule's code, and what it then reads as `p`.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
