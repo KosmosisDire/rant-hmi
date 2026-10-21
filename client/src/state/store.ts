@@ -41,6 +41,8 @@ export interface State {
   link: "connecting" | "open" | "closed";
   /** The smoothed round trip to the backend. */
   rttMs: number | null;
+  /** Whether the WebRTC data channels to the backend are open. */
+  channels: boolean;
   project: ProjectInfo | null;
   node: string;
   version: string;
@@ -70,6 +72,7 @@ export interface State {
 export const [state, setState] = createStore<State>({
   link: "connecting",
   rttMs: null,
+  channels: false,
   project: null,
   node: "",
   version: "",
@@ -232,6 +235,7 @@ export function receive(msg: ServerMsg) {
       setState("answers", msg.alias, msg.answer);
       break;
     case "pong":
+    case "channels":
       break;
   }
 }

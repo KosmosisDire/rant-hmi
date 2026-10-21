@@ -48,6 +48,9 @@ pub enum ServerMsg {
     Pong { t: f64 },
     /// The answer to a screen's offer to play an import's video.
     Play { alias: String, answer: String },
+    /// The answer to a screen's offer of its data channels, none when the screen stays on its
+    /// socket.
+    Channels { answer: Option<String> },
     /// The computed values, whole, after a change.
     Computed { computed: Vec<Computed> },
     /// An action that was not done, and why, for the screen that asked.
@@ -82,6 +85,8 @@ pub enum Level {
 pub enum ClientMsg {
     /// Asks for a pong, to time the round trip.
     Ping { t: f64 },
+    /// Opens the screen's data channels: its WebRTC offer, which the backend answers.
+    Channels { offer: String },
     /// Plays an import's video: the screen's WebRTC offer, which the backend answers.
     Play { alias: String, offer: String },
     StopPlaying { alias: String },

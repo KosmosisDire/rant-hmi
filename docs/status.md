@@ -14,6 +14,8 @@ The screens connected, a list. Each holds:
 - `ping_ms`: the last round trip to it and back, 0 until one is measured
 - `jitter_ms`: how much the round trip wavers, smoothed as RTP does: each new round trip
   moves it a sixteenth of the way to how far that one was from the last
+- `data_channels`: whether its WebRTC data channels are open. Without them it gets
+  everything over its socket.
 
 ## Hmi/Status
 

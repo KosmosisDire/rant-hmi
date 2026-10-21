@@ -96,6 +96,8 @@ struct Session {
     ping: Option<Duration>,
     /// How much the round trip wavers, in ms, smoothed.
     jitter: f64,
+    /// Whether its WebRTC data channels are open.
+    channels: bool,
     heard: Instant,
     /// The edits that undo this screen's own edits, newest last, and those that redo them.
     undo: Vec<Edit>,
@@ -269,7 +271,7 @@ impl App {
             Inbound::Open { session, out, local, remote } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, local, remote, since: since_epoch().as_secs(), ping: None, jitter: 0.0, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
+                self.sessions.insert(session, Session { out, local, remote, since: since_epoch().as_secs(), ping: None, jitter: 0.0, channels: false, heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -339,6 +341,10 @@ impl App {
         }
         match msg {
             ClientMsg::Ping { t } => self.send(session, &ServerMsg::Pong { t }),
+            ClientMsg::Channels { offer } => {
+                let Some(local) = self.sessions.get(&session).map(|s| s.local) else { return };
+                let _ = self.rtc.send(ToRtc::Channels { session, sdp: offer, local });
+            }
             ClientMsg::Play { alias, offer } => {
                 let Some(import) = self.project.find(&alias).cloned() else {
                     return self.refuse(session, format!("{alias} is not a mesh import, so it has no video"), None);
@@ -1085,6 +1091,7 @@ impl App {
                 connected_at: s.since,
                 ping_ms: s.ping.map_or(0.0, |p| p.as_secs_f64() * 1000.0),
                 jitter_ms: s.jitter,
+                data_channels: s.channels,
             })
             .collect();
         clients.sort_by_key(|c| c.id);
@@ -1163,6 +1170,13 @@ impl App {
 
     fn from_rtc(&mut self, r: FromRtc) {
         match r {
+            FromRtc::Channels { session, sdp } => self.send(session, &ServerMsg::Channels { answer: sdp }),
+            FromRtc::Linked { session, open } => {
+                if let Some(s) = self.sessions.get_mut(&session) {
+                    s.channels = open;
+                }
+            }
+            FromRtc::Message { session, msg } => self.inbound(Inbound::Message { session, msg }),
             FromRtc::Answer { session, alias, sdp } => self.send(session, &ServerMsg::Play { alias, answer: sdp }),
             FromRtc::Failed { session, alias, text } => {
                 self.stop_playing(session, &alias);

@@ -20,6 +20,8 @@ pub struct Client {
     /// How much the round trip wavers, in ms, smoothed as RTP does: each new one moves it a
     /// sixteenth of the way to how far that round trip was from the last.
     pub jitter_ms: f64,
+    /// Whether its WebRTC data channels are open. Without them all goes over its socket.
+    pub data_channels: bool,
 }
 
 /// The HMI's own state.
@@ -47,6 +49,7 @@ pub fn clients_value(list: &[Client]) -> Value {
                     ("connected_at", Value::Int(c.connected_at.into())),
                     ("ping_ms", c.ping_ms.into()),
                     ("jitter_ms", c.jitter_ms.into()),
+                    ("data_channels", c.data_channels.into()),
                 ])
             })
             .collect(),
