@@ -104,7 +104,7 @@
   pointer-events: none;
 }
 
-/* An image or video with nothing to show yet, in the editor only. */
+/* An image or video with nothing to show yet, as a camera missing or not up yet. */
 .el-picture-none {
   display: flex;
   align-items: center;

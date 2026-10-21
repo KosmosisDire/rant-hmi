@@ -342,7 +342,7 @@ function ElementView(p: ElementProps & { at?: At }) {
           )}
         </Match>
         <Match when={look().markup}>{(m) => <>{m()}</>}</Match>
-        <Match when={look().media}>{(m) => <MediaView alias={m().alias} src={m().src} fit={m().fit} design={p.design} />}</Match>
+        <Match when={look().media}>{(m) => <MediaView alias={m().alias} src={m().src} fit={m().fit} />}</Match>
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} w={look().w} h={look().h} design={p.design} act={p.act} />
         </Match>
@@ -425,14 +425,14 @@ function ShapeView(p: ElementProps & { at?: At }) {
 }
 
 /** What media shows: an import's H264 over WebRTC when it has some, else its pictures as they
- *  come, a picture an expression gives, or a URL. In the editor one with nothing to show yet
- *  says so, so it can still be picked and placed. */
-function MediaView(p: { alias: string | null; src: unknown; fit: string; design?: boolean }) {
+ *  come, a picture an expression gives, or a URL. One with nothing to show yet says so, as a
+ *  camera that is missing or not up yet, and in the editor can still be picked and placed. */
+function MediaView(p: { alias: string | null; src: unknown; fit: string }) {
   const pic = () => picture((p.alias ? live(p.alias).value : p.src) as Value);
   const url = () => (!p.alias && typeof p.src === "string" && p.src.trim() !== "" ? p.src : null);
   return (
-    <Switch fallback={<Show when={p.design}>{<div class="el-picture-none">{<ImagePlay size={20} />}</div>}</Show>}>
-      <Match when={p.alias && plays(p.alias) && p.alias}>{(a) => <VideoView alias={a()} fit={p.fit} design={p.design} />}</Match>
+    <Switch fallback={<div class="el-picture-none">{<ImagePlay size={20} />}</div>}>
+      <Match when={p.alias && plays(p.alias) && p.alias}>{(a) => <VideoView alias={a()} fit={p.fit} />}</Match>
       <Match when={pic()}>{(x) => <PictureView picture={x()} fit={p.fit} />}</Match>
       <Match when={url()}>{(u) => <img class="el-picture" src={u()} alt="" draggable={false} style={{ "object-fit": FIT[p.fit] ?? "contain" }} />}</Match>
     </Switch>
@@ -456,9 +456,9 @@ function playable(src: string | undefined, value: () => unknown): string | null 
   return imported(v) ? v : null;
 }
 
-/** A video: an import's stream over WebRTC, fitted as a picture is. The editor marks it until
- *  its first frame shows. */
-function VideoView(p: { alias: string | null; fit: string; design?: boolean }) {
+/** A video: an import's stream over WebRTC, fitted as a picture is, marked until its first
+ *  frame shows. */
+function VideoView(p: { alias: string | null; fit: string }) {
   const [shows, setShows] = createSignal(false);
   let el!: HTMLVideoElement;
   createEffect(() => {
@@ -478,7 +478,7 @@ function VideoView(p: { alias: string | null; fit: string; design?: boolean }) {
   return (
     <>
       <video ref={el} class="el-picture" style={{ "object-fit": FIT[p.fit] ?? "contain" }} autoplay muted playsinline onLoadedData={() => setShows(true)} />
-      <Show when={p.design && !shows()}>
+      <Show when={!shows()}>
         <div class="el-picture-none over">
           <ImagePlay size={20} />
         </div>
