@@ -25,7 +25,9 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await eventually(() => readFileSync(file, "utf8").includes('x="88"'), "the designer's edit to save");
   check(readFileSync(file, "utf8").includes('"Fixed"'), "the designer's save lost the outside edit");
 
-  writeFileSync(join(sys.project, "data", "theme.toml"), '[[token]]\nname = "outside"\ndark = "#123456"\nlight = "#abcdef"\n');
+  // added to the theme, which the scenarios after this one still read
+  const theme = join(sys.project, "data", "theme.toml");
+  writeFileSync(theme, `${readFileSync(theme, "utf8")}\n[[token]]\nname = "outside"\ndark = "#123456"\nlight = "#abcdef"\n`);
   await d.tab("Data");
   await page.locator(".data-detail tr", { hasText: "$outside" }).waitFor({ timeout: 4000 });
 }

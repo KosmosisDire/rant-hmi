@@ -6,7 +6,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addPage("Shares");
   const panel = await d.add("frame", { Name: "panel", x: "4", y: "4", w: "40", h: "20" });
   const half = await d.add("frame", { Name: "half", x: "25%", y: "0", w: "50%", h: "50%", Fill: "#4a8fd6" });
-  check((await page.locator(".screen:not([hidden]) .sidebar.right .field-note").count()) === 0, "a percent reads as a mistake");
+  check((await page.locator(".screen:not([hidden]) .sidebar.right .field-note").count()) === 0, `a percent reads as a mistake: ${await page.locator(".screen:not([hidden]) .sidebar.right .field").filter({ has: page.locator(".field-note") }).allTextContents()}`);
   const shares = () => hmi.state.pages.find((p) => p.name === "Shares").children[0].children[0].props;
   // where the half sits in the panel, in page units, from what is drawn
   const within = async (el, width) => {
