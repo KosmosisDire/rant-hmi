@@ -335,8 +335,8 @@ function ElementView(p: ElementProps & { at?: At }) {
         </Match>
         <Match when={look().drawing}>
           {(d) => (
-            // its own units by default are its box's pixels
-            <svg class="drawing" viewBox={d().box ? String(d().box) : `0 0 ${look().w} ${look().h}`} {...({ preserveAspectRatio: FITS[String(d().fit)] ?? FITS.meet } as Record<string, string>)}>
+            // without a view box its units are the pixels of its box inside any padding
+            <svg class="drawing" viewBox={d().box ? String(d().box) : undefined} {...({ preserveAspectRatio: FITS[String(d().fit)] ?? FITS.meet } as Record<string, string>)}>
               <For each={p.element.children}>{inner}</For>
             </svg>
           )}
