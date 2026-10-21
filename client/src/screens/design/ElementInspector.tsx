@@ -506,7 +506,7 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
 }
 
 /** What places an instance, which no input or variable may be called, as the backend says. */
-const PLACING = new Set(["name", "repeat", "x", "y", "w", "h", "origin"]);
+const PLACING = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "rotate"]);
 
 /** A name an input or a component's variable may take. */
 const localName = (t: string) => /^[a-z][A-Za-z0-9]*$/.test(t.trim()) && !PLACING.has(t.trim());

@@ -966,14 +966,14 @@ fn instance_events(elements: &mut [Element], component: &str, from: &str, to: &s
 }
 
 /// What an instance is placed and repeated by, which no input or variable may be called.
-const PLACING: [&str; 7] = ["name", "repeat", "x", "y", "w", "h", "origin"];
+const PLACING: [&str; 8] = ["name", "repeat", "x", "y", "w", "h", "origin", "rotate"];
 
 /// An input or a component's variable is named in camelCase, apart from what places it.
 fn check_input_name(name: &str) -> Result<(), String> {
     let mut chars = name.chars();
     let shaped = chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_alphanumeric());
     if !shaped || PLACING.contains(&name) {
-        return Err(format!("\"{name}\" cannot name an input: start with a small letter, use letters and digits, and keep clear of name, repeat, x, y, w, h and origin"));
+        return Err(format!("\"{name}\" cannot name an input: start with a small letter, use letters and digits, and keep clear of name, repeat, x, y, w, h, origin and rotate"));
     }
     Ok(())
 }

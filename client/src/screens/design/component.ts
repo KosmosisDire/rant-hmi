@@ -71,7 +71,7 @@ export function makeComponent(page: Page, ids: string[]) {
           if (kind === null || kind === "kw" || kind === "str" || kind === "com" || text.startsWith("$")) return text;
           let to = renamed.get(text);
           if (!to) {
-            to = free(joined(text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "x", "y", "w", "h", "text"].includes(n) || inputs.some((i) => i.name === n));
+            to = free(joined(text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "x", "y", "w", "h", "origin", "rotate", "text"].includes(n) || inputs.some((i) => i.name === n));
             renamed.set(text, to);
             inputs.push({ name: to, default: "0", bindable: false });
           }
