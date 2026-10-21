@@ -13,6 +13,7 @@ import { DraftInput } from "../../ui/DraftInput";
 import { Braces, ChevronsUpDown, Copy, Hash, Link, RotateCcw, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
+import { follow } from "../../ui/press";
 
 /** Where the fields stand: the names their code reads, and what completion offers instead
  *  of the mesh imports, as a component offers its own names. */
@@ -188,23 +189,21 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
       at = clamp(at + dx * grain, p.min, p.max);
       p.onShow?.(String(Number(at.toFixed(decimals(grain)))) + unit);
     };
-    const cancel = (k: KeyboardEvent) => {
-      if (k.key !== "Escape") return;
-      k.preventDefault();
-      k.stopPropagation();
-      moved = false;
-      p.onShow?.(original);
-      lead.releasePointerCapture(e.pointerId);
-    };
     const up = () => {
-      lead.removeEventListener("pointermove", move);
-      lead.removeEventListener("lostpointercapture", up);
       window.removeEventListener("keydown", cancel, true);
       if (moved) p.onWrite(String(Number(at.toFixed(decimals(step) + 1))) + unit);
       else if (travel < 3) (p.lead?.onClick ?? focusText)();
     };
-    lead.addEventListener("pointermove", move);
-    lead.addEventListener("lostpointercapture", up);
+    const stop = follow(e, { move, end: up });
+    const cancel = (k: KeyboardEvent) => {
+      if (k.key !== "Escape") return;
+      k.preventDefault();
+      k.stopPropagation();
+      stop();
+      window.removeEventListener("keydown", cancel, true);
+      p.onShow?.(original);
+      lead.releasePointerCapture(e.pointerId);
+    };
     window.addEventListener("keydown", cancel, true);
   };
   const title = () => {

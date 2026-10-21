@@ -4,6 +4,7 @@
 import { createEffect, createSignal } from "solid-js";
 import { remembered, rememberedNumber } from "../state/remember";
 import { PanelLeft, PanelRight } from "./icons";
+import { follow } from "./press";
 
 const [left, setLeft] = rememberedNumber("sidebar-left", 300);
 const [right, setRight] = rememberedNumber("sidebar-right", 360);
@@ -48,17 +49,9 @@ export function Edge(p: { side: "left" | "right" }) {
     const [x0, w0] = [e.clientX, bar.getBoundingClientRect().width];
     const set = p.side === "left" ? setLeft : setRight;
     const move = (m: PointerEvent) => set(Math.round(Math.min(max, Math.max(MIN, w0 + (p.side === "left" ? m.clientX - x0 : x0 - m.clientX)))));
-    const up = () => {
-      setDragging(false);
-      grip.removeEventListener("pointermove", move);
-      grip.removeEventListener("pointerup", up);
-      grip.removeEventListener("pointercancel", up);
-    };
     grip.setPointerCapture(e.pointerId);
     setDragging(true);
-    grip.addEventListener("pointermove", move);
-    grip.addEventListener("pointerup", up);
-    grip.addEventListener("pointercancel", up);
+    follow(e, { move, end: () => setDragging(false) });
   };
   return (
     <div class="edge" data-side={p.side}>

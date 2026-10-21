@@ -14,6 +14,7 @@ import type { Pick } from "./DesignScreen";
 import { addMenu, elementMenu, layersMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
 import { chain, childrenOf, find, holds, moveTo, parentOf } from "./tree";
+import { follow } from "../../ui/press";
 
 const FOLDS = ["open", "closed"] as const;
 
@@ -190,7 +191,9 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
 
   const down = (e: PointerEvent) => {
     const id = (e.target as HTMLElement).closest<HTMLElement>(".list-row[data-id]")?.dataset.id;
-    if (e.button === 0 && id) press = { id, y: e.clientY };
+    if (e.button !== 0 || !id) return;
+    press = { id, y: e.clientY };
+    follow(e, { move, end: up });
   };
   const move = (e: PointerEvent) => {
     if (!press) return;
@@ -214,9 +217,6 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
       class="pane-body"
       ref={host}
       onPointerDown={down}
-      onPointerMove={move}
-      onPointerUp={up}
-      onPointerCancel={up}
       // a row has its own menu, so this is the space around them, the page's top level
       onContextMenu={(e) => layersMenu(e, p.page, p.onPick, () => p.page.children.forEach((c) => p.onPick(c.id, true)))}
     >

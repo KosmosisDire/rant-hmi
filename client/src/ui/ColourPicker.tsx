@@ -3,6 +3,7 @@
 
 import { createSignal, For, Show } from "solid-js";
 import { DraftInput } from "./DraftInput";
+import { follow } from "./press";
 
 /** Red, green and blue from 0 to 255, alpha from 0 to 1. */
 export type Rgba = [number, number, number, number];
@@ -73,13 +74,7 @@ export function ColourPicker(p: { value: string; tokens: { name: string; colour:
       set(clamp((m.clientX - r.left) / r.width), clamp((m.clientY - r.top) / r.height));
       p.onShow(text());
     };
-    const up = () => {
-      el.removeEventListener("pointermove", at);
-      el.removeEventListener("lostpointercapture", up);
-      p.onPick(text());
-    };
-    el.addEventListener("pointermove", at);
-    el.addEventListener("lostpointercapture", up);
+    follow(e, { move: at, end: () => p.onPick(text()) });
     at(e);
   };
   // picking a colour while it is clear means wanting to see it

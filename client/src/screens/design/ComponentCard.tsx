@@ -7,6 +7,7 @@ import { PageView } from "../../page/PageView";
 import type { Page } from "../../protocol/Page";
 import { openPage } from "../../state/view";
 import { addElement } from "./add";
+import { follow } from "../../ui/press";
 
 /** How far a press moves before it is a drag and no longer a click. */
 const SLOP = 6;
@@ -48,19 +49,21 @@ export function ComponentCard(p: { component: Page; open: boolean; page: Page | 
     if (e.button !== 0) return;
     press = { id: e.pointerId, x: e.clientX, y: e.clientY };
     dragged = false;
+    const card = e.currentTarget as HTMLElement;
+    follow(e, { move: (m) => move(m, card), end: up });
   };
-  const move = (e: PointerEvent & { currentTarget: HTMLElement }) => {
-    if (!press || e.pointerId !== press.id) return;
+  const move = (e: PointerEvent, card: HTMLElement) => {
+    if (!press) return;
     if (!ghost()) {
       if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < SLOP) return;
-      e.currentTarget.setPointerCapture(e.pointerId);
+      card.setPointerCapture(e.pointerId);
       dragged = true;
     }
     setGhost({ x: e.clientX, y: e.clientY });
   };
-  const up = (e: PointerEvent) => {
-    if (!press || e.pointerId !== press.id) return;
-    if (ghost()) drop(e.clientX, e.clientY);
+  // a release missed places nothing
+  const up = (e?: PointerEvent) => {
+    if (press && e?.type === "pointerup" && ghost()) drop(e.clientX, e.clientY);
     end();
   };
   // onto the canvas's page, unless that page is this component
@@ -81,9 +84,6 @@ export function ComponentCard(p: { component: Page; open: boolean; page: Page | 
       classList={{ selected: p.open, dragged: !!ghost() }}
       onClick={() => !dragged && openPage(p.component.id)}
       onPointerDown={down}
-      onPointerMove={move}
-      onPointerUp={up}
-      onPointerCancel={end}
       onContextMenu={(e) => {
         end();
         p.onMenu(e);

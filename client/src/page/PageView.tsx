@@ -13,6 +13,7 @@ import { play, stopPlaying } from "../net/video";
 import { component, entity, live, notify, state } from "../state/store";
 import { ImagePlay } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
+import { follow } from "../ui/press";
 import { componentAct, type Act } from "./act";
 import { svgOf } from "./markup";
 import { POINTER, TIMED } from "../state/events";
@@ -199,7 +200,6 @@ function usePress(p: ElementProps & { at?: At }) {
     // a drag goes out at most once a frame, with the latest place
     let next: PointerEvent | null = null;
     const move = (m: PointerEvent) => {
-      if (m.pointerId !== e.pointerId) return;
       last = m;
       if (!next) {
         requestAnimationFrame(() => {
@@ -209,22 +209,17 @@ function usePress(p: ElementProps & { at?: At }) {
       }
       next = m;
     };
-    const up = (u: PointerEvent) => {
-      if (u.pointerId !== e.pointerId) return;
+    // a release missed ends the press where the pointer was last, and taps nothing
+    const end = (u?: PointerEvent) => {
       next = null;
       clearTimeout(held);
       clearInterval(beat);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", up);
       setPressed(false);
-      const at = pointer(el, u, on);
+      const at = pointer(el, u ?? last, on);
       fire("release", at);
-      if (u.type === "pointerup" && at.inside) fire("tap", at);
+      if (u?.type === "pointerup" && at.inside) fire("tap", at);
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
+    follow(e, { move, end });
   };
   // a press anywhere else is this element's outside, as closes what it opened
   let self: globalThis.Element | undefined;
@@ -530,14 +525,7 @@ function Instance(p: { element: Element; scope: Scope; w: number; h: number; des
   const hold = (e: PointerEvent) => {
     if (e.button !== 0) return;
     setHeld(new Map());
-    const end = (u: PointerEvent) => {
-      if (u.pointerId !== e.pointerId) return;
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-      setHeld(null);
-    };
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
+    follow(e, { end: () => setHeld(null) });
   };
   const own = {
     get: (input: string) => held()?.get(input),
@@ -631,14 +619,7 @@ function keep(): Kept & { press(e: PointerEvent): void; over(e: PointerEvent): v
       const names = partsAt(e.target, e.currentTarget as HTMLElement);
       mark(names, { pressed: true, since: performance.now() });
       if (!frame) frame = requestAnimationFrame(tick);
-      const up = (u: PointerEvent) => {
-        if (u.pointerId !== e.pointerId) return;
-        window.removeEventListener("pointerup", up);
-        window.removeEventListener("pointercancel", up);
-        mark(names, { pressed: false });
-      };
-      window.addEventListener("pointerup", up);
-      window.addEventListener("pointercancel", up);
+      follow(e, { end: () => mark(names, { pressed: false }) });
     },
     over: (e) => {
       const names = new Set(partsAt(e.target, e.currentTarget as HTMLElement));

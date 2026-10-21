@@ -8,6 +8,7 @@ import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
+import { follow } from "../../ui/press";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
 import { absolute, boxOf, boxText, find, literal, parentOf, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
@@ -245,7 +246,9 @@ export function Artboard(p: {
         drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
       }
     }
-    if (drag) host.setPointerCapture(e.pointerId);
+    if (!drag) return;
+    host.setPointerCapture(e.pointerId);
+    follow(e, { move, end: up });
   };
 
   const move = (e: PointerEvent) => {
@@ -440,9 +443,6 @@ export function Artboard(p: {
       class="artboard"
       ref={host}
       onPointerDown={down}
-      onPointerMove={move}
-      onPointerUp={up}
-      onPointerCancel={up}
       onContextMenu={(e) => {
         cancel();
         const hit = (e.target as HTMLElement).closest(".el[data-id]")?.getAttribute("data-id");
