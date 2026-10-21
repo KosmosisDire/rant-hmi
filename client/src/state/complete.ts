@@ -9,9 +9,8 @@ import type { Kind } from "../protocol/Kind";
 import type { Page } from "../protocol/Page";
 import type { TypeInfo } from "../protocol/TypeInfo";
 import type { Value } from "../protocol/Value";
-import { partNames } from "./bind";
+import { partNames, tokenValue } from "./bind";
 import { fields, typeLabel } from "./format";
-import { mode } from "./mode";
 import { entity, live, state } from "./store";
 
 export interface Suggestion {
@@ -39,9 +38,18 @@ export type Place = "expression" | "handler" | "component";
 const MOST = 12;
 const WORD = /[A-Za-z0-9_$]/;
 
-/** The theme's tokens, which every place but a backend handler reads, in the editor's mode. */
+/** The theme's tokens, which every place but a backend handler reads, in the editor's mode,
+ *  each with what its value offers after a dot, as a colour's methods. */
 function tokens(): Suggestion[] {
-  return state.tokens.map((t) => ({ label: `$${t.name}`, insert: `$${t.name}`, icon: "token", type: "token", value: mode() === "light" ? t.light : t.dark, known: true }));
+  return state.tokens.map((t) => {
+    let value: Value | null = null;
+    try {
+      value = tokenValue(t) as Value;
+    } catch {
+      // one that cannot be worked out still completes, without a value
+    }
+    return { label: `$${t.name}`, insert: `$${t.name}`, icon: "token", type: "token", value, known: value !== null, members: mathMethods(value, value !== null) };
+  });
 }
 
 /** The language's own names in `place`, from the one list of them, a function's typed with
@@ -207,6 +215,8 @@ export function componentNames(c: Page): Suggestion[] {
 /** After a dot, what the name before it offers: one given its members, else an import's or
  *  variable's fields where code reads those. */
 function given(path: string[], place: Place, names?: Suggestion[], also?: Suggestion[]): Suggestion[] {
+  const token = path[0].startsWith("$") && place !== "handler" ? tokens().find((t) => t.label === path[0]) : undefined;
+  if (token) return path.length === 1 ? (token.members ?? []) : [];
   const own = [...(names ?? []), ...(also ?? [])].find((n) => n.label === path[0]);
   if (own || names) return path.length === 1 ? (own?.members ?? []) : [];
   return members(path, place);

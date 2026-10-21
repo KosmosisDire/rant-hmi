@@ -1,23 +1,43 @@
-// The theme on the Data screen: its tokens, each with a value for dark and one for light, and
-// a token's inspector.
+// The theme on the Data screen: its tokens, each an expression for dark screens and one for
+// light, which may read other tokens and the math, and a token's inspector.
 
-import { batch, For, Show } from "solid-js";
+import { batch, createMemo, For, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Token } from "../../protocol/Token";
+import { tokenScope, tokenValue } from "../../state/bind";
 import { putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Copy, Plus, Trash } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
+import { Field, kindOf, WhereContext } from "../design/Field";
 import type { Picking } from "./DataScreen";
 
-/** A value as its text, with a swatch beside one that is a colour. */
-function Swatch(p: { value: string }) {
+/** A token's value in one mode, worked out, or why it cannot be. */
+function worked(t: Token, mode: "dark" | "light"): { value?: string; fault?: string } {
+  try {
+    const v = tokenValue(t, mode);
+    return { value: v === undefined || v === null ? "" : String(v) };
+  } catch (e) {
+    return { fault: (e as Error).message };
+  }
+}
+
+/** A token's value in one mode: a swatch for a colour, what it works out to, and the
+ *  expression it came from when that is more than a plain value. */
+function Value(p: { token: Token; mode: "dark" | "light" }) {
+  const text = () => (p.mode === "light" && p.token.light.trim() ? p.token.light : p.token.dark);
+  const w = createMemo(() => worked(p.token, p.mode));
   return (
     <span class="swatch-row">
-      <Show when={CSS.supports("color", p.value)}>
-        <span class="swatch" style={{ background: p.value }} />
+      <Show when={w().value !== undefined && CSS.supports("color", w().value!)}>
+        <span class="swatch" style={{ background: w().value }} />
       </Show>
-      <span class="mono">{p.value}</span>
+      <span class="mono" classList={{ bad: !!w().fault }} title={w().fault}>
+        {w().fault ? "cannot be worked out" : w().value}
+      </span>
+      <Show when={!w().fault && text().trim() !== w().value}>
+        <span class="mono faint">{p.mode === "light" && !p.token.light.trim() ? "as dark" : text()}</span>
+      </Show>
     </span>
   );
 }
@@ -43,7 +63,7 @@ export function ThemeTable(p: Picking) {
           Add a token
         </button>
       </div>
-      <div class="hint">Design values every page and component reads as $name. Each has a value for dark screens and one for light.</div>
+      <div class="hint">Design values every page and component reads as $name: colours, numbers in units and text. Each may be worked out from other tokens, as $accent.alpha(0.15), and may differ on light screens.</div>
       <div class="detail-body">
         <Show when={state.tokens.length > 0} fallback={<div class="placeholder">No tokens yet.</div>}>
           <table class="grid">
@@ -68,10 +88,10 @@ export function ThemeTable(p: Picking) {
                   >
                     <td class="name mono">${t.name}</td>
                     <td>
-                      <Swatch value={t.dark} />
+                      <Value token={t} mode="dark" />
                     </td>
                     <td>
-                      <Swatch value={t.light} />
+                      <Value token={t} mode="light" />
                     </td>
                   </tr>
                 )}
@@ -84,6 +104,9 @@ export function ThemeTable(p: Picking) {
   );
 }
 
+/** Where a token's fields stand: they read other tokens and the math, and complete those. */
+const TOKENS = () => ({ scope: tokenScope, names: [], place: "expression" as const });
+
 export function TokenView(p: { token: Token; onRenamed: (name: string) => void }) {
   // a rename moves the selection in the same step, so this view never loses its token
   const change = (to: Partial<Token>) => {
@@ -93,11 +116,16 @@ export function TokenView(p: { token: Token; onRenamed: (name: string) => void }
       if (next.name !== name) p.onRenamed(next.name);
     });
   };
+  const dark = createMemo(() => worked(p.token, "dark"));
+  // a colour's field leads with its swatch and picker, whatever expression gives it
+  const kind = (text: string, w: { value?: string }) => (w.value !== undefined && CSS.supports("color", w.value) ? "colour" : kindOf(text));
   return (
-    <>
+    <WhereContext.Provider value={TOKENS}>
       <div class="pane-head">
         <span class="head-title">
-          <span class="swatch" style={{ background: p.token.dark }} />
+          <Show when={dark().value !== undefined && CSS.supports("color", dark().value!)}>
+            <span class="swatch" style={{ background: dark().value }} />
+          </Show>
           <span class="mono">${p.token.name}</span>
         </span>
         <span class="tag">token</span>
@@ -108,14 +136,8 @@ export function TokenView(p: { token: Token; onRenamed: (name: string) => void }
           <label>Name</label>
           <DraftInput value={p.token.name} accept={(t) => /^[a-z][A-Za-z0-9]*$/.test(t.trim())} onCommit={(name) => change({ name: name.trim() })} />
         </div>
-        <div class="field">
-          <label>Dark</label>
-          <DraftInput value={p.token.dark} accept={(t) => t.trim() !== ""} onCommit={(dark) => change({ dark: dark.trim() })} />
-        </div>
-        <div class="field">
-          <label>Light</label>
-          <DraftInput value={p.token.light} accept={(t) => t.trim() !== ""} onCommit={(light) => change({ light: light.trim() })} />
-        </div>
+        <Field label="Dark" kind={kind(p.token.dark, dark())} value={p.token.dark} onWrite={(t) => t !== null && change({ dark: t.trim() })} />
+        <Field label="Light" kind={kind(p.token.light || p.token.dark, worked(p.token, "light"))} value={p.token.light} placeholder="as dark" onWrite={(t) => change({ light: (t ?? "").trim() })} />
       </div>
       <div class="pane-foot">
         <button class="button" onClick={() => setToken(p.token.name, null)}>
@@ -123,6 +145,6 @@ export function TokenView(p: { token: Token; onRenamed: (name: string) => void }
           Remove
         </button>
       </div>
-    </>
+    </WhereContext.Provider>
   );
 }

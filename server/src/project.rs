@@ -136,13 +136,16 @@ struct ComputedFile {
     computed: Vec<Computed>,
 }
 
-/// A design value with one value per mode, read as `$name` anywhere, components too.
+/// A design value with one value per mode, read as `$name` anywhere, components too. Each is
+/// an expression over other tokens and the math: a colour, a number or a text.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct Token {
     /// camelCase, written without the `$` code puts before it.
     pub name: String,
     pub dark: String,
+    /// Empty for the dark value in light too, as a radius or a spacing is.
+    #[serde(default)]
     pub light: String,
 }
 

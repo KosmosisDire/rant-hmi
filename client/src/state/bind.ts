@@ -5,6 +5,7 @@ import { arith } from "../lang/arith.js";
 import { LIBRARY } from "../lang/math.js";
 import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
+import type { Token } from "../protocol/Token";
 import type { Value } from "../protocol/Value";
 import { mode } from "./mode";
 import { live, notify, state } from "./store";
@@ -117,13 +118,46 @@ function token(name: string) {
   return name.startsWith("$") ? state.tokens.find((t) => `$${t.name}` === name) : undefined;
 }
 
+/** The tokens being worked out, outermost first, so one that reads itself stops, and the mode
+ *  they are worked out in. */
+const working: string[] = [];
+let workingMode: "dark" | "light" | null = null;
+
+/** What a token reads: other tokens and the math, never a value from the mesh. */
+export const tokenScope: Scope = {
+  has: (name) => token(name) !== undefined,
+  get: (name) => tokenValue(token(name)!),
+  set: () => {
+    throw new TypeError("a token only reads");
+  },
+  writes: () => false,
+  missing: (name) => (name.startsWith("$") ? `${name} is no token` : `a token reads only other tokens and the math, not ${name}`),
+};
+
+/** A token's value in `m`, the screen's mode unless given: its expression worked out. An empty
+ *  light value is the dark one. */
+export function tokenValue(t: Token, m: "dark" | "light" = workingMode ?? (mode() === "light" ? "light" : "dark")): unknown {
+  if (working.includes(t.name)) throw new TypeError(`$${t.name} reads itself, through ${[...working.slice(working.indexOf(t.name)), t.name].map((n) => `$${n}`).join(" to ")}`);
+  const [outer, outerMode] = [working.length, workingMode];
+  working.push(t.name);
+  workingMode = m;
+  try {
+    const r = resolve(m === "light" && t.light.trim() ? t.light : t.dark, tokenScope);
+    if (!r.ok) throw new TypeError(r.unknown ? `$${t.name} reads ${r.unknown}, which is unknown` : r.error);
+    return r.value;
+  } finally {
+    working.length = outer;
+    workingMode = outerMode;
+  }
+}
+
 /** A scope that also reads the theme's tokens, in the screen's mode. */
 function themed(s: Scope): Scope {
   return {
     has: (name) => token(name) !== undefined || s.has(name),
     get: (name) => {
       const t = token(name);
-      return t ? (mode() === "light" ? t.light : t.dark) : s.get(name);
+      return t ? tokenValue(t) : s.get(name);
     },
     set: (name, path, value) => {
       if (token(name)) throw new TypeError(`${name} is the theme's, so it cannot be set`);

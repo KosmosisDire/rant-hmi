@@ -4,9 +4,8 @@
 // is asked for and replaces it.
 
 import { createContext, createMemo, createSignal, For, type JSX, Match, Show, Switch, useContext } from "solid-js";
-import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope, sizeWord } from "../../state/bind";
+import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
 import { complete, type Place, signature, type Suggestion } from "../../state/complete";
-import { mode } from "../../state/mode";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
 import { DraftInput } from "../../ui/DraftInput";
@@ -222,7 +221,16 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
     if (kind() === "flag") return literal() ? "Click to flip it" : "An expression gives it";
     return undefined;
   };
-  const tokens = () => state.tokens.map((t) => ({ name: t.name, colour: mode() === "light" ? t.light : t.dark }));
+  // the tokens that work out to a colour, in the screen's mode
+  const tokens = () =>
+    state.tokens.flatMap((t) => {
+      try {
+        const v = tokenValue(t);
+        return typeof v === "string" && CSS.supports("color", v) ? [{ name: t.name, colour: v }] : [];
+      } catch {
+        return [];
+      }
+    });
   return (
     <>
       <button

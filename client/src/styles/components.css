@@ -376,6 +376,11 @@
   gap: 7px;
 }
 
+/* A value that cannot be worked out, as a token reading itself. */
+.swatch-row .bad {
+  color: var(--red);
+}
+
 /* A field with completion, and the list that opens under it. */
 .draft {
   position: relative;

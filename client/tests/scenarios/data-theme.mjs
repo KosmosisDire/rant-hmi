@@ -1,5 +1,7 @@
 // A user adds an accent token, uses it on a page and inside a component, switches the editor
-// to light and sees the light value, then renames the token: pages and components follow.
+// to light and sees the light value, then renames the token: pages and components follow. A
+// token may be worked out from another, its light value left as the dark one, a number counts
+// in units, and tokens that read each other in a ring say they cannot be worked out.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Data");
@@ -46,6 +48,27 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await set("Name", "brand");
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === frame)?.props.background === "$brand", "the page to follow the rename");
   await eventually(() => hmi.page(badge).children[0].props.background === "$brand", "the component to follow the rename");
+
+  // worked out from another, the light value the dark one's own working out
+  await page.locator("button", { hasText: "Add a token" }).click();
+  await right.locator(".head-title", { hasText: "$color" }).waitFor();
+  await set("Name", "brandSoft");
+  await right.locator(".head-title", { hasText: "$brandSoft" }).waitFor();
+  await set("Dark", "$brand.alpha(0.5)");
+  await set("Light", "");
+  await eventually(() => hmi.state.tokens.some((t) => t.name === "brandSoft" && t.dark === "$brand.alpha(0.5)" && t.light === ""), "the token worked out from $brand");
+  hmi.send({ type: "set_token", name: "pad", token: { name: "pad", dark: "1.5", light: "" } });
+  const soft = await hmi.addElement(pageId, "div", { name: "Soft", x: "4", y: "16", w: "8", h: "8", background: "$brandSoft", "border-radius": "$pad" });
+  await d.openPage("Themed");
+  await eventually(async () => (await colour(d.el(soft))) === "rgba(255, 136, 0, 0.5)", "the soft colour in dark");
+  check((await d.el(soft).evaluate((e) => getComputedStyle(e).borderTopLeftRadius)) === "15px", "a number token does not count in units");
+  await page.locator('button[title="Switch the theme"]').click();
+  await eventually(async () => (await colour(d.el(soft))) === "rgba(0, 136, 255, 0.5)", "the soft colour worked out from the light $brand");
+  await page.locator('button[title="Switch the theme"]').click();
+  hmi.send({ type: "set_token", name: "ringA", token: { name: "ringA", dark: "$ringB", light: "" } });
+  hmi.send({ type: "set_token", name: "ringB", token: { name: "ringB", dark: "$ringA", light: "" } });
+  await d.tab("Data");
+  await page.locator(".data-detail tr", { hasText: "$ringA" }).getByText("cannot be worked out").first().waitFor();
 
   // a page's fill reads the theme too, so the ground follows light and dark
   await page.locator("button", { hasText: "Add a token" }).click();
