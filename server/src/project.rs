@@ -648,10 +648,14 @@ mod tests {
     fn tokens_survive_a_reopen() {
         let dir = scratch("tokens");
         let mut p = Project::open(&dir).unwrap();
-        let accent = Token { name: "accent".into(), dark: "#e04a3f".into(), light: "#c0392b".into() };
-        p.set_token("accent", Some(accent.clone())).unwrap();
-        assert_eq!(Project::open(&dir).unwrap().tokens, [accent.clone()]);
-        assert!(p.set_token("Accent", Some(Token { name: "Accent".into(), ..accent })).unwrap_err().contains("small letter"));
+        // apart from the default theme a new project starts with
+        let signal = Token { name: "signal".into(), dark: "#e04a3f".into(), light: "#c0392b".into() };
+        p.set_token("signal", Some(signal.clone())).unwrap();
+        let read = |dir: &Path| Project::open(dir).unwrap().tokens.into_iter().find(|t| t.name == "signal");
+        assert_eq!(read(&dir), Some(signal.clone()));
+        assert!(p.set_token("Signal", Some(Token { name: "Signal".into(), ..signal })).unwrap_err().contains("small letter"));
+        p.set_token("signal", None).unwrap();
+        assert_eq!(read(&dir), None);
         fs::remove_dir_all(&dir).unwrap();
     }
 
