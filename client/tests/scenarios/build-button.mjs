@@ -1,8 +1,9 @@
 // A designer builds a Button in the editor alone, laid out in whatever box an instance gets: a
 // face that fills it and darkens while pressed, its label centred, and an optional hold to
-// confirm, a bar filling along its bottom while held. Its look is inputs that start at the
-// theme's tokens. On a page, a plain one runs its tap, a held one confirms only once its bar
-// is full, and a wide one and a tall one keep their labels centred and their faces whole.
+// confirm, a colour sweeping across the face under the label while held, so a round face shows
+// it too. Its look is inputs that start at the theme's tokens. On a page, a plain one runs its
+// tap, a held one confirms only once the sweep is across, and a wide one and a tall one keep
+// their labels centred and their faces whole.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.addComponent("Button", 20, 6);
@@ -13,16 +14,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("textColour", "$text");
   await d.addInput("textSize", "2");
   await d.addInput("radius", "$radius");
-  await d.addInput("barColour", "$accent");
+  await d.addInput("holdColour", "$accent");
   await d.addSends("confirm");
   await d.add("frame", { Name: "face", x: "0", y: "0", w: "100%", h: "100%", Fill: "root.pressed ? fill.darken(0.15) : fill", Radius: "radius", Overflow: '"hidden"' });
   await d.handler("tap", 'if (!holdMs) emit("confirm");');
   await d.handler("hold", 'if (holdMs) emit("confirm");', "holdMs || 1e9");
+  await d.add("frame", { Name: "progress", x: "0", y: "0", w: "(holdMs ? 100 * Math.min(root.heldFor / holdMs, 1) : 0)%", h: "100%", Fill: "holdColour", Radius: "" });
+  await d.select("face");
   await d.add("frame", { Name: "content", x: "0", y: "0", w: "100%", h: "100%", Fill: "", Radius: "" });
   await d.layOut("Left to right", "Center");
   await d.add("text", { Name: "label", w: "hug", h: "hug", Text: "text", Colour: "textColour", Size: "textSize", Weight: "600" });
-  await d.select("face");
-  await d.add("frame", { Name: "bar", Origin: '"0% 100%"', x: "0", y: "100%", w: "(holdMs ? 100 * Math.min(root.heldFor / holdMs, 1) : 0)%", h: "0.5", Fill: "barColour", Radius: "" });
 
   await d.addPage("Hold buttons");
   const start = await d.place("Button", { x: "4", y: "4", w: "20", h: "6", text: '"Start"' });
@@ -52,9 +53,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await inst(start).click();
   await eventually(() => hmi.state.values.Running?.value === true, "a tap to start the line");
 
-  // a short press on the hold button does nothing, a long one fills the bar and confirms
+  // a short press on the hold button does nothing, a long one sweeps across and confirms
   const b = await inst(stop).boundingBox();
-  const bar = async () => (await part(stop, "bar").boundingBox())?.width ?? 0;
+  const sweep = async () => (await part(stop, "progress").boundingBox())?.width ?? 0;
   const lightness = (rgb) => rgb.match(/\d+/g).slice(0, 3).map(Number).reduce((a, c) => a + c, 0);
   const still = await colour(stop);
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
@@ -67,10 +68,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(hmi.state.values.Running?.value === true, "a short press confirmed");
   await page.mouse.down();
   let seen = 0;
-  await eventually(async () => (seen = await bar()) > 20 && seen < 180, () => `the bar to fill part way, it is ${seen} wide`, 550);
-  const [face, along] = [await part(stop, "face").boundingBox(), await part(stop, "bar").boundingBox()];
-  check(Math.abs(face.y + face.height - (along.y + along.height)) < 1, "the bar is not along the face's bottom");
+  await eventually(async () => (seen = await sweep()) > 20 && seen < 180, () => `the sweep to go part way, it is ${seen} wide`, 550);
+  const [face, along, label] = [await part(stop, "face").boundingBox(), await part(stop, "progress").boundingBox(), await part(stop, "label").boundingBox()];
+  check(Math.abs(face.y - along.y) < 1 && Math.abs(face.height - along.height) < 1, "the sweep does not cover the face from top to bottom");
+  const over = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".el[data-name]")?.getAttribute("data-name"), [label.x + label.width / 2, label.y + label.height / 2]);
+  check(over === "label", `the sweep hides the label under ${over}`);
   await eventually(() => hmi.state.values.Running?.value === false, "a long hold to stop the line");
   await page.mouse.up();
-  await eventually(async () => (await bar()) === 0, "the bar to empty");
+  await eventually(async () => (await sweep()) === 0, "the sweep to go back");
 }
