@@ -179,12 +179,6 @@ export function ComputedView(p: { computed: Computed; onRenamed: (name: string) 
         </div>
         <UsedBy name={p.computed.name} onOpen={p.onOpen} />
       </div>
-      <div class="pane-foot">
-        <button class="button" onClick={() => setComputed(p.computed.name, null)}>
-          <Trash size={12} />
-          Remove
-        </button>
-      </div>
     </>
   );
 }

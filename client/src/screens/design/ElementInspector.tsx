@@ -13,7 +13,7 @@ import { docScope, type Flow, pageScope, resolve, sizeWord } from "../../state/b
 import { capital } from "../../state/format";
 import { complete, componentNames, REPEAT } from "../../state/complete";
 import { brings, offered } from "../../state/events";
-import { component, page as pageOf, setState, state } from "../../state/store";
+import { component, page as pageOf, setState } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
 import { Popover } from "../../ui/Popover";
@@ -32,14 +32,13 @@ import {
   ArrowRight,
   ArrowUp,
   Plus,
-  Trash,
   X,
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, keysOf, kindOf, PADDING, PartsField, RADIUS, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, ORIGINS, PAINT, ROTATE, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
-import { absolute, type Align, align, chain, find, remove, roomOf, scopeOf, setHandler, setProps, showProps, spread, tops } from "./tree";
+import { absolute, type Align, align, chain, find, roomOf, scopeOf, setHandler, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
  *  the free CSS box. */
@@ -122,12 +121,6 @@ function Several(p: { page: Page; ids: string[] }) {
         </div>
         <div class="placeholder">Drag one to move them all, or nudge them with the arrows. Shift click adds an element or takes it away.</div>
       </div>
-      <div class="pane-foot">
-        <button class="button" onClick={() => remove(p.page, tops(p.page, p.ids))}>
-          <Trash size={12} />
-          Delete all
-        </button>
-      </div>
     </>
   );
 }
@@ -152,7 +145,6 @@ function PageInspector(p: { page: Page }) {
     if (send({ type: "edit", edit: { kind: "resize_page", page: p.page.id, width, height } })) setState("pages", (pg) => pg.id === p.page.id, { width, height });
   };
   const isComponent = () => p.page.interface !== null;
-  const lastPage = () => !isComponent() && state.pages.filter((pg) => pg.interface === null).length < 2;
   return (
     <>
       <div class="pane-head">
@@ -224,17 +216,6 @@ function PageInspector(p: { page: Page }) {
             </div>
           </div>
         </Show>
-      </div>
-      <div class="pane-foot">
-        <button
-          class="button"
-          disabled={lastPage()}
-          title={lastPage() ? "A project keeps at least one page" : undefined}
-          onClick={() => send({ type: "edit", edit: { kind: "remove_page", page: p.page.id } })}
-        >
-          <Trash size={12} />
-          {isComponent() ? "Delete component" : "Delete page"}
-        </button>
       </div>
     </>
   );
@@ -463,12 +444,6 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={!grouped()}>
           <Events page={p.page} element={p.element} focus={(event) => typed(`on:${event}`)} />
         </Show>
-      </div>
-      <div class="pane-foot">
-        <button class="button" onClick={() => send({ type: "edit", edit: { kind: "remove_element", page: p.page, id: p.element.id } })}>
-          <Trash size={12} />
-          Delete
-        </button>
       </div>
     </WhereContext.Provider>
   );

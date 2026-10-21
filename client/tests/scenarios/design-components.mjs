@@ -50,7 +50,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.setField("Name", "Light");
   await eventually(() => hmi.page(lamps).children.every((e) => e.component === "Light"), "the instances to follow the rename");
 
-  await page.locator(".screen:not([hidden]) .sidebar.right button", { hasText: "Delete component" }).click();
+  await d.menu(page.locator(".screen:not([hidden]) .pages :is(.list-row, .card)", { has: page.getByText("Light", { exact: true }) }), "Delete component");
   await page.locator(".notice.fault", { hasText: "Light is placed on Lamps, so it stays" }).waitFor();
 
   await d.openPage("Lamps");

@@ -139,12 +139,6 @@ export function TokenView(p: { token: Token; onRenamed: (name: string) => void }
         <Field label="Dark" kind={kind(p.token.dark, dark())} value={p.token.dark} onWrite={(t) => t !== null && change({ dark: t.trim() })} />
         <Field label="Light" kind={kind(p.token.light || p.token.dark, worked(p.token, "light"))} value={p.token.light} placeholder="as dark" onWrite={(t) => change({ light: (t ?? "").trim() })} />
       </div>
-      <div class="pane-foot">
-        <button class="button" onClick={() => setToken(p.token.name, null)}>
-          <Trash size={12} />
-          Remove
-        </button>
-      </div>
     </WhereContext.Provider>
   );
 }

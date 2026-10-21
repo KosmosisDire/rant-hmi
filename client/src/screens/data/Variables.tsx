@@ -163,12 +163,6 @@ export function VariableView(p: { variable: Variable; onRenamed: (name: string) 
         </div>
         <UsedBy name={p.variable.name} onOpen={p.onOpen} />
       </div>
-      <div class="pane-foot">
-        <button class="button" onClick={() => setVariable(p.variable.name, null)}>
-          <Trash size={12} />
-          Remove
-        </button>
-      </div>
     </>
   );
 }

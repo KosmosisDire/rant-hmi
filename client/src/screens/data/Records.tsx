@@ -149,12 +149,6 @@ export function RecordView(p: { record: Record; onRenamed: (name: string) => voi
         </div>
         <UsedBy name={p.record.name} onOpen={p.onOpen} />
       </div>
-      <div class="pane-foot">
-        <button class="button" onClick={() => setRecord(p.record.name, null)}>
-          <Trash size={12} />
-          Remove
-        </button>
-      </div>
     </>
   );
 }

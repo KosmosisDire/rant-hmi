@@ -1,4 +1,3 @@
-import { Trash } from "../../ui/icons";
 import { createEffect, createMemo, For, Match, Show, Switch } from "solid-js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
@@ -189,12 +188,6 @@ function ImportView(p: { imp: Import; onOpen: (page: string) => void }) {
           <div class="error-line">{state.refused?.text}</div>
         </Show>
         <UsedBy name={p.imp.alias} onOpen={p.onOpen} />
-      </div>
-      <div class="pane-foot">
-        <button class="button" onClick={() => unimport(p.imp.alias)}>
-          <Trash size={12} />
-          Remove
-        </button>
       </div>
     </>
   );
