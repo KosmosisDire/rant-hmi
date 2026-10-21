@@ -25,8 +25,16 @@ const CHANNELS_SILENT_MS = 1000;
  *  and the ping that times it. */
 const ON_CHANNEL: ReadonlySet<ClientMsg["type"]> = new Set(["fire", "set", "answer", "ping"]);
 
-// plain CBOR maps as objects, none of cbor-x's own record extension, so Rust reads it
-const cbor = { encoder: new Encoder({ useRecords: false }), decoder: new Decoder({ mapsAsObjects: true, useRecords: false }) };
+// cbor-x reads this option and its README names it, but its types leave it out
+declare module "cbor-x" {
+  interface Options {
+    int64AsNumber?: boolean;
+  }
+}
+
+// plain CBOR maps as objects, none of cbor-x's own record extension, so Rust reads it, and a
+// 64 bit integer, as a Timestamp is, a number the page's math can add, never a BigInt
+const cbor = { encoder: new Encoder({ useRecords: false }), decoder: new Decoder({ mapsAsObjects: true, useRecords: false, int64AsNumber: true }) };
 
 let socket: WebSocket | null = null;
 let beat: number | undefined;

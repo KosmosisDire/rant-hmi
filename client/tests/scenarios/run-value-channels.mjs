@@ -4,7 +4,7 @@
 
 import { Decoder } from "cbor-x";
 
-const decoder = new Decoder({ mapsAsObjects: true, useRecords: false });
+const decoder = new Decoder({ mapsAsObjects: true, useRecords: false, int64AsNumber: true });
 
 /** Notes what each channel brings, and holds it back `__delay` ms when set. */
 function tap() {

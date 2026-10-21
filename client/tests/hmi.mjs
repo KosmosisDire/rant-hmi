@@ -4,7 +4,7 @@
 import { Decoder, Encoder } from "cbor-x";
 
 const encoder = new Encoder({ useRecords: false });
-const decoder = new Decoder({ mapsAsObjects: true, useRecords: false });
+const decoder = new Decoder({ mapsAsObjects: true, useRecords: false, int64AsNumber: true });
 
 export class Hmi {
   /** Connects and waits until the backend has sent everything a screen starts from. */
