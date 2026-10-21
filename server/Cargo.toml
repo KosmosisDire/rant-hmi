@@ -21,7 +21,8 @@ rquickjs = "=0.14.0"
 serde = { version = "1", features = ["derive"] }
 # pure Rust crypto, so no OpenSSL to find on Windows or a target
 str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
+# 1.54.0 races resetting an interval's timer against the driver firing it (tokio PR 8458)
+tokio = { version = ">=1.51, <1.54", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
 toml = "0.8"
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
 tracing = "0.1"
