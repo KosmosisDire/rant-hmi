@@ -65,19 +65,20 @@ function units(drawing: Element): [number, number, number, number] {
   return [0, 0, number(drawing.props.w) || 100, number(drawing.props.h) || 100];
 }
 
-/** What a new shape starts as: in the middle of its drawing, sized to it, and visible. */
+/** What a new shape starts as: in the middle of its drawing, sized to it, visible, and in the
+ *  theme's tokens. */
 function start(tag: Tag, [x, y, w, h]: [number, number, number, number]): Record<string, string> {
   const v = (k: number) => String(Math.round(k * 10) / 10);
   const [cx, cy, s] = [x + w / 2, y + h / 2, Math.min(w, h)];
-  const line = { fill: '"none"', stroke: "#e4e6e8", "stroke-width": v(Math.max(0.1, s / 40)), "stroke-linecap": '"round"' };
+  const line = { fill: '"none"', stroke: "$text", "stroke-width": v(Math.max(0.1, s / 40)), "stroke-linecap": '"round"' };
   const pts = (ps: [number, number][]) => `"${ps.map(([a, b]) => `${v(x + a * w)},${v(y + b * h)}`).join(" ")}"`;
   switch (tag) {
     case "circle":
-      return { name: "Circle", cx: v(cx), cy: v(cy), r: v(s / 3), fill: "#4a8fd6" };
+      return { name: "Circle", cx: v(cx), cy: v(cy), r: v(s / 3), fill: "$accent" };
     case "ellipse":
-      return { name: "Ellipse", cx: v(cx), cy: v(cy), rx: v(w / 3), ry: v(h / 4), fill: "#4a8fd6" };
+      return { name: "Ellipse", cx: v(cx), cy: v(cy), rx: v(w / 3), ry: v(h / 4), fill: "$accent" };
     case "rect":
-      return { name: "Rect", x: v(x + w / 4), y: v(y + h / 4), width: v(w / 2), height: v(h / 2), fill: "#4a8fd6" };
+      return { name: "Rect", x: v(x + w / 4), y: v(y + h / 4), width: v(w / 2), height: v(h / 2), fill: "$accent" };
     case "line":
       return { name: "Line", x1: v(x + w / 4), y1: v(cy), x2: v(x + (3 * w) / 4), y2: v(cy), ...line };
     case "path":
@@ -85,9 +86,9 @@ function start(tag: Tag, [x, y, w, h]: [number, number, number, number]): Record
     case "polyline":
       return { name: "Line", points: pts([[0.1, 0.7], [0.3, 0.4], [0.5, 0.55], [0.7, 0.25], [0.9, 0.35]]), ...line };
     case "polygon":
-      return { name: "Polygon", points: pts([[0.5, 0.2], [0.8, 0.75], [0.2, 0.75]]), fill: "#4a8fd6" };
+      return { name: "Polygon", points: pts([[0.5, 0.2], [0.8, 0.75], [0.2, 0.75]]), fill: "$accent" };
     case "text":
-      return { name: "Label", x: v(cx), y: v(cy), text: '"Text"', fill: "#e4e6e8", "font-size": v(Math.max(0.8, s / 8)), "text-anchor": '"middle"', "dominant-baseline": '"middle"' };
+      return { name: "Label", x: v(cx), y: v(cy), text: '"Text"', fill: "$text", "font-size": v(Math.max(0.8, s / 8)), "text-anchor": '"middle"', "dominant-baseline": '"middle"' };
     default:
       return { name: "Group" };
   }

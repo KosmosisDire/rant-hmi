@@ -1,14 +1,14 @@
 /* A page as it runs. Its look is the project's own, so it never takes the editor's tokens:
-   these are only the defaults an element starts from. */
+   its defaults are the project's theme tokens, `--t-text` for $text, else the values here. */
 
 .page {
   --page-ground: #15171a;
   position: relative;
   overflow: hidden;
   background: var(--page-ground);
-  color: #e4e6e8;
+  color: var(--t-text, #e4e6e8);
   font-family: var(--sans);
-  font-size: 16px;
+  font-size: var(--t-textSize, 16px);
 }
 
 /* A frame shows what spills past it, as HTML does. `overflow: hidden` clips it. */
@@ -47,11 +47,11 @@
 }
 
 .el:focus-within {
-  box-shadow: 0 0 0 2px #4a8fd6;
+  box-shadow: 0 0 0 2px var(--t-accent, #4a8fd6);
 }
 
 .el-input.bad {
-  color: #e5484d;
+  color: var(--t-red, #e5484d);
 }
 
 .page.design .el-input {
@@ -90,9 +90,9 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  font-size: 13px;
-  color: #d2574b;
-  outline: 1px dashed #d2574b;
+  font-size: var(--t-textSmall, 13px);
+  color: var(--t-red, #d2574b);
+  outline: 1px dashed var(--t-red, #d2574b);
   outline-offset: -1px;
 }
 
@@ -111,8 +111,8 @@
   justify-content: center;
   width: 100%;
   height: 100%;
-  color: #9aa0a6;
-  outline: 1px dashed #5f656b;
+  color: var(--t-dim, #9aa0a6);
+  outline: 1px dashed var(--t-border2, #5f656b);
   outline-offset: -1px;
 }
 
@@ -132,9 +132,9 @@
   overflow: visible;
 }
 
-/* Shapes drawn in the page's units take a pixel stroke and a 16 pixel type by default. */
+/* Shapes drawn in the page's units take a pixel stroke and the page's type by default. */
 .units {
-  font-size: 1.6px;
+  font-size: calc(var(--t-textSize, 16px) / 10);
   stroke-width: 0.1;
 }
 

@@ -1,13 +1,13 @@
 // A page drawn as HTML: each element an absolutely placed div, its properties resolved
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
-import { createEffect, createMemo, createSignal, For, Index, Match, onCleanup, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createRoot, createSignal, For, Index, Match, onCleanup, Show, Switch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Scope, sizeWord, UNIT } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Scope, sizeWord, tokenValue, UNIT } from "../state/bind";
 import { fields, short } from "../state/format";
 import { play, stopPlaying } from "../net/connection";
 import { component, entity, live, notify, state } from "../state/store";
@@ -87,6 +87,24 @@ export function pageGround(page: Page): string | undefined {
   return r.ok && r.value !== undefined && r.value !== null && r.value !== "" ? String(r.value) : undefined;
 }
 
+/** Every theme token as a CSS variable, `--t-text`, so what a page draws by default follows
+ *  the theme. A number is a length in units. */
+const themeVars = createRoot(() =>
+  createMemo(() => {
+    const vars: Record<string, string> = {};
+    for (const t of state.tokens) {
+      try {
+        const v = tokenValue(t);
+        if (typeof v === "number") vars[`--t-${t.name}`] = `${v * UNIT}px`;
+        else if (typeof v === "string") vars[`--t-${t.name}`] = v;
+      } catch {
+        // one that cannot be worked out leaves the page's own default, and the theme says why
+      }
+    }
+    return vars;
+  }),
+);
+
 /** The space between blocks a narrow screen stacks, in units. */
 const GAP = 2;
 
@@ -131,7 +149,7 @@ export function PageView(p: { page: Page; overrides?: Overrides; size?: { width:
   const scope = createMemo(() => docScope(p.page));
   const size = () => p.size ?? p.page;
   return (
-    <div class="page" classList={{ design: p.design }} style={{ width: `${size().width * UNIT}px`, height: `${size().height * UNIT}px`, "--page-ground": pageGround(p.page) }}>
+    <div class="page" classList={{ design: p.design }} style={{ ...themeVars(), width: `${size().width * UNIT}px`, height: `${size().height * UNIT}px`, "--page-ground": pageGround(p.page) }}>
       <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} />}</For>
     </div>
   );

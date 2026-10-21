@@ -7,27 +7,27 @@ import { number } from "../../state/bind";
 import { GRID } from "./Artboard";
 import { childrenOf } from "./tree";
 
-/** What a new element starts as: visible, on the grid, and plainly named, in units. A drawing
- *  starts empty, its shapes added from the inspector. */
+/** What a new element starts as: visible, on the grid, plainly named, in units, and in the
+ *  theme's tokens. A drawing starts empty, its shapes added from the inspector. */
 export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup", Record<string, string>> = {
-  div: { name: "Frame", w: "16", h: "8", background: "#2a2f35", "border-radius": "0.8" },
-  span: { name: "Text", w: "16", h: "4", text: '"Text"', color: "#e4e6e8", "font-size": "1.8" },
+  div: { name: "Frame", w: "16", h: "8", background: "$panel", "border-radius": "$radius" },
+  span: { name: "Text", w: "16", h: "4", text: '"Text"', color: "$text", "font-size": "$textSize" },
   input: {
     name: "Input",
     w: "16",
     h: "4",
-    background: "#1e2125",
+    background: "$surface",
     "border-width": "0.1",
     "border-style": '"solid"',
-    "border-color": "#3a4046",
-    "border-radius": "0.6",
-    padding: '"0 10px"',
-    color: "#e4e6e8",
-    "font-size": "1.8",
+    "border-color": "$border2",
+    "border-radius": "$radius",
+    padding: "$space",
+    color: "$text",
+    "font-size": "$textSize",
   },
   media: { name: "Media", w: "32", h: "24", fit: '"meet"' },
   svg: { name: "Drawing", w: "16", h: "16" },
-  markup: { name: "SVG", w: "16", h: "16", markup: '`<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#4a8fd6"/></svg>`' },
+  markup: { name: "SVG", w: "16", h: "16", markup: '`<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="${$accent}"/></svg>`' },
 };
 
 /** The kinds a person adds, in the order the layers bar and the menu offer them. */

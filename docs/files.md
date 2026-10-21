@@ -88,6 +88,9 @@ dark = "0.5"
 - A token's `dark` and `light` are expressions over other tokens and the math: a colour, a
   number in units or a text. `light` left out is the dark one, worked out in light. Tokens
   that read each other in a ring cannot be worked out.
+- What a page shows without a look of its own takes the theme's tokens: text in `$text` at
+  `$textSize`, the focus ring in `$accent`, faults in `$red`. A new element starts in them
+  too, a frame in `$panel` with `$radius`. A project without a token keeps a plain default.
 
 ## Pages and components
 

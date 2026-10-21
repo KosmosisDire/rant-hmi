@@ -1,5 +1,6 @@
 // A user adds a signal colour token, uses it on a page and inside a component, switches the editor
-// to light and sees the light value, then renames the token: pages and components follow. A
+// to light and sees the light value, then renames the token: pages and components follow. What
+// a page shows by default, and each new element, takes the theme's tokens. A
 // token may be worked out from another, its light value left as the dark one, a number counts
 // in units, and tokens that read each other in a ring say they cannot be worked out.
 
@@ -84,6 +85,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.locator('button[title="Switch the theme"]').click();
   await eventually(async () => (await ground()) === "236,236,236", "the artboard to draw the light $ground");
   await page.locator('button[title="Switch the theme"]').click();
+
+  // what an element shows without a look of its own is the theme's, and a new one starts in it
+  const plain = await hmi.addElement(pageId, "span", { name: "Plain", x: "4", y: "30", w: "16", h: "4", text: '"plain"' });
+  const look = (key) => d.el(plain).evaluate((e, k) => getComputedStyle(e)[k], key);
+  await eventually(async () => (await look("color")) === "rgb(237, 237, 237)", "plain text in $text");
+  check((await look("fontSize")) === "14px", `plain text is ${await look("fontSize")}, not $textSize`);
+  const made = await d.add("frame", { Name: "Made" });
+  const find = (es) => es.flatMap((e) => (e.id === made ? [e] : find(e.children)))[0];
+  const starts = () => find(hmi.page(pageId).children)?.props ?? {};
+  await eventually(() => starts().background === "$panel" && starts()["border-radius"] === "$radius", `a new frame to start in the theme's tokens, not ${JSON.stringify(starts())}`);
   await d.tab("Data");
   await page.locator("button", { hasText: "Add a token" }).click();
   await right.locator(".head-title", { hasText: "$color" }).waitFor();
