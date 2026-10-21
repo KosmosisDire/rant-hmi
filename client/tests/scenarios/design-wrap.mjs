@@ -16,6 +16,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const frame = hmi.page(pageId).children[0];
   check(frame.props.layout === '"right"' && frame.props.gap === "4" && frame.props.x === "4" && frame.props.y === "10" && frame.props.w === "hug", `the frame reads ${JSON.stringify(frame.props)}`);
   check(frame.children.map((e) => e.id).join() === [across[1], across[2], across[0]].join(), "the row is not in the order they stood");
+  // the backend holds the frame before this screen draws it, so each part is measured once drawn in it
+  for (const id of across) await d.el(frame.id).locator(`.el[data-id="${id}"]`).waitFor();
   for (const [i, id] of across.entries()) {
     const [was, now] = [before[i], await d.box(id)];
     check(Math.abs(was.x - now.x) < 1.5 && Math.abs(was.y - now.y) < 1.5, `${id} moved from ${was.x},${was.y} to ${now.x},${now.y}`);
