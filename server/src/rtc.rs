@@ -34,6 +34,10 @@ pub const MESSAGE_MAX: usize = 16 * 1024;
 /// below this. Full is str0m's 128 KiB for the two together.
 const DRAINED: usize = 32 * 1024;
 
+/// A frame that waited longer than this for the task is dropped, and its video goes on from the
+/// next keyframe, so a busy backend makes video late but never what screens send and get.
+const FRAME_LATE: Duration = Duration::from_millis(200);
+
 /// One H264 frame of an import's video, in Annex B as the mesh carries it.
 pub struct Frame {
     pub alias: String,
@@ -41,6 +45,8 @@ pub struct Frame {
     /// When to show it, in microseconds.
     pub pts: i64,
     pub data: Vec<u8>,
+    /// When it came off the mesh.
+    pub at: Instant,
 }
 
 pub enum ToRtc {
@@ -51,7 +57,6 @@ pub enum ToRtc {
     Play { session: u32, sdp: String, videos: Vec<Played> },
     /// The screen's channels broke, or the screen is gone, so its connection ends.
     Unlink { session: u32 },
-    Frame(Frame),
     /// A message for a screen, on its reliable channel or its best effort one. It is left out
     /// while the channels are full.
     Send { session: u32, reliable: bool, bytes: Bytes },
@@ -117,22 +122,26 @@ impl Peer {
 /// A datagram one of the sockets took: the address it came to, where from, and its bytes.
 type Packet = (SocketAddr, SocketAddr, Vec<u8>);
 
-/// Starts the task that owns every connection. Frames and the loop's requests go in through
-/// the sender, answers and what screens send come back through `said`.
-pub fn start(said: UnboundedSender<FromRtc>) -> UnboundedSender<ToRtc> {
+/// Starts the task that owns every connection. The loop's requests go in through the first
+/// sender and video frames through the second. Answers and what screens send come back
+/// through `said`.
+pub fn start(said: UnboundedSender<FromRtc>) -> (UnboundedSender<ToRtc>, UnboundedSender<Frame>) {
     str0m::crypto::from_feature_flags().install_process_default();
     let (tx, rx) = unbounded_channel();
-    tokio::spawn(run(rx, said));
-    tx
+    let (frames_tx, frames) = unbounded_channel();
+    tokio::spawn(run(rx, frames, said));
+    (tx, frames_tx)
 }
 
-async fn run(mut requests: UnboundedReceiver<ToRtc>, said: UnboundedSender<FromRtc>) {
+async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiver<Frame>, said: UnboundedSender<FromRtc>) {
     let (arrived, mut packets) = unbounded_channel::<Packet>();
     let mut sockets: HashMap<IpAddr, Arc<UdpSocket>> = HashMap::new();
     let mut peers: Vec<Peer> = Vec::new();
     loop {
         let wake = peers.iter().map(|p| p.wake).min().unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
+        // frames go last, so they wait behind what screens send and get, never the other way
         tokio::select! {
+            biased;
             r = requests.recv() => match r {
                 None => return,
                 Some(ToRtc::Channels { session, sdp, local }) => {
@@ -163,12 +172,6 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, said: UnboundedSender<FromR
                     let _ = said.send(FromRtc::Channels { session, sdp: answer.ok() });
                 }
                 Some(ToRtc::Unlink { session }) => close(&mut peers, &said, |p| p.session == session),
-                Some(ToRtc::Frame(Frame { alias, keyframe, pts, data })) => {
-                    let data: Arc<[u8]> = data.into();
-                    for p in &mut peers {
-                        write(p, &alias, keyframe, pts, &data);
-                    }
-                }
                 Some(ToRtc::Send { session, reliable, bytes }) => {
                     if let Some(p) = peers.iter_mut().find(|p| p.session == session) {
                         put(p, reliable, &bytes);
@@ -189,6 +192,13 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, said: UnboundedSender<FromR
                 let now = Instant::now();
                 for p in peers.iter_mut().filter(|p| p.wake <= now) {
                     let _ = p.rtc.handle_input(Input::Timeout(now));
+                }
+            }
+            Some(Frame { alias, keyframe, pts, data, at }) = frames.recv() => {
+                let late = at.elapsed() > FRAME_LATE;
+                let data: Arc<[u8]> = data.into();
+                for p in &mut peers {
+                    write(p, &alias, keyframe, pts, &data, late);
                 }
             }
         }
@@ -333,12 +343,19 @@ fn put(p: &mut Peer, reliable: bool, bytes: &[u8]) {
     }
 }
 
-/// Writes a frame of an import's video to the screen, where it plays it.
-fn write(p: &mut Peer, alias: &str, keyframe: bool, pts: i64, data: &Arc<[u8]>) {
+/// Writes a frame of an import's video to the screen, where it plays it. A late one is left
+/// out, and the video waits for a keyframe, since nothing after a gap decodes until one.
+fn write(p: &mut Peer, alias: &str, keyframe: bool, pts: i64, data: &Arc<[u8]>, late: bool) {
     if !p.connected {
         return;
     }
     for v in p.videos.iter_mut().filter(|v| v.alias == alias && (v.started || keyframe)) {
+        if late {
+            if std::mem::take(&mut v.started) {
+                warn!("frames of {alias} came late for screen {}, so its video goes on from the next keyframe", p.session);
+            }
+            continue;
+        }
         let Some(writer) = p.rtc.writer(v.mid) else { continue };
         let Some(pt) = v.pt.or_else(|| h264(&writer)) else { continue };
         v.pt = Some(pt);

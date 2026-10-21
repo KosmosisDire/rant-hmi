@@ -3,13 +3,13 @@
 pub mod codec;
 
 use std::collections::HashMap;
-
 use std::future::Future;
+use std::time::Instant;
 
 use rant::types::{VideoCodec, VideoFrame};
 use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteVariable, Schema, Subscriber, VariableDefinition, VariableOptions};
 use crate::value::Value;
-use crate::rtc::{Frame, ToRtc};
+use crate::rtc::Frame;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
@@ -37,7 +37,7 @@ pub struct Mesh {
     node: Node,
     deliveries: UnboundedSender<Delivery>,
     attached: HashMap<String, Attached>,
-    frames: UnboundedSender<ToRtc>,
+    frames: UnboundedSender<Frame>,
     /// The video each played import comes from, and its subscription.
     videos: HashMap<String, (String, Subscriber<VideoFrame>)>,
     own: Own,
@@ -74,7 +74,7 @@ enum Handle {
 }
 
 impl Mesh {
-    pub fn open(options: &MeshOptions, deliveries: UnboundedSender<Delivery>, frames: UnboundedSender<ToRtc>) -> Result<Mesh, rant::Error> {
+    pub fn open(options: &MeshOptions, deliveries: UnboundedSender<Delivery>, frames: UnboundedSender<Frame>) -> Result<Mesh, rant::Error> {
         // fetch_details lists every entity with its schema, as an observer tool needs
         let mut o = NodeOptions::new().domain(options.domain).max_topics(256).fetch_details(true);
         if options.loopback {
@@ -270,7 +270,7 @@ impl Mesh {
         let sub = self.node.subscriber::<VideoFrame>(&source.name, Qos::new().reliable(source.reliable), move |m| {
             if m.codec == VideoCodec::H264 {
                 let f = m.into_inner();
-                let _ = tx.send(ToRtc::Frame(Frame { alias: alias.clone(), keyframe: f.keyframe, pts: f.pts.us, data: f.data }));
+                let _ = tx.send(Frame { alias: alias.clone(), keyframe: f.keyframe, pts: f.pts.us, data: f.data, at: Instant::now() });
             }
         });
         match sub {

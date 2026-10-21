@@ -45,8 +45,8 @@ pub async fn run(o: Options) -> Result<()> {
     let pages = Pages::open(&o.project)?;
     let (deliveries, delivered) = unbounded_channel();
     let (rtc_said, rtc_heard) = unbounded_channel();
-    let rtc = rtc::start(rtc_said);
-    let mesh = Mesh::open(&MeshOptions { name: NODE.to_owned(), domain: o.domain, loopback: o.loopback }, deliveries, rtc.clone())
+    let (rtc, frames) = rtc::start(rtc_said);
+    let mesh = Mesh::open(&MeshOptions { name: NODE.to_owned(), domain: o.domain, loopback: o.loopback }, deliveries, frames)
         .map_err(|e| anyhow!("could not open the Rant node: {e}"))?;
     let listener = TcpListener::bind((o.bind.as_str(), o.port))
         .await
