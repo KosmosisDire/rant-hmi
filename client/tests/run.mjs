@@ -61,7 +61,11 @@ for (const file of files) {
     // the whole log too, kept now in case the run dies before its end
     writeFileSync(join(out, "backend.log"), sys.backend.log);
   }
-  await page.screenshot({ path: join(out, `${name}.png`) });
+  // a page that hangs fails its scenario, never the run
+  await page.screenshot({ path: join(out, `${name}.png`) }).catch((e) => {
+    failed++;
+    console.log(`FAIL  ${name}: the page took no screenshot, ${e.message.split("\n")[0]}`);
+  });
   hmi.close();
   // with any a scenario opened, as a phone's, so a failed one leaves no screen behind
   for (const c of browser.contexts()) await c.close();
