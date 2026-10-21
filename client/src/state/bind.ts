@@ -10,7 +10,7 @@ import type { Value } from "../protocol/Value";
 import { mode } from "./mode";
 import { live, notify, state } from "./store";
 
-/** One unit of every length, in CSS pixels: placement, sizes, drawings, spacing, radii, borders
+/** One unit of every length, in CSS pixels: placement, sizes, diagrams, spacing, radii, borders
  *  and type all count in units, a tenth being one pixel. */
 export const UNIT = 10;
 

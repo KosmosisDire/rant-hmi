@@ -146,7 +146,7 @@ export function designer(page) {
       await right().locator(".pane-head .tag", { hasText: /^(page|component)$/ }).waitFor();
     },
 
-    /** Adds a frame, text, input, image, video or drawing from the layers bar, into the frame selected. Its
+    /** Adds a frame, text, input, image, video or diagram from the layers bar, into the frame selected. Its
      *  fields are set from `fields`. Gives the new element's id. */
     async add(kind, fields = {}) {
       const before = await selected();
@@ -166,7 +166,7 @@ export function designer(page) {
       await item(menus.nth(1), then).click();
     },
 
-    /** Adds a shape from the inspector of a drawing, a group or a shape. */
+    /** Adds a shape from the inspector of a diagram, a group or a shape. */
     async addShape(kind, fields = {}) {
       const before = await selected();
       await right().locator(".ghost", { hasText: "Add shape" }).click();

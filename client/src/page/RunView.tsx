@@ -81,7 +81,7 @@ export function RunView(p: { active: boolean }) {
               <div class="run-page" classList={{ over: n() > base() }} style={{ transform: shown().transform }}>
                 <PageView page={pg} act={pageAct(pg.id)} overrides={shown().stack?.at} size={shown().stack} />
               </div>
-              {/* the stacked page's height, which its scaled drawing does not take */}
+              {/* the stacked page's height, which it does not take once scaled */}
               <Show when={shown().height}>{(h) => <div style={{ height: `${h()}px` }} />}</Show>
             </div>
           );

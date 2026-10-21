@@ -13,7 +13,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addVariable("kx", "0");
   await d.addSends("move");
   await d.addSends("held");
-  await d.add("drawing", { Name: "pad", x: "0", y: "0", w: "24", h: "6" });
+  await d.add("diagram", { Name: "pad", x: "0", y: "0", w: "24", h: "6" });
   // the track takes the presses, which the marks and the knob above it let through
   await d.addShape("rect", { Name: "track", x: "0.3", y: "0.3", Width: "23.4", Height: "5.4", Round: "2.7", Fill: "$panel", Stroke: "$border2", Thickness: "0.2" });
   await d.handler("drag", ["// the knob goes where the finger is along a track 23.4 across, as far as the travel", "kx = Math.max(-1, Math.min(1, ((p.x - 0.5) * 23.4) / travel));", 'emit("move", { x: kx });'].join("\n"));

@@ -47,7 +47,7 @@ const copySelection = () => document.execCommand("copy");
 
 /** The menu on an element. It acts on the selection, which it becomes first unless the
  *  element is already in it. A frame adds inside itself, at `spot` when the canvas was
- *  clicked, and a drawing or a shape adds shapes. */
+ *  clicked, and a diagram or a shape adds shapes. */
 export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick: Pick, id: string, spot?: Spot) {
   const ids = selected.includes(id) ? selected : [id];
   if (!selected.includes(id)) pick(id);

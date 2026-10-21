@@ -261,7 +261,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const text = () => p.element.tag === "span";
   const instance = () => p.element.tag === "use";
   const input = () => p.element.tag === "input";
-  const drawing = () => p.element.tag === "svg";
+  const diagram = () => p.element.tag === "svg";
   const shape = () => SHAPES.has(p.element.tag);
   const grouped = () => p.element.tag === "group";
   // a frame that lays it out places it, so its x and y wait
@@ -387,8 +387,8 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <Field {...prop("src")} label="Source" placeholder="Camera" />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
         </Show>
-        <Show when={drawing()}>
-          <div class="section">Drawing</div>
+        <Show when={diagram()}>
+          <div class="section">Diagram</div>
           <Field {...prop("viewbox")} label="View box" placeholder="its size" />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
         </Show>
@@ -414,7 +414,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <DraftInput multiline class="editor css" value={other()} placeholder={'stroke-linejoin: "round"'} onCommit={setOther} />
           {faultNotes()}
         </Show>
-        <Show when={(drawing() || shape()) && pageOf(p.page)}>{(pg) => <AddShape page={pg()} element={p.element} />}</Show>
+        <Show when={(diagram() || shape()) && pageOf(p.page)}>{(pg) => <AddShape page={pg()} element={p.element} />}</Show>
         <Show when={instance()}>
           <div class="section">Component</div>
           <div class="field">

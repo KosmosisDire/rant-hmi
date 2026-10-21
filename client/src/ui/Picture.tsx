@@ -24,7 +24,7 @@ export function picture(v: Value | null | undefined): Picture | null {
   return { width: f.width, height: f.height, stride: typeof f.stride === "number" ? f.stride : 0, format, data: f.data };
 }
 
-/** How a picture or a drawing fits its box, as CSS says it. */
+/** How a picture or a diagram fits its box, as CSS says it. */
 export const FIT: Record<string, "contain" | "cover" | "fill"> = { meet: "contain", slice: "cover", stretch: "fill" };
 
 const FILES: Record<string, string> = { Jpeg: "image/jpeg", Png: "image/png" };
@@ -120,18 +120,18 @@ async function paint(canvas: HTMLCanvasElement, p: Picture): Promise<string | nu
 /** A picture on a canvas, kept to the latest frame. `onFault` hears why one cannot draw. */
 export function PictureView(p: { picture: Picture; fit?: string; class?: string; onFault?: (why: string | null) => void }) {
   let canvas!: HTMLCanvasElement;
-  let drawing = false;
+  let painting = false;
   let next: Picture | null = null;
   let gone = false;
   onCleanup(() => (gone = true));
   const draw = async (pic: Picture) => {
-    if (drawing) {
+    if (painting) {
       next = pic;
       return;
     }
-    drawing = true;
+    painting = true;
     const why = await paint(canvas, pic);
-    drawing = false;
+    painting = false;
     if (gone) return;
     p.onFault?.(why);
     const later = next;

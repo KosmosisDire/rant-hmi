@@ -1,4 +1,4 @@
-// A designer records Speed on the Data tab and builds a Plot in the editor alone: a drawing in
+// A designer records Speed on the Data tab and builds a Plot in the editor alone: a diagram in
 // units of 0 to 100 stretched over its box, clipping what falls outside, and a line through the
 // record's samples, the newest at the right edge. As Speed changes, the line grows and ends at
 // its value, and a window shorter than the record keeps the older samples inside the card.
@@ -16,7 +16,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("max", "1");
   await d.addInput("seconds", "10");
   await d.add("frame", { Name: "card", x: "0", y: "0", w: "40", h: "16", Fill: "$panel", Radius: "$radius" });
-  await d.add("drawing", { Name: "chart", x: "1", y: "1", w: "38", h: "14", "View box": '"0 0 100 100"', Fit: '"stretch"', Overflow: '"hidden"' });
+  await d.add("diagram", { Name: "chart", x: "1", y: "1", w: "38", h: "14", "View box": '"0 0 100 100"', Fit: '"stretch"', Overflow: '"hidden"' });
   await d.addShape("polyline", {
     Name: "line",
     Points: 'values.length ? values.map((s) => ((s.t - values[values.length - 1].t) / (seconds * 1000) + 1) * 100 + "," + (100 - ((s.v - min) / (max - min)) * 100)).join(" ") : ""',

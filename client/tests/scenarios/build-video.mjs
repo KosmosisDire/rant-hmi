@@ -1,6 +1,6 @@
 // A designer shows the camera as video with what a detector found over it, in the editor
 // alone: media showing the camera, which plays the transcoder's H264 over WebRTC, and a
-// drawing over it in the picture's pixels. Running, the rectangle sits on the
+// diagram over it in the picture's pixels. Running, the rectangle sits on the
 // part the video shows, give or take how far the part moves while the video travels.
 
 export default async function ({ page, hmi, d, sys, check, eventually }) {
@@ -15,7 +15,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await d.addPage("Camera video");
   const box = { x: "4", y: "4", w: "48", h: "36" };
   const video = await d.add("media", { Name: "camera", ...box, Source: "Camera" });
-  await d.add("drawing", { Name: "overlay", ...box, "View box": "`0 0 ${Camera.width} ${Camera.height}`", Fit: '"meet"' });
+  await d.add("diagram", { Name: "overlay", ...box, "View box": "`0 0 ${Camera.width} ${Camera.height}`", Fit: '"meet"' });
   await d.addShape("rect", {
     Name: "found",
     x: "item.min.x",

@@ -122,9 +122,9 @@
   inset: 0;
 }
 
-/* A drawing's shapes and an SVG's markup fill the box inside any padding, and may draw past
+/* A diagram's shapes and an SVG's markup fill the box inside any padding, and may draw past
    it as a frame's children do. */
-.drawing,
+.diagram,
 .markup {
   display: block;
   width: 100%;

@@ -160,7 +160,7 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
   const spotAt = (y: number, ids: string[]): Spot | null => {
     const rows = [...host.querySelectorAll<HTMLElement>(".list-row[data-id]")].map((row) => ({ id: row.dataset.id!, open: row.dataset.open !== undefined, r: row.getBoundingClientRect() }));
     const top = host.getBoundingClientRect().top - host.scrollTop;
-    // only where all that is dragged may go: shapes in drawings, the rest in frames
+    // only where all that is dragged may go: shapes in diagrams, the rest in frames
     const tags = ids.map((id) => find(p.page.children, id)?.tag).filter((t): t is Tag => !!t);
     const fits = (holder: string | null) => tags.every((t) => holds(holder ? (find(p.page.children, holder)?.tag ?? null) : null, t));
     const stays = (holder: string | null) => childrenOf(p.page, holder).filter((c) => !ids.includes(c.id));

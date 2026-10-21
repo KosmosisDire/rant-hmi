@@ -1,5 +1,5 @@
 // A designer builds a Joystick in the editor alone: a base, a travel ring and a knob drawn in
-// one drawing. Only a press on the base works it. The knob follows the finger while it stays
+// one diagram. Only a press on the base works it. The knob follows the finger while it stays
 // within the ring, stops at the ring beyond it, and springs back on release. It sends move with
 // x and y from -1 to 1, up being positive, which the page keeps in two variables, and held with
 // the same on each beat while held, even a still one, and a last 0, 0 when let go.
@@ -16,7 +16,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addVariable("ky", "0");
   await d.addSends("move");
   await d.addSends("held");
-  await d.add("drawing", { Name: "pad", x: "0", y: "0", w: "20", h: "20" });
+  await d.add("diagram", { Name: "pad", x: "0", y: "0", w: "20", h: "20" });
   // the base takes the presses, which the ring and the knob above it let through
   await d.addShape("circle", { Name: "base", "Centre x": "10", "Centre y": "10", Radius: "9.5", Fill: "$panel", Stroke: "$border2", Thickness: "0.2" });
   await d.handler("drag", [

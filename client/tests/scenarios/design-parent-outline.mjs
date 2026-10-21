@@ -1,4 +1,4 @@
-// A designer picks something inside a frame or a drawing and sees the bounds of what holds
+// A designer picks something inside a frame or a diagram and sees the bounds of what holds
 // it, faintly, so placing inside it is easy. Picking the holder itself shows only its ring.
 
 export default async function ({ page, d, check }) {
@@ -15,7 +15,7 @@ export default async function ({ page, d, check }) {
   check((await outline.count()) === 0, "the card outlines itself as its own holder");
 
   await d.deselect();
-  const dial = await d.add("drawing", { Name: "dial", x: "440", y: "44", w: "176", h: "176" });
+  const dial = await d.add("diagram", { Name: "dial", x: "440", y: "44", w: "176", h: "176" });
   await d.addShape("circle", { Name: "face", "Centre x": "88", "Centre y": "88", Radius: "40" });
-  check((await outline.count()) === 1 && (await near(dial)), "the drawing's bounds do not show around its shape");
+  check((await outline.count()) === 1 && (await near(dial)), "the diagram's bounds do not show around its shape");
 }

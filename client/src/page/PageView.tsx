@@ -54,13 +54,13 @@ const CORNER: Holder = { ox: "0px", oy: "0px" };
 /** Ours, never CSS: the rest of an element's properties are CSS. */
 export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "text", "value", "viewbox", "src", "fit", "markup"]);
 
-/** What a drawing holds: SVG shapes, whose every property but the name is an attribute. */
+/** What a diagram holds: SVG shapes, whose every property but the name is an attribute. */
 export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
 
 /** Attributes SVG spells with a capital, which the file writes in small letters. */
 const CASED: Record<string, string> = { pathlength: "pathLength", textlength: "textLength", gradienttransform: "gradientTransform" };
 
-/** How a drawing's view box fits its box: whole, filling it, or stretched to it, as a
+/** How a diagram's view box fits its box: whole, filling it, or stretched to it, as a
  *  picture's fit does, so an overlay lines up with its picture. */
 const FITS: Record<string, string> = { meet: "xMidYMid meet", slice: "xMidYMid slice", stretch: "none" };
 
@@ -168,7 +168,7 @@ export function cssFault(key: string, v: unknown): string | undefined {
   return CSS.supports(key, text) ? undefined : `${text} is not a ${key} the browser takes`;
 }
 
-/** How a shape turns, as CSS: about its origin, a point of its own box, never the drawing's
+/** How a shape turns, as CSS: about its origin, a point of its own box, never the diagram's
  *  corner. SVG's own rotate attribute turns a text's letters instead. */
 const TURNS: Record<string, string> = { rotate: "rotate", origin: "transform-origin" };
 
@@ -364,10 +364,10 @@ function ElementView(p: ElementProps & { at?: At }) {
     if (flow) Object.assign(style, layoutCss(flow, take("wrap") === true, take("align"), spread));
     const text = p.element.tag === "span" ? words(take("text")) : "";
     const value = p.element.tag === "input" ? take("value") : undefined;
-    const drawing = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
+    const diagram = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
     const media = p.element.tag === "media" ? { alias: playable(p.element.props.src, () => take("src")), src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
-    return { style, unknown, faults, text, value, drawing, markup, media, holder: { ox, oy, flow } as Holder };
+    return { style, unknown, faults, text, value, diagram, markup, media, holder: { ox, oy, flow } as Holder };
   });
   const press = usePress(p);
   const inner = (c: Element) => <Placed element={c} scope={p.scope} room={look().holder} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
@@ -389,10 +389,10 @@ function ElementView(p: ElementProps & { at?: At }) {
         <Match when={p.element.tag === "div"}>
           <For each={p.element.children}>{inner}</For>
         </Match>
-        <Match when={look().drawing}>
+        <Match when={look().diagram}>
           {(d) => (
             // without a view box it draws in the page's units, from its box's corner inside any padding
-            <svg class="drawing" viewBox={d().box ? String(d().box) : undefined} {...({ preserveAspectRatio: FITS[String(d().fit)] ?? FITS.meet } as Record<string, string>)}>
+            <svg class="diagram" viewBox={d().box ? String(d().box) : undefined} {...({ preserveAspectRatio: FITS[String(d().fit)] ?? FITS.meet } as Record<string, string>)}>
               <Show
                 when={d().box}
                 fallback={
@@ -466,7 +466,7 @@ function svgFrom(code: unknown, faults: string[]): SVGSVGElement | undefined {
   return svg;
 }
 
-/** A shape in a drawing: each property an SVG attribute, its value an expression. */
+/** A shape in a diagram: each property an SVG attribute, its value an expression. */
 function ShapeView(p: ElementProps & { at?: At }) {
   const look = createMemo(() => {
     const attrs: Record<string, string> = {};
@@ -645,7 +645,7 @@ interface Pointer {
 
 function pointer(el: globalThis.Element, e: PointerEvent, on: string | null): Pointer {
   const at = local(el, e);
-  // a drawing's matrix is single precision, so its noise is rounded away
+  // a diagram's matrix is single precision, so its noise is rounded away
   const clamp = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 1e5) / 1e5;
   const angle = (Math.atan2(at.x - at.w / 2, at.h / 2 - at.y) * 180) / Math.PI;
   return { x: clamp(at.w > 0 ? at.x / at.w : 0), y: clamp(at.h > 0 ? at.y / at.h : 0), angle, on, inside: at.x >= 0 && at.y >= 0 && at.x <= at.w && at.y <= at.h };

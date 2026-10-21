@@ -112,7 +112,7 @@ component placed on a page is a tag named after it.
 - `name`, `x`, `y`, `w`, `h` and `origin` are attributes. A span's text is its body. Every
   other property goes in `style`.
 - Every length counts in units of 10 px, so they compare: a page's size, `x`, `y`, `w`, `h`,
-  a drawing's own coordinates, and a plain number for `gap`, `padding`, `font-size`,
+  a diagram's own coordinates, and a plain number for `gap`, `padding`, `font-size`,
   `border-radius`, `border-width` and the like. A tenth is a pixel: `border-width: 0.1`.
   Text in quotes is CSS as it is written: `box-shadow: "0 2px 8px #0008"`.
 - `x`, `y`, `w` and `h` are units, or with a trailing `%` a share of what holds the element:
@@ -143,7 +143,7 @@ component placed on a page is a tag named after it.
   `item`, and so do their handlers.
 - `<group>` keeps elements together, which the editor picks and moves as one. It has no box,
   origin or place of its own, so what it holds sits as it would without it.
-- `<svg>` is a drawing, placed like a frame. It holds shapes (`path`, `circle`, `ellipse`,
+- `<svg>` is a diagram, placed like a frame. It holds shapes (`path`, `circle`, `ellipse`,
   `rect`, `line`, `polyline`, `polygon`, `text`, and `g` to group them), drawn in its
   `viewbox` units, by default the page's units from its box's corner. `fit` is `"meet"`,
   `"slice"` or `"stretch"`. Every property of a shape is an SVG attribute holding an
@@ -164,7 +164,7 @@ component placed on a page is a tag named after it.
   names a mesh import, bare or as text from an expression. An import with H264, its own or
   the `Video` child rant-transcoder makes on the camera's host, plays over the screen's WebRTC
   data connection. Any other shows its pictures as they come: a Rant Image, or MJPEG frames.
-  `fit` is `"meet"`, `"slice"` or `"stretch"`, as a drawing's is, so a drawing over it with
+  `fit` is `"meet"`, `"slice"` or `"stretch"`, as a diagram's is, so a diagram over it with
   ``viewbox="`0 0 ${Camera.width} ${Camera.height}`"`` and the same fit draws in the
   picture's pixels.
 - `<input value="Speed"/>` is a field an operator types into. A bare name as its value takes

@@ -76,7 +76,7 @@ export function laidOut(page: Page, id: string): boolean {
   });
 }
 
-/** Whether an element is a group, of elements or of a drawing's shapes, picked whole first. */
+/** Whether an element is a group, of elements or of a diagram's shapes, picked whole first. */
 export const isGroup = (e: Element | undefined) => e?.tag === "group" || e?.tag === "g";
 
 /** What a click on `hit` picks: the outermost group around it the selection has not entered,
@@ -222,7 +222,7 @@ export function shiftCopy(e: Element, room: Room, dx: number, dy: number) {
 }
 
 /** Whether `parent`, or the page for null, may hold a `child`: a frame holds elements, a
- *  drawing or a group shapes, as the backend allows. */
+ *  diagram or a group shapes, as the backend allows. */
 export function holds(parent: Tag | null, child: Tag): boolean {
   const shape = SHAPES.has(child);
   if (parent === null || parent === "div" || parent === "group") return !shape;

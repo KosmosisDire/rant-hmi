@@ -10,7 +10,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("min", "0");
   await d.addInput("max", "100");
   await d.addInput("unit", '""');
-  await d.add("drawing", { Name: "dial", x: "0", y: "0", w: "16", h: "16" });
+  await d.add("diagram", { Name: "dial", x: "0", y: "0", w: "16", h: "16" });
   await d.addShape("circle", { Name: "track", ...arc(6.4, "$panel3", 1.1) });
   await d.css('pathlength: 100\nstroke-dasharray: "75 100"');
   await d.addShape("circle", { Name: "level", ...arc(6.4, "value > max * 0.8 ? $red : $accent", 1.1) });
@@ -23,7 +23,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("min", "0");
   await d.addInput("max", "100");
   await d.addSends("change");
-  await d.add("drawing", { Name: "dial", x: "0", y: "0", w: "12", h: "12" });
+  await d.add("diagram", { Name: "dial", x: "0", y: "0", w: "12", h: "12" });
   await d.handler("drag", "const k = Math.min(Math.max((p.angle + 135) / 270, 0), 1);\nvalue = min + k * (max - min);\nemit(\"change\", value);");
   const ring = { "Centre x": "6", "Centre y": "6", Radius: "5.3", Fill: '"none"', Thickness: "0.5", Ends: '"round"', Transform: '"rotate(135 6 6)"' };
   await d.addShape("circle", { Name: "track", ...ring, Stroke: "$panel3" });

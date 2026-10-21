@@ -256,7 +256,7 @@ export function Artboard(p: {
         const bases = Object.fromEntries(all.map((g) => [g.id, boxOf(g, roomOf(p.page, g.id))]));
         drag = { kind, lead, ids: all.map((g) => g.id), sx: e.clientX, sy: e.clientY, bases, boxes: { ...bases }, n: ++drags, enter, turn: turnsOf(lead) };
       };
-      // a shape's own attributes move and scale it, in its drawing's units
+      // a shape's own attributes move and scale it, in its diagram's units
       const startShape = (how: "move" | Handle, id: string) => {
         const el = host.querySelector(`.page-layer [data-id="${id}"]`);
         const base = find(p.page.children, id);
@@ -313,7 +313,7 @@ export function Artboard(p: {
       return;
     }
     if (drag.kind === "shape") {
-      // the pointer's travel in the drawing's units, whole ones unless Alt
+      // the pointer's travel in the diagram's units, whole ones unless Alt
       const m = drag.screen.inverse();
       const unit = (v: number) => (e.altKey ? Number(v.toFixed(2)) : Math.round(v));
       const [du, dv] = [unit(m.a * dx + m.c * dy), unit(m.b * dx + m.d * dy)];
@@ -462,11 +462,11 @@ export function Artboard(p: {
     const style = getComputedStyle(el);
     const angle = parseFloat(style.rotate) || 0;
     const room = turnsOf(id).room;
-    // a frame's point in its own units, a shape's in its drawing's
+    // a frame's point in its own units, a shape's in its diagram's
     const [ox, oy] = style.transformOrigin.split(" ").map((t) => parseFloat(t) / (el instanceof SVGGraphicsElement ? 1 : UNIT));
     const r = host.getBoundingClientRect();
     if (el instanceof SVGGraphicsElement) {
-      // a shape turns about a point of its own outline's box, in the drawing's units
+      // a shape turns about a point of its own outline's box, in the diagram's units
       const b = el.getBBox();
       const m = (el.parentNode as SVGGraphicsElement).getScreenCTM();
       if (!m) return null;

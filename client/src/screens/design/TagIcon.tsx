@@ -11,7 +11,7 @@ export const TAG_WORDS: Record<Tag, string> = {
   use: "instance",
   input: "input",
   media: "media",
-  svg: "drawing",
+  svg: "diagram",
   markup: "SVG",
   path: "path",
   circle: "circle",

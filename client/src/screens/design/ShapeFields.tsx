@@ -1,5 +1,5 @@
-// What the inspector shows of a drawing's shapes: each kind's geometry, the paint they share,
-// and adding a shape sized to the drawing it goes in.
+// What the inspector shows of a diagram's shapes: each kind's geometry, the paint they share,
+// and adding a shape sized to the diagram it goes in.
 
 import { createSignal, For, Show } from "solid-js";
 import { send } from "../../net/connection";
@@ -57,15 +57,15 @@ export function shapeKeys(tag: Tag): Set<string> {
 /** The shapes the inspector and the menu add, in the order they list them. */
 export const SHAPE_KINDS: Tag[] = ["circle", "rect", "line", "path", "polyline", "polygon", "ellipse", "text", "g"];
 
-/** The drawing's own units: its view box, else its box in the page's units. */
-function units(drawing: Element): [number, number, number, number] {
-  const r = resolve(drawing.props.viewbox);
+/** The diagram's own units: its view box, else its box in the page's units. */
+function units(diagram: Element): [number, number, number, number] {
+  const r = resolve(diagram.props.viewbox);
   const box = r.ok ? String(r.value ?? "").trim().split(/[\s,]+/).map(Number) : [];
   if (box.length === 4 && box.every(Number.isFinite)) return box as [number, number, number, number];
-  return [0, 0, number(drawing.props.w) || 100, number(drawing.props.h) || 100];
+  return [0, 0, number(diagram.props.w) || 100, number(diagram.props.h) || 100];
 }
 
-/** What a new shape starts as: in the middle of its drawing, sized to it, visible, and in the
+/** What a new shape starts as: in the middle of its diagram, sized to it, visible, and in the
  *  theme's tokens. */
 function start(tag: Tag, [x, y, w, h]: [number, number, number, number]): Record<string, string> {
   const v = (k: number) => String(Math.round(k * 10) / 10);
@@ -94,19 +94,19 @@ function start(tag: Tag, [x, y, w, h]: [number, number, number, number]): Record
   }
 }
 
-/** Adds a shape into the drawing or group `at` is, or beside it when it is a shape, sized
- *  to the drawing's units. */
+/** Adds a shape into the diagram or group `at` is, or beside it when it is a shape, sized
+ *  to the diagram's units. */
 export function addShape(page: Page, at: Element, tag: Tag) {
   const holder = at.tag === "svg" || at.tag === "g" ? at.id : parentOf(page, at.id);
   let id = holder;
   while (id && find(page.children, id)?.tag !== "svg") id = parentOf(page, id);
-  const drawing = id ? find(page.children, id) : undefined;
-  if (!drawing) return;
-  const element: Element = { id: "", tag, component: null, props: start(tag, units(drawing)), handlers: [], children: [] };
+  const diagram = id ? find(page.children, id) : undefined;
+  if (!diagram) return;
+  const element: Element = { id: "", tag, component: null, props: start(tag, units(diagram)), handlers: [], children: [] };
   send({ type: "edit", edit: { kind: "add_element", page: page.id, parent: holder, index: null, element } });
 }
 
-/** The inspector's row that adds a shape into the drawing or group picked, or beside the
+/** The inspector's row that adds a shape into the diagram or group picked, or beside the
  *  shape picked. */
 export function AddShape(p: { page: Page; element: Element }) {
   const [open, setOpen] = createSignal(false);

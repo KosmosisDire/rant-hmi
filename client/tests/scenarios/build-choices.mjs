@@ -17,7 +17,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.add("text", { Name: "label", x: "1.2", y: "0", w: "14.6", h: "4", Text: "value", Colour: "$text", Size: "1.6" });
   await d.css('line-height: "40px"');
   await d.select("face");
-  await d.add("drawing", { Name: "chevron", x: "16.5", y: "1", w: "2", h: "2" });
+  await d.add("diagram", { Name: "chevron", x: "16.5", y: "1", w: "2", h: "2" });
   await d.addShape("polyline", { Points: '"0.4,0.7 1,1.3 1.6,0.7"', Stroke: "$dim", Thickness: "0.2", Transform: '`rotate(${open ? 180 : 0} 1 1)`' });
   await d.select("face");
   await d.add("frame", { Name: "list", x: "0", y: "4.4", w: "20", h: "options.length * 3.6 + 0.8", Fill: "$panel2", Radius: "$radius" });

@@ -1,11 +1,11 @@
-// Moving and scaling a drawing's shapes by hand: each shape's own attributes, rewritten while
+// Moving and scaling a diagram's shapes by hand: each shape's own attributes, rewritten while
 // they are plain numbers or plain text, as a frame's x and y are.
 
 import type { Element } from "../../protocol/Element";
 import { isNumber } from "../../state/bind";
 
 /** Where a point goes: scaled by sx and sy about (ax, ay), then moved by (dx, dy), in the
- *  drawing's units. */
+ *  diagram's units. */
 export interface Reshape {
   sx: number;
   sy: number;

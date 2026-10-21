@@ -1,13 +1,13 @@
-// A designer shapes a drawing by hand: scales a rect by its corner grip, moves a line and a
+// A designer shapes a diagram by hand: scales a rect by its corner grip, moves a line and a
 // path, and finds a shape placed by a live value stays where its value puts it.
 
 export default async function ({ page, d, hmi, check, eventually }) {
   await d.addPage("By hand");
-  const drawing = await d.add("drawing", { Name: "sketch", x: "4", y: "4", w: "32", h: "16", "View box": '"0 0 200 100"' });
+  const diagram = await d.add("diagram", { Name: "sketch", x: "4", y: "4", w: "32", h: "16", "View box": '"0 0 200 100"' });
   const rect = await d.addShape("rect", { Name: "box", x: "20", y: "20", Width: "40", Height: "20" });
   const props = (id) => hmi.state.pages.find((p) => p.name === "By hand").children[0].children.find((s) => s.id === id).props;
-  // screen pixels for each of the drawing's 200 units, at the artboard's zoom
-  const k = (await d.el(drawing).boundingBox()).width / 200;
+  // screen pixels for each of the diagram's 200 units, at the artboard's zoom
+  const k = (await d.el(diagram).boundingBox()).width / 200;
 
   const grip = await page.locator(".ring .handle.se").boundingBox();
   await d.gesture(grip.x + grip.width / 2, grip.y + grip.height / 2, 20 * k, 10 * k);
@@ -22,8 +22,8 @@ export default async function ({ page, d, hmi, check, eventually }) {
 
   await d.select("sketch");
   const path = await d.addShape("path", { Name: "tick", Path: '"M 150 80 l 20 0 L 190 90"', Thickness: "6" });
-  // pressed on its first stroke, at 160, 80 in the drawing's units
-  const sb = await d.el(drawing).boundingBox();
+  // pressed on its first stroke, at 160, 80 in the diagram's units
+  const sb = await d.el(diagram).boundingBox();
   await d.gesture(sb.x + 160 * k, sb.y + 80 * k, -10 * k, 0);
   await eventually(() => props(path).d === '"M 140 80 l 20 0 L 180 90"', () => `the path to move left 10, not to ${props(path).d}`);
 

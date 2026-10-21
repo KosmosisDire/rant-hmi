@@ -11,7 +11,7 @@ const ATTRS: [&str; 7] = ["name", "repeat", "x", "y", "w", "h", "origin"];
 const TEXT: &str = "text";
 /// An input's value, an attribute as HTML writes it.
 const VALUE: &str = "value";
-/// A drawing's view box, media's source, and how either fits its box, attributes as SVG and
+/// A diagram's view box, media's source, and how either fits its box, attributes as SVG and
 /// HTML write them.
 const VIEWBOX: &str = "viewbox";
 const SRC: &str = "src";
@@ -71,7 +71,7 @@ fn element(out: &mut String, e: &Element, depth: usize) {
                 out.push_str(&format!(" {key}={}", quote(v)));
             }
         }
-        // an input's value and a drawing's view box and fit are attributes, as HTML and SVG write them
+        // an input's value and a diagram's view box and fit are attributes, as HTML and SVG write them
         let own = own_attrs(e.tag);
         for k in own {
             if let Some(v) = e.props.get(*k) {
@@ -565,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn a_drawing_keeps_its_shapes_with_every_value_an_attribute() {
+    fn a_diagram_keeps_its_shapes_with_every_value_an_attribute() {
         let text = "<page name=\"A\" size=\"1408x792\">\n  <svg id=\"e1\" name=\"Gauge\" x=\"44\" y=\"44\" w=\"176\" h=\"176\" viewbox='\"0 0 100 100\"' style=\"opacity: 0.9\">\n    <circle id=\"e2\" name=\"track\" cx=\"50\" cy=\"50\" fill='\"none\"' r=\"40\" stroke=\"#3a4046\" stroke-width=\"8\"/>\n    <g id=\"e3\" transform=\"`rotate(${Speed * 90} 50 50)`\">\n      <line id=\"e4\" x1=\"50\" x2=\"50\" y1=\"50\" y2=\"14\">\n        <on event=\"tap\">\n          log(1);\n        </on>\n      </line>\n    </g>\n    <text id=\"e5\" x=\"50\" y=\"80\">Speed.toFixed(1)</text>\n  </svg>\n</page>\n";
         let page = parse(text, "a").unwrap();
         let svg = &page.children[0];
