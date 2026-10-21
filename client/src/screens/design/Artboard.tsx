@@ -12,7 +12,7 @@ import { follow } from "../../ui/press";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
 import { leaves } from "../../page/PageView";
-import { absolute, boxOf, boxText, find, isGroup, laidOut, literal, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
+import { absolute, boxOf, boxText, find, isGroup, laidOut, literal, originOf, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
 
 /** Places snap to whole pixels. A finer one is typed as a fraction, or dragged with Alt. */
 export const GRID = 1;
@@ -54,7 +54,7 @@ const KEYS: [string, string][] = [
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "box"; sx: number; sy: number }
-  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string }
+  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string; turn: Turns }
   | { kind: "shape"; how: "move" | Handle; id: string; sx: number; sy: number; base: Element; screen: DOMMatrix; outline: DOMRect; props: Record<string, string> | null; enter?: string };
 
 /** A box shown in place of an element's own until the page carries it. `n` names the drag
@@ -75,14 +75,31 @@ function snap(v: number, free: boolean) {
   return free ? Number(v.toFixed(2)) : Math.round(v / GRID) * GRID;
 }
 
-function dragged(kind: "move" | Handle, b: Box, dx: number, dy: number, free: boolean): Box {
-  if (kind === "move") return { x: snap(b.x + dx, free), y: snap(b.y + dy, free), w: b.w, h: b.h };
-  let [x, y, right, bottom] = [b.x, b.y, b.x + b.w, b.y + b.h];
-  if (kind.includes("w")) x = Math.min(snap(x + dx, free), right - GRID);
-  if (kind.includes("e")) right = Math.max(snap(right + dx, free), x + GRID);
-  if (kind.includes("n")) y = Math.min(snap(y + dy, free), bottom - GRID);
-  if (kind.includes("s")) bottom = Math.max(snap(bottom + dy, free), y + GRID);
-  return { x, y, w: right - x, h: bottom - y };
+/** How an element is turned as drawn, in degrees clockwise: by its own rotation, and by those
+ *  of the frames around it, which turn the room it sits in. */
+type Turns = { own: number; room: number };
+
+/** A vector turned clockwise by `deg`, on a page whose y runs down. */
+function turned(x: number, y: number, deg: number): [number, number] {
+  const t = (deg * Math.PI) / 180;
+  return [x * Math.cos(t) - y * Math.sin(t), x * Math.sin(t) + y * Math.cos(t)];
+}
+
+/** A box resized by a grip pulled `dx`, `dy` in its room, along its own turned sides. The side
+ *  or corner across from the grip stays where it is drawn, wherever the element turns about. */
+function resized(e: Element, kind: Handle, b: Box, dx: number, dy: number, turn: number, free: boolean): Box {
+  const [du, dv] = turned(dx, dy, -turn);
+  let [w, h] = [b.w, b.h];
+  if (kind.includes("e")) w = Math.max(GRID, snap(b.w + du, free));
+  if (kind.includes("w")) w = Math.max(GRID, snap(b.w - du, free));
+  if (kind.includes("s")) h = Math.max(GRID, snap(b.h + dv, free));
+  if (kind.includes("n")) h = Math.max(GRID, snap(b.h - dv, free));
+  const across = (ww: number, hh: number) => ({ x: kind.includes("w") ? ww : kind.includes("e") ? 0 : ww / 2, y: kind.includes("n") ? hh : kind.includes("s") ? 0 : hh / 2 });
+  const [own, now] = [originOf(e, b.w, b.h), originOf(e, w, h)];
+  const [a, z] = [across(b.w, b.h), across(w, h)];
+  // the origin moves so the far side, turned about it, lands where it was
+  const [px, py] = turned(a.x - own.x - (z.x - now.x), a.y - own.y - (z.y - now.y), turn);
+  return { x: b.x + own.x + px - now.x, y: b.y + own.y + py - now.y, w, h };
 }
 
 /** A shape scaled by a grip, about the far side of its outline. A flat side, as a level
@@ -224,7 +241,7 @@ export function Artboard(p: {
       const start = (kind: "move" | Handle, lead: string, group: Element[], enter?: string) => {
         const all = group.flatMap((g) => (g.tag === "group" ? [g, ...leaves(g)] : [g]));
         const bases = Object.fromEntries(all.map((g) => [g.id, boxOf(g, roomOf(p.page, g.id))]));
-        drag = { kind, lead, ids: all.map((g) => g.id), sx: e.clientX, sy: e.clientY, bases, boxes: { ...bases }, n: ++drags, enter };
+        drag = { kind, lead, ids: all.map((g) => g.id), sx: e.clientX, sy: e.clientY, bases, boxes: { ...bases }, n: ++drags, enter, turn: turnsOf(lead) };
       };
       // a shape's own attributes move and scale it, in its drawing's units
       const startShape = (how: "move" | Handle, id: string) => {
@@ -297,7 +314,11 @@ export function Artboard(p: {
     const d = drag;
     const k = view().k;
     const lead = d.bases[d.lead];
-    const moved = dragged(d.kind, lead, dx / k, dy / k, e.altKey);
+    // the pointer's travel in the room the elements sit in, which frames around may turn
+    const [rx, ry] = turned(dx / k, dy / k, -d.turn.room);
+    const one = find(p.page.children, d.lead);
+    const moved =
+      d.kind === "move" || !one ? { ...lead, x: snap(lead.x + rx, e.altKey), y: snap(lead.y + ry, e.altKey) } : resized(one, d.kind, lead, rx, ry, d.turn.own, e.altKey);
     // the others keep their places against the one under the pointer
     for (const id of d.ids) {
       const b = d.bases[id];
@@ -413,6 +434,13 @@ export function Artboard(p: {
     });
     onCleanup(() => cancelAnimationFrame(frame));
   });
+  const turnsOf = (id: string): Turns => {
+    const el = host.querySelector(`.page-layer [data-id="${id}"]`);
+    const angle = (x: globalThis.Element) => parseFloat(getComputedStyle(x).rotate) || 0;
+    let room = 0;
+    for (let a = el?.parentElement?.closest(".el"); a; a = a.parentElement?.closest(".el")) room += angle(a);
+    return { own: el ? angle(el) : 0, room };
+  };
   const turnOf = (id: string) => {
     const el = host.querySelector(`.page-layer [data-id="${id}"]`);
     if (!el) return null;

@@ -100,7 +100,7 @@ export function childrenOf(page: Page, parent: string | null): Element[] {
 }
 
 /** Where an element's origin sits in its own box of `w` by `h`, from the box's corner. */
-function originOf(e: Element, w: number, h: number, scope: Scope = pageScope) {
+export function originOf(e: Element, w: number, h: number, scope: Scope = pageScope) {
   const r = e.props.origin === undefined ? undefined : resolve(e.props.origin, scope);
   return originAt(r?.ok ? r.value : undefined, w, h);
 }
