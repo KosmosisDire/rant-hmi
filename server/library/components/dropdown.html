@@ -1,27 +1,27 @@
-<component name="Dropdown" size="220x44">
+<component name="Dropdown" size="20x4">
   <prop name="value" default='""' bindable="true"/>
   <prop name="options" default='["Auto", "Manual", "Off"]'/>
   <event name="change"/>
   <var name="open" start="false"/>
-  <div id="e1" name="face" x="0" y="0" w="220" h="44" style="background: #2a2f35; border-radius: 6">
+  <div id="e1" name="face" x="0" y="0" w="20" h="4" style="background: #2a2f35; border-radius: 0.5">
     <on event="tap">
       open = !open;
     </on>
     <on event="outside">
       open = false;
     </on>
-    <span id="e2" name="label" x="14" y="0" w="160" h="44" style='color: #e4e6e8; font-size: 18; line-height: "44px"'>value</span>
-    <svg id="e3" name="chevron" x="184" y="12" w="20" h="20">
-      <polyline id="e4" name="Line" fill='"none"' points='"4,7 10,13 16,7"' stroke="#9aa0a6" stroke-linecap='"round"' stroke-width="2" transform="`rotate(${open ? 180 : 0} 10 10)`"/>
+    <span id="e2" name="label" x="1.2" y="0" w="14.6" h="4" style='color: #e4e6e8; font-size: 1.6; line-height: "40px"'>value</span>
+    <svg id="e3" name="chevron" x="16.5" y="1" w="2" h="2">
+      <polyline id="e4" name="Line" fill='"none"' points='"0.4,0.7 1,1.3 1.6,0.7"' stroke="#9aa0a6" stroke-linecap='"round"' stroke-width="0.2" transform="`rotate(${open ? 180 : 0} 1 1)`"/>
     </svg>
-    <div id="e5" name="list" x="0" y="48" w="220" h="options.length * 40 + 8" style='background: #2a2f35; border-radius: 6; box-shadow: "0 8px 24px #000a"; display: open ? "block" : "none"'>
-      <div id="e6" name="option" repeat="options" x="4" y="4 + index * 40" w="212" h="40" style='background: item === value ? "#33415a" : "transparent"; border-radius: 4'>
+    <div id="e5" name="list" x="0" y="4.4" w="20" h="options.length * 3.6 + 0.8" style='background: #2a2f35; border-radius: 0.5; box-shadow: "0 8px 24px #000a"; display: open ? "block" : "none"'>
+      <div id="e6" name="option" repeat="options" x="0.4" y="0.4 + index * 3.6" w="19.2" h="3.6" style='background: item === value ? "#33415a" : "transparent"; border-radius: 0.4'>
         <on event="tap">
           value = item;
           open = false;
           emit("change", item);
         </on>
-        <span id="e7" name="optionLabel" x="10" y="0" w="192" h="40" style='color: #e4e6e8; font-size: 16; line-height: "40px"'>item</span>
+        <span id="e7" name="optionLabel" x="1" y="0" w="17.2" h="3.6" style='color: #e4e6e8; font-size: 1.5; line-height: "36px"'>item</span>
       </div>
     </div>
   </div>

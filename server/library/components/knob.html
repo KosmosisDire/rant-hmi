@@ -1,17 +1,17 @@
-<component name="Knob" size="132x132">
+<component name="Knob" size="12x12">
   <prop name="value" default="0" bindable="true"/>
   <prop name="min" default="0"/>
   <prop name="max" default="100"/>
   <event name="change"/>
-  <svg id="e1" name="dial" x="0" y="0" w="132" h="132">
+  <svg id="e1" name="dial" x="0" y="0" w="12" h="12">
     <on event="drag">
       const k = Math.min(Math.max((p.angle + 135) / 270, 0), 1);
       value = min + k * (max - min);
       emit("change", value);
     </on>
-    <circle id="e2" name="track" cx="66" cy="66" fill='"none"' pathlength="100" r="58" stroke="#3a4046" stroke-dasharray='"75 100"' stroke-linecap='"round"' stroke-width="6" transform='"rotate(135 66 66)"'/>
-    <circle id="e3" name="level" cx="66" cy="66" fill='"none"' pathlength="100" r="58" stroke="#4a8fd6" stroke-dasharray="`${(value - min) / (max - min) * 75} 100`" stroke-linecap='"round"' stroke-width="6" transform='"rotate(135 66 66)"'/>
-    <circle id="e4" name="face" cx="66" cy="66" fill='root.pressed ? "#2f3540" : "#2a2f35"' r="46" stroke="#3a4046" stroke-width="2"/>
-    <line id="e5" name="pointer" fill='"none"' stroke="#e4e6e8" stroke-linecap='"round"' stroke-width="5" transform="`rotate(${-135 + (value - min) / (max - min) * 270} 66 66)`" x1="66" x2="66" y1="50" y2="28"/>
+    <circle id="e2" name="track" cx="6" cy="6" fill='"none"' pathlength="100" r="5.3" stroke="#3a4046" stroke-dasharray='"75 100"' stroke-linecap='"round"' stroke-width="0.5" transform='"rotate(135 6 6)"'/>
+    <circle id="e3" name="level" cx="6" cy="6" fill='"none"' pathlength="100" r="5.3" stroke="#4a8fd6" stroke-dasharray="`${(value - min) / (max - min) * 75} 100`" stroke-linecap='"round"' stroke-width="0.5" transform='"rotate(135 6 6)"'/>
+    <circle id="e4" name="face" cx="6" cy="6" fill='root.pressed ? "#2f3540" : "#2a2f35"' r="4.2" stroke="#3a4046" stroke-width="0.2"/>
+    <line id="e5" name="pointer" fill='"none"' stroke="#e4e6e8" stroke-linecap='"round"' stroke-width="0.5" transform="`rotate(${-135 + (value - min) / (max - min) * 270} 6 6)`" x1="6" x2="6" y1="4.5" y2="2.5"/>
   </svg>
 </component>
