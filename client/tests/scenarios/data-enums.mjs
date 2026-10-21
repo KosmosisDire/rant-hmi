@@ -3,7 +3,7 @@
 // options, and a handler on the backend reads them too. An import of the same name hides it.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await hmi.import("RunJob", "Cage/Gp12/RunJob", "write");
+  await hmi.import("EnumJob", "Cage/Gp12/RunJob", "write");
   const job = () => hmi.state.enums.find((e) => e.name === "JobName");
   await eventually(() => hmi.state.entities.some((e) => e.name === "Cage/Gp12/RunJob"), "RunJob");
   await eventually(() => job()?.options.join() === "None,Home249,Jog,Pick,Place", () => `the JobName enum, the enums are ${JSON.stringify(hmi.state.enums)}`);
