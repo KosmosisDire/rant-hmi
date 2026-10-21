@@ -48,6 +48,8 @@ const TEXT_LOOK: Spec[] = [
   ["Size", "font-size", { kind: "number", min: 1, placeholder: "16" }],
   ["Weight", "font-weight", { kind: "choice", options: ["300", "400", "500", "600", "700"], placeholder: "400" }],
   ["Align", "text-align", { kind: "choice", options: ['"left"', '"center"', '"right"'], placeholder: '"left"' }],
+  // a text's lines within its box, as CSS aligns a block's content
+  ["Vertical", "align-content", { kind: "choice", options: ['"start"', '"center"', '"end"'], placeholder: '"start"' }],
 ];
 const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...RADII]);
 
@@ -352,7 +354,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <Field {...prop("value")} label="Value" placeholder="Speed" focus={typed("value")} />
         </Show>
         <Show when={text() || input()}>
-          <For each={TEXT_LOOK}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
+          <For each={TEXT_LOOK.filter(([, key]) => text() || key !== "align-content")}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
         </Show>
         <Show when={!instance() && !shape() && !grouped()}>
           <div class="section">Look</div>
