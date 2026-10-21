@@ -150,12 +150,6 @@
   background: var(--panel3);
 }
 
-/* nothing to do, as back at the first place opened */
-.bar-btn:disabled {
-  opacity: 0.35;
-  pointer-events: none;
-}
-
 /* ------------------------------------------------------------------ status bar */
 
 .statusbar {

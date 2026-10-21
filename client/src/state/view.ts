@@ -10,29 +10,27 @@ export const TABS = ["data", "design", "logic", "run"] as const;
 export type Tab = (typeof TABS)[number];
 
 const KEY = "rant-hmi.page";
-const TOP = "rant-hmi.history-top";
 
-function saved(key: string): string {
+function saved(): string {
   try {
-    return (key === TOP ? sessionStorage : localStorage).getItem(key) ?? "";
+    return localStorage.getItem(KEY) ?? "";
   } catch {
     return "";
   }
 }
 
-function keep(key: string, value: string) {
+function keep(value: string) {
   try {
-    (key === TOP ? sessionStorage : localStorage).setItem(key, value);
+    localStorage.setItem(KEY, value);
   } catch {
     // storage is off: the choice lasts until reload
   }
 }
 
-/** One move, as the history keeps it: where it went, and its place among the moves. */
+/** One move, as the history keeps it. */
 interface Spot {
   tab: Tab;
   page: string;
-  n: number;
 }
 
 const spotOf = (s: unknown) => (s as { hmi?: Spot } | null)?.hmi;
@@ -40,7 +38,7 @@ const spotOf = (s: unknown) => (s as { hmi?: Spot } | null)?.hmi;
 // a reload shows what this tab's own history says it showed, before anything draws
 const reloaded = spotOf(window.history.state);
 const [tab, setTab] = remembered<Tab>("tab", "data", TABS);
-const [chosen, setChosen] = createSignal(saved(KEY));
+const [chosen, setChosen] = createSignal(saved());
 if (reloaded) show(reloaded);
 
 export const currentTab = tab;
@@ -49,25 +47,16 @@ export function currentPage() {
   return page(chosen()) ?? state.pages.find((p) => p.interface === null);
 }
 
-// this move's place, and the last one forward of it, which back leaves in the history
-const [at, setAt] = createSignal({ n: reloaded?.n ?? 0, top: Math.max(reloaded?.n ?? 0, Number(saved(TOP)) || 0) });
-
-export const canGoBack = () => at().n > 0;
-export const canGoForward = () => at().n < at().top;
-
-function show(spot: { tab: Tab; page: string }) {
+function show(spot: Spot) {
   setTab(spot.tab);
   setChosen(spot.page);
-  keep(KEY, spot.page);
+  keep(spot.page);
 }
 
-function go(to: { tab: Tab; page: string }) {
+function go(to: Spot) {
   if (to.tab === tab() && to.page === chosen()) return;
   show(to);
-  const n = at().n + 1;
-  setAt({ n, top: n });
-  keep(TOP, String(n));
-  window.history.pushState({ hmi: { ...to, n } satisfies Spot }, "");
+  window.history.pushState({ hmi: to }, "");
 }
 
 export function openTab(t: Tab) {
@@ -101,14 +90,9 @@ export const tookWanted = () => setWanted(null);
 /** Follows the browser's back and forward from here on. The editor's alone: an operator's
  *  screen keeps its own page stack in the history. */
 export function followHistory() {
-  if (!reloaded) {
-    window.history.replaceState({ hmi: { tab: tab(), page: chosen(), n: 0 } satisfies Spot }, "");
-    keep(TOP, "0");
-  }
+  if (!reloaded) window.history.replaceState({ hmi: { tab: tab(), page: chosen() } satisfies Spot }, "");
   window.addEventListener("popstate", (e) => {
     const spot = spotOf(e.state);
-    if (!spot) return;
-    show(spot);
-    setAt({ n: spot.n, top: at().top });
+    if (spot) show(spot);
   });
 }

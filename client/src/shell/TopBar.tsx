@@ -1,9 +1,9 @@
-import { ArrowLeft, ArrowRight, Code, Database, ExternalLink, Moon, PenTool, Play, Sun } from "../ui/icons";
+import { Code, Database, ExternalLink, Moon, PenTool, Play, Sun } from "../ui/icons";
 import { For, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { state } from "../state/store";
 import { theme, toggleTheme } from "../state/theme";
-import { canGoBack, canGoForward, TABS, type Tab } from "../state/view";
+import { TABS, type Tab } from "../state/view";
 import { Logo } from "../ui/marks";
 import { SidebarToggle } from "../ui/Sidebars";
 
@@ -19,13 +19,6 @@ export function TopBar(p: { tab: Tab; onTab: (t: Tab) => void }) {
     <header class="topbar">
       <SidebarToggle side="left" />
       <Logo />
-      {/* the browser's own back and forward, which step through tabs and pages opened */}
-      <button class="bar-btn" title="Back (Alt Left)" disabled={!canGoBack()} onClick={() => window.history.back()}>
-        <ArrowLeft size={16} />
-      </button>
-      <button class="bar-btn" title="Forward (Alt Right)" disabled={!canGoForward()} onClick={() => window.history.forward()}>
-        <ArrowRight size={16} />
-      </button>
       <nav class="tabs">
         <For each={TABS}>
           {(t) => (
