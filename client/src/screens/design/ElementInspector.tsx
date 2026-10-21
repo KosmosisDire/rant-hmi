@@ -9,7 +9,8 @@ import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
-import { docScope, pageScope, resolve } from "../../state/bind";
+import { docScope, type Flow, pageScope, resolve, sizeWord } from "../../state/bind";
+import { capital } from "../../state/format";
 import { complete, componentNames, REPEAT } from "../../state/complete";
 import { brings, offered } from "../../state/events";
 import { component, page as pageOf, setState, state } from "../../state/store";
@@ -26,15 +27,19 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
   Plus,
   Trash,
   X,
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
-import { BorderField, Field, type FieldProps, kindOf, RADII, RadiusField, type Where, WhereContext } from "./Field";
+import { BorderField, Field, type FieldProps, keysOf, kindOf, PADDING, PartsField, RADIUS, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, ORIGINS, PAINT, ROTATE, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
-import { type Align, align, chain, find, remove, scopeOf, setHandler, setProps, showProps, spread, tops } from "./tree";
+import { absolute, type Align, align, chain, find, remove, roomOf, scopeOf, setHandler, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
  *  the free CSS box. */
@@ -52,7 +57,7 @@ const TEXT_LOOK: Spec[] = [
   // a text's lines within its box, as CSS aligns a block's content
   ["Vertical", "align-content", { kind: "choice", options: ['"start"', '"center"', '"end"'], placeholder: '"start"' }],
 ];
-const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...RADII]);
+const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...keysOf(RADIUS), ...keysOf(PADDING), "gap"]);
 
 /** The right sidebar: the selected element's properties, a word on several, or the page's
  *  when none is selected. */
@@ -259,6 +264,18 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const drawing = () => p.element.tag === "svg";
   const shape = () => SHAPES.has(p.element.tag);
   const grouped = () => p.element.tag === "group";
+  // a frame that lays it out places it, so its x and y wait
+  const flowing = () => {
+    const doc = pageOf(p.page);
+    return !!doc && !!roomOf(doc, p.element.id).flows;
+  };
+  // hug fits what it holds or shows, fill takes the room its frame's flow leaves
+  const sizing = () => ({ hug: p.element.props.layout !== undefined || text() || instance(), fill: flowing() });
+  const fixed = (k: "w" | "h") => {
+    const doc = pageOf(p.page);
+    const b = doc && absolute(doc, p.element.id);
+    if (b) setProps(p.page, p.element.id, { [k]: String(Math.round(k === "w" ? b.w : b.h)) });
+  };
   // the field a double click types into: the one asked for, else the element's main one
   const typed = (key: string) => {
     const t = p.typing;
@@ -332,11 +349,38 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={!shape() && !grouped()}>
           <div class="section">Placement</div>
           <div class="placement">
-            <For each={["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} />}</For>
+            <For each={flowing() ? ["w", "h"] : ["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} />}</For>
           </div>
+          <Show when={sizing().hug || sizing().fill}>
+            <For each={["w", "h"] as const}>
+              {(k) => (
+                <div class="field">
+                  <label>{k === "w" ? "Width" : "Height"}</label>
+                  <div class="choice">
+                    <button classList={{ on: !sizeWord(p.element.props[k]) }} title="A size of its own" onClick={() => sizeWord(p.element.props[k]) && fixed(k)}>
+                      Fixed
+                    </button>
+                    <Show when={sizing().hug}>
+                      <button classList={{ on: sizeWord(p.element.props[k]) === "hug" }} title="The size of what it holds or shows" onClick={() => setProps(p.page, p.element.id, { [k]: "hug" })}>
+                        Hug
+                      </button>
+                    </Show>
+                    <Show when={sizing().fill}>
+                      <button classList={{ on: sizeWord(p.element.props[k]) === "fill" }} title="The room its frame leaves it" onClick={() => setProps(p.page, p.element.id, { [k]: "fill" })}>
+                        Fill
+                      </button>
+                    </Show>
+                  </div>
+                </div>
+              )}
+            </For>
+          </Show>
           {/* the point x and y place, its children count from and it turns about */}
           <Field {...prop("origin")} label="Origin" kind="choice" options={ORIGINS} placeholder='"0% 0%"' />
           <Turn prop={prop} specs={[ROTATE]} />
+          <Show when={p.element.tag === "div"}>
+            <AutoLayout page={p.page} element={p.element} prop={prop} />
+          </Show>
         </Show>
         <Show when={p.element.tag === "media"}>
           <div class="section">Media</div>
@@ -410,7 +454,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">Look</div>
           <Field {...prop("background")} {...LOOK[0][2]} label="Fill" />
           <BorderField props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
-          <RadiusField props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
+          <PartsField of={RADIUS} props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
           <For each={LOOK.slice(1)}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
           <DraftInput multiline class="editor css" value={other()} placeholder={'box-shadow: "0 2px 8px #0008"'} onCommit={setOther} />
@@ -427,6 +471,84 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         </button>
       </div>
     </WhereContext.Provider>
+  );
+}
+
+/** Each way a frame may lay out what it holds, as its button says it. */
+const DIRECTIONS: [Flow, string, typeof ArrowRight][] = [
+  ["right", "Left to right", ArrowRight],
+  ["down", "Top to bottom", ArrowDown],
+  ["left", "Right to left", ArrowLeft],
+  ["up", "Bottom to top", ArrowUp],
+];
+
+/** Where what a frame lays out sits in it, row by row. */
+const POINTS = ["top left", "top center", "top right", "center left", "center", "center right", "bottom left", "bottom center", "bottom right"];
+
+/** How a frame lays out what it holds: not at all, each placed by its x and y, or one after
+ *  another in a direction, with a gap or spread over its length, padding, wrapping and a point
+ *  they sit at. */
+function AutoLayout(p: { page: string; element: Element; prop: (key: string) => Pick<FieldProps, "value" | "onWrite" | "onShow"> }) {
+  const text = (key: string) => p.element.props[key]?.trim();
+  const set = (props: Record<string, string | null>) => setProps(p.page, p.element.id, props);
+  const spread = () => text("gap") === '"auto"';
+  return (
+    <>
+      <div class="section">Auto layout</div>
+      <Show
+        when={p.element.props.layout !== undefined}
+        fallback={
+          <button class="ghost" onClick={() => set({ layout: '"down"', gap: p.element.props.gap ?? "10" })}>
+            <Plus size={13} />
+            Lay out what it holds
+          </button>
+        }
+      >
+        <div class="field">
+          <label>Direction</label>
+          <div class="tool-row">
+            <For each={DIRECTIONS}>
+              {([flow, title, Icon]) => (
+                <button class="icon-btn" classList={{ on: text("layout") === `"${flow}"` }} title={title} onClick={() => set({ layout: `"${flow}"` })}>
+                  <Icon size={15} />
+                </button>
+              )}
+            </For>
+            <button class="icon-btn" title="Stop laying out, so each part is placed by its x and y" onClick={() => set({ layout: null, wrap: null, align: null, gap: spread() ? null : (p.element.props.gap ?? null) })}>
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+        <Field {...p.prop("wrap")} label="Wrap" kind="flag" placeholder="false" />
+        <div class="field">
+          <label>Spacing</label>
+          <div class="choice">
+            <button classList={{ on: !spread() }} title="A gap between each" onClick={() => spread() && set({ gap: "10" })}>
+              Packed
+            </button>
+            <button classList={{ on: spread() }} title="Spread over the frame's whole length" onClick={() => !spread() && set({ gap: '"auto"' })}>
+              Spread
+            </button>
+          </div>
+        </div>
+        <Show when={!spread()}>
+          <Field {...p.prop("gap")} label="Gap" kind="number" min={0} placeholder="0" />
+        </Show>
+        <PartsField of={PADDING} props={p.element.props} write={set} show={(props) => showProps(p.page, p.element.id, props)} />
+        <div class="field">
+          <label>Align</label>
+          <div class="points">
+            <For each={POINTS}>
+              {(point) => (
+                <button class="point" classList={{ on: (text("align") ?? '"top left"') === `"${point}"` }} title={capital(point)} onClick={() => set({ align: point === "top left" ? null : `"${point}"` })}>
+                  <i />
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+    </>
   );
 }
 

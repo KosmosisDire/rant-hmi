@@ -99,6 +99,13 @@ component placed on a page is a tag named after it.
   other property goes in `style`.
 - `x`, `y`, `w` and `h` are pixels, or with a trailing `%` a share of what holds the element:
   its width for `x` and `w`, its height for `y` and `h`. `w="50%"`, `x="(Speed * 10)%"`.
+- `w` and `h` may also be `hug`, the size of what the element holds or shows, or `fill`, the
+  room its frame's layout leaves it.
+- `layout` on a frame lays out what it holds one after another, `"right"`, `"down"`, `"left"`
+  or `"up"`, and their `x` and `y` wait. `gap` is the space between them, `"auto"` spreading
+  them over the frame's length, `padding` insets them, `wrap: true` wraps them, and `align`
+  is where they sit, as `"top left"`, `"center"` or `"bottom right"`:
+  `style='layout: "down"; gap: 10; padding: 10; align: "center"'`.
 - `origin` is a point of the element's box, a pair of percents of it or pixels such as
   `origin='"50% 100%"'`, the top left when unset. `x` and `y` place it, counted from the
   origin of what holds the element, and the element turns about it. A shape's origin is a

@@ -4,13 +4,13 @@
 // is asked for and replaces it.
 
 import { createContext, createMemo, createSignal, For, type JSX, Match, Show, Switch, useContext } from "solid-js";
-import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope } from "../../state/bind";
+import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope, sizeWord } from "../../state/bind";
 import { complete, type Place, type Suggestion } from "../../state/complete";
 import { mode } from "../../state/mode";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
 import { DraftInput } from "../../ui/DraftInput";
-import { Braces, ChevronsUpDown, Copy, Hash, Link, RotateCcw, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
+import { Braces, ChevronsUpDown, Copy, Hash, Link, RotateCcw, SquareDashed, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
 import { follow } from "../../ui/press";
@@ -75,8 +75,10 @@ export interface FieldProps {
 export function Field(p: FieldProps) {
   const where = useContext(WhereContext);
   const write = (t: string) => p.onWrite(t.trim() === "" ? null : t);
+  // placement's own words, as a trailing % is, never an expression
+  const word = () => !!p.percent && (isPercent(p.value) || !!sizeWord(p.value));
   const status = createMemo(() => {
-    if (p.plain) return undefined;
+    if (p.plain || (p.percent && sizeWord(p.value))) return undefined;
     const r = resolve(p.percent ? percentOf(p.value).expr : p.value, where().scope);
     if (r.ok) {
       const bad = r.value !== undefined && r.value !== null && r.value !== "" ? p.check?.(r.value) : undefined;
@@ -88,7 +90,7 @@ export function Field(p: FieldProps) {
   return (
     <div
       class="field"
-      classList={{ bound: !p.plain && !isConstant(p.value) && !(p.percent && isPercent(p.value)), inside: p.inside }}
+      classList={{ bound: !p.plain && !isConstant(p.value) && !word(), inside: p.inside }}
       onContextMenu={(e) => {
         // in the text, the text's own menu opens instead
         if ((e.target as HTMLElement).closest("input, textarea")) return;
@@ -153,7 +155,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   const where = useContext(WhereContext);
   const kind = () => p.kind ?? "any";
   const percent = () => !!p.percent && isPercent(p.value);
-  const literal = () => p.value.trim() === "" || isConstant(p.value) || percent();
+  const literal = () => p.value.trim() === "" || isConstant(p.value) || percent() || (!!p.percent && !!sizeWord(p.value));
   const scrubs = () => kind() === "number" && (p.value.trim() === "" || isNumber(p.value) || percent());
   const [opened, setOpened] = createSignal(false);
   let lead!: HTMLButtonElement;
@@ -355,64 +357,93 @@ export function BorderField(p: { props: Record<string, string | undefined>; writ
   );
 }
 
-/** Each corner's radius, in the order CSS lists them. */
-const CORNERS: [string, string][] = [
-  ["Top left", "border-top-left-radius"],
-  ["Top right", "border-top-right-radius"],
-  ["Bottom right", "border-bottom-right-radius"],
-  ["Bottom left", "border-bottom-left-radius"],
-];
+/** A property CSS also writes in parts, as the radius per corner or the padding per side: its
+ *  label, the property for all, each part's label and property in CSS's order, and its icon. */
+interface Parts {
+  label: string;
+  all: string;
+  parts: [string, string][];
+  icon: () => JSX.Element;
+  /** What the parts are, as the field's titles say: "corner", "side". */
+  each: string;
+}
 
-/** What the radius field writes, which More CSS leaves to it. */
-export const RADII = ["border-radius", ...CORNERS.map(([, key]) => key)];
+export const RADIUS: Parts = {
+  label: "Radius",
+  all: "border-radius",
+  parts: [
+    ["Top left", "border-top-left-radius"],
+    ["Top right", "border-top-right-radius"],
+    ["Bottom right", "border-bottom-right-radius"],
+    ["Bottom left", "border-bottom-left-radius"],
+  ],
+  icon: () => <SquareRoundCorner size={12} />,
+  each: "corner",
+};
 
-/** The corners' radius: one for all that scrubs from its lead, a click on which opens a field
- *  per corner. Corners of their own take the place of the one for all, never sit beside it,
- *  since CSS would let whichever comes later win. */
-export function RadiusField(p: { props: Record<string, string | undefined>; write: (props: Record<string, string | null>) => void; show: (props: Record<string, string>) => void }) {
+export const PADDING: Parts = {
+  label: "Padding",
+  all: "padding",
+  parts: [
+    ["Top", "padding-top"],
+    ["Right", "padding-right"],
+    ["Bottom", "padding-bottom"],
+    ["Left", "padding-left"],
+  ],
+  icon: () => <SquareDashed size={12} />,
+  each: "side",
+};
+
+/** What a parts field writes, which More CSS leaves to it. */
+export const keysOf = (f: Parts) => [f.all, ...f.parts.map(([, key]) => key)];
+
+/** One value for all parts that scrubs from its lead, a click on which opens a field per part.
+ *  Parts of their own take the place of the one for all, never sit beside it, since CSS would
+ *  let whichever comes later win. */
+export function PartsField(p: { of: Parts; props: Record<string, string | undefined>; write: (props: Record<string, string | null>) => void; show: (props: Record<string, string>) => void }) {
   const [opened, setOpened] = createSignal(false);
   let host!: HTMLDivElement;
   const part = (key: string) => p.props[key] ?? "";
-  const own = () => CORNERS.some(([, key]) => part(key) !== "");
+  const own = () => p.of.parts.some(([, key]) => part(key) !== "");
   const toggle = () => setOpened(!opened());
-  // a first corner of its own starts the others at the one for all
-  const corner = (key: string, text: string | null) => {
+  // a first part of its own starts the others at the one for all
+  const one = (key: string, text: string | null) => {
     const props: Record<string, string | null> = { [key]: text };
     if (!own()) {
-      for (const [, k] of CORNERS) if (k !== key) props[k] = part("border-radius") || null;
-      props["border-radius"] = null;
+      for (const [, k] of p.of.parts) if (k !== key) props[k] = part(p.of.all) || null;
+      props[p.of.all] = null;
     }
     p.write(props);
   };
-  // one for all again, at the top left's
-  const same = () => p.write({ "border-radius": part("border-top-left-radius") || null, ...Object.fromEntries(CORNERS.map(([, k]) => [k, null])) });
+  // one for all again, at the first part's
+  const same = () => p.write({ [p.of.all]: part(p.of.parts[0][1]) || null, ...Object.fromEntries(p.of.parts.map(([, k]) => [k, null])) });
   return (
     <div ref={host}>
       <Show
         when={own()}
         fallback={
           <Field
-            label="Radius"
+            label={p.of.label}
             kind="number"
             min={0}
             placeholder="0"
-            value={part("border-radius")}
-            onWrite={(t) => p.write({ "border-radius": t })}
-            onShow={(t) => p.show({ "border-radius": t })}
-            lead={{ icon: <SquareRoundCorner size={12} />, title: "Drag to change every corner, click for each one", onClick: toggle }}
+            value={part(p.of.all)}
+            onWrite={(t) => p.write({ [p.of.all]: t })}
+            onShow={(t) => p.show({ [p.of.all]: t })}
+            lead={{ icon: p.of.icon(), title: `Drag to change every ${p.of.each}, click for each one`, onClick: toggle }}
           />
         }
       >
-        <div class="field" classList={{ bound: CORNERS.some(([, key]) => !isConstant(part(key))) }}>
-          <label>Radius</label>
+        <div class="field" classList={{ bound: p.of.parts.some(([, key]) => !isConstant(part(key))) }}>
+          <label>{p.of.label}</label>
           <span class="vbox has-lead">
             <button type="button" class="editor border-sum" onClick={toggle}>
-              <For each={CORNERS}>{([, key]) => <span classList={{ linked: !isConstant(part(key)) }}>{part(key) || "0"}</span>}</For>
+              <For each={p.of.parts}>{([, key]) => <span classList={{ linked: !isConstant(part(key)) }}>{part(key) || "0"}</span>}</For>
             </button>
-            <button type="button" class="lead" title="Each corner" onClick={toggle}>
-              <SquareRoundCorner size={12} />
+            <button type="button" class="lead" title={`Each ${p.of.each}`} onClick={toggle}>
+              {p.of.icon()}
             </button>
-            <button class="icon-btn tail" title="One radius for every corner" onClick={same}>
+            <button class="icon-btn tail" title={`One ${p.of.label.toLowerCase()} for every ${p.of.each}`} onClick={same}>
               <X size={12} />
             </button>
           </span>
@@ -420,10 +451,8 @@ export function RadiusField(p: { props: Record<string, string | undefined>; writ
       </Show>
       <Show when={opened()}>
         <Popover anchor={host} onClose={() => setOpened(false)} class="parts">
-          <For each={CORNERS}>
-            {([label, key]) => (
-              <Field label={label} kind="number" min={0} placeholder={part("border-radius") || "0"} value={part(key)} onWrite={(t) => corner(key, t)} onShow={(t) => p.show({ [key]: t })} />
-            )}
+          <For each={p.of.parts}>
+            {([label, key]) => <Field label={label} kind="number" min={0} placeholder={part(p.of.all) || "0"} value={part(key)} onWrite={(t) => one(key, t)} onShow={(t) => p.show({ [key]: t })} />}
           </For>
         </Popover>
       </Show>
