@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
-use crate::value::Value;
+use rant::types::Timestamp;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{info, warn};
 
@@ -22,6 +22,7 @@ use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Varia
 use crate::protocol::{ClientMsg, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
+use crate::value::Value;
 use crate::rtc::{FromRtc, MESSAGE_MAX, ToRtc};
 
 /// How often changed values go out and the mesh is checked.
@@ -91,8 +92,8 @@ struct Session {
     out: Outbox,
     local: IpAddr,
     remote: IpAddr,
-    /// When it connected, in Unix seconds.
-    since: u64,
+    /// When it connected.
+    since: Timestamp,
     ping: Option<Duration>,
     /// How much the round trip wavers, in ms, smoothed.
     jitter: f64,
@@ -194,8 +195,8 @@ pub struct App {
     history: HashMap<String, VecDeque<Sample>>,
     sample_at: HashMap<String, Instant>,
     epoch: Option<u32>,
-    /// When the HMI started, in Unix seconds.
-    started_at: u64,
+    /// When the HMI started.
+    started_at: Timestamp,
     /// What the engine was last told each import's message is made of.
     forms: HashMap<String, Form>,
     health_at: Instant,
@@ -237,7 +238,7 @@ impl App {
             history: HashMap::new(),
             sample_at: HashMap::new(),
             epoch: None,
-            started_at: since_epoch().as_secs(),
+            started_at: Timestamp::now(),
             forms: HashMap::new(),
             health_at: Instant::now(),
             edited: None,
@@ -287,7 +288,7 @@ impl App {
             Inbound::Open { session, out, local, remote } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, local, remote, since: since_epoch().as_secs(), ping: None, jitter: 0.0, channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
+                self.sessions.insert(session, Session { out, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));

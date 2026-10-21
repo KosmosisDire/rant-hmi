@@ -10,7 +10,7 @@ The screens connected, a list. Each holds:
 
 - `id`: its number, as the log and `p.screen` give it
 - `address`: where it connects from
-- `connected_at`: when it connected, in Unix seconds
+- `connected_at`: when it connected, a Rant Timestamp: microseconds since the Unix epoch
 - `ping_ms`: the last round trip to it and back, 0 until one is measured. While it has its
   data channels it is timed there, the way its values and actions go, else on its socket.
 - `jitter_ms`: how much the round trip wavers, smoothed as RTP does: each new round trip
@@ -22,7 +22,7 @@ The screens connected, a list. Each holds:
 
 - `version`: the HMI's version
 - `project`: the project's name
-- `started_at`: when the HMI started, in Unix seconds
+- `started_at`: when the HMI started, a Timestamp too
 - `clients`: how many screens are connected
 - `missing`: the entities imported but not on the mesh now
 

@@ -1,6 +1,8 @@
 //! What the HMI publishes about itself, read only: the screens connected to it and its own
 //! state. Pages import them as they import any entity.
 
+use rant::types::Timestamp;
+
 use crate::value::Value;
 
 pub const CLIENTS: &str = "Hmi/Clients";
@@ -13,8 +15,8 @@ pub struct Client {
     pub id: u32,
     /// Where it connects from. A list holds only fixed sizes, and an IPv6 address fits.
     pub address: rant::String<48>,
-    /// When it connected, in Unix seconds.
-    pub connected_at: u64,
+    /// When it connected.
+    pub connected_at: Timestamp,
     /// The last round trip to it and back, in ms, 0 until one is measured. Timed on its data
     /// channels while it has them.
     pub ping_ms: f64,
@@ -32,8 +34,8 @@ pub struct HmiStatus {
     pub version: String,
     /// The project's name.
     pub project: String,
-    /// When the HMI started, in Unix seconds.
-    pub started_at: u64,
+    /// When the HMI started.
+    pub started_at: Timestamp,
     /// How many screens are connected.
     pub clients: u32,
     /// The entities imported but not on the mesh now, each as long as a name may be.
@@ -48,7 +50,7 @@ pub fn clients_value(list: &[Client]) -> Value {
                 Value::map([
                     ("id", Value::Int(c.id.into())),
                     ("address", (*c.address).into()),
-                    ("connected_at", Value::Int(c.connected_at.into())),
+                    ("connected_at", Value::Int(c.connected_at.us.into())),
                     ("ping_ms", c.ping_ms.into()),
                     ("jitter_ms", c.jitter_ms.into()),
                     ("data_channels", c.data_channels.into()),
@@ -63,7 +65,7 @@ pub fn status_value(s: &HmiStatus) -> Value {
     Value::map([
         ("version", s.version.as_str().into()),
         ("project", s.project.as_str().into()),
-        ("started_at", Value::Int(s.started_at.into())),
+        ("started_at", Value::Int(s.started_at.us.into())),
         ("clients", Value::Int(s.clients.into())),
         ("missing", Value::List(s.missing.iter().map(|m| (**m).into()).collect())),
     ])
