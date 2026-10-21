@@ -306,12 +306,13 @@ function usePress(p: ElementProps & { at?: At }) {
     };
     follow(e, { move, end });
   };
-  // a press anywhere else is this element's outside, as closes what it opened
+  // a press anywhere else is this element's outside, as closes what it opened, while its page
+  // shows: the editor keeps its run hidden behind the other tabs, and a run its covered pages
   createEffect(() => {
     if (!p.act || !p.element.handlers.some((h) => h.event === "outside")) return;
     let away: { e: PointerEvent; at: Pointer } | undefined;
     const readAway = (e: PointerEvent) => {
-      if (self && !self.contains(e.target as Node)) away = { e, at: pointer(self, e, null) };
+      if (self && !self.contains(e.target as Node) && !self.closest("[hidden]")) away = { e, at: pointer(self, e, null) };
     };
     const actAway = (e: PointerEvent) => {
       if (away?.e === e) fire("outside", away.at);
