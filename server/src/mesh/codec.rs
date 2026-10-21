@@ -50,15 +50,34 @@ pub fn top_fields(shapes: &[Shape]) -> Vec<String> {
     if bare(shapes).is_some() { Vec::new() } else { shapes.iter().map(|s| s.field.name.clone()).collect() }
 }
 
-/// Adds each named enum the shapes hold at any depth, unless one of that name is there.
-pub fn enums(shapes: &[Shape], out: &mut Vec<EnumInfo>) {
+/// Adds each enum the shapes hold at any depth, unless one of that name is there: the named
+/// ones, or the anonymous ones by their field's name, so named ones go first.
+pub fn enums(shapes: &[Shape], anonymous: bool, out: &mut Vec<EnumInfo>) {
     for s in shapes {
-        let name = s.field.type_name.as_deref().filter(|n| !n.is_empty());
+        let named = s.field.type_name.as_deref().filter(|n| !n.is_empty());
+        let name = match named {
+            Some(n) if !anonymous => Some(n.to_owned()),
+            // until Rant names every enum: drop this once it refuses anonymous ones
+            None if anonymous => pascal(&s.field.name),
+            _ => None,
+        };
         if let Some(name) = name.filter(|n| s.field.kind == FieldType::Enum && !out.iter().any(|e| e.name == *n)) {
-            out.push(EnumInfo { name: name.to_owned(), options: s.options.clone() });
+            out.push(EnumInfo { name, options: s.options.clone() });
         }
-        enums(&s.members, out);
+        enums(&s.members, anonymous, out);
     }
+}
+
+/// A field's name as a type's, `job_name` as `JobName`, or none when code could not name it.
+fn pascal(field: &str) -> Option<String> {
+    let mut name = String::new();
+    for word in field.split('_') {
+        let mut chars = word.chars();
+        name.extend(chars.next().map(|c| c.to_ascii_uppercase()));
+        name.extend(chars);
+    }
+    let usable = name.starts_with(|c: char| c.is_ascii_alphabetic()) && name.chars().all(|c| c.is_ascii_alphanumeric());
+    usable.then_some(name)
 }
 
 fn join(prefix: &str, name: &str) -> String {
@@ -401,13 +420,18 @@ mod tests {
     }
 
     #[test]
-    fn named_enums_are_listed_once_and_unnamed_ones_left_out() {
+    fn enums_are_listed_once_and_an_anonymous_one_by_its_field() {
         let node = node();
         let schema = node.schema("LineMode = enum<u8> { Auto, Manual }
-Line { mode: LineMode, part: { side: enum<u8> { Left, Right } }, last: LineMode }").unwrap();
+Line { mode: LineMode, part: { side_now: enum<u8> { Left, Right }, line_mode: enum<u8> { Up, Down } }, last: LineMode }").unwrap();
         let mut out = Vec::new();
-        enums(&shapes(&schema), &mut out);
-        assert_eq!(out, [EnumInfo { name: "LineMode".into(), options: vec!["Auto".into(), "Manual".into()] }]);
+        enums(&shapes(&schema), false, &mut out);
+        enums(&shapes(&schema), true, &mut out);
+        let names = |o: &[&str]| o.iter().map(|&n| n.to_owned()).collect::<Vec<_>>();
+        assert_eq!(out, [
+            EnumInfo { name: "LineMode".into(), options: names(&["Auto", "Manual"]) },
+            EnumInfo { name: "SideNow".into(), options: names(&["Left", "Right"]) },
+        ]);
     }
 
     #[test]
