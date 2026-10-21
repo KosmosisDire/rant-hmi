@@ -10,7 +10,7 @@ name = "rant-hmi"
 path = "src/main.rs"
 
 [dependencies]
-rant = { package = "rant-middleware", git = "https://github.com/KosmosisDire/Rant.git", tag = "crate-v0.0.32" }
+rant = { package = "rant-middleware", git = "https://github.com/KosmosisDire/Rant.git", tag = "crate-v0.0.33" }
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
 ciborium = "0.2"
