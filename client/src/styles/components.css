@@ -973,7 +973,8 @@ table.grid td.name > span {
   transition: height 0.22s ease-out;
 }
 
-.sheet.dragging {
+/* under a finger, or into a new room at once */
+.sheet.snap {
   transition: none;
 }
 

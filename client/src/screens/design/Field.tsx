@@ -10,10 +10,11 @@ import { capital } from "../../state/format";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
 import { DraftInput } from "../../ui/DraftInput";
-import { Activity, Braces, ChevronsUpDown, Copy, Grid3x3, Hash, Link, RotateCcw, SquareDashed, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
+import { Activity, Braces, ChevronsUpDown, Copy, Grid3x3, Hash, Link, Minus, Plus, RotateCcw, SquareDashed, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
 import { follow } from "../../ui/press";
+import { fingered } from "../../ui/touch";
 import { EASES, type Motion, motionOf, transitions, withMotion } from "./motion";
 
 /** Where the fields stand: the names their code reads, and what completion offers instead
@@ -71,7 +72,7 @@ export interface FieldProps {
   options?: string[];
   min?: number;
   max?: number;
-  /** How much one pixel of scrub moves a number. */
+  /** How much one pixel of scrub or one press of a stepper moves a number. */
   step?: number;
   placeholder?: string;
   /** Plain text, never an expression. */
@@ -131,8 +132,8 @@ export function Field(p: FieldProps) {
       class="field"
       classList={{ bound: !p.plain && !isConstant(p.value) && !word(), inside: p.inside }}
       onContextMenu={(e) => {
-        // in the text, the text's own menu opens instead
-        if ((e.target as HTMLElement).closest("input, textarea")) return;
+        // in the text, the text's own menu opens instead, and a held stepper is no press for a menu
+        if ((e.target as HTMLElement).closest("input, textarea, .steps")) return;
         openMenu(e, [
           { label: "Reset to default", icon: <RotateCcw size={13} />, disabled: p.value.trim() === "", run: () => write("") },
           { label: "Copy the value", icon: <Copy size={13} />, disabled: p.value.trim() === "", run: () => copyText(p.value) },
@@ -218,8 +219,9 @@ function ValueBox(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => 
   const where = useContext(WhereContext);
   let box!: HTMLSpanElement;
   const field = () => box.querySelector<HTMLInputElement>("input")!;
+  const steps = () => fingered && !p.plain && plainNumber(p);
   return (
-    <span class="vbox" classList={{ "has-lead": !p.plain }} ref={box}>
+    <span class="vbox" classList={{ "has-lead": !p.plain, "has-steps": steps() }} ref={box}>
       <DraftInput
         value={p.value}
         placeholder={p.placeholder}
@@ -231,6 +233,9 @@ function ValueBox(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => 
       <Show when={!p.plain}>
         <Lead {...p} field={field} />
       </Show>
+      <Show when={steps()}>
+        <Steps {...p} />
+      </Show>
     </span>
   );
 }
@@ -240,6 +245,54 @@ const clamp = (n: number, min = -Infinity, max = Infinity) => Math.min(max, Math
 /** Decimals enough to show a step. */
 const decimals = (step: number) => (String(step).split(".")[1] ?? "").length;
 
+/** Whether a number field holds a plain number, which a gesture may change, never code. */
+const plainNumber = (p: { kind?: Kind; value: string; percent?: boolean }) => p.kind === "number" && (p.value.trim() === "" || isNumber(p.value) || (!!p.percent && isPercent(p.value)));
+
+/** The number a plain number field shows, its placeholder while it is empty. */
+const numberIn = (p: { value: string; placeholder?: string }) => Number(percentOf(p.value).expr?.trim() || p.placeholder || 0) || 0;
+
+/** A finger's - and + on a plain number: a tap steps it once, a hold steps on until let go, and a
+ *  drag that scrolls the list away leaves it be. */
+function Steps(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void }) {
+  const step = () => p.step ?? 1;
+  const text = (n: number) => String(Number(n.toFixed(decimals(step()) + 1))) + (p.percent && isPercent(p.value) ? "%" : "");
+  const next = (from: number, by: number) => clamp(from + by * step(), p.min, p.max);
+  let held = false;
+  const hold = (by: number) => (e: PointerEvent) => {
+    held = false;
+    const original = p.value;
+    let at = numberIn(p);
+    let timer = setTimeout(function again() {
+      held = true;
+      at = next(at, by);
+      p.onShow?.(text(at));
+      timer = setTimeout(again, 80);
+    }, 400);
+    follow(e, {
+      end: (u) => {
+        clearTimeout(timer);
+        if (held && u?.type === "pointerup") p.onWrite(text(at));
+        else if (held) p.onShow?.(original);
+      },
+    });
+  };
+  // a hold's release still clicks, and that click steps no further
+  const tap = (by: number) => () => {
+    if (!held) p.onWrite(text(next(numberIn(p), by)));
+    held = false;
+  };
+  return (
+    <span class="steps">
+      <button type="button" tabIndex={-1} title="Less" onPointerDown={hold(-1)} onClick={tap(-1)}>
+        <Minus size={14} />
+      </button>
+      <button type="button" tabIndex={-1} title="More" onPointerDown={hold(1)} onClick={tap(1)}>
+        <Plus size={14} />
+      </button>
+    </span>
+  );
+}
+
 /** The words a choice shows for an option: its text without quotes. */
 const word = (option: string) => option.replace(/^"(.*)"$/, "$1");
 
@@ -248,7 +301,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   const kind = () => p.kind ?? "any";
   const percent = () => !!p.percent && isPercent(p.value);
   const literal = () => p.value.trim() === "" || isConstant(p.value) || percent() || (!!p.percent && !!sizeWord(p.value));
-  const scrubs = () => kind() === "number" && (p.value.trim() === "" || isNumber(p.value) || percent());
+  const scrubs = () => plainNumber(p);
   const [opened, setOpened] = createSignal(false);
   let lead!: HTMLButtonElement;
   // what the value draws now, for a swatch
@@ -274,7 +327,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
     e.preventDefault();
     lead.setPointerCapture(e.pointerId);
     const unit = percent() ? "%" : "";
-    const from = Number(percentOf(p.value).expr?.trim() || p.placeholder || 0) || 0;
+    const from = numberIn(p);
     const original = p.value;
     const step = p.step ?? 1;
     let [travel, moved, last, at] = [0, false, e.clientX, from];

@@ -34,6 +34,8 @@ export function Sheet(p: {
   const setStop = (n: number) => (p.onStop ? p.onStop(n) : setOwn(n));
   const [dragged, setDragged] = createSignal<number | null>(null);
   const [shown, setShown] = createSignal(false);
+  // a new room, as a phone's keyboard makes, moves it at once, so what has the focus is kept in sight
+  const [resized, setResized] = createSignal(false);
 
   const measure = () => {
     const room = box.offsetParent ? box.offsetParent.clientHeight : innerHeight;
@@ -71,17 +73,23 @@ export function Sheet(p: {
     });
   };
 
+  const resize = () => {
+    setResized(true);
+    measure();
+    requestAnimationFrame(() => setResized(false));
+  };
+
   onMount(() => {
     measure();
     const watch = new ResizeObserver(measure);
     watch.observe(content);
-    window.addEventListener("resize", measure);
+    window.addEventListener("resize", resize);
     // drawn shut first, so it slides up to its stop
     const frame = requestAnimationFrame(() => setShown(true));
     onCleanup(() => {
       cancelAnimationFrame(frame);
       watch.disconnect();
-      window.removeEventListener("resize", measure);
+      window.removeEventListener("resize", resize);
     });
   });
 
@@ -96,7 +104,7 @@ export function Sheet(p: {
           p.ref?.(el);
         }}
         class={`sheet ${p.class ?? ""}`}
-        classList={{ dock: p.docked, dragging: dragged() !== null }}
+        classList={{ dock: p.docked, snap: dragged() !== null || resized() }}
         style={{ height: `${Math.ceil(height())}px` }}
       >
         <div ref={grip} class="sheet-grip" onPointerDown={down} />
