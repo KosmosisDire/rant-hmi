@@ -29,3 +29,12 @@ screen.
 cd client && npm install && npm run build && cd ..
 cargo run -p rant-hmi -- path/to/my-hmi
 ```
+
+## Example
+
+A packing line with a belt, a robot and a label camera, run against a simulated line:
+
+```
+cargo run --example demo -- --loopback
+cargo run -p rant-hmi -- examples/packing-line --loopback
+```
