@@ -16,6 +16,7 @@ backend runs the same file.
 | `lerp(a, b, t)` | from `a` toward `b`, numbers or vectors |
 | `vec(x, y)`, `vec(x, y, z)` | a 2D or 3D vector |
 | `fromEuler(roll, pitch, yaw)` | a quaternion, in radians |
+| `mix(a, b, t)` | a colour from `a` toward `b` |
 
 A project's own name hides one of these, so no import or variable may take one.
 
@@ -43,6 +44,24 @@ Pose * Tool                       // poses combine
   vector of their size, part by part.
 - A 2D and a 3D vector never mix: the code stops and says so.
 
+## Colours
+
+A colour is text such as `"#2a6fd6"`, or `"#2a6fd680"` with its alpha, and a bare `#2a6fd6` in a
+page reads as one. Theme tokens are colours too.
+
+```js
+#224493.lighten(0.2)              // a fifth of the way to white
+$accent.darken(0.3)
+$accent.alpha(0.15)               // see through, as a selection's tint
+$panel.fade(0.5)                  // its alpha halved
+$accent.mix($red, 0.5)            // halfway to another colour
+#229834 * 1.2                     // brighter, and * 0.8 darker
+$text * $accent                   // each channel by the other's
+```
+
+- `lighten`, `darken` and `mix` go through OKLab, where an even step looks even and a hue holds.
+- A number times a colour scales its red, green and blue, its alpha kept.
+
 ## Methods
 
 | Value | Methods |
@@ -50,6 +69,7 @@ Pose * Tool                       // poses combine
 | vector | `length() normalized() dot(v) cross(v) distance(v) lerp(v, t) equals(v)` |
 | quaternion | `rotate(v) inverse() normalized() euler() equals(q)` |
 | pose | `apply(v) inverse()` |
+| colour | `lighten(t) darken(t) alpha(a) fade(k) mix(c, t)` |
 
 - `euler()` gives `{ roll, pitch, yaw }` in radians.
 - A 2D `cross` is a number: how far the second turns from the first.

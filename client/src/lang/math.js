@@ -3,8 +3,13 @@
 // 3D vectors, quaternions and poses through. Values stay plain objects, known by their own keys,
 // so one from the mesh needs no wrapping, and what the math makes goes back to the mesh as is.
 
-/** What a value is by its own keys: "vec2", "vec3", "quat", "pose", or null for anything else. */
+/** A colour is text such as "#2a6fd6" or "#2a6fd680", as a bare #hex in code reads. */
+const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+/** What a value is: a colour by its text, else by its own keys "vec2", "vec3", "quat" or
+ *  "pose", or null for anything else. */
 export function kind(v) {
+  if (typeof v === "string") return HEX.test(v) ? "colour" : null;
   if (v === null || typeof v !== "object" || Array.isArray(v) || ArrayBuffer.isView(v)) return null;
   const keys = Object.keys(v);
   if (keys.length < 2 || keys.length > 4) return null;
@@ -16,7 +21,7 @@ export function kind(v) {
   return null;
 }
 
-const NAMES = { vec2: "a 2D vector", vec3: "a 3D vector", quat: "a quaternion", pose: "a pose" };
+const NAMES = { vec2: "a 2D vector", vec3: "a 3D vector", quat: "a quaternion", pose: "a pose", colour: "a colour" };
 
 /** A value as an error names it. */
 const named = (v) => NAMES[kind(v)] ?? (typeof v === "string" ? "text" : v === null || v === undefined ? String(v) : `a ${typeof v}`);
@@ -115,6 +120,72 @@ function fromEuler(roll, pitch, yaw) {
   };
 }
 
+// --------------------------------------------------------------------------- colours
+
+/** A colour's red, green, blue and alpha, each 0 to 1. */
+function rgba(c) {
+  let h = HEX.exec(c)[1];
+  if (h.length <= 4) h = [...h].map((x) => x + x).join("");
+  const n = (i) => parseInt(h.slice(i, i + 2), 16) / 255;
+  return { r: n(0), g: n(2), b: n(4), a: h.length === 8 ? n(6) : 1 };
+}
+
+/** Red, green, blue and alpha as a colour, its alpha written only when it shows through. */
+function hex({ r, g, b, a }) {
+  const two = (v) => Math.round(Math.min(1, Math.max(0, v || 0)) * 255).toString(16).padStart(2, "0");
+  return `#${two(r)}${two(g)}${two(b)}${two(a) === "ff" ? "" : two(a)}`;
+}
+
+// OKLab, where an even step looks even and a hue holds as it lightens
+const linear = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+const gamma = (v) => (v <= 0.0031308 ? 12.92 * Math.max(0, v) : 1.055 * v ** (1 / 2.4) - 0.055);
+
+function lab({ r, g, b, a }) {
+  const [R, G, B] = [linear(r), linear(g), linear(b)];
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+  const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+  const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  return { L: 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, A: 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, B: 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s, a };
+}
+
+function srgb({ L, A, B, a }) {
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
+  return {
+    r: gamma(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    g: gamma(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    b: gamma(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+    a,
+  };
+}
+
+/** From colour `a` toward colour `b` by `t`, 0 to 1, through OKLab. */
+function mix(a, b, t) {
+  need("mix", a, "colour");
+  need("mix", b, "colour");
+  const [p, q] = [lab(rgba(a)), lab(rgba(b))];
+  const at = (x, y) => x + (y - x) * t;
+  return hex(srgb({ L: at(p.L, q.L), A: at(p.A, q.A), B: at(p.B, q.B), a: at(p.a, q.a) }));
+}
+
+/** A colour's channels times `k`, brighter above 1 and darker below, its alpha kept. */
+const scale = (c, k) => {
+  const v = rgba(c);
+  return hex({ r: v.r * k, g: v.g * k, b: v.b * k, a: v.a });
+};
+
+const COLOUR = {
+  lighten: (c, t) => mix(c, hex({ r: 1, g: 1, b: 1, a: rgba(c).a }), t),
+  darken: (c, t) => mix(c, hex({ r: 0, g: 0, b: 0, a: rgba(c).a }), t),
+  alpha: (c, a) => hex({ ...rgba(c), a }),
+  fade: (c, k) => {
+    const v = rgba(c);
+    return hex({ ...v, a: v.a * k });
+  },
+  mix: (c, other, t = 0.5) => mix(c, other, t),
+};
+
 // --------------------------------------------------------------------------- poses
 
 const papply = (p, v) => __add(qrotate(p.orientation, v), p.position);
@@ -127,7 +198,7 @@ const POSE = {
   },
 };
 
-const METHODS = { vec2: VECTOR, vec3: VECTOR, quat: QUATERNION, pose: POSE };
+const METHODS = { vec2: VECTOR, vec3: VECTOR, quat: QUATERNION, pose: POSE, colour: COLOUR };
 
 /** Every method name, which arith.js routes through `__method`. */
 export const METHOD_NAMES = [...new Set(Object.values(METHODS).flatMap((m) => Object.keys(m)))];
@@ -157,10 +228,17 @@ function __sub(a, b) {
 }
 
 /** A vector by a number or a vector of its kind, a quaternion by a quaternion or a 3D vector,
- *  which it turns, and a pose by a pose or a 3D vector, which it moves. */
+ *  which it turns, a pose by a pose or a 3D vector, which it moves, and a colour by a number,
+ *  which brightens or darkens it, or by a colour, each channel by the other's. */
 function __mul(a, b) {
   const [ka, kb] = [kind(a), kind(b)];
   if (!ka && !kb) return a * b;
+  if (ka === "colour" && typeof b === "number") return scale(a, b);
+  if (kb === "colour" && typeof a === "number") return scale(b, a);
+  if (ka === "colour" && kb === "colour") {
+    const [p, q] = [rgba(a), rgba(b)];
+    return hex({ r: p.r * q.r, g: p.g * q.g, b: p.b * q.b, a: p.a * q.a });
+  }
   if (isVec(ka) && typeof b === "number") return zip(ka, a, null, (x) => x * b);
   if (isVec(kb) && typeof a === "number") return zip(kb, b, null, (x) => a * x);
   if (ka === kb && isVec(ka)) return zip(ka, a, b, (x, y) => x * y);
@@ -174,6 +252,7 @@ function __mul(a, b) {
 function __div(a, b) {
   const [ka, kb] = [kind(a), kind(b)];
   if (!ka && !kb) return a / b;
+  if (ka === "colour" && typeof b === "number") return scale(a, 1 / b);
   if (isVec(ka) && typeof b === "number") return zip(ka, a, null, (x) => x / b);
   if (ka === kb && isVec(ka)) return zip(ka, a, b, (x, y) => x / y);
   return refuse(a, b, "divided");
@@ -238,6 +317,7 @@ export const LIBRARY = {
   PI: Math.PI,
   vec,
   fromEuler,
+  mix,
   __add,
   __sub,
   __mul,

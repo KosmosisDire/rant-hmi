@@ -61,6 +61,11 @@ const METHOD_WORDS: Record<string, [string, string]> = {
   inverse: ["inverse()", "the way back"],
   euler: ["euler()", "roll, pitch and yaw, in radians"],
   apply: ["apply(", "a point moved by it"],
+  lighten: ["lighten(", "toward white by t, 0 to 1"],
+  darken: ["darken(", "toward black by t, 0 to 1"],
+  alpha: ["alpha(", "with this alpha, 0 to 1"],
+  fade: ["fade(", "its alpha times k"],
+  mix: ["mix(", "toward another colour by t"],
 };
 
 /** What a vector, quaternion or pose offers of the math library after a dot. One taking

@@ -37,6 +37,7 @@ export const API = [
   { name: "PI", words: "half a turn, in radians" },
   { name: "vec", takes: ["x", "y", "z?"], words: "a 2D or 3D vector" },
   { name: "fromEuler", takes: ["roll", "pitch", "yaw"], words: "a rotation from roll, pitch and yaw" },
+  { name: "mix", takes: ["a", "b", "t"], words: "a colour from a toward b by t" },
 
   { name: "notify", takes: ["text"], words: "tell this screen", places: ["handler"] },
   { name: "log", takes: ["...values"], words: "write to the log", places: ["handler"] },
