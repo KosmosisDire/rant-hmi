@@ -9,6 +9,10 @@ import type { Value } from "../protocol/Value";
 import { mode } from "./mode";
 import { live, notify, state } from "./store";
 
+/** One unit of every length, in CSS pixels: placement, sizes, drawings, spacing, radii, borders
+ *  and type all count in units, a tenth being one pixel. */
+export const UNIT = 10;
+
 /** A plain number, which a drag may write over. */
 export function isNumber(value: string | undefined): boolean {
   return value !== undefined && /^\s*-?\d+(\.\d+)?\s*$/.test(value);
@@ -35,7 +39,7 @@ export function placement(value: string | undefined, whole: number, scope: Scope
 }
 
 /** An origin's two parts, a pair such as "50% 100%", each a number and whether it is a percent
- *  of the box rather than pixels. Unset, or not such a pair, is the corner. */
+ *  of the box rather than units. Unset, or not such a pair, is the corner. */
 function originParts(value: unknown): { n: number; percent: boolean }[] {
   const [a, b] = typeof value === "string" ? value.trim().split(/\s+/) : [];
   const one = (t: string | undefined) => {
@@ -55,7 +59,7 @@ export function originAt(value: unknown, w: number, h: number): { x: number; y: 
  *  move a box so its origin sits where its corner was. Null at the corner. */
 export function originCss(value: unknown, by = 1): [string, string] | null {
   const parts = originParts(value);
-  return parts.every((p) => p.n === 0) ? null : (parts.map((p) => `${p.n * by}${p.percent ? "%" : "px"}`) as [string, string]);
+  return parts.every((p) => p.n === 0) ? null : (parts.map((p) => (p.percent ? `${p.n * by}%` : `${p.n * by * UNIT}px`)) as [string, string]);
 }
 
 /** What w or h may say in place of a size: hug, the size of what the element holds, or fill,

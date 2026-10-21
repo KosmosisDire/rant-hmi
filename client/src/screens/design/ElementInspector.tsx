@@ -51,7 +51,7 @@ const LOOK: Spec[] = [
 ];
 const TEXT_LOOK: Spec[] = [
   ["Colour", "color", { kind: "colour", placeholder: "#e4e6e8" }],
-  ["Size", "font-size", { kind: "number", min: 1, placeholder: "16" }],
+  ["Size", "font-size", { kind: "number", min: 0.1, step: 0.1, placeholder: "1.6" }],
   ["Weight", "font-weight", { kind: "choice", options: ["300", "400", "500", "600", "700"], placeholder: "400" }],
   ["Align", "text-align", { kind: "choice", options: ['"left"', '"center"', '"right"'], placeholder: '"left"' }],
   // a text's lines within its box, as CSS aligns a block's content
@@ -143,8 +143,8 @@ const SIZINGS: [Sizing, string, string][] = [
   ["fill", "Fill", "Laid out in the box it is placed at, so what it places in percents stretches"],
 ];
 
-/** A page side in pixels, as the backend allows. */
-const side = (t: string) => /^\d+$/.test(t.trim()) && Number(t) >= 1 && Number(t) <= 16384;
+/** A page side in units, as the backend allows. */
+const side = (t: string) => /^\d+$/.test(t.trim()) && Number(t) >= 1 && Number(t) <= 1600;
 
 function PageInspector(p: { page: Page }) {
   // here at once too, since the other side is sent with it

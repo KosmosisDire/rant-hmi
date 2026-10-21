@@ -323,12 +323,13 @@ pub struct Pages {
     rules_changed: bool,
 }
 
-const WIDTH: u32 = 1408;
-const HEIGHT: u32 = 792;
-const COMPONENT_WIDTH: u32 = 264;
-const COMPONENT_HEIGHT: u32 = 176;
-/// The largest side a page may have, in pixels.
-const LARGEST: u32 = 16384;
+/// A new page, in units of 10 px: 1280 by 720 pixels.
+const WIDTH: u32 = 128;
+const HEIGHT: u32 = 72;
+const COMPONENT_WIDTH: u32 = 24;
+const COMPONENT_HEIGHT: u32 = 16;
+/// The largest side a page may have, in units of 10 px.
+const LARGEST: u32 = 1600;
 
 impl Pages {
     /// Reads every page in `pages/` and component in `components/`, starting a page called
@@ -532,7 +533,7 @@ impl Pages {
             }
             Edit::ResizePage { page, width, height } => {
                 if !(1..=LARGEST).contains(&width) || !(1..=LARGEST).contains(&height) {
-                    return Err(format!("a page is 1 to {LARGEST} pixels a side"));
+                    return Err(format!("a page is 1 to {LARGEST} units a side"));
                 }
                 let p = self.page_mut(&page)?;
                 let old = (std::mem::replace(&mut p.width, width), std::mem::replace(&mut p.height, height));

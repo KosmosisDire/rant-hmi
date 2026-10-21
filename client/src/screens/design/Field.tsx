@@ -295,7 +295,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
 
 /** The parts of a border, each its own property and expression, so one may be bound alone. */
 const BORDER: [string, string, Kind, Partial<FieldProps>][] = [
-  ["Width", "border-width", "number", { min: 0, placeholder: "1" }],
+  ["Width", "border-width", "number", { min: 0, step: 0.1, placeholder: "0.1" }],
   ["Style", "border-style", "choice", { options: ['"solid"', '"dashed"', '"dotted"', '"double"', '"none"'], placeholder: '"solid"' }],
   ["Colour", "border-color", "colour", { placeholder: "#3a4046" }],
 ];
@@ -314,7 +314,7 @@ export function BorderField(p: { props: Record<string, string | undefined>; writ
   };
   const write = (key: string, text: string | null) => {
     const props: Record<string, string | null> = { [key]: text };
-    if (text !== null && !part("border-width") && key !== "border-width") props["border-width"] = "1";
+    if (text !== null && !part("border-width") && key !== "border-width") props["border-width"] = "0.1";
     if (text !== null && !part("border-style") && key !== "border-style") props["border-style"] = '"solid"';
     p.write(props);
   };
@@ -426,6 +426,7 @@ export function PartsField(p: { of: Parts; props: Record<string, string | undefi
             label={p.of.label}
             kind="number"
             min={0}
+            step={0.1}
             placeholder="0"
             value={part(p.of.all)}
             onWrite={(t) => p.write({ [p.of.all]: t })}
@@ -452,7 +453,7 @@ export function PartsField(p: { of: Parts; props: Record<string, string | undefi
       <Show when={opened()}>
         <Popover anchor={host} onClose={() => setOpened(false)} class="parts">
           <For each={p.of.parts}>
-            {([label, key]) => <Field label={label} kind="number" min={0} placeholder={part(p.of.all) || "0"} value={part(key)} onWrite={(t) => one(key, t)} onShow={(t) => p.show({ [key]: t })} />}
+            {([label, key]) => <Field label={label} kind="number" min={0} step={0.1} placeholder={part(p.of.all) || "0"} value={part(key)} onWrite={(t) => one(key, t)} onShow={(t) => p.show({ [key]: t })} />}
           </For>
         </Popover>
       </Show>

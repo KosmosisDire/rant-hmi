@@ -173,14 +173,14 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     let attrs = r.attrs()?;
     r.expect(">")?;
     let interface = (root == "component").then(Interface::default);
-    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 1408, height: 792, shows: Shows::Full, fill: String::new(), interface, children: Vec::new() };
+    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 128, height: 72, shows: Shows::Full, fill: String::new(), interface, children: Vec::new() };
     for (k, v) in attrs {
         match k.as_str() {
             "name" => page.name = v,
             "size" => {
-                let (w, h) = v.split_once('x').ok_or_else(|| r.error("size is written WxH, like 1408x792"))?;
-                page.width = w.trim().parse().map_err(|_| r.error("size is written WxH, like 1408x792"))?;
-                page.height = h.trim().parse().map_err(|_| r.error("size is written WxH, like 1408x792"))?;
+                let (w, h) = v.split_once('x').ok_or_else(|| r.error("size is written WxH, like 128x72"))?;
+                page.width = w.trim().parse().map_err(|_| r.error("size is written WxH, like 128x72"))?;
+                page.height = h.trim().parse().map_err(|_| r.error("size is written WxH, like 128x72"))?;
             }
             "fill" if root == "page" => page.fill = v,
             "sizing" if root == "component" => {

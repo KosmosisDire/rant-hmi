@@ -26,7 +26,7 @@ export const GEOMETRY: Partial<Record<Tag, Spec[]>> = {
   polyline: [["Points", "points", { placeholder: '"0,0 50,20 100,0"' }]],
   polygon: [["Points", "points", { placeholder: '"0,0 50,20 100,0"' }]],
   path: [["Path", "d", { placeholder: '"M 0 0 L 100 100"' }]],
-  text: [["Text", "text", { kind: "text", placeholder: '"Text"' }], ["x", "x", n("0")], ["y", "y", n("0")], ["Size", "font-size", { ...n("16"), min: 1 }], ["Anchor", "text-anchor", { kind: "choice", options: ['"start"', '"middle"', '"end"'], placeholder: '"start"' }]],
+  text: [["Text", "text", { kind: "text", placeholder: '"Text"' }], ["x", "x", n("0")], ["y", "y", n("0")], ["Size", "font-size", { ...n("1.6"), min: 0.1, step: 0.1 }], ["Anchor", "text-anchor", { kind: "choice", options: ['"start"', '"middle"', '"end"'], placeholder: '"start"' }]],
   g: [["Transform", "transform", { placeholder: '`rotate(${angle} 50 50)`' }]],
 };
 
@@ -34,7 +34,7 @@ export const GEOMETRY: Partial<Record<Tag, Spec[]>> = {
 export const PAINT: Spec[] = [
   ["Fill", "fill", { kind: "colour", placeholder: "#000000" }],
   ["Stroke", "stroke", { kind: "colour", placeholder: '"none"' }],
-  ["Thickness", "stroke-width", { ...n("1"), min: 0, step: 0.5 }],
+  ["Thickness", "stroke-width", { ...n("0.1"), min: 0, step: 0.1 }],
   ["Opacity", "opacity", { ...n("1"), min: 0, max: 1, step: 0.01 }],
   ["Dashes", "stroke-dasharray", { placeholder: '"4 4"' }],
   ["Ends", "stroke-linecap", { kind: "choice", options: ['"butt"', '"round"', '"square"'], placeholder: '"butt"' }],
@@ -57,7 +57,7 @@ export function shapeKeys(tag: Tag): Set<string> {
 /** The shapes the inspector and the menu add, in the order they list them. */
 export const SHAPE_KINDS: Tag[] = ["circle", "rect", "line", "path", "polyline", "polygon", "ellipse", "text", "g"];
 
-/** The drawing's own units: its view box, else its box in pixels. */
+/** The drawing's own units: its view box, else its box in the page's units. */
 function units(drawing: Element): [number, number, number, number] {
   const r = resolve(drawing.props.viewbox);
   const box = r.ok ? String(r.value ?? "").trim().split(/[\s,]+/).map(Number) : [];
@@ -69,7 +69,7 @@ function units(drawing: Element): [number, number, number, number] {
 function start(tag: Tag, [x, y, w, h]: [number, number, number, number]): Record<string, string> {
   const v = (k: number) => String(Math.round(k * 10) / 10);
   const [cx, cy, s] = [x + w / 2, y + h / 2, Math.min(w, h)];
-  const line = { fill: '"none"', stroke: "#e4e6e8", "stroke-width": v(Math.max(1, s / 40)), "stroke-linecap": '"round"' };
+  const line = { fill: '"none"', stroke: "#e4e6e8", "stroke-width": v(Math.max(0.1, s / 40)), "stroke-linecap": '"round"' };
   const pts = (ps: [number, number][]) => `"${ps.map(([a, b]) => `${v(x + a * w)},${v(y + b * h)}`).join(" ")}"`;
   switch (tag) {
     case "circle":
@@ -87,7 +87,7 @@ function start(tag: Tag, [x, y, w, h]: [number, number, number, number]): Record
     case "polygon":
       return { name: "Polygon", points: pts([[0.5, 0.2], [0.8, 0.75], [0.2, 0.75]]), fill: "#4a8fd6" };
     case "text":
-      return { name: "Label", x: v(cx), y: v(cy), text: '"Text"', fill: "#e4e6e8", "font-size": v(Math.max(8, s / 8)), "text-anchor": '"middle"', "dominant-baseline": '"middle"' };
+      return { name: "Label", x: v(cx), y: v(cy), text: '"Text"', fill: "#e4e6e8", "font-size": v(Math.max(0.8, s / 8)), "text-anchor": '"middle"', "dominant-baseline": '"middle"' };
     default:
       return { name: "Group" };
   }

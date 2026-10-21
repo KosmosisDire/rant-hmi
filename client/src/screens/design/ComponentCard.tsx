@@ -5,6 +5,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { PageView } from "../../page/PageView";
 import type { Page } from "../../protocol/Page";
+import { UNIT } from "../../state/bind";
 import { openPage } from "../../state/view";
 import { addElement } from "./add";
 import { follow } from "../../ui/press";
@@ -14,9 +15,10 @@ const SLOP = 6;
 
 /** A component drawn whole in a box of `w` by `h`, centred. */
 function Picture(p: { component: Page; w: number; h: number }) {
-  const k = () => Math.min(p.w / p.component.width, p.h / p.component.height);
+  const [w, h] = [() => p.component.width * UNIT, () => p.component.height * UNIT];
+  const k = () => Math.min(p.w / w(), p.h / h());
   return (
-    <div class="card-fit" style={{ width: `${p.component.width}px`, height: `${p.component.height}px`, transform: `translate(-50%, -50%) scale(${k()})` }}>
+    <div class="card-fit" style={{ width: `${w()}px`, height: `${h()}px`, transform: `translate(-50%, -50%) scale(${k()})` }}>
       <PageView page={p.component} />
     </div>
   );

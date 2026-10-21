@@ -7,7 +7,7 @@ import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { produce } from "solid-js/store";
-import { docScope, flowOf, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope, sizeWord } from "../../state/bind";
+import { docScope, flowOf, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope, sizeWord, UNIT } from "../../state/bind";
 import { notify, setState } from "../../state/store";
 
 /** The element and every frame around it, outermost first. */
@@ -59,7 +59,7 @@ function flows(e: Element, scope: Scope): boolean {
  *  lays out itself. A repeat's first copy stands for it, as everywhere in the editor. */
 function drawn(id: string): Box | undefined {
   const el = document.querySelector<HTMLElement>(`.page-layer [data-id="${id}"]`);
-  return el ? { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight } : undefined;
+  return el ? { x: el.offsetLeft / UNIT, y: el.offsetTop / UNIT, w: el.offsetWidth / UNIT, h: el.offsetHeight / UNIT } : undefined;
 }
 
 /** Whether the page lays out an element, or a frame around it, itself: a frame's flow or a

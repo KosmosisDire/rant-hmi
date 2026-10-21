@@ -6,7 +6,7 @@ import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import { SHAPES } from "../../page/PageView";
-import { GRID, STEP } from "./Artboard";
+import { GRID } from "./Artboard";
 import { moving, reshape } from "./geometry";
 import { boxOf, childrenOf, find, holds, literal, parentOf, roomOf, sendEdits, shiftCopy } from "./tree";
 
@@ -90,8 +90,8 @@ export function duplicate(page: Page, elements: Element[]) {
     const parent = parentOf(page, element.id);
     const copy: Element = JSON.parse(JSON.stringify(element));
     // a shape steps by its own attributes, a frame by its place, in the unit it is written in
-    if (SHAPES.has(copy.tag)) Object.assign(copy.props, reshape(copy, moving(STEP, STEP)) ?? {});
-    else if (literal(copy, ["x", "y"])) shiftCopy(copy, roomOf(page, element.id), STEP, STEP);
+    if (SHAPES.has(copy.tag)) Object.assign(copy.props, reshape(copy, moving(GRID, GRID)) ?? {});
+    else if (literal(copy, ["x", "y"])) shiftCopy(copy, roomOf(page, element.id), GRID, GRID);
     const shift = before.get(parent) ?? 0;
     before.set(parent, shift + 1);
     const index = childrenOf(page, parent).findIndex((c) => c.id === element.id) + 1 + shift;

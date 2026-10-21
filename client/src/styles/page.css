@@ -132,6 +132,12 @@
   overflow: visible;
 }
 
+/* Shapes drawn in the page's units take a pixel stroke and a 16 pixel type by default. */
+.units {
+  font-size: 1.6px;
+  stroke-width: 0.1;
+}
+
 /* A shape showing an unknown value fades, since a hatch cannot fill a stroke. */
 .el.shape.unknown {
   opacity: 0.3;

@@ -2,13 +2,15 @@
 // what could run script or restyle the app is taken out, since a value from the mesh may end
 // up in it.
 
+import { UNIT } from "../state/bind";
+
 const SVG = "http://www.w3.org/2000/svg";
 
 /** Elements that run script, hold other documents or restyle the whole page. */
 const UNSAFE = "script, foreignObject, iframe, object, embed, style";
 
 /** The markup as an SVG filling its box: its own root when it is one, so a file pastes in as
- *  it is, else an SVG holding it, drawn in pixels. Or why it does not read. */
+ *  it is, else an SVG holding it, drawn in the page's units. Or why it does not read. */
 export function svgOf(markup: string): { svg?: SVGSVGElement; error?: string } {
   const bare = markup.replace(/^\s*<\?xml[^>]*\?>/, "").replace(/<!DOCTYPE[^>]*>/i, "");
   const doc = new DOMParser().parseFromString(`<svg xmlns="${SVG}">${bare}</svg>`, "image/svg+xml");
@@ -27,6 +29,13 @@ export function svgOf(markup: string): { svg?: SVGSVGElement; error?: string } {
   }
   const top = [...doc.documentElement.children];
   const root = top.length === 1 && top[0].localName === "svg" ? top[0] : doc.documentElement;
+  if (root === doc.documentElement) {
+    const units = doc.createElementNS(SVG, "g");
+    units.setAttribute("class", "units");
+    units.setAttribute("transform", `scale(${UNIT})`);
+    units.append(...top);
+    root.append(units);
+  }
   const svg = document.importNode(root, true) as unknown as SVGSVGElement;
   // a size with no view box would keep it at that size, where a view box scales it to the box
   const [w, h] = [svg.getAttribute("width"), svg.getAttribute("height")].map(Number);

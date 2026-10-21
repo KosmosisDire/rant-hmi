@@ -9,21 +9,23 @@ import type { Page } from "../../protocol/Page";
 import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
 import { follow } from "../../ui/press";
+import { UNIT } from "../../state/bind";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
 import { leaves } from "../../page/PageView";
 import { absolute, boxOf, boxText, find, isGroup, laidOut, literal, originOf, parentOf, pickAt, roomOf, sendEdits, setProps, showProps, tops } from "./tree";
 
-/** Places snap to whole pixels. A finer one is typed as a fraction, or dragged with Alt. */
+/** Places snap to whole units. A finer one is typed as a fraction, or dragged with Alt, which
+ *  lands on pixels, a tenth of a unit. */
 export const GRID = 1;
-/** A coarse step: Shift's nudge, and how far a copy lands from what it copies. */
-export const STEP = 10;
+/** Shift's nudge, in units. */
+export const STEP = 4;
 /** Grid lines every so many units and how strong each set is. A set fades out as its lines
  *  close up on screen, so zoomed out the grid thins instead of turning grey. */
 const LEVELS = [
   [GRID, 0.045],
-  [STEP, 0.06],
-  [STEP * 10, 0.06],
+  [GRID * 4, 0.06],
+  [GRID * 16, 0.06],
 ] as const;
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 type Handle = (typeof HANDLES)[number];
@@ -47,8 +49,8 @@ const KEYS: [string, string][] = [
   ["Shift or Ctrl click", "add to the selection or take away"],
   ["Shift drag on empty space", "add what lies wholly inside"],
   ["Ctrl A", "select everything on the page"],
-  ["Drag", "move by whole pixels, Alt by hundredths"],
-  ["Arrows", "nudge a pixel, Shift ten"],
+  ["Drag", "move by whole units, Alt by pixels"],
+  ["Arrows", "nudge a unit, Shift four, Alt a pixel"],
   ["Double click", "type into the element's field"],
   ["Delete", "remove"],
   ["Ctrl D", "duplicate"],
@@ -82,7 +84,7 @@ function keysFor(kind: "move" | Handle): (keyof Box)[] {
 }
 
 function snap(v: number, free: boolean) {
-  return free ? Number(v.toFixed(2)) : Math.round(v / GRID) * GRID;
+  return free ? Math.round(v * UNIT) / UNIT : Math.round(v / GRID) * GRID;
 }
 
 /** How an element is turned as drawn, in degrees clockwise: by its own rotation, and by those
@@ -146,7 +148,8 @@ export function Artboard(p: {
 }) {
   let host!: HTMLDivElement;
   let grid!: HTMLCanvasElement;
-  const [view, setView] = createSignal({ k: 0.5, x: 0, y: 0 });
+  /** Where the page sits on screen, and `k` screen pixels per unit. */
+  const [view, setView] = createSignal({ k: UNIT / 2, x: 0, y: 0 });
   const [held, setHeld] = createSignal<Held>({});
   /** The box a Shift drag draws, on screen. */
   const [box, setBox] = createSignal<{ left: number; top: number; width: number; height: number } | null>(null);
@@ -209,7 +212,7 @@ export function Artboard(p: {
       const [px, py] = [e.clientX - r.left, e.clientY - r.top];
       // a wheel's notch, a trackpad's glide and a pinch all zoom, never by a leap
       const dy = Math.max(-120, Math.min(120, e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY));
-      const k = Math.min(8, Math.max(0.1, v.k * Math.exp(-dy * 0.002)));
+      const k = Math.min(8 * UNIT, Math.max(0.1 * UNIT, v.k * Math.exp(-dy * 0.002)));
       setView({ k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k });
     };
     host.addEventListener("wheel", wheel, { passive: false });
@@ -399,7 +402,7 @@ export function Artboard(p: {
     const r = host.getBoundingClientRect();
     const v = view();
     const [cx, cy] = [r.width / 2, r.height / 2];
-    setView({ k: 1, x: cx - (cx - v.x) / v.k, y: cy - (cy - v.y) / v.k });
+    setView({ k: UNIT, x: cx - ((cx - v.x) / v.k) * UNIT, y: cy - ((cy - v.y) / v.k) * UNIT });
   };
 
   const sheet = () => {
@@ -457,7 +460,8 @@ export function Artboard(p: {
     const style = getComputedStyle(el);
     const angle = parseFloat(style.rotate) || 0;
     const room = turnsOf(id).room;
-    const [ox, oy] = style.transformOrigin.split(" ").map(parseFloat);
+    // a frame's point in its own units, a shape's in its drawing's
+    const [ox, oy] = style.transformOrigin.split(" ").map((t) => parseFloat(t) / (el instanceof SVGGraphicsElement ? 1 : UNIT));
     const r = host.getBoundingClientRect();
     if (el instanceof SVGGraphicsElement) {
       // a shape turns about a point of its own outline's box, in the drawing's units
@@ -534,7 +538,7 @@ export function Artboard(p: {
       }}
     >
       <canvas class="artboard-grid" ref={grid} />
-      <div class="page-layer" style={{ transform: `translate(${view().x}px, ${view().y}px) scale(${view().k})` }}>
+      <div class="page-layer" style={{ transform: `translate(${view().x}px, ${view().y}px) scale(${view().k / UNIT})` }}>
         <PageView page={p.page} overrides={overrides} design />
       </div>
       <div class="veil" style={sheet()} />
@@ -557,7 +561,7 @@ export function Artboard(p: {
       <Show when={turn() && turns(turn()!.id) && turn()}>{(t) => <div class="origin" style={{ left: `${t().at.x}px`, top: `${t().at.y}px` }} />}</Show>
       <div class="zoom">
         <button class="icon-btn mono" title="Show at 100%" onClick={actual} onPointerDown={(e) => e.stopPropagation()}>
-          {Math.round(view().k * 100)}%
+          {Math.round((view().k / UNIT) * 100)}%
         </button>
         <button class="icon-btn" title="Fit the page" onClick={fit} onPointerDown={(e) => e.stopPropagation()}>
           Fit

@@ -9,6 +9,7 @@ import { Download } from "../ui/icons";
 import { openMenu } from "../ui/Menu";
 import { savePicture, showsPicture } from "../ui/Picture";
 import { pageAct } from "./act";
+import { UNIT } from "../state/bind";
 import { PageView, stacked } from "./PageView";
 
 export function RunView(p: { active: boolean }) {
@@ -26,20 +27,21 @@ export function RunView(p: { active: boolean }) {
   };
   const scale = () => {
     const b = pages()[base()];
-    return b ? Math.min(size().w / b.width, size().h / b.height) : 1;
+    return b ? Math.min(size().w / (b.width * UNIT), size().h / (b.height * UNIT)) : 1;
   };
   const place = (pg: Page) => {
-    const k = Math.min(scale(), size().w / pg.width, size().h / pg.height);
-    return `translate(${(size().w - pg.width * k) / 2}px, ${(size().h - pg.height * k) / 2}px) scale(${k})`;
+    const [w, h] = [pg.width * UNIT, pg.height * UNIT];
+    const k = Math.min(scale(), size().w / w, size().h / h);
+    return `translate(${(size().w - w * k) / 2}px, ${(size().h - h * k) / 2}px) scale(${k})`;
   };
   // a portrait screen reads a landscape page as its blocks one under another, at one zoom
   const layout = (pg: Page, n: number) => {
     if (n !== base() || size().w >= size().h || pg.width <= pg.height) return { transform: place(pg) };
     const stack = stacked(pg);
-    const k = size().w / stack.width;
+    const k = size().w / (stack.width * UNIT);
     // the page's ground reaches the screen's foot even when its blocks end above it
-    const tall = { ...stack, height: Math.max(stack.height, Math.floor(size().h / k)) };
-    return { transform: `scale(${k})`, stack: tall, height: tall.height * k };
+    const tall = { ...stack, height: Math.max(stack.height, Math.floor(size().h / k / UNIT)) };
+    return { transform: `scale(${k})`, stack: tall, height: tall.height * UNIT * k };
   };
 
   // measured at once when the tab shows, so its first frame is never drawn at no size

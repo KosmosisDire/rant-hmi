@@ -7,7 +7,7 @@ import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Scope, sizeWord } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Scope, sizeWord, UNIT } from "../state/bind";
 import { fields, short } from "../state/format";
 import { play, stopPlaying } from "../net/video";
 import { component, entity, live, notify, state } from "../state/store";
@@ -86,8 +86,8 @@ export function pageGround(page: Page): string | undefined {
   return r.ok && r.value !== undefined && r.value !== null && r.value !== "" ? String(r.value) : undefined;
 }
 
-/** The space between blocks a narrow screen stacks. */
-const GAP = 22;
+/** The space between blocks a narrow screen stacks, in units. */
+const GAP = 2;
 
 /** A page as a narrow screen shows it: its top level elements one under another in reading
  *  order, rows by how far down they start, left to right within a row. */
@@ -130,7 +130,7 @@ export function PageView(p: { page: Page; overrides?: Overrides; size?: { width:
   const scope = createMemo(() => docScope(p.page));
   const size = () => p.size ?? p.page;
   return (
-    <div class="page" classList={{ design: p.design }} style={{ width: `${size().width}px`, height: `${size().height}px`, "--page-ground": pageGround(p.page) }}>
+    <div class="page" classList={{ design: p.design }} style={{ width: `${size().width * UNIT}px`, height: `${size().height * UNIT}px`, "--page-ground": pageGround(p.page) }}>
       <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} />}</For>
     </div>
   );
@@ -139,7 +139,7 @@ export function PageView(p: { page: Page; overrides?: Overrides; size?: { width:
 function css(key: string, v: unknown): string {
   const text = String(v);
   if (!/^-?\d+(\.\d+)?$/.test(text)) return text;
-  return LENGTHS.has(key) ? `${text}px` : key === "rotate" ? `${text}deg` : text;
+  return LENGTHS.has(key) ? `${Number(text) * UNIT}px` : key === "rotate" ? `${text}deg` : text;
 }
 
 /** Why the browser would drop a CSS value, as for a misspelt property or a colour it cannot
@@ -299,14 +299,14 @@ function ElementView(p: ElementProps & { at?: At }) {
     const length = (k: keyof Box) => {
       const { expr, percent } = percentOf(p.element.props[k]);
       const n = Number(take(k, expr) ?? 0);
-      return !Number.isFinite(n) ? "0px" : percent ? `${n}%` : `${n}px`;
+      return !Number.isFinite(n) ? "0px" : percent ? `${n}%` : `${n * UNIT}px`;
     };
     const word = (k: "w" | "h") => sizeWord(p.element.props[k]);
     // a hugging instance takes its component's own size
     const made = p.element.tag === "use" ? component(p.element.component ?? "") : undefined;
     const size = (k: "w" | "h") => {
       if (word(k) === "fill") return "100%";
-      if (word(k) === "hug") return made ? `${k === "w" ? made.width : made.height}px` : undefined;
+      if (word(k) === "hug") return made ? `${(k === "w" ? made.width : made.height) * UNIT}px` : undefined;
       return length(k);
     };
     const origin = take("origin");
@@ -327,7 +327,7 @@ function ElementView(p: ElementProps & { at?: At }) {
         }
       }
     } else if (o) {
-      Object.assign(style, { left: `${o.x}px`, top: `${o.y}px`, width: `${o.w}px`, height: `${o.h}px` });
+      Object.assign(style, { left: `${o.x * UNIT}px`, top: `${o.y * UNIT}px`, width: `${o.w * UNIT}px`, height: `${o.h * UNIT}px` });
     } else {
       // x and y place its origin, counted from the origin of what holds it
       const from = (o: string, k: "x" | "y") => (o === "0px" ? length(k) : `calc(${o} + ${length(k)})`);
@@ -372,9 +372,18 @@ function ElementView(p: ElementProps & { at?: At }) {
         </Match>
         <Match when={look().drawing}>
           {(d) => (
-            // without a view box its units are the pixels of its box inside any padding
+            // without a view box it draws in the page's units, from its box's corner inside any padding
             <svg class="drawing" viewBox={d().box ? String(d().box) : undefined} {...({ preserveAspectRatio: FITS[String(d().fit)] ?? FITS.meet } as Record<string, string>)}>
-              <For each={p.element.children}>{inner}</For>
+              <Show
+                when={d().box}
+                fallback={
+                  <g class="units" transform={`scale(${UNIT})`}>
+                    <For each={p.element.children}>{inner}</For>
+                  </g>
+                }
+              >
+                <For each={p.element.children}>{inner}</For>
+              </Show>
             </svg>
           )}
         </Match>
@@ -695,14 +704,15 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
         const display = () => p.element.handlers.length === 0 && bindable().length > 0 && !bindable().some((i) => scope.writes(i.name));
         // scaled whole to fit and centred, or laid out in the box itself
         const fills = () => c().interface?.sizing === "fill";
-        const k = () => Math.min(placed().w / c().width, placed().h / c().height);
-        const place = () => (fills() ? "none" : `translate(${(placed().w - c().width * k()) / 2}px, ${(placed().h - c().height * k()) / 2}px) scale(${k()})`);
+        const [cw, ch] = [() => c().width * UNIT, () => c().height * UNIT];
+        const k = () => Math.min(placed().w / cw(), placed().h / ch());
+        const place = () => (fills() ? "none" : `translate(${(placed().w - cw() * k()) / 2}px, ${(placed().h - ch() * k()) / 2}px) scale(${k()})`);
         return (
           // held from the capture, before any part's handler writes, and a part's press heard
           // after its own handlers, so a release handler still reads how long it was held
           <div
             class="instance"
-            style={{ width: fills() ? "100%" : `${c().width}px`, height: fills() ? "100%" : `${c().height}px`, transform: place() }}
+            style={{ width: fills() ? "100%" : `${cw()}px`, height: fills() ? "100%" : `${ch()}px`, transform: place() }}
             ref={(el) => {
               el.addEventListener("pointerdown", hold, true);
               // its element holds it only once the tree is built

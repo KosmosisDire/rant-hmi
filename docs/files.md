@@ -84,20 +84,24 @@ A page is written as the HTML it draws as. A frame is a `div`, a text a `span`, 
 component placed on a page is a tag named after it.
 
 ```html
-<page name="Overview" size="1408x792">
-  <div id="e1" name="Speed card" x="44" y="44" w="264" h="132" style="background: #1e2125">
+<page name="Overview" size="128x72">
+  <div id="e1" name="Speed card" x="4" y="4" w="24" h="12" style="background: #1e2125">
     <on event="tap">
       Speed = Speed + 0.1;
     </on>
-    <span id="e2" x="22" y="22" w="220" h="44" style="font-size: 32">Speed.toFixed(2)</span>
+    <span id="e2" x="2" y="2" w="20" h="4" style="font-size: 3.2">Speed.toFixed(2)</span>
   </div>
-  <Meter id="e3" x="352" y="44" w="264" h="176" level="Speed * 10"/>
+  <Meter id="e3" x="32" y="4" w="24" h="16" level="Speed * 10"/>
 </page>
 ```
 
 - `name`, `x`, `y`, `w`, `h` and `origin` are attributes. A span's text is its body. Every
   other property goes in `style`.
-- `x`, `y`, `w` and `h` are pixels, or with a trailing `%` a share of what holds the element:
+- Every length counts in units of 10 px, so they compare: a page's size, `x`, `y`, `w`, `h`,
+  a drawing's own coordinates, and a plain number for `gap`, `padding`, `font-size`,
+  `border-radius`, `border-width` and the like. A tenth is a pixel: `border-width: 0.1`.
+  Text in quotes is CSS as it is written: `box-shadow: "0 2px 8px #0008"`.
+- `x`, `y`, `w` and `h` are units, or with a trailing `%` a share of what holds the element:
   its width for `x` and `w`, its height for `y` and `h`. `w="50%"`, `x="(Speed * 10)%"`.
 - `w` and `h` may also be `hug`, the size of what the element holds or shows, or `fill`, the
   room its frame's layout leaves it.
@@ -105,8 +109,8 @@ component placed on a page is a tag named after it.
   or `"up"`, and their `x` and `y` wait. `gap` is the space between them, `"auto"` spreading
   them over the frame's length, `padding` insets them, `wrap: true` wraps them, and `align`
   is where they sit, as `"top left"`, `"center"` or `"bottom right"`:
-  `style='layout: "down"; gap: 10; padding: 10; align: "center"'`.
-- `origin` is a point of the element's box, a pair of percents of it or pixels such as
+  `style='layout: "down"; gap: 1; padding: 1; align: "center"'`.
+- `origin` is a point of the element's box, a pair of percents of it or units such as
   `origin='"50% 100%"'`, the top left when unset. `x` and `y` place it, counted from the
   origin of what holds the element, and the element turns about it. A shape's origin is a
   point of its own outline's box, only what it turns about, and its middle when unset.
@@ -121,21 +125,21 @@ component placed on a page is a tag named after it.
   the element from 0 to 1, `angle` around its centre, `on` the part pressed and `inside`. An
   instance's own event brings what its component passes to `emit`.
 - `repeat` draws an element once per item of a list, or a number of times:
-  `<div repeat="6" x="44 + index * 132">`. It and all inside it read `index`, from 0, and
+  `<div repeat="6" x="4 + index * 12">`. It and all inside it read `index`, from 0, and
   `item`, and so do their handlers.
 - `<group>` keeps elements together, which the editor picks and moves as one. It has no box,
   origin or place of its own, so what it holds sits as it would without it.
 - `<svg>` is a drawing, placed like a frame. It holds shapes (`path`, `circle`, `ellipse`,
   `rect`, `line`, `polyline`, `polygon`, `text`, and `g` to group them), drawn in its
-  `viewbox` units, by default its size in pixels. `fit` is `"meet"`, `"slice"` or
-  `"stretch"`. Every property of a shape is an SVG attribute holding an expression:
-  `<line x1="88" y1="88" x2="88" y2="22" transform="`rotate(${Speed * 90} 88 88)`"/>`.
+  `viewbox` units, by default the page's units from its box's corner. `fit` is `"meet"`,
+  `"slice"` or `"stretch"`. Every property of a shape is an SVG attribute holding an
+  expression: `<line x1="8" y1="8" x2="8" y2="2" transform="`rotate(${Speed * 90} 8 8)`"/>`.
 - `<markup>` is an SVG made by code: its body is an expression giving SVG markup as text, or
   a list of it, redrawn as what it reads changes. Markup with an `<svg>` root fills the box
-  as that SVG does, so a file pastes in as it is. Other markup draws in pixels. Script, styles
+  as that SVG does, so a file pastes in as it is. Other markup draws in units. Script, styles
   and `on` attributes in the markup are taken out.
   ```html
-  <markup id="e5" x="44" y="44" w="176" h="176">
+  <markup id="e5" x="4" y="4" w="16" h="16">
     `<svg viewBox="0 0 100 100">
       ${Array.from({ length: 12 }, (_, i) =>
         `<line x1="50" y1="4" x2="50" y2="12" stroke="#9aa0a6" transform="rotate(${i * 30} 50 50)"/>`).join("")}
@@ -158,11 +162,11 @@ A component has the same body, with its inputs, the events it sends and its own 
 first.
 
 ```html
-<component name="Meter" size="264x176">
+<component name="Meter" size="24x16">
   <prop name="level" default="0" bindable="true"/>
   <event name="change"/>
   <var name="peak" start="0"/>
-  <span id="e1" x="11" y="11" w="242" h="44">level + "%"</span>
+  <span id="e1" x="1" y="1" w="22" h="4">level + "%"</span>
 </component>
 ```
 
