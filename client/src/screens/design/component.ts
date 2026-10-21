@@ -99,7 +99,7 @@ export function makeComponent(page: Page, ids: string[]) {
 
   const name = free(joined(picked[0].props.name ?? "", (w) => w[0].toUpperCase() + w.slice(1)).replace(/^[^A-Z]+/, "") || "Part", (n) => state.pages.some((p) => p.interface !== null && p.name === n));
   const id = free(slug(name), (n) => state.pages.some((p) => p.id === n));
-  const component: Page = { id, name, width: right - left, height: bottom - top, shows: "full", fill: "", interface: { inputs, events, variables: [] }, children: parts };
+  const component: Page = { id, name, width: right - left, height: bottom - top, shows: "full", fill: "", interface: { inputs, events, variables: [], sizing: "scale" }, children: parts };
   const instance: Element = {
     id: "",
     tag: "use",

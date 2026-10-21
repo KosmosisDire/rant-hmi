@@ -159,6 +159,9 @@ first.
 </component>
 ```
 
+- `sizing="fill"` lays the component out in the box each instance is placed at, so what it
+  places in percents stretches with it. Without it an instance scales the component whole to
+  fit its box, keeping its shape.
 - `bindable` lets the component write the input back to what the instance binds it to.
 - Each instance keeps its own `<var>` on each screen, from `start`. Its code reads and sets
   it by name.

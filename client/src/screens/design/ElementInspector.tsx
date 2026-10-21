@@ -8,6 +8,7 @@ import type { Interface } from "../../protocol/Interface";
 import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
+import type { Sizing } from "../../protocol/Sizing";
 import { docScope, pageScope, resolve } from "../../state/bind";
 import { complete, componentNames, REPEAT } from "../../state/complete";
 import { brings, offered } from "../../state/events";
@@ -131,6 +132,12 @@ const SHOWS: [Shows, string][] = [
   ["over", "Over"],
 ];
 
+/** How a component's instances draw it, as each choice says. */
+const SIZINGS: [Sizing, string, string][] = [
+  ["scale", "Scale", "Scaled whole to fit the box it is placed at, keeping its shape"],
+  ["fill", "Fill", "Laid out in the box it is placed at, so what it places in percents stretches"],
+];
+
 /** A page side in pixels, as the backend allows. */
 const side = (t: string) => /^\d+$/.test(t.trim()) && Number(t) >= 1 && Number(t) <= 16384;
 
@@ -171,6 +178,18 @@ function PageInspector(p: { page: Page }) {
         <Show when={p.page.interface}>
           {(i) => (
             <>
+              <div class="field">
+                <label>Sizing</label>
+                <div class="choice">
+                  <For each={SIZINGS}>
+                    {([sizing, label, title]) => (
+                      <button classList={{ on: i().sizing === sizing }} title={title} onClick={() => i().sizing !== sizing && send({ type: "edit", edit: { kind: "set_sizing", page: p.page.id, sizing } })}>
+                        {label}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
               <Inputs page={p.page.id} inputs={i().inputs} />
               <Variables page={p.page.id} variables={i().variables} />
               <Sends page={p.page.id} events={i().events} />

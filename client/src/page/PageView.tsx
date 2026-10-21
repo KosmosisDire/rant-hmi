@@ -621,20 +621,23 @@ function Instance(p: { element: Element; scope: Scope; w: number; h: number; des
         // only shows: it takes no input and does not look pressable
         const bindable = () => c().interface?.inputs.filter((i) => i.bindable) ?? [];
         const display = () => p.element.handlers.length === 0 && bindable().length > 0 && !bindable().some((i) => scope.writes(i.name));
+        // scaled whole to fit and centred, or laid out in the box itself
+        const fills = () => c().interface?.sizing === "fill";
+        const box = () => (fills() ? { w: p.w, h: p.h } : { w: c().width, h: c().height });
         const k = () => Math.min(p.w / c().width, p.h / c().height);
-        const place = () => `translate(${(p.w - c().width * k()) / 2}px, ${(p.h - c().height * k()) / 2}px) scale(${k()})`;
+        const place = () => (fills() ? "none" : `translate(${(p.w - c().width * k()) / 2}px, ${(p.h - c().height * k()) / 2}px) scale(${k()})`);
         return (
           // held from the capture, before any part's handler writes, and a part's press heard
           // after its own handlers, so a release handler still reads how long it was held
           <div
             class="instance"
-            style={{ width: `${c().width}px`, height: `${c().height}px`, transform: place() }}
+            style={{ width: `${box().w}px`, height: `${box().h}px`, transform: place() }}
             ref={(el) => el.addEventListener("pointerdown", hold, true)}
             onPointerDown={(e) => p.act && !display() && kept.press(e)}
             onPointerOver={(e) => p.act && !display() && kept.over(e)}
             onPointerLeave={() => kept.leave()}
           >
-            <For each={c().children}>{(e) => <Placed element={e} scope={scope} room={{ w: c().width, h: c().height }} design={p.design} act={display() ? undefined : act} inside />}</For>
+            <For each={c().children}>{(e) => <Placed element={e} scope={scope} room={box()} design={p.design} act={display() ? undefined : act} inside />}</For>
           </div>
         );
       }}

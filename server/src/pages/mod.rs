@@ -48,6 +48,19 @@ pub struct Interface {
     /// Its own state, which each instance keeps on each screen.
     #[serde(default)]
     pub variables: Vec<Local>,
+    #[serde(default)]
+    pub sizing: Sizing,
+}
+
+/// How an instance draws its component in the box it is placed at: scaled whole to fit,
+/// keeping its shape, or laid out anew in that box, so what it places in percents stretches.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Sizing {
+    #[default]
+    Scale,
+    Fill,
 }
 
 /// A component's own variable, camelCase. Each instance starts it at `start`, an expression of
@@ -241,6 +254,8 @@ pub enum Edit {
     RenamePage { page: String, name: String },
     ResizePage { page: String, width: u32, height: u32 },
     SetShows { page: String, shows: Shows },
+    /// How a component's instances draw it.
+    SetSizing { page: String, sizing: Sizing },
     SetFill { page: String, fill: String },
     RemovePage { page: String },
     /// Puts a whole page back, ids and all, as undoing its removal does.
@@ -526,6 +541,13 @@ impl Pages {
             Edit::SetShows { page, shows } => {
                 let old = std::mem::replace(&mut self.page_mut(&page)?.shows, shows);
                 Edit::SetShows { page: page.clone(), shows: old }
+            }
+            Edit::SetSizing { page, sizing } => {
+                let p = self.page_mut(&page)?;
+                let name = p.name.clone();
+                let i = p.interface.as_mut().ok_or_else(|| format!("{name} is a page, and only a component is placed at a size"))?;
+                let old = std::mem::replace(&mut i.sizing, sizing);
+                Edit::SetSizing { page: page.clone(), sizing: old }
             }
             Edit::SetFill { page, fill } => {
                 let p = self.page_mut(&page)?;
@@ -821,7 +843,7 @@ impl Pages {
             Edit::Batch { .. } => unreachable!("taken above"),
         };
         let page = match &undo {
-            Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::SetShows { page, .. } | Edit::SetFill { page, .. } => page,
+            Edit::RenamePage { page, .. } | Edit::ResizePage { page, .. } | Edit::SetShows { page, .. } | Edit::SetSizing { page, .. } | Edit::SetFill { page, .. } => page,
             Edit::RemoveElement { page, .. } => page,
             Edit::PutElement { page, .. } | Edit::MoveElement { page, .. } | Edit::SetProps { page, .. } | Edit::SetHandler { page, .. } => page,
             Edit::SetInput { page, .. } | Edit::SetEvent { page, .. } | Edit::SetLocal { page, .. } => page,

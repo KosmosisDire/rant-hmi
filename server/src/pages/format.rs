@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Handler, Input, Interface, Local, Page, Shows, Tag, rank};
+use super::{Element, Handler, Input, Interface, Local, Page, Shows, Sizing, Tag, rank};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 7] = ["name", "repeat", "x", "y", "w", "h", "origin"];
@@ -35,7 +35,8 @@ pub fn write(page: &Page) -> String {
     let root = if page.interface.is_some() { "component" } else { "page" };
     let shows = if page.shows == Shows::Over { " shows=\"over\"" } else { "" };
     let fill = if page.fill.is_empty() { String::new() } else { format!(" fill={}", quote(&page.fill)) };
-    let mut out = format!("<{root} name={} size=\"{}x{}\"{shows}{fill}>\n", quote(&page.name), page.width, page.height);
+    let sizing = if page.interface.as_ref().is_some_and(|i| i.sizing == Sizing::Fill) { " sizing=\"fill\"" } else { "" };
+    let mut out = format!("<{root} name={} size=\"{}x{}\"{shows}{sizing}{fill}>\n", quote(&page.name), page.width, page.height);
     for i in page.interface.iter().flat_map(|i| &i.inputs) {
         let bindable = if i.bindable { " bindable=\"true\"" } else { "" };
         out.push_str(&format!("  <prop name={} default={}{bindable}/>\n", quote(&i.name), quote(&i.default)));
@@ -182,6 +183,14 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
                 page.height = h.trim().parse().map_err(|_| r.error("size is written WxH, like 1408x792"))?;
             }
             "fill" if root == "page" => page.fill = v,
+            "sizing" if root == "component" => {
+                let sizing = match v.as_str() {
+                    "scale" => Sizing::Scale,
+                    "fill" => Sizing::Fill,
+                    _ => return Err(r.error("sizing is scale or fill")),
+                };
+                page.interface.as_mut().expect("a component has an interface").sizing = sizing;
+            }
             "shows" => {
                 page.shows = match v.as_str() {
                     "full" => Shows::Full,
@@ -788,6 +797,7 @@ mod tests {
             inputs: vec![Input { name: "level".into(), default: rng.pick(&VALUES), bindable: rng.below(2) == 0 }],
             events: vec!["change".into()],
             variables: vec![Local { name: "state".into(), start: rng.pick(&VALUES) }],
+            sizing: if rng.below(2) == 0 { Sizing::Fill } else { Sizing::Scale },
         });
         let shows = if rng.below(3) == 0 { Shows::Over } else { Shows::Full };
         // a component draws on what holds it, so only a page has a fill
