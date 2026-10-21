@@ -28,6 +28,16 @@ const LEVELS = [
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 type Handle = (typeof HANDLES)[number];
 
+/** Each grip's direction on an unturned box, in degrees clockwise from east. */
+const AIMS: Record<Handle, number> = { e: 0, se: 45, s: 90, sw: 135, w: 180, nw: 225, n: 270, ne: 315 };
+const CURSORS = ["ew-resize", "nwse-resize", "ns-resize", "nesw-resize"];
+
+/** The resize cursor nearest a grip's direction once its element turns `turn` degrees. */
+function cursorOf(h: Handle, turn: number): string {
+  const along = (((AIMS[h] + turn) % 180) + 180) % 180;
+  return CURSORS[Math.round(along / 45) % 4];
+}
+
 /** What each key and gesture does here, as the keys list shows it. */
 const KEYS: [string, string][] = [
   ["Wheel", "zoom about the pointer"],
@@ -423,7 +433,7 @@ export function Artboard(p: {
 
   // how the one picked element turns as drawn, each frame while it is picked, as live values
   // may turn it: its angle, the point it turns about from its corner, and that point on screen
-  const [turn, setTurn] = createSignal<{ id: string; angle: number; ox: number; oy: number; at: { x: number; y: number } } | null>(null);
+  const [turn, setTurn] = createSignal<{ id: string; angle: number; room: number; ox: number; oy: number; at: { x: number; y: number } } | null>(null);
   createEffect(() => {
     const id = p.selected.length === 1 ? p.selected[0] : null;
     setTurn(null);
@@ -446,6 +456,7 @@ export function Artboard(p: {
     if (!el) return null;
     const style = getComputedStyle(el);
     const angle = parseFloat(style.rotate) || 0;
+    const room = turnsOf(id).room;
     const [ox, oy] = style.transformOrigin.split(" ").map(parseFloat);
     const r = host.getBoundingClientRect();
     if (el instanceof SVGGraphicsElement) {
@@ -454,12 +465,12 @@ export function Artboard(p: {
       const m = (el.parentNode as SVGGraphicsElement).getScreenCTM();
       if (!m) return null;
       const at = new DOMPoint(b.x + ox, b.y + oy).matrixTransform(m);
-      return { id, angle, ox, oy, at: { x: at.x - r.left, y: at.y - r.top } };
+      return { id, angle, room, ox, oy, at: { x: at.x - r.left, y: at.y - r.top } };
     }
     const b = absolute(p.page, id, overrides);
     if (!b) return null;
     const v = view();
-    return { id, angle, ox, oy, at: { x: v.x + (b.x + ox) * v.k, y: v.y + (b.y + oy) * v.k } };
+    return { id, angle, room, ox, oy, at: { x: v.x + (b.x + ox) * v.k, y: v.y + (b.y + oy) * v.k } };
   };
   // a shape shows grips while its attributes can scale, as a group's transform cannot
   const scales = (id: string) => {
@@ -536,7 +547,7 @@ export function Artboard(p: {
             {(r) => (
               <div class="ring" style={r()}>
                 <Show when={p.selected.length === 1 && (!shape(id) || scales(id)) && find(p.page.children, id)?.tag !== "group" && !roomOf(p.page, id).flows}>
-                  <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} />}</For>
+                  <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} style={{ cursor: cursorOf(h, turn()?.id === id ? turn()!.angle + turn()!.room : 0) }} />}</For>
                 </Show>
               </div>
             )}

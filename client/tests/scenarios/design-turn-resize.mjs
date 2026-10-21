@@ -20,7 +20,9 @@ export default async function ({ page, hmi, d, eventually }) {
   };
   const at = (id) => ["x", "y", "w", "h"].map((key) => props(hmi, pageId, id)[key]).join();
 
-  // turned upright about its corner, its east side faces down, and the corner holds
+  // turned upright about its corner, its east grip faces down and shows so, and the corner holds
+  await d.el(corner).click();
+  await eventually(async () => (await page.locator(".artboard .ring .handle.e").evaluate((g) => g.style.cursor)) === "ns-resize", "the east grip of an upright frame to show an up and down cursor");
   await pull(corner, 0, 50);
   await eventually(() => at(corner) === "200,200,150,50", () => `the corner frame to grow down to 150 wide, it is ${at(corner)}`);
 
