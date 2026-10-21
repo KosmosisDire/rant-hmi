@@ -310,6 +310,12 @@
   border-radius: var(--radius);
 }
 
+/* a w or h whose label offers Fixed, Hug or Fill */
+.sizes {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 .point {
   display: grid;
   place-items: center;

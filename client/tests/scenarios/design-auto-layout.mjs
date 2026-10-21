@@ -2,7 +2,8 @@
 // down a column centred; spread over its length with an auto gap; with one part filling the
 // room left; and wrapped. A part it lays out shows its ring where it is drawn, offers no grips,
 // and a drag leaves its x be. The inspector lays a frame out from its Auto layout section, and
-// a part it lays out offers its size, not its x and y.
+// a part it lays out offers its size, not its x and y, its w and h labels offering Fixed, Hug or
+// Fill where they may.
 
 import { props } from "../designer.mjs";
 
@@ -65,6 +66,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const field = (label) => right.locator(".field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) });
   const is = (key, value) => eventually(() => props(hmi, pageId, box)[key] === value, () => `${key} to be ${value}, not ${props(hmi, pageId, box)[key]}`);
   await d.select("Box");
+  const marked = () => right.locator(".placement .lead .sizes").count();
+  check((await marked()) === 0, "a frame that holds nothing laid out offers to hug");
   await right.locator(".ghost", { hasText: "Lay out what it holds" }).click();
   await is("layout", '"down"');
   await is("gap", "$space");
@@ -78,14 +81,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await is("gap", "$space");
   await field("Spacing").locator("button", { hasText: /^Spread$/ }).click();
   await is("gap", '"auto"');
-  await field("Width").locator("button", { hasText: /^Hug$/ }).click();
+  await eventually(async () => (await marked()) === 2, "w and h to offer their sizes once it lays out");
+  await d.size("w", "Hug");
   await is("w", "hug");
   await shows("the box to hug its parts", async () => Math.round((await d.box(box)).width / (await k())) === 10);
-  await field("Width").locator("button", { hasText: /^Fixed$/ }).click();
+  await d.size("w", "Fixed");
   await is("w", "10");
   await d.select("A");
-  await field("Width").waitFor();
+  await right.locator('.lead.inside[aria-label="w"] .sizes').waitFor();
   check((await right.locator(".placement .lead", { hasText: /^x$/ }).count()) === 0, "a part the box lays out offers x");
-  await field("Width").locator("button", { hasText: /^Fill$/ }).click();
+  await d.size("w", "Fill");
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === box).children[0].props.w === "fill", "A to fill");
 }

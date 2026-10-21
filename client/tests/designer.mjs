@@ -140,6 +140,12 @@ export function designer(page) {
       await right().locator(`[data-sends="${event}"]`).waitFor();
     },
 
+    /** Makes the selected element's `key`, "w" or "h", Fixed, Hug or Fill, from its label. */
+    async size(key, word) {
+      await right().locator(`.lead.inside[aria-label="${key}"]`).click();
+      await page.locator(".popover.menu .menu-item", { has: page.locator(".menu-label", { hasText: new RegExp(`^${word}$`) }) }).click();
+    },
+
     /** Sets the open component's sizing, "Scale" or "Fill", from its inspector. */
     async sizing(word) {
       await right().locator(".field", { has: page.locator("label", { hasText: /^Sizing$/ }) }).locator("button", { hasText: new RegExp(`^${word}$`) }).click();

@@ -47,7 +47,7 @@ export const ORIGINS = ['"0% 0%"', '"50% 0%"', '"100% 0%"', '"0% 50%"', '"50% 50
 /** How a shape turns: by degrees, clockwise, about its origin, a point of its own box, by
  *  default its middle. */
 export const ROTATE: Spec = ["Rotate", "rotate", n("0")];
-export const TURN: Spec[] = [ROTATE, ["Origin", "origin", { kind: "choice", options: ORIGINS, placeholder: '"50% 50%"' }]];
+export const TURN: Spec[] = [ROTATE, ["Origin", "origin", { kind: "point", options: ORIGINS, placeholder: '"50% 50%"' }]];
 
 /** The attributes a shape's fields name, so the rest show as more attributes. */
 export function shapeKeys(tag: Tag): Set<string> {

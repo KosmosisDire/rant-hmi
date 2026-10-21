@@ -57,8 +57,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.waitForTimeout(300);
   const boxes = async () => [await d.el(panel).boundingBox(), await d.el(dot).boundingBox()].flatMap((b) => [b.x, b.y, b.width, b.height]);
   const before = await boxes();
-  await d.setField("Origin", '"100% 100%"');
-  await eventually(() => props(hmi, pageId, panel).origin === '"100% 100%"', "the new origin");
+  // picked from the nine points of its box
+  await page.locator('.screen:not([hidden]) .sidebar.right .lead[title="Pick a point of its box"]').click();
+  await page.locator('.popover .point[title="Bottom right"]').click();
+  await eventually(() => props(hmi, pageId, panel).origin === '"100% 100%"', "the new origin"); 
   let after = [];
   await eventually(async () => (after = await boxes()).every((v, i) => Math.abs(v - before[i]) < 1), () => `the panel and dot moved from ${before.map(Math.round)} to ${after.map(Math.round)}`);
 }

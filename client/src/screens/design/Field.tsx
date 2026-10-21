@@ -6,10 +6,11 @@
 import { createContext, createMemo, createSignal, For, type JSX, Match, Show, Switch, useContext } from "solid-js";
 import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
 import { complete, type Place, signature, type Suggestion } from "../../state/complete";
+import { capital } from "../../state/format";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
 import { DraftInput } from "../../ui/DraftInput";
-import { Braces, ChevronsUpDown, Copy, Hash, Link, RotateCcw, SquareDashed, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
+import { Braces, ChevronsUpDown, Copy, Grid3x3, Hash, Link, RotateCcw, SquareDashed, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
 import { follow } from "../../ui/press";
@@ -28,7 +29,7 @@ export interface Where {
 export const WhereContext = createContext<() => Where>((): Where => ({ scope: pageScope, place: "handler" }));
 
 /** What a field holds, which says what its lead does. */
-export type Kind = "number" | "colour" | "choice" | "flag" | "text" | "any";
+export type Kind = "number" | "colour" | "choice" | "point" | "flag" | "text" | "any";
 
 /** The kind a value's text is now, for fields whose kind comes from what they hold. */
 export function kindOf(text: string): Kind {
@@ -74,9 +75,9 @@ export interface FieldProps {
   focus?: number;
   /** Why a value the code gives would not show, as CSS the browser drops, or nothing. */
   check?: (value: unknown) => string | undefined;
-  /** A lead of its own: its icon, its title and what a click on it does, else what any does,
-   *  while a drag on it still scrubs a number. */
-  lead?: { icon: JSX.Element; title: string; onClick?: () => void };
+  /** A lead of its own: its icon, its title and what a click on it does, given the lead, else
+   *  what any does, while a drag on it still scrubs a number. */
+  lead?: { icon: JSX.Element; title: string; onClick?: (lead: HTMLElement) => void };
 }
 
 /** One property, an expression unless `plain`. Under it, what stops it showing, and for
@@ -181,8 +182,8 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   // a number that scrubs takes its click when the drag ends without moving
   const click = () => {
     if (scrubs()) return;
-    if (p.lead?.onClick) p.lead.onClick();
-    else if (kind() === "colour" || kind() === "choice") setOpened(!opened());
+    if (p.lead?.onClick) p.lead.onClick(lead);
+    else if (kind() === "colour" || kind() === "choice" || kind() === "point") setOpened(!opened());
     else if (kind() === "flag" && literal()) p.onWrite(p.value.trim() === "true" ? "false" : "true");
     else focusText();
   };
@@ -209,7 +210,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
     const up = () => {
       window.removeEventListener("keydown", cancel, true);
       if (moved) p.onWrite(String(Number(at.toFixed(decimals(step) + 1))) + unit);
-      else if (travel < 3) (p.lead?.onClick ?? focusText)();
+      else if (travel < 3) p.lead?.onClick ? p.lead.onClick(lead) : focusText();
     };
     const stop = follow(e, { move, end: up });
     const cancel = (k: KeyboardEvent) => {
@@ -228,6 +229,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
     if (kind() === "number") return scrubs() ? "Drag to change it, Shift for finer steps" : "An expression gives it, so a drag leaves it be";
     if (kind() === "colour") return "Pick a colour";
     if (kind() === "choice") return "Pick one";
+    if (kind() === "point") return "Pick a point of its box";
     if (kind() === "flag") return literal() ? "Click to flip it" : "An expression gives it";
     return undefined;
   };
@@ -270,6 +272,9 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
           <Match when={kind() === "choice"}>
             <ChevronsUpDown size={12} />
           </Match>
+          <Match when={kind() === "point"}>
+            <Grid3x3 size={12} />
+          </Match>
           <Match when={kind() === "flag"}>{p.value.trim() === "true" ? <ToggleRight size={13} /> : <ToggleLeft size={13} />}</Match>
           <Match when={kind() === "text"}>
             <Type size={12} />
@@ -287,6 +292,16 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
                 onPick={(t) => {
                   p.onWrite(t);
                   if (t.startsWith("$")) setOpened(false);
+                }}
+              />
+            </Match>
+            <Match when={kind() === "point"}>
+              <Points
+                values={p.options ?? []}
+                on={p.value.trim() || p.placeholder}
+                pick={(v) => {
+                  setOpened(false);
+                  p.onWrite(v);
                 }}
               />
             </Match>
@@ -310,6 +325,24 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
         </Popover>
       </Show>
     </>
+  );
+}
+
+/** The nine points of a box, row by row, as words. */
+export const POINTS = ["top left", "top center", "top right", "center left", "center", "center right", "bottom left", "bottom center", "bottom right"];
+
+/** Nine points of a box, three by three, each one of `values` in the order of POINTS. */
+export function Points(p: { values: string[]; on: string | undefined; pick: (value: string) => void }) {
+  return (
+    <div class="points">
+      <For each={p.values}>
+        {(v, i) => (
+          <button class="point" classList={{ on: v === p.on?.trim() }} title={capital(POINTS[i()])} onClick={() => p.pick(v)}>
+            <i />
+          </button>
+        )}
+      </For>
+    </div>
   );
 }
 

@@ -10,12 +10,12 @@ import type { Page } from "../../protocol/Page";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
 import { docScope, type Flow, pageScope, resolve, sizeWord } from "../../state/bind";
-import { capital } from "../../state/format";
 import { complete, componentNames, REPEAT } from "../../state/complete";
 import { brings, offered } from "../../state/events";
 import { component, page as pageOf, setState } from "../../state/store";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
+import { openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
 import { EventCard, EventIcon } from "../logic/EventCard";
 import {
@@ -31,11 +31,12 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  Check,
   Plus,
   X,
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
-import { BorderField, Field, type FieldProps, keysOf, kindOf, PADDING, PartsField, RADIUS, type Where, WhereContext } from "./Field";
+import { BorderField, Field, type FieldProps, keysOf, kindOf, PADDING, PartsField, Points, POINTS, RADIUS, type Where, WhereContext } from "./Field";
 import { AddShape, GEOMETRY, ORIGINS, PAINT, ROTATE, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { absolute, type Align, align, chain, find, originEdits, roomOf, scopeOf, sendEdits, setHandler, setProps, showProps, spread, tops } from "./tree";
@@ -257,6 +258,21 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     const b = doc && absolute(doc, p.element.id);
     if (b) setProps(p.page, p.element.id, { [k]: String(Math.round(k === "w" ? b.w : b.h)) });
   };
+  // a size that may hug or fill offers them from its label, which a dotted line marks
+  const sizes = (k: "w" | "h") => {
+    if (!sizing().hug && !sizing().fill) return undefined;
+    const now = () => sizeWord(p.element.props[k]);
+    const mark = (on: boolean) => (on ? <Check size={13} /> : undefined);
+    const choose = (lead: HTMLElement) => {
+      const r = lead.getBoundingClientRect();
+      openMenu({ x: r.left, y: r.bottom + 4 }, [
+        { label: "Fixed", icon: mark(!now()), run: () => now() && fixed(k) },
+        ...(sizing().hug ? [{ label: "Hug", icon: mark(now() === "hug"), run: () => setProps(p.page, p.element.id, { [k]: "hug" }) }] : []),
+        ...(sizing().fill ? [{ label: "Fill", icon: mark(now() === "fill"), run: () => setProps(p.page, p.element.id, { [k]: "fill" }) }] : []),
+      ]);
+    };
+    return { icon: <span class="sizes">{k}</span>, title: "Drag to change it, click for Fixed, Hug or Fill", onClick: choose };
+  };
   // the field a double click types into: the one asked for, else the element's main one
   const typed = (key: string) => {
     const t = p.typing;
@@ -330,34 +346,12 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={!shape() && !grouped()}>
           <div class="section">Placement</div>
           <div class="placement">
-            <For each={flowing() ? ["w", "h"] : ["x", "y", "w", "h"]}>{(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} />}</For>
-          </div>
-          <Show when={sizing().hug || sizing().fill}>
-            <For each={["w", "h"] as const}>
-              {(k) => (
-                <div class="field">
-                  <label>{k === "w" ? "Width" : "Height"}</label>
-                  <div class="choice">
-                    <button classList={{ on: !sizeWord(p.element.props[k]) }} title="A size of its own" onClick={() => sizeWord(p.element.props[k]) && fixed(k)}>
-                      Fixed
-                    </button>
-                    <Show when={sizing().hug}>
-                      <button classList={{ on: sizeWord(p.element.props[k]) === "hug" }} title="The size of what it holds or shows" onClick={() => setProps(p.page, p.element.id, { [k]: "hug" })}>
-                        Hug
-                      </button>
-                    </Show>
-                    <Show when={sizing().fill}>
-                      <button classList={{ on: sizeWord(p.element.props[k]) === "fill" }} title="The room its frame leaves it" onClick={() => setProps(p.page, p.element.id, { [k]: "fill" })}>
-                        Fill
-                      </button>
-                    </Show>
-                  </div>
-                </div>
-              )}
+            <For each={flowing() ? ["w", "h"] : ["x", "y", "w", "h"]}>
+              {(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} lead={k === "w" || k === "h" ? sizes(k) : undefined} />}
             </For>
-          </Show>
+          </div>
           {/* the point x and y place, its children count from and it turns about */}
-          <Field {...prop("origin")} onWrite={(t) => sendEdits(originEdits(pageOf(p.page)!, p.element.id, t))} label="Origin" kind="choice" options={ORIGINS} placeholder='"0% 0%"' />
+          <Field {...prop("origin")} onWrite={(t) => sendEdits(originEdits(pageOf(p.page)!, p.element.id, t))} label="Origin" kind="point" options={ORIGINS} placeholder='"0% 0%"' />
           <Turn prop={prop} specs={[ROTATE]} />
           <Show when={p.element.tag === "div"}>
             <AutoLayout page={p.page} element={p.element} prop={prop} />
@@ -457,9 +451,6 @@ const DIRECTIONS: [Flow, string, typeof ArrowRight][] = [
   ["up", "Bottom to top", ArrowUp],
 ];
 
-/** Where what a frame lays out sits in it, row by row. */
-const POINTS = ["top left", "top center", "top right", "center left", "center", "center right", "bottom left", "bottom center", "bottom right"];
-
 /** How a frame lays out what it holds: not at all, each placed by its x and y, or one after
  *  another in a direction, with a gap or spread over its length, padding, wrapping and a point
  *  they sit at. */
@@ -512,15 +503,7 @@ function AutoLayout(p: { page: string; element: Element; prop: (key: string) => 
         <PartsField of={PADDING} props={p.element.props} write={set} show={(props) => showProps(p.page, p.element.id, props)} />
         <div class="field">
           <label>Align</label>
-          <div class="points">
-            <For each={POINTS}>
-              {(point) => (
-                <button class="point" classList={{ on: (text("align") ?? '"top left"') === `"${point}"` }} title={capital(point)} onClick={() => set({ align: point === "top left" ? null : `"${point}"` })}>
-                  <i />
-                </button>
-              )}
-            </For>
-          </div>
+          <Points values={POINTS.map((w) => `"${w}"`)} on={text("align") ?? '"top left"'} pick={(v) => set({ align: v === '"top left"' ? null : v })} />
         </div>
       </Show>
     </>
