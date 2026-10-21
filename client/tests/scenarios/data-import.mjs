@@ -10,7 +10,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await row.locator(".row-add").click();
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Pose" && i.intent === "read"), "the one click import");
   await eventually(async () => (await page.locator(".screen:not([hidden]) .sidebar.right .head-title").textContent()).includes("Pose"), "the inspector to show the import");
-  check((await row.locator(".row-add").count()) === 0, "an imported row still offers +");
+  await eventually(async () => (await row.locator(".row-add").count()) === 0, "the imported row to stop offering +");
 
   const pageId = await hmi.addPage("Pose page");
   const text = await hmi.addElement(pageId, "span", { name: "Pose", x: "44", y: "44", w: "264", h: "44", text: "Pose.position.x.toFixed(2)" });
