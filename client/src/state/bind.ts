@@ -3,6 +3,7 @@
 
 import { createSignal, getListener, onCleanup } from "solid-js";
 import { arith } from "../lang/arith.js";
+import { isHex, tokens } from "../lang/lex";
 import { LIBRARY, setClock } from "../lang/math.js";
 import { send } from "../net/connection";
 import type { Page } from "../protocol/Page";
@@ -403,50 +404,14 @@ export function runHandler(code: string, scope: Scope, emit: (name: string, payl
   });
 }
 
-const HEX = /^#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w$])/i;
-
-/** The source with each #hex outside strings made a string. `nested` stops at the brace
- *  closing a template literal's `${`. */
-function colours(src: string, at = 0, nested = false): [string, number] {
-  let out = "";
-  let depth = 0;
-  let i = at;
-  while (i < src.length) {
-    const c = src[i];
-    if (nested && c === "}" && depth-- === 0) return [out, i];
-    if (nested && c === "{") depth++;
-    if (c === '"' || c === "'") {
-      let j = i + 1;
-      while (j < src.length && src[j] !== c) j += src[j] === "\\" ? 2 : 1;
-      out += src.slice(i, j + 1);
-      i = j + 1;
-    } else if (c === "`") {
-      out += c;
-      i++;
-      while (i < src.length && src[i] !== "`") {
-        if (src[i] === "\\") {
-          out += src.slice(i, i + 2);
-          i += 2;
-        } else if (src.startsWith("${", i)) {
-          const [inner, end] = colours(src, i + 2, true);
-          out += "${" + inner + "}";
-          i = end + 1;
-        } else {
-          out += src[i++];
-        }
-      }
-      out += "`";
-      i++;
-    } else if (c === "#" && HEX.test(src.slice(i))) {
-      const hex = HEX.exec(src.slice(i))![0];
-      out += `"${hex}"`;
-      i += hex.length;
-    } else {
-      out += c;
-      i++;
-    }
+/** The source with each #hex outside strings and comments made a string. */
+function colours(src: string): string {
+  let [out, at] = ["", 0];
+  for (const t of tokens(src).filter((t) => t.kind === "literal" && isHex(src.slice(t.start, t.end)))) {
+    out += `${src.slice(at, t.start)}"${src.slice(t.start, t.end)}"`;
+    at = t.end;
   }
-  return [out, i];
+  return out + src.slice(at);
 }
 
 const compiled = new Map<string, ((scope: object, ...math: unknown[]) => unknown) | string>();
@@ -455,7 +420,7 @@ function compile(src: string): ((scope: object, ...math: unknown[]) => unknown) 
   let fn = compiled.get(src);
   if (fn === undefined) {
     // `with` routes bare names through the scope, which needs sloppy mode, as new Function gives
-    fn = make<(scope: object, ...math: unknown[]) => unknown>(`with (scope) { return (${colours(src)[0]}\n); }`);
+    fn = make<(scope: object, ...math: unknown[]) => unknown>(`with (scope) { return (${colours(src)}\n); }`);
     compiled.set(src, fn);
   }
   return fn;

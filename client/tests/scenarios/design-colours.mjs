@@ -1,5 +1,6 @@
 // A user reads code in colour: an import in its kind's colour, the HMI's own names blue, text
-// green and comments faint, and the colours follow a long line as it scrolls.
+// green and comments faint, the colours follow a long line as it scrolls, and a template's code
+// reads as code.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   hmi.send({ type: "set_variable", name: "presses", variable: { name: "presses", start: 0, per: "hmi" } });
@@ -27,4 +28,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
     return own > 0 && own === colours;
   }, "the colours to follow the line's scroll");
   await page.keyboard.press("Escape");
+
+  // a template's code is coloured as code, a backtick inside its ${ } included
+  await d.setField("Text", '`${Running ? `on ${Speed}` : "off"} m/s`');
+  let t = [];
+  const coloured = async () => {
+    t = await runs(".field:has(label:text-is('Text'))");
+    return t.includes("hl-variable:Running") && t.includes("hl-variable:Speed") && t.at(-1) === 'hl-str:"off"} m/s`';
+  };
+  await eventually(coloured, "the template's code in colour").catch(() => check(false, `the template's code is not in colour: ${t.join(" | ")}`));
 }

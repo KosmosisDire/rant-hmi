@@ -1,6 +1,7 @@
 // How a property's changes animate, kept in the element's CSS `transition` as text a person
 // reads in the file: "background 300ms ease, left 200ms linear".
 
+import { splitOutside } from "../../lang/lex";
 import { isConstant, resolve, tokenScope } from "../../state/bind";
 
 /** How long a property's change takes, in ms, and how it eases. */
@@ -18,30 +19,13 @@ export const EASES: [string, string][] = [
   ["ease-in-out", "In out"],
 ];
 
-/** Splits at commas outside brackets, as a cubic-bezier's own commas are. */
-function entries(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let from = 0;
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === "(") depth++;
-    else if (text[i] === ")") depth--;
-    else if (text[i] === "," && depth === 0) {
-      out.push(text.slice(from, i).trim());
-      from = i + 1;
-    }
-  }
-  out.push(text.slice(from).trim());
-  return out.filter((e) => e !== "");
-}
-
 /** The transition's entries as written, or null when code works it out, so no field can
  *  change one. */
 export function transitions(value: string): string[] | null {
   if (value.trim() === "") return [];
   if (!isConstant(value)) return null;
   const r = resolve(value, tokenScope);
-  return r.ok && typeof r.value === "string" ? entries(r.value) : null;
+  return r.ok && typeof r.value === "string" ? splitOutside(r.value, ",") : null;
 }
 
 /** How `property` animates in a transition's entries, if it does. */

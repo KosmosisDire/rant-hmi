@@ -2,6 +2,7 @@
 // live value. It reads only the text before the caret, so the code need not parse.
 
 import { apiIn } from "../lang/api.js";
+import { tokens as lex } from "../lang/lex";
 import { kind, LIBRARY, METHODS_OF } from "../lang/math.js";
 import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Kind } from "../protocol/Kind";
@@ -100,7 +101,7 @@ export const REPEAT: Suggestion[] = [
  *  `also` adds to them, as a repeat adds `index` and `item`. */
 export function complete(text: string, caret: number, place: Place, names?: Suggestion[], also?: Suggestion[]): Completion | null {
   const before = text.slice(0, caret);
-  if (inString(before)) return null;
+  if (inWords(before)) return null;
   let from = caret;
   while (from > 0 && WORD.test(before[from - 1])) from--;
   const word = before.slice(from);
@@ -217,23 +218,11 @@ function takes(t: TypeInfo): Pick<Signature, "params" | "whole"> {
  *  Strings and comments are passed over. */
 function opened(before: string): { at: number; commas: number } | null {
   const stack: { ch: string; at: number; commas: number }[] = [];
-  for (let i = 0; i < before.length; i++) {
-    const c = before[i];
-    if (c === '"' || c === "'" || c === "`") {
-      i++;
-      while (i < before.length && before[i] !== c) i += before[i] === "\\" ? 2 : 1;
-    } else if (c === "/" && before[i + 1] === "/") {
-      while (i < before.length && before[i] !== "\n") i++;
-    } else if (c === "/" && before[i + 1] === "*") {
-      const end = before.indexOf("*/", i + 2);
-      i = end < 0 ? before.length : end + 1;
-    } else if (c === "(" || c === "[" || c === "{") {
-      stack.push({ ch: c, at: i, commas: 0 });
-    } else if (c === ")" || c === "]" || c === "}") {
-      stack.pop();
-    } else if (c === "," && stack.length > 0) {
-      stack[stack.length - 1].commas++;
-    }
+  for (const t of lex(before).filter((t) => t.kind === "mark")) {
+    const c = before[t.start];
+    if ("([{".includes(c)) stack.push({ ch: c, at: t.start, commas: 0 });
+    else if (")]}".includes(c)) stack.pop();
+    else if (c === "," && stack.length > 0) stack[stack.length - 1].commas++;
   }
   const top = stack.at(-1);
   return top?.ch === "(" ? { at: top.at, commas: top.commas } : null;
@@ -301,19 +290,10 @@ function bareType(fields: FieldInfo[] | undefined): string | undefined {
   return fields?.length === 1 && fields[0].name === "" ? typeLabel(fields[0]) : undefined;
 }
 
-/** True when the text ends inside a string, where names are only text. */
-function inString(before: string): boolean {
-  let quote: string | null = null;
-  for (let i = 0; i < before.length; i++) {
-    const c = before[i];
-    if (quote) {
-      if (c === "\\") i++;
-      else if (c === quote) quote = null;
-    } else if (c === '"' || c === "'" || c === "`") {
-      quote = c;
-    }
-  }
-  return quote !== null;
+/** True when the text ends inside a string or a comment, where names are only words. */
+function inWords(before: string): boolean {
+  const last = lex(before).at(-1);
+  return !!last && (last.kind === "text" || last.kind === "comment") && last.open;
 }
 
 /** The path a dot follows, read backwards: `Joints.position[2]` gives Joints, position, 2. */

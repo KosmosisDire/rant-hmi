@@ -12,6 +12,7 @@ use ts_rs::TS;
 
 use crate::list::{self, Named, named};
 use crate::rules::{self, EVERY_MS, KEEP_S};
+use crate::pages::js;
 use crate::{files, library};
 
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
@@ -396,7 +397,8 @@ fn load<F: DeserializeOwned + Default>(root: &Path, file: &Path) -> Result<F> {
 /// else None. A getter reads the computed values it names, a setter writes its target.
 fn cycle(all: &[Computed]) -> Option<Vec<String>> {
     let next = |c: &Computed| -> Vec<String> {
-        let mut out: Vec<String> = all.iter().filter(|o| names_in(&c.get).contains(&o.name)).map(|o| o.name.clone()).collect();
+        let read: Vec<&str> = js::names(&c.get).into_iter().map(|(_, name)| name).collect();
+        let mut out: Vec<String> = all.iter().filter(|o| read.contains(&o.name.as_str())).map(|o| o.name.clone()).collect();
         out.extend(c.set.iter().filter(|s| all.iter().any(|o| o.name == s.target)).map(|s| s.target.clone()));
         out
     };
@@ -419,39 +421,6 @@ fn cycle(all: &[Computed]) -> Option<Vec<String>> {
             path[start..].to_vec()
         })
     })
-}
-
-/// The names code mentions, leaving out quoted text. Text in backticks counts, so a name in a
-/// template's own words reads as used.
-fn names_in(code: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut chars = code.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '"' || c == '\'' {
-            let mut escaped = false;
-            for d in chars.by_ref() {
-                if d == c && !escaped {
-                    break;
-                }
-                escaped = d == '\\' && !escaped;
-            }
-        } else if c.is_alphabetic() || c == '_' || c == '$' {
-            let mut word = c.to_string();
-            while let Some(&d) = chars.peek() {
-                if !(d.is_alphanumeric() || d == '_' || d == '$') {
-                    break;
-                }
-                word.push(d);
-                chars.next();
-            }
-            out.push(word);
-        } else if c.is_ascii_digit() {
-            while chars.peek().is_some_and(|d| d.is_alphanumeric() || *d == '.') {
-                chars.next();
-            }
-        }
-    }
-    out
 }
 
 fn theme_file(root: &Path) -> PathBuf {
