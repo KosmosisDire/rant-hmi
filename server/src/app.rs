@@ -702,7 +702,6 @@ impl App {
         }
     }
 
-    /// Starts the element's handler for `event`, unless it is still running from before.
     /// Runs an element's handler for `event`, unless it still runs from before. `at` is the
     /// copy of a repeat it happened on, its index and item.
     fn fire(&mut self, session: u32, page: String, id: String, event: String, payload: Value, at: Option<(u32, Value)>) {
@@ -717,9 +716,15 @@ impl App {
         }
         let label = format!("{} {event}", e.props.get("name").unwrap_or(&id));
         let code = h.code.clone();
+        self.start(Running { session: Some(session), page, id, index, event, label }, code, payload, at);
+    }
+
+    /// Starts `code` as the run `running` names, with `p` and the copy of a repeat `at`.
+    fn start(&mut self, running: Running, code: String, p: Value, at: Option<(u32, Value)>) {
         self.next_run += 1;
-        self.runs.insert(self.next_run, Running { session: Some(session), page, id, index, event, label });
-        self.script.send(ToScript::Run { run: self.next_run, session: Some(session), code, p: payload, at });
+        let session = running.session;
+        self.runs.insert(self.next_run, running);
+        self.script.send(ToScript::Run { run: self.next_run, session, code, p, at });
     }
 
     /// Runs each rule that `fits`, unless it still runs from before.
@@ -729,9 +734,7 @@ impl App {
             if self.runs.values().any(|r| r.session.is_none() && r.id == rule.id) {
                 continue;
             }
-            self.next_run += 1;
-            self.runs.insert(self.next_run, Running { session: None, page: String::new(), id: rule.id, index: None, event: "rule".into(), label: rule.name });
-            self.script.send(ToScript::Run { run: self.next_run, session: None, code: rule.code, p: p.clone(), at: None });
+            self.start(Running { session: None, page: String::new(), id: rule.id, index: None, event: "rule".into(), label: rule.name }, rule.code, p.clone(), None);
         }
     }
 

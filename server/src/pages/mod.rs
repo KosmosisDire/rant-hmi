@@ -436,12 +436,6 @@ impl Pages {
     /// True when `component`, or a component it holds at any depth, has an instance of the
     /// component called `name`.
     fn holds(&self, component: &str, name: &str) -> bool {
-        fn uses(elements: &[Element], out: &mut Vec<String>) {
-            for e in elements {
-                out.extend(e.component.clone());
-                uses(&e.children, out);
-            }
-        }
         let mut seen = HashSet::new();
         let mut todo = vec![component.to_owned()];
         while let Some(c) = todo.pop() {
@@ -449,9 +443,7 @@ impl Pages {
                 return true;
             }
             if seen.insert(c.clone()) {
-                let mut found = Vec::new();
-                uses(self.component(&c).map_or(&[][..], |p| &p.children), &mut found);
-                todo.extend(found);
+                todo.extend(all(self.component(&c).map_or(&[][..], |p| &p.children)).filter_map(|e| e.component.clone()));
             }
         }
         false
@@ -460,16 +452,16 @@ impl Pages {
     /// An element tree may go into `page` when each instance in it names a component that
     /// exists and does not hold `page`, which would make it hold itself.
     fn check_uses(&self, page: &str, e: &Element) -> Result<(), String> {
-        if let Some(c) = &e.component {
+        let host = self.get(page).filter(|p| p.interface.is_some()).map(|p| p.name.clone());
+        for c in all(std::slice::from_ref(e)).filter_map(|e| e.component.as_ref()) {
             if self.component(c).is_none() {
                 return Err(format!("there is no component {c}"));
             }
-            let host = self.get(page).filter(|p| p.interface.is_some()).map(|p| p.name.clone());
-            if let Some(host) = host.filter(|h| self.holds(c, h)) {
+            if let Some(host) = host.as_ref().filter(|h| self.holds(c, h)) {
                 return Err(format!("{host} cannot hold {c}, since {c} holds {host}"));
             }
         }
-        e.children.iter().try_for_each(|c| self.check_uses(page, c))
+        Ok(())
     }
 
     pub fn get(&self, id: &str) -> Option<&Page> {
@@ -496,7 +488,7 @@ impl Pages {
                     *code = renamed;
                 }
             }
-            if p.children.iter_mut().fold(changed, |c, e| rename_in(e, from, to) | c) {
+            if each_mut(&mut p.children, &mut |e| rename_in(e, from, to)) | changed {
                 touched.push(p.id.clone());
             }
         }
@@ -648,7 +640,7 @@ impl Pages {
                     return Err("a project keeps at least one page".into());
                 }
                 if gone.interface.is_some() {
-                    let user = self.list.iter().find(|p| p.id != page && uses(&p.children, &gone.name));
+                    let user = self.list.iter().find(|p| p.id != page && all(&p.children).any(|e| e.component.as_ref() == Some(&gone.name)));
                     if let Some(user) = user {
                         return Err(format!("{} is placed on {}, so it stays", gone.name, user.name));
                     }
@@ -677,7 +669,11 @@ impl Pages {
                 self.check_uses(&page, &element)?;
                 let p = self.page_mut(&page)?;
                 let mut next = highest(&p.children) + 1;
-                renumber(&mut element, &mut next);
+                each_mut(std::slice::from_mut(&mut element), &mut |e| {
+                    e.id = format!("e{next}");
+                    next += 1;
+                    false
+                });
                 check_tree(&element, &mut HashSet::new())?;
                 let id = element.id.clone();
                 let list = holder(p, &parent, element.tag)?;
@@ -695,8 +691,7 @@ impl Pages {
             Edit::PutElement { page, parent, index, element } => {
                 self.check_uses(&page, &element)?;
                 let p = self.page_mut(&page)?;
-                let mut ids = HashSet::new();
-                p.children.iter().for_each(|e| all_ids(e, &mut ids));
+                let mut ids = all(&p.children).map(|e| e.id.clone()).collect();
                 check_tree(&element, &mut ids)?;
                 let id = element.id.clone();
                 let list = holder(p, &parent, element.tag)?;
@@ -805,9 +800,7 @@ impl Pages {
                 if to.as_deref() != Some(name.as_str()) && old.is_some() {
                     let p = self.page_mut(&page)?;
                     if let Some(to) = &to {
-                        for e in &mut p.children {
-                            rename_in(e, &name, to);
-                        }
+                        each_mut(&mut p.children, &mut |e| rename_in(e, &name, to));
                     }
                     for p in &mut self.list {
                         if instance_props(&mut p.children, &component, &name, to.as_deref()) {
@@ -860,9 +853,7 @@ impl Pages {
                 let old = list::put(variables, &name, local, || format!("{component} has no variable {name}"))?;
                 if let (Some(_), Some(to)) = (&old, &to) {
                     if *to != name {
-                        for e in &mut p.children {
-                            rename_in(e, &name, to);
-                        }
+                        each_mut(&mut p.children, &mut |e| rename_in(e, &name, to));
                     }
                 }
                 Edit::SetLocal { page: page.clone(), name: to.unwrap_or(name), local: old }
@@ -964,8 +955,19 @@ fn slug(name: &str) -> String {
     s.trim_end_matches('-').to_owned()
 }
 
-/// Writes every use of the name `from` in an element's values and handlers as `to`. True
-/// when any changed.
+/// Every element here and all they hold, each before what it holds.
+fn all(elements: &[Element]) -> Box<dyn Iterator<Item = &Element> + '_> {
+    Box::new(elements.iter().flat_map(|e| std::iter::once(e).chain(all(&e.children))))
+}
+
+/// Changes each element here and all they hold by `f`, each before what it holds. True when
+/// `f` says any changed.
+fn each_mut(elements: &mut [Element], f: &mut impl FnMut(&mut Element) -> bool) -> bool {
+    elements.iter_mut().fold(false, |changed, e| f(e) | each_mut(&mut e.children, f) | changed)
+}
+
+/// Writes every use of the name `from` in an element's own values and handlers as `to`.
+/// True when any changed.
 fn rename_in(e: &mut Element, from: &str, to: &str) -> bool {
     let mut changed = false;
     for value in e.props.iter_mut().filter(|(k, _)| k.as_str() != "name").map(|(_, v)| v) {
@@ -978,60 +980,46 @@ fn rename_in(e: &mut Element, from: &str, to: &str) -> bool {
         changed |= renamed != h.code;
         h.code = renamed;
     }
-    e.children.iter_mut().fold(changed, |c, child| rename_in(child, from, to) | c)
+    changed
 }
 
 /// Moves each instance of `component`'s value for the input `from` to `to`, or drops it
 /// where `to` is none. True when any changed.
 fn instance_props(elements: &mut [Element], component: &str, from: &str, to: Option<&str>) -> bool {
-    let mut changed = false;
-    for e in elements {
-        if e.component.as_deref() == Some(component) {
-            if let Some(v) = e.props.remove(from) {
-                if let Some(to) = to {
-                    e.props.insert(to.to_owned(), v);
-                }
-                changed = true;
-            }
+    each_mut(elements, &mut |e| {
+        if e.component.as_deref() != Some(component) {
+            return false;
         }
-        changed |= instance_props(&mut e.children, component, from, to);
-    }
-    changed
+        let Some(v) = e.props.remove(from) else { return false };
+        if let Some(to) = to {
+            e.props.insert(to.to_owned(), v);
+        }
+        true
+    })
 }
 
 /// Renames the handlers of `component`'s instances for the event `from` to `to`, keeping
 /// their order. True when any changed.
 fn instance_events(elements: &mut [Element], component: &str, from: &str, to: &str) -> bool {
-    let mut changed = false;
-    for e in elements {
-        if e.component.as_deref() == Some(component) {
-            for h in e.handlers.iter_mut().filter(|h| h.event == from) {
-                h.event = to.to_owned();
-                changed = true;
-            }
-            e.handlers.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
+    each_mut(elements, &mut |e| {
+        if e.component.as_deref() != Some(component) || !e.handlers.iter().any(|h| h.event == from) {
+            return false;
         }
-        changed |= instance_events(&mut e.children, component, from, to);
-    }
-    changed
-}
-
-/// True when an element here is an instance of the component called `name`.
-fn uses(elements: &[Element], name: &str) -> bool {
-    elements.iter().any(|e| e.component.as_deref() == Some(name) || uses(&e.children, name))
+        e.handlers.iter_mut().filter(|h| h.event == from).for_each(|h| h.event = to.to_owned());
+        e.handlers.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
+        true
+    })
 }
 
 /// Writes the instances of the component `from` as `to`. True when any changed.
 fn rename_uses(elements: &mut [Element], from: &str, to: &str) -> bool {
-    let mut changed = false;
-    for e in elements {
-        if e.component.as_deref() == Some(from) {
+    each_mut(elements, &mut |e| {
+        let hit = e.component.as_deref() == Some(from);
+        if hit {
             e.component = Some(to.to_owned());
-            changed = true;
         }
-        changed |= rename_uses(&mut e.children, from, to);
-    }
-    changed
+        hit
+    })
 }
 
 /// A property is a CSS name or an instance's input: a small letter first, then letters,
@@ -1049,33 +1037,23 @@ fn check_props<'a>(keys: impl Iterator<Item = &'a String>) -> Result<(), String>
 /// The highest number in any id on the page. New ids count up from it, so none is reused
 /// while the page holds a higher one.
 fn highest(elements: &[Element]) -> u32 {
-    elements.iter().map(|e| e.id.strip_prefix('e').and_then(|n| n.parse().ok()).unwrap_or(0).max(highest(&e.children))).max().unwrap_or(0)
-}
-
-/// Gives an element and all it holds new ids, `e` and a number counting up from `next`.
-fn renumber(e: &mut Element, next: &mut u32) {
-    e.id = format!("e{next}");
-    *next += 1;
-    e.children.iter_mut().for_each(|c| renumber(c, next));
+    all(elements).filter_map(|e| e.id.strip_prefix('e')?.parse().ok()).max().unwrap_or(0)
 }
 
 /// An element's tree from a screen: property names, no text holding elements, and ids new
 /// to `ids`, which gains them.
 fn check_tree(e: &Element, ids: &mut HashSet<String>) -> Result<(), String> {
-    check_props(e.props.keys())?;
-    e.children.iter().try_for_each(|c| e.tag.holds(c.tag))?;
-    if (e.tag == Tag::Use) != e.component.is_some() {
-        return Err("an instance, and only an instance, names a component".into());
+    for e in all(std::slice::from_ref(e)) {
+        check_props(e.props.keys())?;
+        e.children.iter().try_for_each(|c| e.tag.holds(c.tag))?;
+        if (e.tag == Tag::Use) != e.component.is_some() {
+            return Err("an instance, and only an instance, names a component".into());
+        }
+        if !ids.insert(e.id.clone()) {
+            return Err(format!("the id {} is already on the page", e.id));
+        }
     }
-    if !ids.insert(e.id.clone()) {
-        return Err(format!("the id {} is already on the page", e.id));
-    }
-    e.children.iter().try_for_each(|c| check_tree(c, ids))
-}
-
-fn all_ids(e: &Element, ids: &mut HashSet<String>) {
-    ids.insert(e.id.clone());
-    e.children.iter().for_each(|c| all_ids(c, ids));
+    Ok(())
 }
 
 /// The list an element with `tag` goes into: the page's own, a frame's or a diagram's.
@@ -1088,7 +1066,6 @@ fn holder<'a>(page: &'a mut Page, parent: &Option<String>, tag: Tag) -> Result<&
     Ok(&mut e.children)
 }
 
-/// Where an element sits: its frame, None for the page, and its index there.
 /// The holder elements share and where each sits in it, in the order given, each once. The
 /// error says to pick elements that share one, to `what` them.
 fn sharing(children: &[Element], page: &str, ids: &[String], what: &str) -> Result<(Option<String>, Vec<(usize, String)>), String> {
@@ -1121,6 +1098,7 @@ fn into_new(page: &str, children: &[Element], holder: Option<String>, order: &[(
     Edit::Batch { edits }
 }
 
+/// Where an element sits: its frame, None for the page, and its index there.
 fn locate(elements: &[Element], id: &str, parent: Option<&str>) -> Option<(Option<String>, usize)> {
     if let Some(at) = elements.iter().position(|e| e.id == id) {
         return Some((parent.map(str::to_owned), at));
@@ -1129,7 +1107,7 @@ fn locate(elements: &[Element], id: &str, parent: Option<&str>) -> Option<(Optio
 }
 
 fn find<'a>(elements: &'a [Element], id: &str) -> Option<&'a Element> {
-    elements.iter().find_map(|e| if e.id == id { Some(e) } else { find(&e.children, id) })
+    all(elements).find(|e| e.id == id)
 }
 
 fn find_mut<'a>(elements: &'a mut [Element], id: &str) -> Option<&'a mut Element> {

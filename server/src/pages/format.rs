@@ -135,7 +135,7 @@ fn block(out: &mut String, inner: &str, open: &str, code: &str, close: &str) {
 }
 
 /// Code at `indent`, blank lines left bare.
-fn lines(out: &mut String, indent: &str, code: &str) {
+pub(super) fn lines(out: &mut String, indent: &str, code: &str) {
     for line in code.lines() {
         if !line.trim().is_empty() {
             out.push_str(&format!("{indent}{line}"));

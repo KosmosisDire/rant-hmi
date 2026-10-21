@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::format::{Reader, dedent, quote};
+use super::format::{Reader, dedent, lines, quote};
 use super::js::outside;
 
 /// One of the HMI's own handlers.
@@ -71,12 +71,7 @@ pub fn write(rules: &[Rule]) -> String {
             When::Leaves => "screen=\"leaves\"".into(),
         };
         out.push_str(&format!("  <on id={} name={} {when}>\n", quote(&r.id), quote(&r.name)));
-        for line in r.code.lines() {
-            if !line.trim().is_empty() {
-                out.push_str(&format!("    {line}"));
-            }
-            out.push('\n');
-        }
+        lines(&mut out, "    ", &r.code);
         out.push_str("  </on>\n");
     }
     out.push_str("</logic>\n");
