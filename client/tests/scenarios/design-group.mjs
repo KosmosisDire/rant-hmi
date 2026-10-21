@@ -20,7 +20,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await says("2 elements");
   await d.menu(d.el(b), "Group");
   await eventually(() => top().length === 1 && top()[0].tag === "group", "the two to go into a group");
-  check((await row(top()[0].id).count()) === 1, "the layers show no row for the group");
+  await eventually(async () => (await row(top()[0].id).count()) === 1, "the layers to show a row for the group");
   check(top()[0].children.map((e) => e.id).join() === `${a},${b}`, "the group changed their order");
   check(props(hmi, pageId, a).x === "44" && props(hmi, pageId, b).x === "220", "grouping moved them");
   await says("group");
