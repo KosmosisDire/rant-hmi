@@ -1,6 +1,6 @@
 // The HMI's own state on the Data screen: the variables table and a variable's inspector.
 
-import { batch, For, Show } from "solid-js";
+import { For } from "solid-js";
 import { send } from "../../net/connection";
 import type { Per } from "../../protocol/Per";
 import type { Variable } from "../../protocol/Variable";
@@ -8,12 +8,11 @@ import type { Value } from "../../protocol/Value";
 import { freeLocal } from "../../state/names";
 import { live, putLocal, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
-import { Grid } from "../../ui/Grid";
-import { Copy, Plus, RotateCcw, Trash } from "../../ui/icons";
+import { RotateCcw } from "../../ui/icons";
 import { LocalIcon } from "../../ui/marks";
-import { copyText, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
+import { changing, ItemPane, ItemTable, type Kind, NameField } from "./Items";
 import { UsedBy } from "./UsedBy";
 
 const PER: [Per, string][] = [
@@ -31,130 +30,76 @@ function literal(text: string): Value | undefined {
   }
 }
 
-function setVariable(name: string, variable: Variable | null) {
-  if (send({ type: "set_variable", name, variable })) putLocal("variables", name, variable);
-}
-
-/** A variable's right click menu: back to its start, its name to copy, and deleting it. */
-function variableMenu(e: MouseEvent, v: Variable) {
-  openMenu(e, [
-    { label: "Reset to its start", icon: <RotateCcw size={13} />, run: () => send({ type: "set", alias: v.name, path: "", value: v.start }) },
-    { label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(v.name) },
-    "-",
-    { label: "Delete", icon: <Trash size={13} />, run: () => setVariable(v.name, null) },
-  ]);
-}
+/** The HMI's variables, as the Data screen finds and changes them. */
+export const VARIABLES: Kind<Variable> = {
+  holds: "variable",
+  items: () => state.variables,
+  name: (v) => v.name,
+  put: (name, variable) => {
+    if (send({ type: "set_variable", name, variable })) putLocal("variables", name, variable);
+  },
+};
 
 export function VariablesTable(p: Picking) {
-  const add = () => {
-    const name = freeLocal("newVariable");
-    setVariable(name, { name, start: 0, per: "hmi" });
-    p.onSelect({ kind: "variable", name });
-  };
   return (
-    <>
-      <div class="detail-head">
-        <span class="hero">Variables</span>
-        <span class="tag">{state.variables.length}</span>
-        <button class="button" onClick={add}>
-          <Plus size={12} />
-          Add a variable
-        </button>
-      </div>
-      <div class="hint">The HMI's own state, shared by every screen or kept for each one. Handlers set them, pages read them.</div>
-      <div class="detail-body">
-        <Show when={state.variables.length > 0} fallback={<div class="placeholder">No variables yet.</div>}>
-          <Grid cols={["Name", "Kept", "Starts", "Value"]}>
-            <For each={state.variables}>
-              {(v) => {
-                const now = () => live(v.name);
-                const picked = () => p.selection?.kind === "variable" && p.selection.name === v.name;
-                return (
-                  <tr
-                    class="row"
-                    classList={{ selected: picked() }}
-                    onClick={() => p.onSelect({ kind: "variable", name: v.name })}
-                    onContextMenu={(e) => {
-                      p.onSelect({ kind: "variable", name: v.name });
-                      variableMenu(e, v);
-                    }}
-                  >
-                    <td class="name">
-                      <span>
-                        <LocalIcon />
-                        <span class="mono">{v.name}</span>
-                      </span>
-                    </td>
-                    <td>{PER.find(([k]) => k === v.per)?.[1]}</td>
-                    <td class="cell-value">
-                      <Preview value={v.start} known />
-                    </td>
-                    <td class="cell-value">
-                      <Preview value={now().value} known={now().known} />
-                    </td>
-                  </tr>
-                );
-              }}
-            </For>
-          </Grid>
-        </Show>
-      </div>
-    </>
+    <ItemTable
+      kind={VARIABLES}
+      picking={p}
+      title="Variables"
+      hint="The HMI's own state, shared by every screen or kept for each one. Handlers set them, pages read them."
+      empty="No variables yet."
+      add={["Add a variable", (): Variable => ({ name: freeLocal("newVariable"), start: 0, per: "hmi" })]}
+      cols={["Name", "Kept", "Starts", "Value"]}
+      mark={() => <LocalIcon />}
+      cells={(v) => (
+        <>
+          <td>{PER.find(([k]) => k === v.per)?.[1]}</td>
+          <td class="cell-value">
+            <Preview value={v.start} known />
+          </td>
+          <td class="cell-value">
+            <Preview value={live(v.name).value} known={live(v.name).known} />
+          </td>
+        </>
+      )}
+      menu={(v) => [{ label: "Reset to its start", icon: <RotateCcw size={13} />, run: () => send({ type: "set", alias: v.name, path: "", value: v.start }) }]}
+    />
   );
 }
 
-export function VariableView(p: { variable: Variable; onRenamed: (name: string) => void; onOpen: (page: string) => void }) {
+export function VariableView(p: { variable: Variable; picking: Picking }) {
   const now = () => live(p.variable.name);
-  // a rename moves the selection in the same step, so this view never loses its variable
-  const change = (to: Partial<Variable>) => {
-    const [name, next] = [p.variable.name, { ...p.variable, ...to }];
-    batch(() => {
-      setVariable(name, next);
-      if (next.name !== name) p.onRenamed(next.name);
-    });
-  };
+  const change = changing(VARIABLES, () => p.variable, p.picking);
   return (
-    <>
-      <div class="pane-head">
-        <span class="head-title">
-          <LocalIcon />
-          <span class="mono">{p.variable.name}</span>
-        </span>
-        <span class="tag">variable</span>
+    <ItemPane mark={<LocalIcon />} name={p.variable.name} tag="variable">
+      <div class="section">Variable</div>
+      <NameField value={p.variable.name} rule={/^[a-z][A-Za-z0-9_]*$/} onCommit={(name) => change({ name })} />
+      <div class="field">
+        <label>Kept</label>
+        <div class="choice">
+          <For each={PER}>
+            {([per, label]) => (
+              <button classList={{ on: p.variable.per === per }} onClick={() => p.variable.per !== per && change({ per })}>
+                {label}
+              </button>
+            )}
+          </For>
+        </div>
       </div>
-      <div class="pane-body pad">
-        <div class="section">Variable</div>
-        <div class="field">
-          <label>Name</label>
-          <DraftInput value={p.variable.name} accept={(t) => /^[a-z][A-Za-z0-9_]*$/.test(t.trim())} onCommit={(name) => change({ name: name.trim() })} />
-        </div>
-        <div class="field">
-          <label>Kept</label>
-          <div class="choice">
-            <For each={PER}>
-              {([per, label]) => (
-                <button classList={{ on: p.variable.per === per }} onClick={() => p.variable.per !== per && change({ per })}>
-                  {label}
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-        <div class="field">
-          <label>Starts</label>
-          <DraftInput value={JSON.stringify(p.variable.start)} accept={(t) => literal(t) !== undefined} onCommit={(t) => change({ start: literal(t)! })} />
-        </div>
-        <div class="section">Value now</div>
-        <div class="field">
-          <label>{p.variable.per === "screen" ? "This screen" : "Shared"}</label>
-          <DraftInput
-            value={now().value === null ? "" : JSON.stringify(now().value)}
-            accept={(t) => literal(t) !== undefined}
-            onCommit={(t) => send({ type: "set", alias: p.variable.name, path: "", value: literal(t)! })}
-          />
-        </div>
-        <UsedBy name={p.variable.name} onOpen={p.onOpen} />
+      <div class="field">
+        <label>Starts</label>
+        <DraftInput value={JSON.stringify(p.variable.start)} accept={(t) => literal(t) !== undefined} onCommit={(t) => change({ start: literal(t)! })} />
       </div>
-    </>
+      <div class="section">Value now</div>
+      <div class="field">
+        <label>{p.variable.per === "screen" ? "This screen" : "Shared"}</label>
+        <DraftInput
+          value={now().value === null ? "" : JSON.stringify(now().value)}
+          accept={(t) => literal(t) !== undefined}
+          onCommit={(t) => send({ type: "set", alias: p.variable.name, path: "", value: literal(t)! })}
+        />
+      </div>
+      <UsedBy name={p.variable.name} onOpen={p.picking.onOpen} />
+    </ItemPane>
   );
 }

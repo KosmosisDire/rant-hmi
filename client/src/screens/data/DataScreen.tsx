@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, on, onCleanup, onMount } from "solid-js";
+import { createEffect, createSignal, For, type JSX, on, onCleanup, onMount } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { phone } from "../../ui/phone";
 import { follow } from "../../ui/press";
@@ -11,16 +11,12 @@ import { RecordsTable } from "./Records";
 import { ThemeTable } from "./Theme";
 import { VariablesTable } from "./Variables";
 
-/** What the Data screen has picked: an entity on the mesh, an import, a variable, a record or
- *  a token. */
-export type Selection =
-  | { kind: "entity"; name: string }
-  | { kind: "import"; alias: string }
-  | { kind: "variable"; name: string }
-  | { kind: "record"; name: string }
-  | { kind: "computed"; name: string }
-  | { kind: "token"; name: string }
-  | null;
+/** The kinds of item the Data screen's tables hold. */
+export type Held = "import" | "variable" | "computed" | "record" | "token";
+
+/** What the Data screen has picked: an entity on the mesh by its path, or an item of a table
+ *  by its name, an import's alias. */
+export type Selection = { kind: "entity" | Held; name: string } | null;
 
 export interface Picking {
   selection: Selection;
@@ -30,7 +26,7 @@ export interface Picking {
 }
 
 /** The detail's tables, each with the kind of row it holds. A phone shows one at a time. */
-const CARDS = [
+const CARDS: { name: string; Table: (p: Picking) => JSX.Element; holds: Held }[] = [
   { name: "Imports", Table: MeshImports, holds: "import" },
   { name: "Variables", Table: VariablesTable, holds: "variable" },
   { name: "Computed", Table: ComputedTable, holds: "computed" },

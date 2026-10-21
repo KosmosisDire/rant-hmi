@@ -2,6 +2,7 @@ import { createMemo, createSignal, For, Show, useContext } from "solid-js";
 import { produce } from "solid-js/store";
 import { send } from "../../net/connection";
 import { cssFault, OWN, SHAPES } from "../../page/PageView";
+import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Interface } from "../../protocol/Interface";
@@ -13,7 +14,7 @@ import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenVal
 import { complete, completeCss, componentNames, REPEAT, signature, signatureCss } from "../../state/complete";
 import { brings, offered } from "../../state/events";
 import { freeName } from "../../state/names";
-import { component, page as pageOf, setState, state } from "../../state/store";
+import { component, page as pageOf, putIn, setState, state } from "../../state/store";
 import { paintCss } from "../../ui/highlight";
 import { openPage } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
@@ -752,34 +753,34 @@ const constants = (text: string, caret: number) => complete(text, caret, "expres
 /** A name an input or a component's variable may take. */
 const localName = (t: string) => /^[a-z][A-Za-z0-9]*$/.test(t.trim()) && !PLACING.has(t.trim());
 
-/** Changes a component's interface here at once too, in place, so a change right after builds
- *  on this one. The backend sends the page back should it refuse. */
-function putInterface(page: string, change: (i: Interface) => void) {
-  setState("pages", (pg) => pg.id === page, "interface", produce((i) => i && change(i)));
+/** Sends an edit of a component's interface and makes it here at once too, in place, so a
+ *  change right after builds on this one. The backend sends the page back should it refuse. */
+function editInterface(edit: Edit & { page: string }, change: (i: Interface) => void) {
+  if (send({ type: "edit", edit })) setState("pages", (pg) => pg.id === edit.page, "interface", produce((i) => i && change(i)));
+}
+
+/** A component's interface list's head, with its add button. */
+function ListHead(p: { title: string; add: string; onAdd: () => void }) {
+  return (
+    <div class="section section-row">
+      {p.title}
+      <button class="icon-btn" title={p.add} onClick={() => p.onAdd()}>
+        <Plus size={13} />
+      </button>
+    </div>
+  );
 }
 
 /** A component's inputs, each a box: its name, whether it may be written back, its default. */
 function Inputs(p: { page: string; inputs: Input[] }) {
-  const write = (name: string, input: Input | null) => {
-    if (!send({ type: "edit", edit: { kind: "set_input", page: p.page, name, input } })) return;
-    putInterface(p.page, (i) => {
-      const at = i.inputs.findIndex((x) => x.name === name);
-      if (at >= 0 && input) Object.assign(i.inputs[at], input);
-      else if (at >= 0) i.inputs.splice(at, 1);
-    });
-  };
+  const write = (name: string, input: Input | null) => editInterface({ kind: "set_input", page: p.page, name, input }, (i) => putIn(i.inputs, name, input, (x) => x.name));
   const add = () => {
     const name = freeName("input", (n) => p.inputs.some((i) => i.name === n));
     write(name, { name, default: "0", bindable: false });
   };
   return (
     <>
-      <div class="section section-row">
-        Inputs
-        <button class="icon-btn" title="Add an input" onClick={add}>
-          <Plus size={13} />
-        </button>
-      </div>
+      <ListHead title="Inputs" add="Add an input" onAdd={add} />
       <For each={p.inputs}>
         {(i) => (
           <div class="handler" data-input={i.name}>
@@ -812,26 +813,14 @@ function Inputs(p: { page: string; inputs: Input[] }) {
 
 /** A component's own variables, each a box: its name and what each instance starts it at. */
 function Variables(p: { page: string; variables: Local[] }) {
-  const write = (name: string, local: Local | null) => {
-    if (!send({ type: "edit", edit: { kind: "set_local", page: p.page, name, local } })) return;
-    putInterface(p.page, (i) => {
-      const at = i.variables.findIndex((x) => x.name === name);
-      if (at >= 0 && local) Object.assign(i.variables[at], local);
-      else if (at >= 0) i.variables.splice(at, 1);
-    });
-  };
+  const write = (name: string, local: Local | null) => editInterface({ kind: "set_local", page: p.page, name, local }, (i) => putIn(i.variables, name, local, (x) => x.name));
   const add = () => {
     const name = freeName("state", (n) => p.variables.some((v) => v.name === n));
     write(name, { name, start: "0" });
   };
   return (
     <>
-      <div class="section section-row">
-        Variables
-        <button class="icon-btn" title="Add a variable" onClick={add}>
-          <Plus size={13} />
-        </button>
-      </div>
+      <ListHead title="Variables" add="Add a variable" onAdd={add} />
       <For each={p.variables}>
         {(v) => (
           <div class="handler" data-var={v.name}>
@@ -860,26 +849,14 @@ function Variables(p: { page: string; variables: Local[] }) {
 
 /** The events a component sends with `emit`, which each instance may handle. */
 function Sends(p: { page: string; events: string[] }) {
-  const write = (name: string, to: string | null) => {
-    if (!send({ type: "edit", edit: { kind: "set_event", page: p.page, name, to } })) return;
-    putInterface(p.page, (i) => {
-      const at = i.events.indexOf(name);
-      if (at >= 0 && to) i.events[at] = to;
-      else if (at >= 0) i.events.splice(at, 1);
-    });
-  };
+  const write = (name: string, to: string | null) => editInterface({ kind: "set_event", page: p.page, name, to }, (i) => putIn(i.events, name, to, (e) => e));
   const add = () => {
     const name = freeName("change", (n) => p.events.includes(n));
     write(name, name);
   };
   return (
     <>
-      <div class="section section-row">
-        Sends
-        <button class="icon-btn" title="Add an event it sends" onClick={add}>
-          <Plus size={13} />
-        </button>
-      </div>
+      <ListHead title="Sends" add="Add an event it sends" onAdd={add} />
       <For each={p.events}>
         {(e) => (
           <div class="handler-head sends-row" data-sends={e}>

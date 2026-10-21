@@ -7,42 +7,23 @@ import type { Intent } from "../../protocol/Intent";
 import type { Value } from "../../protocol/Value";
 import { capital, choosesIntent, intentWords, typeLabel } from "../../state/format";
 import { entity, importOf, live, putLocal, setState, state } from "../../state/store";
-import { DraftInput } from "../../ui/DraftInput";
 import { KindIcon } from "../../ui/marks";
+import { COMPUTED, ComputedView } from "./Computed";
 import type { Picking } from "./DataScreen";
 import { ImportForm } from "./ImportForm";
-import { TokenView } from "./Theme";
+import { changing, ItemPane, type Kind, NameField, picked } from "./Items";
+import { RECORDS, RecordView } from "./Records";
+import { TokenView, TOKENS } from "./Theme";
 import { UsedBy } from "./UsedBy";
-import { ComputedView } from "./Computed";
-import { RecordView } from "./Records";
-import { VariableView } from "./Variables";
+import { VARIABLES, VariableView } from "./Variables";
 import { ValueTree } from "./ValueTree";
 
-/** The right sidebar: an entity to import, or an import to watch and set. */
+/** The right sidebar: an entity to import, or an item of a table to watch and change. */
 export function Inspector(p: Picking) {
-  const imported = createMemo(() => {
-    const s = p.selection;
-    return s?.kind === "import" ? state.imports.find((i) => i.alias === s.alias) : undefined;
-  });
+  const imported = createMemo(() => picked(IMPORTS, p));
   const onMesh = createMemo(() => {
     const s = p.selection;
     return s?.kind === "entity" ? entity(s.name) : undefined;
-  });
-  const token = createMemo(() => {
-    const s = p.selection;
-    return s?.kind === "token" ? state.tokens.find((t) => t.name === s.name) : undefined;
-  });
-  const variable = createMemo(() => {
-    const s = p.selection;
-    return s?.kind === "variable" ? state.variables.find((v) => v.name === s.name) : undefined;
-  });
-  const record = createMemo(() => {
-    const s = p.selection;
-    return s?.kind === "record" ? state.records.find((r) => r.name === s.name) : undefined;
-  });
-  const computed = createMemo(() => {
-    const s = p.selection;
-    return s?.kind === "computed" ? state.computed.find((c) => c.name === s.name) : undefined;
   });
 
   // An entity just imported shows as its import, and a removed import as its entity again.
@@ -53,7 +34,7 @@ export function Inspector(p: Picking) {
     if (i) lastEntity = i.entity;
     if (s?.kind === "entity") {
       const now = importOf(s.name);
-      if (now) p.onSelect({ kind: "import", alias: now.alias });
+      if (now) p.onSelect({ kind: "import", name: now.alias });
     } else if (s?.kind === "import" && !i) {
       p.onSelect(lastEntity ? { kind: "entity", name: lastEntity } : null);
     }
@@ -61,66 +42,61 @@ export function Inspector(p: Picking) {
 
   return (
     <Switch fallback={<div class="placeholder">Pick an entity in the mesh, or a mesh import.</div>}>
-      <Match when={imported()}>{(i) => <ImportView imp={i()} onOpen={p.onOpen} />}</Match>
+      <Match when={imported()}>{(i) => <ImportView imp={i()} picking={p} />}</Match>
       {/* keyed, so another entity starts its import form over */}
       <Match when={onMesh()} keyed>
         {(e) => <EntityView entity={e} />}
       </Match>
-      <Match when={token()}>{(t) => <TokenView token={t()} onRenamed={(name) => p.onSelect({ kind: "token", name })} />}</Match>
-      <Match when={variable()}>{(v) => <VariableView variable={v()} onRenamed={(name) => p.onSelect({ kind: "variable", name })} onOpen={p.onOpen} />}</Match>
-      <Match when={record()}>{(r) => <RecordView record={r()} onRenamed={(name) => p.onSelect({ kind: "record", name })} onOpen={p.onOpen} />}</Match>
-      <Match when={computed()}>{(c) => <ComputedView computed={c()} onRenamed={(name) => p.onSelect({ kind: "computed", name })} onOpen={p.onOpen} />}</Match>
+      <Match when={picked(TOKENS, p)}>{(t) => <TokenView token={t()} picking={p} />}</Match>
+      <Match when={picked(VARIABLES, p)}>{(v) => <VariableView variable={v()} picking={p} />}</Match>
+      <Match when={picked(RECORDS, p)}>{(r) => <RecordView record={r()} picking={p} />}</Match>
+      <Match when={picked(COMPUTED, p)}>{(c) => <ComputedView computed={c()} picking={p} />}</Match>
     </Switch>
   );
 }
 
 function EntityView(p: { entity: EntityInfo }) {
   return (
-    <>
-      <div class="pane-head">
-        <span class="head-title">
-          <KindIcon kind={p.entity.kind} />
-          <span class="mono">{p.entity.name}</span>
-        </span>
-        <span class="tag">{p.entity.kind}</span>
-      </div>
-      <div class="pane-body pad">
-        <About
-          rows={[
-            ["Providers", String(p.entity.providers)],
-            ...(choosesIntent(p.entity.kind) ? [["Type", p.entity.schema?.name || "anonymous"] as [string, string]] : []),
-            ...(p.entity.kind === "variable" ? [["Takes sets", p.entity.writable ? "yes" : "no"] as [string, string]] : []),
-          ]}
-        />
-        <Show when={choosesIntent(p.entity.kind)} fallback={<Calls entity={p.entity} />}>
-          <Show when={p.entity.schema} fallback={<div class="placeholder">Its details have not arrived yet.</div>}>
-            {(t) => (
-              <>
-                <div class="section">Fields</div>
-                <Fields fields={t().fields} depth={0} />
-              </>
-            )}
-          </Show>
+    <ItemPane mark={<KindIcon kind={p.entity.kind} />} name={p.entity.name} tag={p.entity.kind}>
+      <About
+        rows={[
+          ["Providers", String(p.entity.providers)],
+          ...(choosesIntent(p.entity.kind) ? [["Type", p.entity.schema?.name || "anonymous"] as [string, string]] : []),
+          ...(p.entity.kind === "variable" ? [["Takes sets", p.entity.writable ? "yes" : "no"] as [string, string]] : []),
+        ]}
+      />
+      <Show when={choosesIntent(p.entity.kind)} fallback={<Calls entity={p.entity} />}>
+        <Show when={p.entity.schema} fallback={<div class="placeholder">Its details have not arrived yet.</div>}>
+          {(t) => (
+            <>
+              <div class="section">Fields</div>
+              <Fields fields={t().fields} depth={0} />
+            </>
+          )}
         </Show>
-        <ImportForm entity={p.entity} />
-      </div>
-    </>
+      </Show>
+      <ImportForm entity={p.entity} />
+    </ItemPane>
   );
 }
 
-/** Changes an import's alias or intent, here at once too. */
-export function changeImport(imp: Import, to: Partial<Import>) {
-  setState("refused", null);
-  const next = { ...imp, ...to };
-  if (send({ type: "change_import", alias: imp.alias, import: next })) putLocal("imports", imp.alias, next);
-}
+/** The mesh imports, as the Data screen finds and changes them. A change may rename one or
+ *  change its intent, and shows here at once too. */
+export const IMPORTS: Kind<Import> = {
+  holds: "import",
+  items: () => state.imports,
+  name: (i) => i.alias,
+  put: (alias, imp) => {
+    if (!imp) return void send({ type: "unimport", alias });
+    setState("refused", null);
+    if (send({ type: "change_import", alias, import: imp })) putLocal("imports", alias, imp);
+  },
+};
 
 /** A variable whose owner takes no sets can only be read. */
 export const canWrite = (imp: Import) => imp.kind !== "variable" || (entity(imp.entity)?.writable ?? true);
 
-export const unimport = (alias: string) => send({ type: "unimport", alias });
-
-function ImportView(p: { imp: Import; onOpen: (page: string) => void }) {
+function ImportView(p: { imp: Import; picking: Picking }) {
   const e = () => entity(p.imp.entity);
   const v = () => live(p.imp.alias);
   const writable = () => p.imp.intent === "write" && p.imp.kind === "variable";
@@ -128,68 +104,54 @@ function ImportView(p: { imp: Import; onOpen: (page: string) => void }) {
     setState("refused", null);
     send({ type: "set", alias: p.imp.alias, path, value });
   };
-  const change = (to: Partial<Import>) => changeImport(p.imp, to);
+  const change = changing(IMPORTS, () => p.imp, p.picking);
   return (
-    <>
-      <div class="pane-head">
-        <span class="head-title">
-          <KindIcon kind={p.imp.kind} />
-          <span class="mono">{p.imp.alias}</span>
-        </span>
-        <span class="tag" classList={{ write: p.imp.intent === "write" }}>
-          {intentWords(p.imp.kind, p.imp.intent)}
-        </span>
-      </div>
-      <div class="pane-body pad">
-        <div class="section">Import</div>
-        <div class="field">
-          <label>Alias</label>
-          <DraftInput value={p.imp.alias} accept={(t) => /^[A-Z][A-Za-z0-9_]*$/.test(t.trim())} onCommit={(alias) => change({ alias: alias.trim() })} />
-        </div>
-        <div class="field" hidden={!choosesIntent(p.imp.kind)}>
-          <label>Intent</label>
-          <div class="choice">
-            <For each={["read", "write"] as Intent[]}>
-              {(intent) => (
-                <button
-                  classList={{ on: p.imp.intent === intent }}
-                  disabled={intent === "write" && !canWrite(p.imp)}
-                  title={intent === "write" && !canWrite(p.imp) ? "Its owner takes no sets" : undefined}
-                  onClick={() => p.imp.intent !== intent && change({ intent })}
-                >
-                  {capital(intentWords(p.imp.kind, intent))}
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-        <About
-          rows={[
-            ["Entity", p.imp.entity],
-            ["Kind", p.imp.kind],
-            ["State", choosesIntent(p.imp.kind) ? (v().known ? "live" : "unknown") : e()?.providers ? "on the mesh" : "not on the mesh"],
-          ]}
-        />
-        <Switch>
-          <Match when={!choosesIntent(p.imp.kind) && e()}>{(en) => <Calls entity={en()} />}</Match>
-          <Match when={e()?.schema}>
-            {(t) => (
-              <>
-                <div class="section">Value</div>
-                <ValueTree fields={t().fields} value={v().value} known={v().known} onSet={writable() ? set : undefined} />
-              </>
+    <ItemPane mark={<KindIcon kind={p.imp.kind} />} name={p.imp.alias} tag={intentWords(p.imp.kind, p.imp.intent)} write={p.imp.intent === "write"}>
+      <div class="section">Import</div>
+      <NameField label="Alias" value={p.imp.alias} rule={/^[A-Z][A-Za-z0-9_]*$/} onCommit={(alias) => change({ alias })} />
+      <div class="field" hidden={!choosesIntent(p.imp.kind)}>
+        <label>Intent</label>
+        <div class="choice">
+          <For each={["read", "write"] as Intent[]}>
+            {(intent) => (
+              <button
+                classList={{ on: p.imp.intent === intent }}
+                disabled={intent === "write" && !canWrite(p.imp)}
+                title={intent === "write" && !canWrite(p.imp) ? "Its owner takes no sets" : undefined}
+                onClick={() => p.imp.intent !== intent && change({ intent })}
+              >
+                {capital(intentWords(p.imp.kind, intent))}
+              </button>
             )}
-          </Match>
-          <Match when={true}>
-            <div class="placeholder">Not on the mesh right now.</div>
-          </Match>
-        </Switch>
-        <Show when={state.refused && state.refused.alias === p.imp.alias}>
-          <div class="error-line">{state.refused?.text}</div>
-        </Show>
-        <UsedBy name={p.imp.alias} onOpen={p.onOpen} />
+          </For>
+        </div>
       </div>
-    </>
+      <About
+        rows={[
+          ["Entity", p.imp.entity],
+          ["Kind", p.imp.kind],
+          ["State", choosesIntent(p.imp.kind) ? (v().known ? "live" : "unknown") : e()?.providers ? "on the mesh" : "not on the mesh"],
+        ]}
+      />
+      <Switch>
+        <Match when={!choosesIntent(p.imp.kind) && e()}>{(en) => <Calls entity={en()} />}</Match>
+        <Match when={e()?.schema}>
+          {(t) => (
+            <>
+              <div class="section">Value</div>
+              <ValueTree fields={t().fields} value={v().value} known={v().known} onSet={writable() ? set : undefined} />
+            </>
+          )}
+        </Match>
+        <Match when={true}>
+          <div class="placeholder">Not on the mesh right now.</div>
+        </Match>
+      </Switch>
+      <Show when={state.refused && state.refused.alias === p.imp.alias}>
+        <div class="error-line">{state.refused?.text}</div>
+      </Show>
+      <UsedBy name={p.imp.alias} onOpen={p.picking.onOpen} />
+    </ItemPane>
   );
 }
 

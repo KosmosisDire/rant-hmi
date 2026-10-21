@@ -7,7 +7,7 @@ import { KindIcon } from "../../ui/marks";
 import { copyText, openMenu } from "../../ui/Menu";
 import type { Picking } from "./DataScreen";
 import { suggest } from "./ImportForm";
-import { unimport } from "./Inspector";
+import { IMPORTS } from "./Inspector";
 
 /** One step of a name: the entity there, if any, and the names under it. An entity may hold
  *  others, as a camera holds its `Video`. */
@@ -61,7 +61,7 @@ export function MeshTree(p: Picking) {
 
   const pick = (e: EntityInfo) => {
     const imported = importOf(e.name);
-    p.onSelect(imported ? { kind: "import", alias: imported.alias } : { kind: "entity", name: e.name });
+    p.onSelect(imported ? { kind: "import", name: imported.alias } : { kind: "entity", name: e.name });
   };
   // one click imports to read under the suggested alias, both can be changed after
   const quick = (e: EntityInfo) => {
@@ -73,14 +73,14 @@ export function MeshTree(p: Picking) {
     pick(e);
     const imported = importOf(e.name);
     openMenu(ev, [
-      imported ? { label: `Remove ${imported.alias}`, icon: <Trash size={13} />, run: () => unimport(imported.alias) } : { label: "Import to read", icon: <Plus size={13} />, run: () => quick(e) },
+      imported ? { label: `Remove ${imported.alias}`, icon: <Trash size={13} />, run: () => IMPORTS.put(imported.alias, null) } : { label: "Import to read", icon: <Plus size={13} />, run: () => quick(e) },
       { label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(e.name) },
     ]);
   };
   const picked = (e: EntityInfo) => {
     const s = p.selection;
     if (s?.kind === "entity") return s.name === e.name;
-    return s?.kind === "import" && importOf(e.name)?.alias === s.alias;
+    return s?.kind === "import" && importOf(e.name)?.alias === s.name;
   };
 
   const Caret = (c: { branch: Branch }) => (
