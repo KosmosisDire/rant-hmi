@@ -105,7 +105,7 @@
   position: absolute;
   width: 9px;
   height: 9px;
-  margin: -6px 0 0 -6px;
+  translate: -50% -50%;
   border: 1.5px solid var(--accent);
   border-radius: 50%;
   background: var(--ground);
