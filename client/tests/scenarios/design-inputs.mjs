@@ -1,5 +1,6 @@
 // A user gives a Meter an input filled per instance from live data: a rename reaches its code
-// and instances, completion offers inputs only, and a rename then a quick click is one change.
+// and instances, completion offers inputs only, no note reads the input as CSS, and a rename
+// then a quick click is one change.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const meter = await hmi.addComponent("Meter");
@@ -45,6 +46,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.setField("level", "Speed * 10");
   const shown = () => d.el(inst).locator(".instance .el").textContent();
   await eventually(async () => /^\d+(\.\d+)?%$/.test(await shown()) && (await shown()) !== "50%", "the instance to read live data through its input");
+  const note = page.locator(".screen:not([hidden]) .sidebar.right .field", { has: page.locator("label", { hasText: /^level$/ }) }).locator(".field-note");
+  check((await note.count()) === 0, `the input reads as CSS: ${await note.allTextContents()}`);
 
   await d.openPage("Meter");
   await nameBox.fill("fill");

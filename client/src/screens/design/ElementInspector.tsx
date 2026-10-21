@@ -246,8 +246,8 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     },
     onWrite: (t: string | null) => setProps(p.page, p.element.id, { [key]: t }),
     onShow: (t: string) => showProps(p.page, p.element.id, { [key]: t }),
-    // a frame's own properties are CSS, which the browser may drop
-    check: !shape() && !OWN.has(key) ? (v: unknown) => cssFault(key, v) : undefined,
+    // a frame's own properties are CSS, which the browser may drop, and of an instance's only its turn
+    check: !shape() && !OWN.has(key) && (!instance() || key === "rotate") ? (v: unknown) => cssFault(key, v) : undefined,
   });
   // a new origin leaves the element where it is drawn
   const newOrigin = (t: string | null) => sendEdits(originEdits(pageOf(p.page)!, p.element.id, t));
