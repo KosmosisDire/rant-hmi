@@ -1,0 +1,22 @@
+<component name="Button" size="20x6" sizing="fill">
+  <prop name="text" default='"Start"'/>
+  <prop name="holdMs" default="0"/>
+  <prop name="fill" default="$panel3"/>
+  <prop name="textColour" default="$text"/>
+  <prop name="textSize" default="2"/>
+  <prop name="radius" default="$radius"/>
+  <prop name="holdColour" default="$accent"/>
+  <event name="confirm"/>
+  <div id="e1" name="face" x="0" y="0" w="100%" h="100%" style='background: root.pressed ? fill.darken(0.15) : fill; border-radius: radius; overflow: "hidden"'>
+    <on event="tap">
+      if (!holdMs) emit("confirm");
+    </on>
+    <on event="hold" after="holdMs || 1e9">
+      if (holdMs) emit("confirm");
+    </on>
+    <div id="e2" name="progress" x="0" y="0" w="(holdMs ? 100 * Math.min(root.heldFor / holdMs, 1) : 0)%" h="100%" style="background: holdColour"/>
+    <div id="e3" name="content" x="0" y="0" w="100%" h="100%" style='align: "center"; gap: $space; layout: "right"'>
+      <span id="e4" name="label" x="1" y="1" w="hug" h="hug" style="color: textColour; font-size: textSize; font-weight: 600">text</span>
+    </div>
+  </div>
+</component>

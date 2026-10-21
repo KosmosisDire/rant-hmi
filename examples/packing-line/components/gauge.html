@@ -1,0 +1,18 @@
+<component name="Gauge" size="16x16">
+  <prop name="value" default="0"/>
+  <prop name="min" default="0"/>
+  <prop name="max" default="100"/>
+  <prop name="unit" default='""'/>
+  <prop name="digits" default="1"/>
+  <prop name="alarm" default="0.8"/>
+  <prop name="colour" default="$accent"/>
+  <prop name="alarmColour" default="$red"/>
+  <prop name="trackColour" default="$panel3"/>
+  <prop name="textColour" default="$text"/>
+  <svg id="e1" name="dial" x="0" y="0" w="16" h="16">
+    <circle id="e2" name="track" cx="8" cy="8" fill='"none"' pathlength="100" r="6.4" stroke="trackColour" stroke-dasharray='"75 100"' stroke-linecap='"round"' stroke-width="1.1" transform='"rotate(135 8 8)"'/>
+    <circle id="e3" name="level" cx="8" cy="8" fill='"none"' pathlength="100" r="6.4" stroke="(value - min) / (max - min) > alarm ? alarmColour : colour" stroke-dasharray="`${Math.min(Math.max((value - min) / (max - min), 0), 1) * 75} 100`" stroke-linecap='"round"' stroke-width="1.1" transform='"rotate(135 8 8)"'/>
+    <text id="e4" name="reading" dominant-baseline='"middle"' fill="textColour" font-size="2.7" text-anchor='"middle"' x="8" y="8.4">value.toFixed(digits)</text>
+    <text id="e5" name="units" dominant-baseline='"middle"' fill="$dim" font-size="1.3" text-anchor='"middle"' x="8" y="11.5">unit</text>
+  </svg>
+</component>

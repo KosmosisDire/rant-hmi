@@ -1,0 +1,27 @@
+<component name="Stepper" size="18x5" sizing="fill">
+  <prop name="value" default="0" bindable="true"/>
+  <prop name="step" default="1"/>
+  <prop name="min" default="0"/>
+  <prop name="max" default="10"/>
+  <prop name="fill" default="$panel3"/>
+  <prop name="textColour" default="$text"/>
+  <prop name="radius" default="$radius"/>
+  <event name="change"/>
+  <div id="e1" name="row" x="0" y="0" w="100%" h="100%" style='layout: "right"; gap: $spaceSmall'>
+    <div id="e2" name="less" x="0" y="0" w="hug" h="100%" style='align: "center"; aspect-ratio: 1; background: less.pressed ? fill.darken(0.15) : fill; border-radius: radius; layout: "right"'>
+      <on event="repeat" every="150">
+        value = clamp(value - step, min, max);
+        emit("change", value);
+      </on>
+      <span id="e3" name="lessSign" x="0" y="0" w="hug" h="hug" style="color: textColour; font-size: $textLarge">"-"</span>
+    </div>
+    <span id="e4" name="reading" x="0" y="0" w="fill" h="100%" style='align-content: "center"; color: textColour; font-size: $textLarge; font-weight: 600; text-align: "center"'>value</span>
+    <div id="e5" name="more" x="0" y="0" w="hug" h="100%" style='align: "center"; aspect-ratio: 1; background: more.pressed ? fill.darken(0.15) : fill; border-radius: radius; layout: "right"'>
+      <on event="repeat" every="150">
+        value = clamp(value + step, min, max);
+        emit("change", value);
+      </on>
+      <span id="e6" name="moreSign" x="0" y="0" w="hug" h="hug" style="color: textColour; font-size: $textLarge">"+"</span>
+    </div>
+  </div>
+</component>

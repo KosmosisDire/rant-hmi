@@ -1,0 +1,127 @@
+<page name="Overview" size="128x72">
+  <div id="e1" name="Header" x="1" y="1" w="126" h="7" style='align: "center left"; background: $surface; border-radius: $radiusLarge; gap: $spaceLarge; layout: "right"; padding: 1.2'>
+    <span id="e2" name="Title" x="0" y="0" w="hug" h="hug" style="color: $text; font-size: $textLarge; font-weight: 700">"Packing line"</span>
+    <span id="e3" name="Last part" x="0" y="0" w="hug" h="hug" style="color: $dim">"Last part " + Conveyor.part</span>
+    <div id="e4" name="Spacer" x="0" y="0" w="fill" h="1"/>
+    <group id="e5" name="Lamps">
+      <Lamp id="e6" name="Running lamp" x="0" y="0" w="10" h="3" label='"Running"' lit="Running"/>
+      <Lamp id="e7" name="Too fast lamp" x="0" y="0" w="10" h="3" colour="$red" label='"Too fast"' lit="tooFast && floor(time.now / 500) % 2 == 0"/>
+    </group>
+    <ModeSwitch id="e8" name="Mode" x="0" y="0" w="20" h="4.4" options="Mode.options" value="Settings.mode"/>
+    <span id="e9" name="Clock" x="0" y="0" w="hug" h="hug" style='color: $dim; font-variant-numeric: "tabular-nums"'>new Date(time.now).toLocaleTimeString()</span>
+    <Button id="e10" name="Camera" x="0" y="0" w="11" h="4.4" fill="$panel2" text='"Camera"' textSize="$textSize">
+      <on event="confirm">
+        await open(Pages.Camera);
+      </on>
+    </Button>
+    <Button id="e11" name="Settings" x="0" y="0" w="11" h="4.4" fill="$panel2" text='"Settings"' textSize="$textSize">
+      <on event="confirm">
+        if (await open(Pages.Settings)) notify(Settings.mode + " mode, " + Settings.target + " parts to make");
+      </on>
+    </Button>
+  </div>
+  <div id="e12" name="Line" x="1" y="9" w="40" h="62" style='background: $panel; border-radius: $radiusLarge; gap: $space; layout: "down"; padding: $spaceLarge'>
+    <span id="e13" name="Line title" x="0" y="0" w="hug" h="hug" style="color: $dim">"Line"</span>
+    <div id="e14" name="Readings" x="0" y="0" w="fill" h="8" style='gap: $space; layout: "right"'>
+      <Readout id="e15" name="Belt speed" x="0" y="0" w="fill" h="fill" digits="2" fill="$panel2" label='"Belt speed"' unit='"m/s"' value="Conveyor.speed"/>
+      <Readout id="e16" name="Rate" x="0" y="0" w="fill" h="fill" digits="0" fill="$panel2" label='"Rate"' unit='"/min"' value="partsPerMinute"/>
+    </div>
+    <div id="e17" name="Speed row" x="0" y="0" w="fill" h="14" style='align: "center left"; gap: $spaceLarge; layout: "right"'>
+      <Gauge id="e18" name="Speed gauge" x="0" y="0" w="14" h="14" alarm="0.75" digits="0" unit='"%"' value="speedPercent"/>
+      <div id="e19" name="Speed controls" x="0" y="0" w="fill" h="hug" style='gap: $space; layout: "down"'>
+        <span id="e20" name="Speed label" x="0" y="0" w="hug" h="hug" style="color: $dim">"Line speed"</span>
+        <Slider id="e21" name="Speed slider" x="0" y="0" w="fill" h="4" value="speedPercent"/>
+        <div id="e22" name="Run row" x="0" y="0" w="fill" h="4" style='align: "center left"; gap: $space; layout: "right"'>
+          <Toggle id="e23" name="Running toggle" x="0" y="0" w="8" h="4" colour="$green" value="Running"/>
+          <span id="e24" name="Running text" x="0" y="0" w="hug" h="hug">Running ? "Running" : "Stopped"</span>
+        </div>
+      </div>
+    </div>
+    <div id="e25" name="Start and stop" x="0" y="0" w="fill" h="6" style='gap: $space; layout: "right"'>
+      <Button id="e26" name="Start" x="0" y="0" w="fill" h="fill" fill="$green" holdMs="600" holdColour="$green.lighten(0.25)" text='"Hold to start"' textColour="$onFill" textSize="1.6">
+        <on event="confirm">
+          Running = true;
+        </on>
+      </Button>
+      <Button id="e27" name="Stop" x="0" y="0" w="fill" h="fill" fill="$red" text='"Stop"' textColour="$onFill" textSize="1.6">
+        <on event="confirm">
+          Running = false;
+        </on>
+      </Button>
+    </div>
+    <div id="e28" name="Target row" x="0" y="0" w="fill" h="5" style='align: "center left"; gap: $space; layout: "right"'>
+      <span id="e29" name="Target label" x="0" y="0" w="fill" h="hug" style="color: $dim">"Target parts"</span>
+      <Stepper id="e30" name="Target" x="0" y="0" w="18" h="5" max="500" step="10" value="Settings.target"/>
+    </div>
+    <Button id="e31" name="Reset count" x="0" y="0" w="fill" h="5" text='"Reset the count"' textSize="1.6">
+      <on event="confirm">
+        const cleared = await Reset();
+        notify(cleared + " parts cleared");
+      </on>
+    </Button>
+    <Plot id="e32" name="Speed history" x="0" y="0" w="fill" h="fill" fill="$panel2" max="2" seconds="30" values="speedHistory"/>
+    <span id="e33" name="Run time" x="0" y="0" w="hug" h="hug" style="color: $faint; font-size: $textSmall">"Running time " + floor(runSeconds / 60) + ":" + String(runSeconds % 60).padStart(2, "0") + ", screens open " + HmiStatus.clients + ", visits " + visits</span>
+  </div>
+  <div id="e34" name="Belt" x="42" y="9" w="44" h="30" style='background: $panel; border-radius: $radiusLarge; gap: $space; layout: "down"; padding: $spaceLarge'>
+    <div id="e35" name="Belt title row" x="0" y="0" w="fill" h="hug" style='align: "center left"; gap: $space; layout: "right"'>
+      <span id="e36" name="Belt title" x="0" y="0" w="fill" h="hug" style="color: $dim">"Belt"</span>
+      <div id="e37" name="Spinner" x="0" y="0" w="1.6" h="1.6" origin='"50% 50%"' style='border-color: Running ? $accent : $faint; border-radius: $radiusPill; border-style: "solid"; border-top-color: "transparent"; border-width: 0.3; rotate: Running ? time.now / 3 % 360 : 0'/>
+    </div>
+    <svg id="e38" name="Belt view" x="0" y="0" w="fill" h="fill" viewbox='"0 6 100 28"' style='overflow: "hidden"'>
+      <rect id="e39" name="belt" fill="$belt" height="24" rx="2" width="100" x="0" y="8"/>
+      <line id="e40" name="slat" repeat="12" stroke="$beltSlat" stroke-width="0.8" x1="(index * 100 / 12 + time.now / 1000 * Conveyor.speed * 25) % 100" x2="(index * 100 / 12 + time.now / 1000 * Conveyor.speed * 25) % 100" y1="8" y2="32"/>
+      <rect id="e41" name="parcel" fill="$parcel" height="14" rx="1" stroke="$parcel.darken(0.3)" stroke-width="0.6" width="18" x="(time.now / 1000 * Conveyor.speed * 25) % 130 - 22" y="13"/>
+      <text id="e42" name="parcel label" dominant-baseline='"middle"' fill="$parcel.darken(0.65)" font-size="4" text-anchor='"middle"' x="(time.now / 1000 * Conveyor.speed * 25) % 130 - 13" y="20.5">Conveyor.part</text>
+    </svg>
+    <Joystick1D id="e43" name="Jog" x="0" y="0" w="fill" h="5" style='opacity: Settings.mode == "Manual" ? 1 : 0.4; pointer-events: Settings.mode == "Manual" ? "auto" : "none"'>
+      <on event="move">
+        Jog.send(p.x * 2);
+      </on>
+    </Joystick1D>
+    <span id="e44" name="Jog hint" x="0" y="0" w="hug" h="hug" style="color: $faint; font-size: $textSmall">Settings.mode == "Manual" ? "Slide and hold to jog, let go to stop" : "Switch to Manual to jog"</span>
+  </div>
+  <div id="e45" name="Label camera" x="87" y="9" w="40" h="30" style='background: $panel; border-radius: $radiusLarge; gap: $space; layout: "down"; padding: $spaceLarge'>
+    <div id="e46" name="Camera title row" x="0" y="0" w="fill" h="3.6" style='align: "center left"; gap: $space; layout: "right"'>
+      <span id="e47" name="Camera title" x="0" y="0" w="fill" h="hug" style="color: $dim">"Label camera"</span>
+      <span id="e48" name="Boxes label" x="0" y="0" w="hug" h="hug" style="color: $dim; font-size: $textSmall">"Boxes"</span>
+      <Toggle id="e49" name="Boxes toggle" x="0" y="0" w="7" h="3.6" value="showBoxes"/>
+    </div>
+    <div id="e50" name="View" x="0" y="0" w="fill" h="fill" style='background: $ground; border-radius: $radius; overflow: "hidden"'>
+      <media id="e51" name="Picture" x="0" y="0" w="100%" h="100%" src="LabelCam" fit='"meet"'/>
+      <svg id="e52" name="Found" x="0" y="0" w="100%" h="100%" viewbox="`0 0 ${LabelCam.width} ${LabelCam.height}`" fit='"meet"' style='visibility: showBoxes ? "visible" : "hidden"'>
+        <rect id="e53" name="box" fill='index ? $green.alpha(0.12) : "none"' height="item.max.y - item.min.y" repeat="Labels.boxes" rx="4" stroke="index ? $green : $amber" stroke-width="3" width="item.max.x - item.min.x" x="item.min.x" y="item.min.y"/>
+      </svg>
+    </div>
+    <span id="e54" name="Found text" x="0" y="0" w="hug" h="hug" style="color: $faint; font-size: $textSmall">Labels.boxes.length - 1 + " labels found on the parcel"</span>
+  </div>
+  <div id="e55" name="Robot" x="42" y="40" w="85" h="31" style='background: $panel; border-radius: $radiusLarge; gap: $spaceLarge; layout: "right"; padding: $spaceLarge'>
+    <div id="e56" name="Joints" x="0" y="0" w="fill" h="fill" style='gap: $spaceSmall; layout: "down"'>
+      <span id="e57" name="Joints title" x="0" y="0" w="hug" h="hug" style="color: $dim">"Robot joints"</span>
+      <div id="e58" name="Joint" repeat="6" x="0" y="0" w="fill" h="fill" style='align: "center left"; gap: $space; layout: "right"'>
+        <span id="e59" name="Joint name" x="0" y="0" w="3" h="hug" style="color: $dim; font-size: $textSmall">"J" + (index + 1)</span>
+        <div id="e60" name="Joint track" x="0" y="0" w="fill" h="1.2" style="background: $panel3; border-radius: $radiusPill">
+          <div id="e61" name="Joint bar" x="50%" y="0" w="(abs(Joints.position[index]) * 45)%" h="100%" origin='Joints.position[index] < 0 ? "100% 0%" : "0% 0%"' style='background: Joints.position[index] < 0 ? $blue : $accent; border-radius: $radiusPill; transition: "width 120ms linear"'/>
+        </div>
+        <span id="e62" name="Joint angle" x="0" y="0" w="7" h="hug" style='font-size: $textSmall; text-align: "right"'>degrees(Joints.position[index]).toFixed(0) + " deg"</span>
+      </div>
+    </div>
+    <markup id="e63" name="J1 dial" x="0" y="0" w="22" h="fill">
+      `<svg viewBox="0 0 100 100">
+        ${Array.from({ length: 24 }, (_, i) => `<line x1="50" y1="6" x2="50" y2="${i % 6 ? 11 : 17}" stroke="${$dim}" stroke-width="2" transform="rotate(${i * 15} 50 50)"/>`).join("")}
+        <line x1="50" y1="50" x2="50" y2="16" stroke="${$accent}" stroke-width="4" stroke-linecap="round" transform="rotate(${degrees(Joints.position[0])} 50 50)"/>
+        <circle cx="50" cy="50" r="5" fill="${$text}"/>
+      </svg>`
+    </markup>
+    <svg id="e64" name="Tool path" x="0" y="0" w="22" h="fill" viewbox="`${-60 / zoom} ${-60 / zoom} ${120 / zoom} ${120 / zoom}`">
+      <circle id="e65" name="reach" cx="0" cy="0" fill='"none"' r="40" stroke="$border2" stroke-dasharray='"3 3"' stroke-width="1"/>
+      <line id="e66" name="x axis" stroke="$border" stroke-width="0.6" x1="-55" x2="55" y1="0" y2="0"/>
+      <line id="e67" name="y axis" stroke="$border" stroke-width="0.6" x1="0" x2="0" y1="-55" y2="55"/>
+      <circle id="e68" name="tool" cx="Pose.position.x * 100" cy="-Pose.position.y * 100" fill="$accent" r="5"/>
+    </svg>
+    <div id="e69" name="Pose" x="0" y="0" w="16" h="fill" style='gap: $space; layout: "down"'>
+      <Readout id="e70" name="From centre" x="0" y="0" w="fill" h="8" digits="2" fill="$panel2" label='"From centre"' unit='"m"' value="vec(Pose.position.x, Pose.position.y).length()"/>
+      <span id="e71" name="Zoom label" x="0" y="0" w="hug" h="hug" style="color: $dim; font-size: $textSmall">"Zoom " + zoom.toFixed(1) + "x"</span>
+      <Knob id="e72" name="Zoom" x="0" y="0" w="12" h="12" max="3" min="1" value="zoom"/>
+    </div>
+  </div>
+</page>

@@ -1,0 +1,28 @@
+<component name="Joystick1D" size="24x6" sizing="fill">
+  <prop name="reach" default="0.75"/>
+  <prop name="repeatMs" default="100"/>
+  <prop name="fill" default="$panel"/>
+  <prop name="colour" default="$accent"/>
+  <prop name="knobColour" default="$panel3"/>
+  <prop name="lineColour" default="$border2"/>
+  <event name="move"/>
+  <event name="held"/>
+  <var name="kx" start="0"/>
+  <div id="e1" name="track" x="0" y="0" w="100%" h="100%" style='background: fill; border-color: lineColour; border-radius: $radiusPill; border-style: "solid"; border-width: 0.2'>
+    <on event="release">
+      kx = 0;
+      emit("move", { x: 0 });
+      emit("held", { x: 0 });
+    </on>
+    <on event="repeat" every="repeatMs">
+      emit("held", { x: kx });
+    </on>
+    <on event="drag">
+      // the knob goes where the finger is along the track, as far as its reach
+      kx = Math.max(-1, Math.min(1, ((p.x - 0.5) * 2) / reach));
+      emit("move", { x: kx });
+    </on>
+    <div id="e2" name="span" x="(50 - reach * 50)%" y="50%" w="(reach * 100)%" h="0" origin='"0% 50%"' style='border-top-color: lineColour; border-top-style: "dashed"; border-top-width: 0.2; pointer-events: "none"'/>
+    <div id="e3" name="knob" x="(50 + kx * reach * 50)%" y="50%" w="hug" h="75%" origin='"50% 50%"' style='aspect-ratio: 1; background: track.pressed ? colour : knobColour; border-color: $text; border-radius: "50%"; border-style: "solid"; border-width: 0.2; pointer-events: "none"'/>
+  </div>
+</component>

@@ -1,0 +1,65 @@
+[[import]]
+alias = "Speed"
+entity = "Line1/Speed"
+kind = "variable"
+intent = "write"
+
+[[import]]
+alias = "Running"
+entity = "Line1/Running"
+kind = "variable"
+intent = "write"
+
+[[import]]
+alias = "Settings"
+entity = "Line1/Settings"
+kind = "variable"
+intent = "write"
+
+[[import]]
+alias = "Conveyor"
+entity = "Line1/Conveyor"
+kind = "topic"
+intent = "read"
+
+[[import]]
+alias = "Jog"
+entity = "Line1/Jog"
+kind = "topic"
+intent = "write"
+
+[[import]]
+alias = "Reset"
+entity = "Line1/Reset"
+kind = "function"
+intent = "write"
+
+[[import]]
+alias = "LabelCam"
+entity = "Line1/LabelCam"
+kind = "topic"
+intent = "read"
+
+[[import]]
+alias = "Labels"
+entity = "Line1/LabelCam/Detections"
+kind = "topic"
+intent = "read"
+
+[[import]]
+alias = "Joints"
+entity = "Robot/Joints"
+kind = "topic"
+intent = "read"
+
+[[import]]
+alias = "Pose"
+entity = "Robot/Pose"
+kind = "topic"
+intent = "read"
+
+[[import]]
+alias = "HmiStatus"
+entity = "Hmi/Status"
+kind = "variable"
+intent = "read"

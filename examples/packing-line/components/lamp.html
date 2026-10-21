@@ -1,0 +1,10 @@
+<component name="Lamp" size="12x3" sizing="fill">
+  <prop name="lit" default="false"/>
+  <prop name="label" default='"Running"'/>
+  <prop name="colour" default="$green"/>
+  <prop name="offColour" default="$faint"/>
+  <div id="e1" name="row" x="0" y="0" w="100%" h="100%" style='align: "center left"; gap: $space; layout: "right"'>
+    <div id="e2" name="dot" x="0" y="0" w="1.2" h="1.2" style='background: lit ? colour : offColour; border-radius: $radiusPill; box-shadow: lit ? "0 0 8px " + colour : "none"'/>
+    <span id="e3" name="caption" x="0" y="0" w="hug" h="hug" style="color: lit ? $text : $dim">label</span>
+  </div>
+</component>

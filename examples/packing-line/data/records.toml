@@ -1,0 +1,5 @@
+[[record]]
+name = "speedHistory"
+source = "Conveyor.speed"
+every_ms = 100
+keep_s = 60

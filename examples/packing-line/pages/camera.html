@@ -1,0 +1,27 @@
+<page name="Camera" size="128x72">
+  <div id="e1" name="Camera" x="1" y="1" w="126" h="70" style='background: $panel; border-radius: $radiusLarge; gap: $space; layout: "down"; padding: $spaceLarge'>
+    <div id="e2" name="Title row" x="0" y="0" w="fill" h="4.4" style='align: "center left"; gap: $spaceLarge; layout: "right"'>
+      <Button id="e3" name="Back" x="0" y="0" w="10" h="4.4" fill="$panel2" text='"Back"' textSize="$textSize">
+        <on event="confirm">
+          close();
+        </on>
+      </Button>
+      <span id="e4" name="Title" x="0" y="0" w="fill" h="hug" style="font-size: $textLarge; font-weight: 700">"Label camera"</span>
+      <span id="e5" name="Size" x="0" y="0" w="hug" h="hug" style="color: $dim">LabelCam.width + " x " + LabelCam.height + " px"</span>
+      <span id="e6" name="Boxes label" x="0" y="0" w="hug" h="hug" style="color: $dim">"Boxes"</span>
+      <Toggle id="e7" name="Boxes toggle" x="0" y="0" w="8" h="4" value="showBoxes"/>
+    </div>
+    <div id="e8" name="View" x="0" y="0" w="fill" h="fill" style='background: $ground; border-radius: $radius; overflow: "hidden"'>
+      <media id="e9" name="Picture" x="0" y="0" w="100%" h="100%" src="LabelCam" fit='"meet"'/>
+      <svg id="e10" name="Found" x="0" y="0" w="100%" h="100%" viewbox="`0 0 ${LabelCam.width} ${LabelCam.height}`" fit='"meet"' style='visibility: showBoxes ? "visible" : "hidden"'>
+        <rect id="e11" name="box" fill='index ? $green.alpha(0.12) : "none"' height="item.max.y - item.min.y" repeat="Labels.boxes" rx="4" stroke="index ? $green : $amber" stroke-width="3" width="item.max.x - item.min.x" x="item.min.x" y="item.min.y"/>
+        <text id="e12" name="box name" fill="index ? $green : $amber" font-size="18" font-weight="700" paint-order='"stroke"' repeat="Labels.boxes" stroke="$ground" stroke-width="5" x="item.min.x + 4" y="item.min.y - 8">index ? "Label " + index : "Parcel"</text>
+      </svg>
+    </div>
+    <div id="e13" name="Finds" x="0" y="0" w="fill" h="hug" style='gap: $space; layout: "right"; wrap: true'>
+      <div id="e14" name="Find" repeat="Labels.boxes" x="0" y="0" w="hug" h="4" style='align: "center"; background: index ? $greenBg : $amberBg; border-radius: $radiusPill; layout: "right"; padding: 1.2'>
+        <span id="e15" name="Find text" x="0" y="0" w="hug" h="hug" style="color: index ? $green : $amber">(index ? "Label " + index : "Parcel") + ", " + round(item.max.x - item.min.x) + " x " + round(item.max.y - item.min.y) + " px"</span>
+      </div>
+    </div>
+  </div>
+</page>
