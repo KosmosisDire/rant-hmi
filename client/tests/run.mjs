@@ -63,7 +63,8 @@ for (const file of files) {
   }
   await page.screenshot({ path: join(out, `${name}.png`) });
   hmi.close();
-  await context.close();
+  // with any a scenario opened, as a phone's, so a failed one leaves no screen behind
+  for (const c of browser.contexts()) await c.close();
 }
 await browser.close();
 // with --library, the components the scenarios made by hand become those a new project starts with
