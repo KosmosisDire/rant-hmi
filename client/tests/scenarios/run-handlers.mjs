@@ -5,15 +5,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await hmi.import("Reset", "Line1/Reset", "write");
   const pageId = await hmi.addPage("Buttons");
   const button = async (name, x, event, code) => {
-    const id = await hmi.addElement(pageId, "div", { name, x: String(x), y: "44", w: "176", h: "88", background: "#2a2f35" });
+    const id = await hmi.addElement(pageId, "div", { name, x: String(x), y: "4", w: "16", h: "8", background: "#2a2f35" });
     await hmi.setHandler(pageId, id, event, code);
     return id;
   };
-  const faster = await button("Faster", 44, "tap", "Speed = Speed + 0.5;");
-  const jog = await button("Jog", 264, "press", "Speed = 2;");
+  const faster = await button("Faster", 4, "tap", "Speed = Speed + 0.5;");
+  const jog = await button("Jog", 24, "press", "Speed = 2;");
   await hmi.setHandler(pageId, jog, "release", "Speed = 0.25;");
-  const reset = await button("Reset", 484, "tap", "const cleared = await Reset();\nnotify(`Reset after ${cleared} parts`);");
-  const broken = await button("Broken", 704, "tap", "Speed = Sped;");
+  const reset = await button("Reset", 44, "tap", "const cleared = await Reset();\nnotify(`Reset after ${cleared} parts`);");
+  const broken = await button("Broken", 64, "tap", "Speed = Sped;");
 
   await d.openPage("Buttons");
   await d.tab("Run");

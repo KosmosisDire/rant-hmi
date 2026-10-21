@@ -6,10 +6,10 @@ import { props } from "../designer.mjs";
 
 export default async function ({ page, hmi, d, eventually }) {
   const pageId = await hmi.addPage("Turned grips");
-  const corner = await hmi.addElement(pageId, "div", { name: "Corner", x: "200", y: "200", w: "100", h: "50", rotate: "90", background: "#2a2f35" });
-  const middle = await hmi.addElement(pageId, "div", { name: "Middle", x: "600", y: "300", w: "100", h: "50", rotate: "90", origin: '"50% 50%"', background: "#4a8fd6" });
+  const corner = await hmi.addElement(pageId, "div", { name: "Corner", x: "20", y: "20", w: "10", h: "5", rotate: "90", background: "#2a2f35" });
+  const middle = await hmi.addElement(pageId, "div", { name: "Middle", x: "60", y: "30", w: "10", h: "5", rotate: "90", origin: '"50% 50%"', background: "#4a8fd6" });
   await d.openPage("Turned grips");
-  const k = (await page.locator(".artboard .page").boundingBox()).width / 1408;
+  const k = (await page.locator(".artboard .page").boundingBox()).width / 128;
   const pull = async (id, dx, dy) => {
     await d.el(id).click();
     const g = await page.locator(".artboard .ring .handle.e").boundingBox();
@@ -23,10 +23,10 @@ export default async function ({ page, hmi, d, eventually }) {
   // turned upright about its corner, its east grip faces down and shows so, and the corner holds
   await d.el(corner).click();
   await eventually(async () => (await page.locator(".artboard .ring .handle.e").evaluate((g) => g.style.cursor)) === "ns-resize", "the east grip of an upright frame to show an up and down cursor");
-  await pull(corner, 0, 50);
-  await eventually(() => at(corner) === "200,200,150,50", () => `the corner frame to grow down to 150 wide, it is ${at(corner)}`);
+  await pull(corner, 0, 5);
+  await eventually(() => at(corner) === "20,20,15,5", () => `the corner frame to grow down to 15 wide, it is ${at(corner)}`);
 
   // about its middle, the middle moves so its west side, now its top, holds
-  await pull(middle, 0, 40);
-  await eventually(() => at(middle) === "600,320,140,50", () => `the middle frame to grow down with its top kept, it is ${at(middle)}`);
+  await pull(middle, 0, 4);
+  await eventually(() => at(middle) === "60,32,14,5", () => `the middle frame to grow down with its top kept, it is ${at(middle)}`);
 }

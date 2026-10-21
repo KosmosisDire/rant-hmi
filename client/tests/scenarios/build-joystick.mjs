@@ -9,19 +9,19 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // shared, so the test reads them as any screen would
   for (const name of ["beats", "heldX"]) hmi.send({ type: "set_variable", name, variable: { name, start: 0, per: "hmi" } });
 
-  await d.addComponent("Joystick", 220, 220);
-  await d.addInput("travel", "70");
+  await d.addComponent("Joystick", 20, 20);
+  await d.addInput("travel", "6.5");
   await d.addInput("repeatMs", "100");
   await d.addVariable("kx", "0");
   await d.addVariable("ky", "0");
   await d.addSends("move");
   await d.addSends("held");
-  await d.add("drawing", { Name: "pad", x: "0", y: "0", w: "220", h: "220" });
+  await d.add("drawing", { Name: "pad", x: "0", y: "0", w: "20", h: "20" });
   // the base takes the presses, which the ring and the knob above it let through
-  await d.addShape("circle", { Name: "base", "Centre x": "110", "Centre y": "110", Radius: "104", Fill: "#1e2125", Stroke: "#3a4046", Thickness: "2" });
+  await d.addShape("circle", { Name: "base", "Centre x": "10", "Centre y": "10", Radius: "9.5", Fill: "#1e2125", Stroke: "#3a4046", Thickness: "0.2" });
   await d.handler("drag", [
-    "// the knob goes where the finger is, as far as the ring, on a base 208 across",
-    "const dx = (p.x - 0.5) * 208, dy = (p.y - 0.5) * 208;",
+    "// the knob goes where the finger is, as far as the ring, on a base 19 across",
+    "const dx = (p.x - 0.5) * 19, dy = (p.y - 0.5) * 19;",
     "const k = Math.min(1, travel / Math.max(Math.hypot(dx, dy), 1));",
     "kx = (dx * k) / travel;",
     "ky = (dy * k) / travel;",
@@ -29,16 +29,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   ].join("\n"));
   await d.handler("release", 'kx = 0;\nky = 0;\nemit("move", { x: 0, y: 0 });\nemit("held", { x: 0, y: 0 });');
   await d.handler("repeat", 'emit("held", { x: kx, y: -ky });', "repeatMs");
-  await d.addShape("circle", { Name: "ring", "Centre x": "110", "Centre y": "110", Radius: "travel", Fill: '"none"', Stroke: "#2f3540", Thickness: "2", Dashes: '"4 6"' });
+  await d.addShape("circle", { Name: "ring", "Centre x": "10", "Centre y": "10", Radius: "travel", Fill: '"none"', Stroke: "#2f3540", Thickness: "0.2", Dashes: '"0.4 0.6"' });
   await d.css('pointer-events: "none"');
-  await d.addShape("circle", { Name: "knob", "Centre x": "110 + kx * travel", "Centre y": "110 + ky * travel", Radius: "34", Fill: 'base.pressed ? "#4a8fd6" : "#3a4046"', Stroke: "#e4e6e8", Thickness: "2" });
+  await d.addShape("circle", { Name: "knob", "Centre x": "10 + kx * travel", "Centre y": "10 + ky * travel", Radius: "3", Fill: 'base.pressed ? "#4a8fd6" : "#3a4046"', Stroke: "#e4e6e8", Thickness: "0.2" });
   await d.css('pointer-events: "none"');
 
   await d.addPage("Joystick");
-  const stick = await d.place("Joystick", { x: "44", y: "44", w: "220", h: "220" });
+  const stick = await d.place("Joystick", { x: "4", y: "4", w: "20", h: "20" });
   await d.handler("move", "jogX = p.x;\njogY = p.y;");
   await d.handler("held", "beats = beats + 1;\nheldX = p.x;");
-  await d.add("text", { Name: "readout", x: "308", y: "132", w: "264", h: "44", Text: '"x " + jogX.toFixed(2) + "  y " + jogY.toFixed(2)', Colour: "#e4e6e8", Size: "20" });
+  await d.add("text", { Name: "readout", x: "28", y: "12", w: "24", h: "4", Text: '"x " + jogX.toFixed(2) + "  y " + jogY.toFixed(2)', Colour: "#e4e6e8", Size: "2" });
 
   await d.tab("Run");
   const inst = page.locator(`.run-layer:not([hidden]) .el[data-id="${stick}"]`);
@@ -48,7 +48,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
     return [b.x + b.width / 2, b.y + b.height / 2];
   };
   const [cx, cy] = await centre(inst);
-  const scale = (await inst.boundingBox()).width / 220;
+  const scale = (await inst.boundingBox()).width / 20;
   const shared = (name) => hmi.state.values[name]?.value;
   const beats = () => shared("beats");
 
@@ -66,18 +66,18 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // within the ring the knob sits under the finger
   await page.mouse.move(cx, cy);
   await page.mouse.down();
-  await page.mouse.move(cx + 30 * scale, cy - 40 * scale, { steps: 6 });
+  await page.mouse.move(cx + 3 * scale, cy - 4 * scale, { steps: 6 });
   const [kx, ky] = await centre(knob);
-  check(Math.abs(kx - (cx + 30 * scale)) < 3 && Math.abs(ky - (cy - 40 * scale)) < 3, `the knob is at ${kx - cx}, ${ky - cy} from the centre, not under the finger`);
+  check(Math.abs(kx - (cx + 3 * scale)) < 3 && Math.abs(ky - (cy - 4 * scale)) < 3, `the knob is at ${kx - cx}, ${ky - cy} from the centre, not under the finger`);
   const readout = page.locator(".run-layer:not([hidden]) .el.text");
   let said = "";
   const reads = (text, what) => eventually(async () => (said = await readout.textContent()) === text, () => `${what}, the page says ${said}`);
-  await reads("x 0.43  y 0.57", "the page to hear the move");
+  await reads("x 0.46  y 0.62", "the page to hear the move");
 
   // beyond it, the knob stops at the ring in the finger's direction
-  await page.mouse.move(cx + 200 * scale, cy, { steps: 6 });
+  await page.mouse.move(cx + 20 * scale, cy, { steps: 6 });
   const [fx, fy] = await centre(knob);
-  check(Math.abs(fx - (cx + 70 * scale)) < 3 && Math.abs(fy - cy) < 3, `the knob went to ${fx - cx}, ${fy - cy} past the ring`);
+  check(Math.abs(fx - (cx + 6.5 * scale)) < 3 && Math.abs(fy - cy) < 3, `the knob went to ${fx - cx}, ${fy - cy} past the ring`);
   await reads("x 1.00  y 0.00", "a full push right");
 
   // held still, it keeps sending where it is, about once each 100 ms

@@ -5,23 +5,23 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const cell = await hmi.addPage("Cell");
   const confirm = await hmi.addPage("Confirm");
   const button = async (pageId, name, x, code) => {
-    const id = await hmi.addElement(pageId, "div", { name, x: String(x), y: "44", w: "176", h: "88", background: "#2a2f35" });
+    const id = await hmi.addElement(pageId, "div", { name, x: String(x), y: "4", w: "16", h: "8", background: "#2a2f35" });
     await hmi.setHandler(pageId, id, "tap", code);
     return id;
   };
-  const run = await button(cell, "Run", 44, 'if (!await open(Pages.Confirm)) {\n  notify("Not run");\n  return;\n}\nSpeed = 2;\nnotify("Running");');
-  const yes = await button(confirm, "Yes", 44, "close(true);");
-  const no = await button(confirm, "No", 264, "close(false);");
+  const run = await button(cell, "Run", 4, 'if (!await open(Pages.Confirm)) {\n  notify("Not run");\n  return;\n}\nSpeed = 2;\nnotify("Running");');
+  const yes = await button(confirm, "Yes", 4, "close(true);");
+  const no = await button(confirm, "No", 24, "close(false);");
 
   await d.openPage("Confirm");
   const w = d.field("w");
-  await w.fill("484");
+  await w.fill("44");
   await w.press("Enter");
   const h = d.field("h");
-  await h.fill("176");
+  await h.fill("16");
   await h.press("Enter");
   await page.locator(".screen:not([hidden]) .sidebar.right .choice button", { hasText: "Over" }).click();
-  await eventually(() => hmi.page(confirm)?.shows === "over" && hmi.page(confirm)?.width === 484, "Confirm to show over others");
+  await eventually(() => hmi.page(confirm)?.shows === "over" && hmi.page(confirm)?.width === 44, "Confirm to show over others");
 
   await d.openPage("Cell");
   await d.tab("Run");

@@ -4,7 +4,7 @@
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const held = await hmi.addPage("Hidden hold");
-  const pad = await hmi.addElement(held, "div", { name: "pad", x: "44", y: "44", w: "176", h: "88", background: "#2a2f35" });
+  const pad = await hmi.addElement(held, "div", { name: "pad", x: "4", y: "4", w: "16", h: "8", background: "#2a2f35" });
   await hmi.setHandler(held, pad, "press", "Speed = 1.25;");
   await hmi.setHandler(held, pad, "release", "Speed = 0;");
 

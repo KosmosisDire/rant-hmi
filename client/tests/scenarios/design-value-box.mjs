@@ -60,7 +60,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => now()["border-color"] === 'Running ? "#2e7d32" : "#c62828"', "the colour alone to be bound");
   check(now()["border-width"] === "2", "binding the colour changed the width");
   const drawn = await d.el(card).evaluate((el) => getComputedStyle(el).borderTopStyle + " " + getComputedStyle(el).borderTopWidth);
-  check(drawn === "solid 2px", `the border is drawn as ${drawn}`);
+  check(drawn === "solid 20px", `the border is drawn as ${drawn}`);
   check(await page.locator(".border-sum .linked").count() === 1, "the bound part is not marked");
   await page.keyboard.press("Escape");
 

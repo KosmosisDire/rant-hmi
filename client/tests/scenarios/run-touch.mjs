@@ -4,7 +4,7 @@
 
 export default async function ({ page, hmi, sys, check, eventually }) {
   const pageId = await hmi.addPage("Touch");
-  const pad = await hmi.addElement(pageId, "div", { name: "pad", x: "44", y: "44", w: "264", h: "132", background: "#2a2f35" });
+  const pad = await hmi.addElement(pageId, "div", { name: "pad", x: "4", y: "4", w: "24", h: "12", background: "#2a2f35" });
   await hmi.setHandler(pageId, pad, "press", "Speed = 1.25;");
   await hmi.setHandler(pageId, pad, "release", "Speed = 0;");
 
@@ -39,7 +39,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   check(!(await longPress(drawn)), "a long press reached the browser's menu");
   await finger("touchEnd");
   await touch.locator(".popover.menu").waitFor();
-  check(hmi.page(pageId).children[0].props.x === "44", `a long press moved the pad to ${hmi.page(pageId).children[0].props.x}`);
+  check(hmi.page(pageId).children[0].props.x === "4", `a long press moved the pad to ${hmi.page(pageId).children[0].props.x}`);
   await touch.keyboard.press("Escape");
 
   // the run: a long press is a press, held until the finger lifts

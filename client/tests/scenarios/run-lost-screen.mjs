@@ -3,7 +3,7 @@
 
 export default async function ({ page, hmi, sys, d, eventually }) {
   const pageId = await hmi.addPage("Jog");
-  const jog = await hmi.addElement(pageId, "div", { name: "Jog", x: "44", y: "44", w: "176", h: "88", background: "#2a2f35" });
+  const jog = await hmi.addElement(pageId, "div", { name: "Jog", x: "4", y: "4", w: "16", h: "8", background: "#2a2f35" });
   await hmi.setHandler(pageId, jog, "press", "Speed = 2;");
   await hmi.setHandler(pageId, jog, "release", "Speed = 0.25;");
   await hmi.set("Speed", 0.25);

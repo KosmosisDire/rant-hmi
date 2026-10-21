@@ -13,7 +13,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const sheet = await page.locator(".artboard .page").boundingBox();
   const b = await d.box(id);
   await d.drag(id, 0, sheet.y + sheet.height + 40 - b.y);
-  await eventually(() => Number(at().y) > 792, "the frame to land below the page");
+  await eventually(() => Number(at().y) > 72, "the frame to land below the page");
 
   await page.keyboard.press("Escape");
   const out = await d.box(id);

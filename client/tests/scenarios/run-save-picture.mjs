@@ -4,7 +4,7 @@
 export default async function ({ page, hmi, check, eventually }) {
   if (!hmi.state.imports.some((i) => i.alias === "Camera")) await hmi.import("Camera", "Cell/Camera");
   const pageId = await hmi.addPage("Snapshot");
-  const shot = await hmi.addElement(pageId, "media", { name: "camera", x: "44", y: "44", w: "320", h: "240", src: "Camera", fit: '"meet"' });
+  const shot = await hmi.addElement(pageId, "media", { name: "camera", x: "4", y: "4", w: "32", h: "24", src: "Camera", fit: '"meet"' });
   await page.locator(".tab", { hasText: "Design" }).click();
   await page.locator(".screen:not([hidden]) .pages .list-row", { hasText: "Snapshot" }).click();
   await page.locator(".tab", { hasText: "Run" }).click();

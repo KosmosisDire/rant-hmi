@@ -4,7 +4,7 @@
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const button = await hmi.addComponent("HoldButton");
-  await hmi.edit({ kind: "resize_page", page: button, width: 220, height: 88 });
+  await hmi.edit({ kind: "resize_page", page: button, width: 20, height: 8 });
   await d.openPage("HoldButton");
   const interface_ = () => hmi.page(button).interface;
 
@@ -16,9 +16,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await name.press("Enter");
   await eventually(() => interface_().variables[0]?.name === "count", "the variable renamed");
 
-  const face = await hmi.addElement(button, "div", { name: "face", x: "0", y: "0", w: "220", h: "88", background: "#2a2f35", "border-radius": "8" });
-  await hmi.addElement(button, "div", { name: "bar", x: "0", y: "80", w: "220 * Math.min(root.heldFor / 600, 1)", h: "8", background: "#4a8fd6" }, face);
-  await hmi.addElement(button, "span", { name: "label", x: "22", y: "22", w: "176", h: "44", text: 'count + " holds"', color: "#e4e6e8", "font-size": "22" }, face);
+  const face = await hmi.addElement(button, "div", { name: "face", x: "0", y: "0", w: "20", h: "8", background: "#2a2f35", "border-radius": "0.8" });
+  await hmi.addElement(button, "div", { name: "bar", x: "0", y: "7.2", w: "20 * Math.min(root.heldFor / 600, 1)", h: "0.8", background: "#4a8fd6" }, face);
+  await hmi.addElement(button, "span", { name: "label", x: "2", y: "2", w: "16", h: "4", text: 'count + " holds"', color: "#e4e6e8", "font-size": "2" }, face);
 
   // completion offers the parts' pointer state after a dot
   await page.locator(".screen:not([hidden]) .sidebar.left .list-row", { has: page.locator(".list-label", { hasText: /^face$/ }) }).click();
@@ -36,9 +36,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => hold()?.code === "count = count + 1;" && hold()?.ms === "600", "the hold handler and its time");
 
   const pageId = await hmi.addPage("Holds");
-  const place = (x) => hmi.addElement(pageId, "use", { name: "Hold", x: String(x), y: "44", w: "220", h: "88" }, null, "HoldButton");
-  const first = await place(44);
-  const second = await place(308);
+  const place = (x) => hmi.addElement(pageId, "use", { name: "Hold", x: String(x), y: "4", w: "20", h: "8" }, null, "HoldButton");
+  const first = await place(4);
+  const second = await place(28);
   await d.openPage("Holds");
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);

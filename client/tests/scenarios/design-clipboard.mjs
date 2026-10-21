@@ -3,9 +3,9 @@
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Clip");
-  const panel = await hmi.addElement(pageId, "div", { name: "Panel", x: "44", y: "44", w: "220", h: "132", background: "#2a2f35" });
-  await hmi.addElement(pageId, "span", { name: "Label", x: "11", y: "11", w: "176", h: "44", text: '"Hi"' }, panel);
-  const holder = await hmi.addElement(pageId, "div", { name: "Holder", x: "440", y: "44", w: "440", h: "352", background: "#1e2125" });
+  const panel = await hmi.addElement(pageId, "div", { name: "Panel", x: "4", y: "4", w: "20", h: "12", background: "#2a2f35" });
+  await hmi.addElement(pageId, "span", { name: "Label", x: "1", y: "1", w: "16", h: "4", text: '"Hi"' }, panel);
+  const holder = await hmi.addElement(pageId, "div", { name: "Holder", x: "40", y: "4", w: "40", h: "32", background: "#1e2125" });
   await d.openPage("Clip");
   const roots = () => hmi.page(pageId).children;
   const empty = () => page.locator(".artboard").click({ position: { x: 5, y: 5 } });
@@ -27,7 +27,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Control+d");
   await eventually(() => roots().length === 4, "the duplicate");
   const dup = roots()[2];
-  check(dup.props.x === "54" && dup.props.y === "54", `the duplicate sits at ${dup.props.x}, ${dup.props.y}`);
+  check(dup.props.x === "5" && dup.props.y === "5", `the duplicate sits at ${dup.props.x}, ${dup.props.y}`);
 
   await eventually(async () => dup.id === (await page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-row.selected").getAttribute("data-id")), "the duplicate to be selected");
   await page.keyboard.press("Control+x");

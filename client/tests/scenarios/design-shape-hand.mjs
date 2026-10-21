@@ -3,7 +3,7 @@
 
 export default async function ({ page, d, hmi, check, eventually }) {
   await d.addPage("By hand");
-  const drawing = await d.add("drawing", { Name: "sketch", x: "44", y: "44", w: "352", h: "176", "View box": '"0 0 200 100"' });
+  const drawing = await d.add("drawing", { Name: "sketch", x: "4", y: "4", w: "32", h: "16", "View box": '"0 0 200 100"' });
   const rect = await d.addShape("rect", { Name: "box", x: "20", y: "20", Width: "40", Height: "20" });
   const props = (id) => hmi.state.pages.find((p) => p.name === "By hand").children[0].children.find((s) => s.id === id).props;
   // screen pixels for each of the drawing's 200 units, at the artboard's zoom

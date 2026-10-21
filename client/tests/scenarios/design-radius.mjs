@@ -29,7 +29,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const others = ["border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius"].map((k) => now()[k]);
   check(others.join() === "8,8,8", `the other corners start at ${others}, not 8`);
   const drawn = await d.el(card).evaluate((el) => [getComputedStyle(el).borderTopLeftRadius, getComputedStyle(el).borderTopRightRadius].join());
-  check(drawn === "20px,8px", `the corners draw as ${drawn}`);
+  check(drawn === "200px,80px", `the corners draw as ${drawn}`);
   await page.keyboard.press("Escape");
   const sum = await radius.locator(".border-sum span").allTextContents();
   check(sum.join() === "20,8,8,8", `the row sums the corners up as ${sum}`);

@@ -4,18 +4,18 @@
 // component's code never names the mesh.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await d.addComponent("Toggle", 88, 44);
+  await d.addComponent("Toggle", 8, 4);
   await d.addInput("value", "false", true);
   await d.addSends("change");
-  await d.add("frame", { Name: "track", x: "0", y: "0", w: "88", h: "44", Fill: 'value ? "#2e7d32" : "#3a4046"', Radius: "22" });
+  await d.add("frame", { Name: "track", x: "0", y: "0", w: "8", h: "4", Fill: 'value ? "#2e7d32" : "#3a4046"', Radius: "2" });
   await d.handler("tap", 'value = !value;\nemit("change", value);');
-  await d.add("frame", { Name: "knob", x: "value ? 48 : 4", y: "4", w: "36", h: "36", Fill: "#e4e6e8", Radius: "18" });
+  await d.add("frame", { Name: "knob", x: "value ? 4.4 : 0.4", y: "0.4", w: "3.2", h: "3.2", Fill: "#e4e6e8", Radius: "1.6" });
   await d.css('transition: "left 120ms ease-out"\nbox-shadow: "0 1px 3px #0006"');
 
   await d.addPage("Toggles");
-  const line = await d.place("Toggle", { x: "44", y: "44", w: "88", h: "44", value: "Running" });
+  const line = await d.place("Toggle", { x: "4", y: "4", w: "8", h: "4", value: "Running" });
   await d.handler("change", 'notify(p ? "Started" : "Stopped");');
-  const shown = await d.place("Toggle", { x: "176", y: "44", w: "88", h: "44", value: "!Running" });
+  const shown = await d.place("Toggle", { x: "16", y: "4", w: "8", h: "4", value: "!Running" });
 
   await hmi.set("Running", true);
   await d.tab("Run");

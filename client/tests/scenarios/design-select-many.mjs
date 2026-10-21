@@ -5,10 +5,10 @@ import { props } from "../designer.mjs";
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Many");
-  const box = (name, x) => ({ name, x: String(x), y: "44", w: "88", h: "88", background: "#2a2f35" });
-  const a = await hmi.addElement(pageId, "div", box("A", 44));
-  const b = await hmi.addElement(pageId, "div", box("B", 220));
-  const c = await hmi.addElement(pageId, "div", box("C", 396));
+  const box = (name, x) => ({ name, x: String(x), y: "4", w: "8", h: "8", background: "#2a2f35" });
+  const a = await hmi.addElement(pageId, "div", box("A", 4));
+  const b = await hmi.addElement(pageId, "div", box("B", 20));
+  const c = await hmi.addElement(pageId, "div", box("C", 36));
   await d.openPage("Many");
   const x = (id) => props(hmi, pageId, id).x;
   const head = page.locator(".screen:not([hidden]) .sidebar.right .head-title");
@@ -29,34 +29,34 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check((await page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-row.selected").count()) === 2, "the layers do not show both");
 
   await d.drag(b, 88, 44);
-  await eventually(() => x(b) !== "220", "the drag to move B");
-  const moved = Number(x(b)) - 220;
-  check(Number(x(a)) - 44 === moved && x(c) === "396", `the drag moved A by ${Number(x(a)) - 44} and B by ${moved}, C to ${x(c)}`);
+  await eventually(() => x(b) !== "20", "the drag to move B");
+  const moved = Number(x(b)) - 20;
+  check(Number(x(a)) - 4 === moved && x(c) === "36", `the drag moved A by ${Number(x(a)) - 4} and B by ${moved}, C to ${x(c)}`);
   check(props(hmi, pageId, a).y === props(hmi, pageId, b).y, "A and B left their row");
   await page.keyboard.press("Control+z");
-  await eventually(() => x(a) === "44" && x(b) === "220", "one undo to take both back");
+  await eventually(() => x(a) === "4" && x(b) === "20", "one undo to take both back");
   // the page acts on what it draws, so it draws the undo before the next key
-  await eventually(async () => (await drawn(a)) === "44px 44px" && (await drawn(b)) === "220px 44px", "the page to draw both back", 1500);
+  await eventually(async () => (await drawn(a)) === "40px 40px" && (await drawn(b)) === "200px 40px", "the page to draw both back", 1500);
 
   await page.keyboard.press("ArrowRight");
-  await eventually(() => x(a) === "45" && x(b) === "221", "the arrows to nudge both");
+  await eventually(() => x(a) === "5" && x(b) === "21", "the arrows to nudge both");
 
   await row("C").click({ modifiers: ["Control"] });
   await eventually(async () => (await head.textContent()) === "3 elements", "a layer row to join the selection");
   await d.el(b).click({ modifiers: ["Shift"] });
   await eventually(async () => (await head.textContent()) === "2 elements", "Shift click to take B away");
 
-  await hmi.setProps(pageId, c, { x: "500", y: "132" });
-  await eventually(async () => (await drawn(c)) === "500px 132px", "the page to draw C moved");
+  await hmi.setProps(pageId, c, { x: "50", y: "13" });
+  await eventually(async () => (await drawn(c)) === "500px 130px", "the page to draw C moved");
   await page.keyboard.press("Control+a");
   await eventually(async () => (await head.textContent()) === "3 elements", "Ctrl A to take the page");
   const tool = (title) => page.locator(`.screen:not([hidden]) .sidebar.right button[title="${title}"]`);
   await tool("Line up top edges").click();
-  await eventually(() => [a, b, c].every((id) => props(hmi, pageId, id).y === "44"), "the tops to line up");
+  await eventually(() => [a, b, c].every((id) => props(hmi, pageId, id).y === "4"), "the tops to line up");
   await tool("Spread evenly across").click();
   const gaps = () => {
     const [xa, xb, xc] = [a, b, c].map((id) => Number(x(id)));
-    return xa === 45 && xc === 500 && Math.abs(xb - xa - (xc - xb)) <= 1;
+    return xa === 5 && xc === 50 && Math.abs(xb - xa - (xc - xb)) <= 1;
   };
   await eventually(gaps, "even gaps across");
   await page.keyboard.press("Delete");

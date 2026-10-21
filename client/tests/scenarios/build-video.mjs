@@ -13,7 +13,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   }
 
   await d.addPage("Camera video");
-  const box = { x: "44", y: "44", w: "480", h: "360" };
+  const box = { x: "4", y: "4", w: "48", h: "36" };
   const video = await d.add("media", { Name: "camera", ...box, Source: "Camera" });
   await d.add("drawing", { Name: "overlay", ...box, "View box": "`0 0 ${Camera.width} ${Camera.height}`", Fit: '"meet"' });
   await d.addShape("rect", {

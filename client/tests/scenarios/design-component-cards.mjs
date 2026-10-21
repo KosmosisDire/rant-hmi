@@ -5,7 +5,7 @@
 
 export default async function ({ page, hmi, sys, d, check, eventually }) {
   const tile = await hmi.addComponent("Tile");
-  await hmi.addElement(tile, "div", { name: "face", x: "0", y: "0", w: "88", h: "44", background: "#c62828" });
+  await hmi.addElement(tile, "div", { name: "face", x: "0", y: "0", w: "8", h: "4", background: "#c62828" });
   const target = await hmi.addPage("Cards");
   await d.openPage("Cards");
   const card = page.locator(".screen:not([hidden]) .sidebar.left .card", { hasText: /^Tile$/ });
@@ -39,15 +39,15 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
     await page.mouse.up();
   };
 
-  await drag(on(440, 330));
+  await drag(on(44, 33));
   await eventually(() => placed().length === 1, "a Tile placed by a drag");
   const t = placed()[0];
   const [cx, cy] = [Number(t.props.x) + w / 2, Number(t.props.y) + h / 2];
-  check(Math.abs(cx - 440) <= 11 && Math.abs(cy - 330) <= 11, `the Tile centres on ${cx}, ${cy}, not where it was let go`);
+  check(Math.abs(cx - 44) <= 1 && Math.abs(cy - 33) <= 1, `the Tile centres on ${cx}, ${cy}, not where it was let go`);
   check(t.props.w === String(w) && t.props.h === String(h), "the Tile is not at its size");
 
   await drag({ x: start.x, y: start.y + 160 });
-  await drag(on(700, 500), () => page.keyboard.press("Escape"));
+  await drag(on(70, 50), () => page.keyboard.press("Escape"));
   await page.waitForTimeout(300);
   check(placed().length === 1, "a drag let go off the canvas or after Escape placed a Tile");
   check(!(await page.locator(".card-ghost").count()), "a drag left its picture behind");
@@ -67,7 +67,7 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   const finger = (type, x, y) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y }] });
   const [fx, fy] = [tcard.x + tcard.width / 2, tcard.y + tcard.height / 2];
   await finger("touchStart", fx, fy);
-  for (let i = 1; i <= 8; i++) await finger("touchMove", fx + ((tsheet.x + 900 * tk - fx) * i) / 8, fy + ((tsheet.y + 200 * tk - fy) * i) / 8);
+  for (let i = 1; i <= 8; i++) await finger("touchMove", fx + ((tsheet.x + 90 * tk - fx) * i) / 8, fy + ((tsheet.y + 20 * tk - fy) * i) / 8);
   await finger("touchEnd");
   await eventually(() => placed().length === 2, "a Tile placed by a finger");
   await touch.context().close();

@@ -10,13 +10,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.set({ Name: "speedHistory", Records: "Speed", "Every ms": "100", "Keeps s": "10" });
   await eventually(() => hmi.state.records?.some((r) => r.name === "speedHistory" && r.source === "Speed" && r.keep_s === 10), "the record");
 
-  await d.addComponent("Plot", 440, 176);
+  await d.addComponent("Plot", 40, 16);
   await d.addInput("values", "[]");
   await d.addInput("min", "0");
   await d.addInput("max", "1");
   await d.addInput("seconds", "10");
-  await d.add("frame", { Name: "card", x: "0", y: "0", w: "440", h: "176", Fill: "#1e2125", Radius: "8" });
-  await d.add("drawing", { Name: "chart", x: "11", y: "11", w: "418", h: "154", "View box": '"0 0 100 100"', Fit: '"stretch"', Overflow: '"hidden"' });
+  await d.add("frame", { Name: "card", x: "0", y: "0", w: "40", h: "16", Fill: "#1e2125", Radius: "0.8" });
+  await d.add("drawing", { Name: "chart", x: "1", y: "1", w: "38", h: "14", "View box": '"0 0 100 100"', Fit: '"stretch"', Overflow: '"hidden"' });
   await d.addShape("polyline", {
     Name: "line",
     Points: 'values.length ? values.map((s) => ((s.t - values[values.length - 1].t) / (seconds * 1000) + 1) * 100 + "," + (100 - ((s.v - min) / (max - min)) * 100)).join(" ") : ""',
@@ -26,7 +26,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.css('vector-effect: "non-scaling-stroke"\nstroke-linejoin: "round"');
 
   await d.addPage("Trend");
-  const plot = await d.place("Plot", { x: "44", y: "44", w: "440", h: "176", values: "speedHistory", max: "2" });
+  const plot = await d.place("Plot", { x: "4", y: "4", w: "40", h: "16", values: "speedHistory", max: "2" });
 
   await d.tab("Run");
   for (const v of [0.2, 0.8, 1.4, 1.9, 1.0]) {

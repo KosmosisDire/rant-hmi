@@ -8,8 +8,8 @@ export default async function ({ page, d, check, eventually }) {
   const origin = page.locator(".screen:not([hidden]) .artboard .origin");
 
   await d.addPage("Turns");
-  const dial = await d.add("drawing", { Name: "dial", x: "44", y: "44", w: "176", h: "176" });
-  const needle = await d.addShape("line", { Name: "needle", "From x": "88", "From y": "88", "To x": "88", "To y": "22", Stroke: "#e4e6e8", Thickness: "4" });
+  const dial = await d.add("drawing", { Name: "dial", x: "4", y: "4", w: "16", h: "16" });
+  const needle = await d.addShape("line", { Name: "needle", "From x": "8", "From y": "8", "To x": "8", "To y": "2", Stroke: "#e4e6e8", Thickness: "0.4" });
   check((await origin.count()) === 0, "the point shows on a shape that does not turn");
   await d.set({ Origin: '"50% 100%"', Rotate: "90" });
   await origin.waitFor();
@@ -22,7 +22,7 @@ export default async function ({ page, d, check, eventually }) {
   }, "the needle to point right");
 
   await d.deselect();
-  const card = await d.add("frame", { Name: "card", x: "396", y: "88", w: "176", h: "88", Origin: '"50% 50%"', Rotate: "45" });
+  const card = await d.add("frame", { Name: "card", x: "36", y: "8", w: "16", h: "8", Origin: '"50% 50%"', Rotate: "45" });
   await eventually(async () => (await page.locator(".screen:not([hidden]) .artboard .ring").evaluate((r) => r.style.transform)) === "rotate(45deg)", "the ring to turn with the card");
   near(middle(await origin.boundingBox()), middle(await d.el(card).boundingBox()), "the card's point is not its middle");
 

@@ -3,24 +3,24 @@
 // line's speed there, a drag sets it, and a readout beside it follows.
 
 export default async function ({ page, hmi, d, eventually }) {
-  await d.addComponent("Slider", 300, 44);
+  await d.addComponent("Slider", 27, 4);
   await d.addInput("value", "0", true);
   await d.addInput("min", "0");
   await d.addInput("max", "100");
   await d.addInput("step", "1");
   await d.addSends("change");
-  await d.add("frame", { Name: "slider", x: "0", y: "0", w: "300", h: "44", Fill: "", Radius: "" });
+  await d.add("frame", { Name: "slider", x: "0", y: "0", w: "27", h: "4", Fill: "", Radius: "" });
   await d.handler("drag", "value = Math.round((min + p.x * (max - min)) / step) * step;\nemit(\"change\", value);");
-  await d.add("frame", { Name: "track", x: "0", y: "18", w: "300", h: "8", Fill: "#3a4046", Radius: "4" });
+  await d.add("frame", { Name: "track", x: "0", y: "1.6", w: "27", h: "0.8", Fill: "#3a4046", Radius: "0.4" });
   await d.select("slider");
-  await d.add("frame", { Name: "fill", x: "0", y: "18", w: "(value - min) / (max - min) * 300", h: "8", Fill: "#4a8fd6", Radius: "4" });
+  await d.add("frame", { Name: "fill", x: "0", y: "1.6", w: "(value - min) / (max - min) * 27", h: "0.8", Fill: "#4a8fd6", Radius: "0.4" });
   await d.select("slider");
-  await d.add("frame", { Name: "thumb", x: "(value - min) / (max - min) * 300 - 11", y: "11", w: "22", h: "22", Fill: 'root.pressed ? "#ffffff" : "#e4e6e8"', Radius: "11" });
+  await d.add("frame", { Name: "thumb", x: "(value - min) / (max - min) * 27 - 1", y: "1", w: "2", h: "2", Fill: 'root.pressed ? "#ffffff" : "#e4e6e8"', Radius: "1" });
   await d.css('box-shadow: "0 1px 4px #0008"');
 
   await d.addPage("Sliders");
-  const speed = await d.place("Slider", { x: "44", y: "44", w: "300", h: "44", value: "Speed", max: "2", step: "0.1" });
-  await d.add("text", { Name: "Speed", x: "374", y: "44", w: "132", h: "44", Text: 'Speed.toFixed(1) + " m/s"', Colour: "#e4e6e8", Size: "22" });
+  const speed = await d.place("Slider", { x: "4", y: "4", w: "27", h: "4", value: "Speed", max: "2", step: "0.1" });
+  await d.add("text", { Name: "Speed", x: "34", y: "4", w: "12", h: "4", Text: 'Speed.toFixed(1) + " m/s"', Colour: "#e4e6e8", Size: "2" });
 
   await hmi.set("Speed", 0);
   await d.tab("Run");

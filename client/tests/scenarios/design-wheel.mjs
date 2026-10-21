@@ -22,7 +22,7 @@ export default async function ({ page, d, check }) {
 
   await page.locator('button[title="Show at 100%"]').click();
   check((await zoom()) === "100%", "the percent did not show the page at its true size");
-  check(Math.abs((await sheet()).width - 1408) < 1, "the page is not drawn at its true size");
+  check(Math.abs((await sheet()).width - 1280) < 1, "the page is not drawn at its true size");
 
   const keys = page.locator(".artboard .keys");
   await page.keyboard.press("Shift+Slash");

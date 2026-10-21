@@ -3,22 +3,22 @@
 // page, a plain one runs its tap, and a held one confirms only once its bar is full.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await d.addComponent("Button", 220, 66);
+  await d.addComponent("Button", 20, 6);
   await d.addInput("text", '"Start"');
   await d.addInput("holdMs", "0");
   await d.addSends("confirm");
-  await d.add("frame", { Name: "face", x: "0", y: "0", w: "220", h: "66", Fill: 'root.pressed ? "#1f5a24" : "#2e7d32"', Radius: "8" });
+  await d.add("frame", { Name: "face", x: "0", y: "0", w: "20", h: "6", Fill: 'root.pressed ? "#1f5a24" : "#2e7d32"', Radius: "0.8" });
   await d.handler("tap", 'if (!holdMs) emit("confirm");');
   await d.handler("hold", 'if (holdMs) emit("confirm");', "holdMs || 1e9");
-  await d.add("text", { Name: "label", x: "0", y: "0", w: "220", h: "66", Text: "text", Colour: "#ffffff", Size: "22", Weight: "600", Align: '"center"' });
-  await d.css('line-height: "66px"');
+  await d.add("text", { Name: "label", x: "0", y: "0", w: "20", h: "6", Text: "text", Colour: "#ffffff", Size: "2", Weight: "600", Align: '"center"' });
+  await d.css('line-height: "60px"');
   await d.select("face");
-  await d.add("frame", { Name: "bar", x: "0", y: "60", w: "holdMs ? 220 * Math.min(root.heldFor / holdMs, 1) : 0", h: "6", Fill: "#ffffffaa" });
+  await d.add("frame", { Name: "bar", x: "0", y: "5.5", w: "holdMs ? 20 * Math.min(root.heldFor / holdMs, 1) : 0", h: "0.5", Fill: "#ffffffaa" });
 
   await d.addPage("Hold buttons");
-  const start = await d.place("Button", { x: "44", y: "44", w: "220", h: "66", text: '"Start"' });
+  const start = await d.place("Button", { x: "4", y: "4", w: "20", h: "6", text: '"Start"' });
   await d.handler("confirm", "Running = true;");
-  const stop = await d.place("Button", { x: "308", y: "44", w: "220", h: "66", text: '"Hold to stop"', holdMs: "600" });
+  const stop = await d.place("Button", { x: "28", y: "4", w: "20", h: "6", text: '"Hold to stop"', holdMs: "600" });
   await d.handler("confirm", "Running = false;");
 
   await hmi.set("Running", false);
