@@ -46,13 +46,15 @@ export interface Holder {
   ox: string;
   oy: string;
   flow?: Flow;
+  /** With the first part on top, the z-index it takes, each after it one less. */
+  first?: number;
 }
 
 /** The page's corner, where its own elements count from. */
 const CORNER: Holder = { ox: "0px", oy: "0px" };
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "text", "value", "viewbox", "src", "fit", "markup"]);
+export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup"]);
 
 /** What a diagram holds: SVG shapes, whose every property but the name is an attribute. */
 export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
@@ -82,6 +84,7 @@ const LENGTHS = new Set([
   ...["font-size", "border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius"],
   ...["border-width", "padding", "margin", "gap", "row-gap", "column-gap", "letter-spacing", "outline-width", "outline-offset"],
   ...SIDES.flatMap((s) => [`padding-${s}`, `margin-${s}`, `border-${s}-width`]),
+  ...["min-width", "max-width", "min-height", "max-height"],
 ]);
 
 /** A page's ground from its fill, the theme's `$ground` when it has none. None for a component,
@@ -186,6 +189,8 @@ interface ElementProps {
   element: Element;
   scope: Scope;
   room: Holder;
+  /** Where it sits among what its frame holds. */
+  order?: number;
   overrides?: Overrides;
   design?: boolean;
   act?: Act;
@@ -344,7 +349,8 @@ function ElementView(p: ElementProps & { at?: At }) {
       for (const k of ["w", "h"] as const) {
         const side = k === "w" ? "width" : "height";
         // a size a grip holds is a number until the page carries it
-        if (word(k) === "fill" && k === along && !o) Object.assign(style, { flex: "1 1 0", [`min-${side}`]: "0" });
+        // a fill may shrink to nothing, or to the least its own min allows
+        if (word(k) === "fill" && k === along && !o) Object.assign(style, { flex: "1 1 0", [`min-${side}`]: style[`min-${side}`] ?? "0" });
         else if (word(k) === "fill" && !o) style["align-self"] = "stretch";
         else {
           const s = o ? `${(k === "w" ? o.w : o.h) * UNIT}px` : size(k);
@@ -368,23 +374,26 @@ function ElementView(p: ElementProps & { at?: At }) {
     }
     // it turns about its origin
     style["transform-origin"] = `${ox} ${oy}`;
+    // where parts overlap, the first on top when its frame says so, a repeat's copies in turn
+    if (p.room.first !== undefined && p.order !== undefined) style["z-index"] = String(p.room.first - p.order * COPIES - (p.at?.index ?? 0));
     if (flow) Object.assign(style, layoutCss(flow, take("wrap") === true, take("align"), spread));
     const text = p.element.tag === "span" ? words(take("text")) : "";
     const value = p.element.tag === "input" ? take("value") : undefined;
     const diagram = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
     const media = p.element.tag === "media" ? { alias: playable(p.element.props.src, () => take("src")), src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
-    return { style, unknown, faults, text, value, diagram, markup, media, holder: { ox, oy, flow } as Holder };
+    const first = p.element.tag === "div" && take("stack") === "first" ? p.element.children.length * COPIES : undefined;
+    return { style, unknown, faults, text, value, diagram, markup, media, holder: { ox, oy, flow, first } as Holder };
   });
   const press = usePress(p);
-  const inner = (c: Element) => <Placed element={c} scope={p.scope} room={look().holder} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
+  const inner = (c: Element, i: () => number) => <Placed element={c} scope={p.scope} room={look().holder} order={i()} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
   return (
     <div
       data-id={p.inside ? undefined : p.element.id}
       data-name={p.element.props.name}
       class="el"
       classList={{ text: p.element.tag === "span", unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), pressed: press.pressed() }}
-      style={{ ...look().style, "z-index": raised() === p.element ? "1" : undefined }}
+      style={{ ...look().style, "z-index": raised() === p.element ? String((p.room.first ?? 0) + 1) : look().style["z-index"] }}
       title={p.design && look().faults.length > 0 ? look().faults.join("\n") : undefined}
       ref={(el) => {
         press.ref(el);

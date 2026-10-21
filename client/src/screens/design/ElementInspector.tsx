@@ -59,7 +59,14 @@ const TEXT_LOOK: Spec[] = [
   // a text's lines within its box, as CSS aligns a block's content
   ["Vertical", "align-content", { kind: "choice", options: ['"start"', '"center"', '"end"'], placeholder: '"start"' }],
 ];
-const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...keysOf(RADIUS), ...keysOf(PADDING), "gap", "position"]);
+/** The least and most a size the page works out may be, each with its field once set. */
+const LIMITS: [string, string, "w" | "h", string][] = [
+  ["min w", "min-width", "w", "Min width"],
+  ["min h", "min-height", "h", "Min height"],
+  ["max w", "max-width", "w", "Max width"],
+  ["max h", "max-height", "h", "Max height"],
+];
+const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...keysOf(RADIUS), ...keysOf(PADDING), "gap", "position", ...LIMITS.map(([, key]) => key)]);
 
 /** The right sidebar: the selected element's properties, a word on several, or the page's
  *  when none is selected. */
@@ -276,15 +283,24 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     if (!sizing().hug && !sizing().fill) return undefined;
     const now = () => sizeWord(p.element.props[k]);
     const mark = (on: boolean) => (on ? <Check size={13} /> : undefined);
+    // a limit starts at the size drawn now, and a second pick takes it away
+    const limit = (key: string) => {
+      const doc = pageOf(p.page);
+      const b = doc && absolute(doc, p.element.id);
+      if (p.element.props[key] !== undefined) setProps(p.page, p.element.id, { [key]: null });
+      else if (b) setProps(p.page, p.element.id, { [key]: String(Math.round(k === "w" ? b.w : b.h)) });
+    };
     const choose = (lead: HTMLElement) => {
       const r = lead.getBoundingClientRect();
       openMenu({ x: r.left, y: r.bottom + 4 }, [
         { label: "Fixed", icon: mark(!now()), run: () => now() && fixed(k) },
         ...(sizing().hug ? [{ label: "Hug", icon: mark(now() === "hug"), run: () => setProps(p.page, p.element.id, { [k]: "hug" }) }] : []),
         ...(sizing().fill ? [{ label: "Fill", icon: mark(now() === "fill"), run: () => setProps(p.page, p.element.id, { [k]: "fill" }) }] : []),
+        "-",
+        ...LIMITS.filter(([, , of]) => of === k).map(([, key, , words]) => ({ label: words, icon: mark(p.element.props[key] !== undefined), run: () => limit(key) })),
       ]);
     };
-    return { icon: <span class="sizes">{k}</span>, title: "Drag to change it, click for Fixed, Hug or Fill", onClick: choose };
+    return { icon: <span class="sizes">{k}</span>, title: "Drag to change it, click for Fixed, Hug, Fill or its least and most", onClick: choose };
   };
   // the field a double click types into: the one asked for, else the element's main one
   const typed = (key: string) => {
@@ -362,6 +378,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             <For each={flowing() ? ["w", "h"] : ["x", "y", "w", "h"]}>
               {(k) => <Field {...prop(k)} label={k} kind="number" inside percent min={k === "w" || k === "h" ? 0 : undefined} lead={k === "w" || k === "h" ? sizes(k) : undefined} />}
             </For>
+            <For each={LIMITS.filter(([, key]) => p.element.props[key] !== undefined)}>{([label, key]) => <Field {...prop(key)} label={label} kind="number" inside min={0} />}</For>
           </div>
           <Show when={room()?.flows}>
             <Show
@@ -533,6 +550,18 @@ function AutoLayout(p: { page: string; element: Element; prop: (key: string) => 
         <div class="field">
           <label>Align</label>
           <Points values={POINTS.map((w) => `"${w}"`)} on={text("align") ?? '"top left"'} pick={(v) => set({ align: v === '"top left"' ? null : v })} />
+        </div>
+        {/* which part draws over the next where they overlap */}
+        <div class="field">
+          <label>On top</label>
+          <div class="choice">
+            <button classList={{ on: text("stack") !== '"first"' }} title="Each part over the one before it" onClick={() => set({ stack: null })}>
+              Last
+            </button>
+            <button classList={{ on: text("stack") === '"first"' }} title="Each part over the one after it" onClick={() => set({ stack: '"first"' })}>
+              First
+            </button>
+          </div>
         </div>
       </Show>
     </>
