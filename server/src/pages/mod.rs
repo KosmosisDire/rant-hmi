@@ -980,7 +980,7 @@ impl Pages {
             return Ok(());
         };
         let folder = if page.interface.is_some() { "components" } else { "pages" };
-        files::write(&self.root.join(folder).join(format!("{id}.html")), &format::write(page))
+        files::write(&self.root.join(folder).join(format!("{id}.html")), &format::write(page, &self.list))
     }
 }
 
@@ -1446,6 +1446,13 @@ mod tests {
         assert_eq!(again.get(&gauge).unwrap().interface.as_ref().unwrap().inputs, [input("level").unwrap()]);
         pages.apply(undo).unwrap();
         assert_eq!(pages.get("overview").unwrap().children[0].props["value"], "Speed");
+
+        // what is no input is CSS on the instance's box, written as a frame's style is
+        let id = pages.get("overview").unwrap().children[0].id.clone();
+        pages.apply(Edit::SetProps { page: "overview".into(), id: id.clone(), props: [("opacity".to_string(), Some("0.5".to_string()))].into() }).unwrap();
+        let file = fs::read_to_string(dir.join("pages").join("overview.html")).unwrap();
+        assert!(file.contains(&format!("<Gauge id=\"{id}\" x=\"0\" value=\"Speed\" style=\"opacity: 0.5\"/>")), "{file}");
+        assert_eq!(Pages::open(&dir).unwrap().get("overview").unwrap().children[0].props, pages.get("overview").unwrap().children[0].props);
 
         assert!(pages.apply(Edit::SetInput { page: gauge.clone(), name: "x".into(), input: input("x") }).unwrap_err().contains("keep clear"));
         assert!(pages.apply(Edit::SetInput { page: "overview".into(), name: "a".into(), input: input("a") }).unwrap_err().contains("only a component"));

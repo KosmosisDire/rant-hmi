@@ -83,6 +83,8 @@ const LIMITS: [string, string, "w" | "h", string][] = [
   ["max h", "max-height", "h", "Max height"],
 ];
 const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...keysOf(RADIUS), ...keysOf(PADDING), "gap", "position", ...LIMITS.map(([, key]) => key)]);
+/** What an instance's own fields show of its box: its turn, its place out of a flow, its size's bounds. */
+const BOX_NAMED = new Set(["rotate", "position", ...LIMITS.map(([, key]) => key)]);
 
 /** The right sidebar: the selected element's properties, a word on several, or the page's
  *  when none is selected. */
@@ -339,8 +341,9 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     return t && want === key ? t.n : undefined;
   };
   // the properties no field names, as CSS lines, or a shape's as attribute lines
-  const named = () => (shape() ? shapeKeys(p.element.tag) : NAMED);
-  const loose = (k: string) => !OWN.has(k) && !named().has(k);
+  const named = () => (shape() ? shapeKeys(p.element.tag) : instance() ? BOX_NAMED : NAMED);
+  const inputs = () => new Set(component(p.element.component ?? "")?.interface?.inputs.map((i) => i.name));
+  const loose = (k: string) => !OWN.has(k) && !named().has(k) && !(instance() && inputs().has(k));
   const other = () =>
     Object.entries(p.element.props)
       .filter(([k]) => loose(k))
@@ -489,6 +492,12 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
               <For each={inputs()}>{(i) => <Field {...prop(i.name)} label={i.name} kind={kindOf(i.default)} placeholder={i.default} />}</For>
             </Show>
           )}
+        </Show>
+        {/* CSS on the instance's box, as dimming or hiding it whole */}
+        <Show when={instance() && component(p.element.component ?? "")}>
+          <div class="section">More CSS</div>
+          <DraftInput multiline class="editor css" value={other()} placeholder={"opacity: Running ? 1 : 0.4"} onCommit={setOther} />
+          {faultNotes()}
         </Show>
         <Show when={text()}>
           <div class="section">Text</div>

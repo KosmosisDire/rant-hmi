@@ -117,6 +117,9 @@ component placed on a page is a tag named after it.
 
 - `name`, `x`, `y`, `w`, `h` and `origin` are attributes. A span's text is its body. Every
   other property goes in `style`.
+- An instance's inputs are attributes too, and its `style` is CSS on its box, as dimming it
+  whole: `<Meter id="e3" level="Speed * 10" style="opacity: Running ? 1 : 0.4"/>`. A name
+  its component has as an input is always that input.
 - Every length counts in units of 10 px, so they compare: a page's size, `x`, `y`, `w`, `h`,
   a diagram's own coordinates, and a plain number for `gap`, `padding`, `font-size`,
   `border-radius`, `border-width` and the like. A tenth is a pixel: `border-width: 0.1`.

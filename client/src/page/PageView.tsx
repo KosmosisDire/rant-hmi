@@ -315,10 +315,12 @@ function ElementView(p: ElementProps & { at?: At }) {
     // a frame that lays out what it holds, its gap "auto" spreading them over its length
     const flow = p.element.tag === "div" ? flowOf(take("layout")) : undefined;
     const spread = !!flow && take("gap") === "auto";
-    // an instance's other properties are its inputs, never CSS, but for how it turns and moves.
-    // Design draws no motion, so a drag and the outlines follow the pointer at once.
+    // an instance's inputs are never CSS, the rest is CSS on its box, as without its component
+    // all are inputs. Design draws no motion, so a drag and the outlines follow the pointer.
+    const made = p.element.tag === "use" ? component(p.element.component ?? "") : undefined;
+    const input = (key: string) => p.element.tag === "use" && (!made || !!made.interface?.inputs.some((i) => i.name === key));
     for (const key of Object.keys(p.element.props)) {
-      if (OWN.has(key) || (p.element.tag === "use" && key !== "rotate" && key !== "transition") || (key === "gap" && spread)) continue;
+      if (OWN.has(key) || input(key) || (key === "gap" && spread)) continue;
       if (key === "transition" && p.design) continue;
       const v = take(key);
       if (v === undefined || v === null || v === "") continue;
@@ -334,7 +336,6 @@ function ElementView(p: ElementProps & { at?: At }) {
     };
     const word = (k: "w" | "h") => sizeWord(p.element.props[k]);
     // a hugging instance takes its component's own size
-    const made = p.element.tag === "use" ? component(p.element.component ?? "") : undefined;
     const size = (k: "w" | "h") => {
       if (word(k) === "fill") return "100%";
       if (word(k) === "hug") return made ? `${(k === "w" ? made.width : made.height) * UNIT}px` : undefined;

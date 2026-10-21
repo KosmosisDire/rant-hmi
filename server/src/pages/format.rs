@@ -31,7 +31,9 @@ fn own_attrs(tag: Tag) -> &'static [&'static str] {
 
 // ------------------------------------------------------------------------------ writing
 
-pub fn write(page: &Page) -> String {
+/// The page as its file. `components` are the project's, whose inputs tell an instance's
+/// inputs from the CSS on its box.
+pub fn write(page: &Page, components: &[Page]) -> String {
     let root = if page.interface.is_some() { "component" } else { "page" };
     let shows = if page.shows == Shows::Over { " shows=\"over\"" } else { "" };
     let fill = if page.fill.is_empty() { String::new() } else { format!(" fill={}", quote(&page.fill)) };
@@ -48,13 +50,13 @@ pub fn write(page: &Page) -> String {
         out.push_str(&format!("  <var name={} start={}/>\n", quote(&v.name), quote(&v.start)));
     }
     for e in &page.children {
-        element(&mut out, e, 1);
+        element(&mut out, e, 1, components);
     }
     out.push_str(&format!("</{root}>\n"));
     out
 }
 
-fn element(out: &mut String, e: &Element, depth: usize) {
+fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
     let tag = e.word();
     out.push_str(&"  ".repeat(depth));
     out.push_str(&format!("<{tag} id={}", quote(&e.id)));
@@ -82,16 +84,17 @@ fn element(out: &mut String, e: &Element, depth: usize) {
         let rest = e.props.iter().filter(|(k, _)| {
             !ATTRS.contains(&k.as_str()) && (e.tag == Tag::Use || k.as_str() != TEXT) && !own.contains(&k.as_str()) && !(e.tag == Tag::Markup && k.as_str() == MARKUP)
         });
-        if e.tag == Tag::Use {
-            // an instance's inputs are attributes of their own
-            for (k, v) in rest {
-                out.push_str(&format!(" {k}={}", quote(v)));
-            }
-        } else {
-            let style: Vec<String> = rest.map(|(k, v)| format!("{k}: {v}")).collect();
-            if !style.is_empty() {
-                out.push_str(&format!(" style={}", quote(&style.join("; "))));
-            }
+        // an instance's inputs are attributes of their own, the rest CSS on its box as a frame's
+        // style is. Without its component each stays an attribute.
+        let interface = e.component.as_deref().and_then(|c| components.iter().find(|p| p.interface.is_some() && p.name == c)).and_then(|p| p.interface.as_ref());
+        let input = |k: &str| e.tag == Tag::Use && interface.is_none_or(|i| i.inputs.iter().any(|x| x.name == k));
+        let (inputs, rest): (Vec<_>, Vec<_>) = rest.partition(|(k, _)| input(k));
+        for (k, v) in inputs {
+            out.push_str(&format!(" {k}={}", quote(v)));
+        }
+        let style: Vec<String> = rest.into_iter().map(|(k, v)| format!("{k}: {v}")).collect();
+        if !style.is_empty() {
+            out.push_str(&format!(" style={}", quote(&style.join("; "))));
         }
     }
     let text = e.props.get(TEXT).filter(|_| body);
@@ -116,7 +119,7 @@ fn element(out: &mut String, e: &Element, depth: usize) {
                 lines(out, &inner, code);
             }
             for child in &e.children {
-                element(out, child, depth + 1);
+                element(out, child, depth + 1, components);
             }
             out.push_str(&"  ".repeat(depth));
             out.push_str(&format!("</{tag}>\n"));
@@ -534,7 +537,7 @@ mod tests {
         assert_eq!(speed.props["text"], "Speed < 1 ? \"slow; </span>\" : `fast ${Speed}`");
         assert_eq!(speed.props["color"], "Speed > 1 && Running ? 'red' : #e4e6e8");
         assert_eq!(page.children[0].children[1].props["text"], "\"Belt <1> & rollers\"");
-        assert_eq!(write(&page), PAGE);
+        assert_eq!(write(&page, &[]), PAGE);
     }
 
     #[test]
@@ -551,7 +554,7 @@ mod tests {
         let page = parse(text, "a").unwrap();
         assert_eq!(page.children[0].props["value"], "Settings.target");
         assert_eq!(page.children[1].handlers[0].event, "change");
-        assert_eq!(write(&page), text);
+        assert_eq!(write(&page, &[]), text);
     }
 
     #[test]
@@ -561,7 +564,7 @@ mod tests {
         let i = page.interface.as_ref().unwrap();
         assert_eq!(i.variables, [Local { name: "open".into(), start: "false".into() }]);
         assert_eq!(page.children[0].handlers[0].ms, "holdMs");
-        assert_eq!(write(&page), text);
+        assert_eq!(write(&page, &[]), text);
     }
 
     #[test]
@@ -573,7 +576,7 @@ mod tests {
         assert_eq!((svg.children[0].tag, svg.children[0].props["r"].as_str()), (Tag::Circle, "40"));
         assert_eq!(svg.children[1].children[0].handlers[0].code, "log(1);");
         assert_eq!((svg.children[2].tag, svg.children[2].props["text"].as_str()), (Tag::SvgText, "Speed.toFixed(1)"));
-        assert_eq!(write(&page), text);
+        assert_eq!(write(&page, &[]), text);
     }
 
     #[test]
@@ -596,7 +599,7 @@ mod tests {
         assert!(e.props["markup"].ends_with("</svg>` // never \"</markup>\""));
         assert_eq!((e.tag, e.handlers[0].code.as_str(), e.props["opacity"].as_str()), (Tag::Markup, "log(1);", "0.9"));
         assert!(!page.children[1].props.contains_key("markup"));
-        assert_eq!(write(&page), text);
+        assert_eq!(write(&page, &[]), text);
     }
 
     #[test]
@@ -605,7 +608,7 @@ mod tests {
         let page = parse(text, "a").unwrap();
         let e = &page.children[0];
         assert_eq!((e.tag, e.props["src"].as_str(), e.props["fit"].as_str()), (Tag::Media, "Camera", "\"slice\""));
-        assert_eq!(write(&page), text);
+        assert_eq!(write(&page, &[]), text);
     }
 
     #[test]
@@ -613,7 +616,7 @@ mod tests {
         let text = "<page name=\"A\" size=\"1408x792\">\n  <Button id=\"e1\" x=\"44\" text='\"Go\"'/>\n</page>\n";
         let page = parse(text, "a").unwrap();
         assert_eq!(page.children[0].props["text"], "\"Go\"");
-        assert_eq!(write(&page), text);
+        assert_eq!(write(&page, &[]), text);
     }
 
     #[test]
@@ -621,7 +624,7 @@ mod tests {
         let text = "<page name=\"A\" size=\"1408x792\" fill=\"$ground\">\n</page>\n";
         let page = parse(text, "a").unwrap();
         assert_eq!(page.fill, "$ground");
-        assert_eq!(write(&page), text);
+        assert_eq!(write(&page, &[]), text);
     }
 
     #[test]
@@ -629,11 +632,11 @@ mod tests {
         let mut page = parse(PAGE, "overview").unwrap();
         for v in ["Mode == \"Auto\" ? \"A\" : \"M\"", "a ? \"it's\" : 'b'", "\"&quot; &amp; &\""] {
             page.children[1].props.insert("x".into(), v.into());
-            let text = write(&page);
+            let text = write(&page, &[]);
             assert_eq!(parse(&text, "overview").unwrap(), page, "{v} as {text}");
         }
         page.children[1].props.insert("x".into(), "Mode == \"Auto\"".into());
-        assert!(write(&page).contains("x='Mode == \"Auto\"'"));
+        assert!(write(&page, &[]).contains("x='Mode == \"Auto\"'"));
     }
 
     #[test]
@@ -645,7 +648,7 @@ mod tests {
         let mut half = page.clone();
         half.children[0].handlers.push(Handler { event: "tap".into(), code: "open(\"".into(), ms: String::new() });
         half.children.push(Element { id: "e2".into(), tag: Tag::Span, component: None, props: [("text".to_string(), "\"Hi".to_string())].into(), handlers: vec![Handler { event: "tap".into(), code: "log(`".into(), ms: String::new() }], children: Vec::new() });
-        let again = parse(&write(&half), "a").unwrap();
+        let again = parse(&write(&half, &[]), "a").unwrap();
         assert_eq!(again.children[0].handlers[0].code, "open(\"");
         assert_eq!(again.children[1].handlers[0].code, "log(`");
         assert_eq!(again.children[1].props["text"], "\"Hi");
@@ -682,7 +685,7 @@ mod tests {
         assert_eq!(e1.handlers[1].event, "release");
         assert_eq!(e1.children[0].handlers[0].code, "Jog = 1;");
         assert_eq!(e1.children[0].props["text"], "Speed.toFixed(1)");
-        assert_eq!(write(&page), text);
+        assert_eq!(write(&page, &[]), text);
         assert_eq!(parse("<page><div id=\"a\"><on event=\"tap\"></on><on event=\"tap\"></on></div></page>", "a").unwrap_err(), "line 1: a second tap handler");
     }
 
@@ -853,7 +856,7 @@ mod tests {
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
         for _ in 0..10000 {
             let page = random_page(&mut rng);
-            let text = write(&page);
+            let text = write(&page, &[]);
             let back = parse(&text, "p").unwrap_or_else(|e| panic!("{e} in\n{text}"));
             assert_eq!(back, page, "read back otherwise:\n{text}");
         }
