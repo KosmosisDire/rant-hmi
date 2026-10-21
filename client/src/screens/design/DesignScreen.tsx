@@ -2,7 +2,7 @@ import { batch, createEffect, createSignal, on, onCleanup, onMount, Show, untrac
 import { UNIT } from "../../state/bind";
 import { onMoved, state } from "../../state/store";
 import { currentPage, openPage, tookWanted, wanted } from "../../state/view";
-import { Edge } from "../../ui/Sidebars";
+import { Edge, reveal, Sidebar } from "../../ui/Sidebars";
 import { Artboard, GRID, STEP } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
@@ -77,6 +77,13 @@ export function DesignScreen(p: { shown: boolean }) {
       at = id;
     });
   });
+
+  // on a phone an element picked from the drawer or tapped on the page shows in the sheet
+  const pickShown: Pick = (id, add) => {
+    pick(id, add);
+    if (id) reveal();
+  };
+  const tapped = (e: MouseEvent) => document.elementFromPoint(e.clientX, e.clientY)?.closest(".page-layer .el[data-id]") && reveal();
 
   // an element that went away leaves the selection
   createEffect(() => {
@@ -161,19 +168,19 @@ export function DesignScreen(p: { shown: boolean }) {
 
   return (
     <div class="screen" hidden={!p.shown}>
-      <aside class="sidebar left">
-        <Outline page={currentPage()} selected={selection()} onPick={pick} onEdit={edit} />
-      </aside>
+      <Sidebar side="left">
+        <Outline page={currentPage()} selected={selection()} onPick={pickShown} onEdit={edit} />
+      </Sidebar>
       <Edge side="left" />
-      <section class="detail">
+      <section class="detail" onClick={tapped}>
         <Show when={currentPage()} fallback={<div class="later">No page yet.</div>}>
           {(page) => <Artboard page={page()} selected={selection()} onPick={pick} onEdit={edit} keys={keys()} onKeys={setKeys} />}
         </Show>
       </section>
       <Edge side="right" />
-      <aside class="sidebar right">
+      <Sidebar side="right">
         <ElementInspector page={currentPage()} selected={selection()} typing={typing()} />
-      </aside>
+      </Sidebar>
     </div>
   );
 }

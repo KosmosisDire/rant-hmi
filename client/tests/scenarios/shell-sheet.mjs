@@ -19,12 +19,17 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await screen.locator(".tab", { hasText: "Design" }).tap();
   const cdp = await phone.newCDPSession(screen);
   const finger = (type, x, y) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y }] });
+  // the page's row is in the drawer, so it slides out first
+  const drawer = async () => {
+    if ((await screen.locator(".app.drawer-open").count()) === 0) await screen.locator(".topbar .bar-btn").first().tap();
+    await row(screen).waitFor();
+  };
   const longPress = () =>
     row(screen).evaluate((el) => {
       const r = el.getBoundingClientRect();
       el.dispatchEvent(new PointerEvent("contextmenu", { bubbles: true, cancelable: true, pointerType: "touch", clientX: r.x + 20, clientY: r.y + 10 }));
     });
-  const sheet = screen.locator(".sheet");
+  const sheet = screen.locator(".sheet:not(.dock)");
   const resting = async () => {
     let last = null;
     await eventually(async () => {
@@ -37,6 +42,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   };
 
   // the menu comes up the bottom, full width and as tall as its rows, nothing picked
+  await drawer();
   await longPress();
   await sheet.locator(".popover.menu").waitFor();
   const menu = await resting();
@@ -47,14 +53,17 @@ export default async function ({ page, hmi, sys, check, eventually }) {
 
   // a row runs as a tap
   const pages = hmi.state.pages.length;
+  await drawer();
   await longPress();
   await resting();
   await sheet.locator(".menu-item", { hasText: "Duplicate" }).tap();
   await eventually(() => hmi.state.pages.length === pages + 1, "the page duplicated from the sheet");
   check((await sheet.count()) === 0, "the menu stays after its row ran");
 
-  // a colour's picker spans the sheet
+  // a colour's picker spans the sheet, in the inspector's sheet raised by the right toggle
+  await drawer();
   await row(screen).tap();
+  await screen.locator(".topbar .bar-btn").last().tap();
   const lead = screen.locator(".screen:not([hidden]) .sidebar.right .lead").first();
   await lead.scrollIntoViewIfNeeded();
   await lead.tap();
@@ -65,9 +74,10 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await eventually(async () => (await sheet.count()) === 0, "the picker closed");
 
   // dragged down by its grip, it closes. Last, since a tap just after a quick drag stops a fling.
+  await drawer();
   await longPress();
   await resting();
-  const grip = await screen.locator(".sheet-grip").boundingBox();
+  const grip = await sheet.locator(".sheet-grip").boundingBox();
   await finger("touchStart", 195, grip.y + 10);
   for (const dy of [40, 120, 220]) await finger("touchMove", 195, grip.y + 10 + dy);
   await finger("touchEnd");

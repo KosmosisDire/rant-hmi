@@ -15,6 +15,7 @@ import { addMenu, elementMenu, layersMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
 import { chain, childrenOf, find, holds, moveAll, parentOf, tops } from "./tree";
 import { follow } from "../../ui/press";
+import { closeDrawer } from "../../ui/Sidebars";
 
 const FOLDS = ["open", "closed"] as const;
 
@@ -60,6 +61,11 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     if (page) openMenu({ x: at.left, y: at.bottom + 4 }, addMenu(page, place));
   };
   const pages = () => state.pages.filter((pg) => pg.interface === null);
+  // a pick from a phone's drawer puts it away, so the page shows
+  const show = (pg: Page) => {
+    openPage(pg.id);
+    closeDrawer();
+  };
   const components = () => state.pages.filter((pg) => pg.interface !== null);
   const addPage = () => {
     let n = pages().length + 1;
@@ -100,7 +106,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
       <div class="pages" classList={{ tall: !shown("layers") }} hidden={!shown("pages")}>
         <For each={pages()}>
           {(pg) => (
-            <button class="list-row" classList={{ selected: pg.id === p.page?.id }} onClick={() => openPage(pg.id)} onContextMenu={(e) => pageMenu(e, pg)}>
+            <button class="list-row" classList={{ selected: pg.id === p.page?.id }} onClick={() => show(pg)} onContextMenu={(e) => pageMenu(e, pg)}>
               <File size={14} />
               <span class="list-label">{pg.name}</span>
               <Show when={startPage() === pg.id}>

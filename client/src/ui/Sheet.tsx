@@ -1,9 +1,11 @@
 // A panel along the bottom of a phone's screen, as the explorer's. It rests at stops: its grip
-// alone unless it is modal, then all it holds while that is under half the screen, else 70
-// percent, then the screen below the top bar. A drag of the grip moves it and rests it at the
-// stop it was thrown toward, a tap on the grip steps it up, and a modal one dragged down closes.
+// alone unless it is modal, then all it holds while that is under half its room, else 70
+// percent, then its room but a strip. A drag of the grip moves it and rests it at the stop it
+// was thrown toward, a tap on the grip steps it up, and a modal one dragged down closes. Its
+// room is the screen, or when docked what holds it, which it tells how tall it rests as --sheet
+// so the rest can keep clear of it.
 
-import { createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { follow } from "./press";
 
 /** A drag further than this rests the sheet at the next stop its way, else at the nearest. */
@@ -11,16 +13,30 @@ const THROW = 24;
 /** What the highest stop leaves showing above it, so the sheet still reads as one. */
 const ABOVE = 48;
 
-export function Sheet(p: { ref?: (el: HTMLDivElement) => void; class?: string; modal?: boolean; scrim?: boolean; onClose?: () => void; children: JSX.Element }) {
+export function Sheet(p: {
+  ref?: (el: HTMLDivElement) => void;
+  class?: string;
+  modal?: boolean;
+  docked?: boolean;
+  scrim?: boolean;
+  onClose?: () => void;
+  /** The stop to rest at, counted from the lowest, for an owner that moves it too. */
+  stop?: number;
+  onStop?: (stop: number) => void;
+  children: JSX.Element;
+}) {
+  let box!: HTMLDivElement;
   let grip!: HTMLDivElement;
   let content!: HTMLDivElement;
   const [stops, setStops] = createSignal<number[]>([0]);
-  const [stop, setStop] = createSignal(0);
+  const [own, setOwn] = createSignal(0);
+  const stop = () => Math.min(p.stop ?? own(), stops().length - 1);
+  const setStop = (n: number) => (p.onStop ? p.onStop(n) : setOwn(n));
   const [dragged, setDragged] = createSignal<number | null>(null);
   const [shown, setShown] = createSignal(false);
 
   const measure = () => {
-    const room = innerHeight;
+    const room = box.offsetParent ? box.offsetParent.clientHeight : innerHeight;
     const holds = grip.offsetHeight + content.offsetHeight;
     const list = p.modal ? [] : [grip.offsetHeight];
     const middle = holds <= room * 0.5 ? holds : Math.min(holds, room * 0.7);
@@ -28,9 +44,10 @@ export function Sheet(p: { ref?: (el: HTMLDivElement) => void; class?: string; m
     const full = Math.min(holds, room - ABOVE);
     if (full > list.at(-1)! + 1) list.push(full);
     setStops(list);
-    setStop((s) => Math.min(s, list.length - 1));
   };
-  const height = () => (shown() ? (dragged() ?? stops()[stop()]) : 0);
+  const rest = () => (shown() ? stops()[stop()] : 0);
+  const height = () => dragged() ?? rest();
+  createEffect(() => p.docked && box.parentElement?.style.setProperty("--sheet", `${Math.ceil(rest())}px`));
 
   const down = (e: PointerEvent) => {
     if (e.button !== 0) return;
@@ -44,7 +61,7 @@ export function Sheet(p: { ref?: (el: HTMLDivElement) => void; class?: string; m
         const at = dragged() ?? h0;
         setDragged(null);
         const list = stops();
-        if (Math.abs(moved) < 4) return setStop((s) => (s + 1) % list.length);
+        if (Math.abs(moved) < 4) return setStop((stop() + 1) % list.length);
         if (p.modal && moved < -THROW && at < list[0]) return p.onClose?.();
         let next = list.reduce((best, h, i) => (Math.abs(h - at) < Math.abs(list[best] - at) ? i : best), 0);
         if (moved > THROW) next = list.findIndex((h) => h >= at - 1);
@@ -73,7 +90,15 @@ export function Sheet(p: { ref?: (el: HTMLDivElement) => void; class?: string; m
       <Show when={p.scrim}>
         <div class="sheet-scrim" />
       </Show>
-      <div ref={p.ref} class={`sheet ${p.class ?? ""}`} classList={{ dragging: dragged() !== null }} style={{ height: `${Math.ceil(height())}px` }}>
+      <div
+        ref={(el) => {
+          box = el;
+          p.ref?.(el);
+        }}
+        class={`sheet ${p.class ?? ""}`}
+        classList={{ dock: p.docked, dragging: dragged() !== null }}
+        style={{ height: `${Math.ceil(height())}px` }}
+      >
         <div ref={grip} class="sheet-grip" onPointerDown={down} />
         <div class="sheet-body">
           <div ref={content} class="sheet-content">

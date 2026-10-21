@@ -1,7 +1,8 @@
-// The page on its artboard: the wheel zooms, a drag on empty space pans, elements move and
-// resize on the grid (Alt slips it), and a drag writes when it ends.
+// The page on its artboard: the wheel or a pinch zooms, a drag on empty space or with two
+// fingers pans, elements move and resize on the grid (Alt slips it), and a drag writes when it
+// ends.
 
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import { type Box, PageView, pageGround, SHAPES } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
@@ -9,6 +10,7 @@ import type { Page } from "../../protocol/Page";
 import type { Pick } from "./DesignScreen";
 import { Keyboard } from "../../ui/icons";
 import { follow } from "../../ui/press";
+import { fingered } from "../../ui/touch";
 import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
@@ -28,6 +30,9 @@ const LEVELS = [
   [GRID * 16, 0.06],
 ] as const;
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
+/** Under a finger a side shorter on screen than this keeps its corner grips alone, so a press
+ *  in the middle of a small element still moves it. */
+const SIDE = 48;
 type Handle = (typeof HANDLES)[number];
 
 /** Each grip's direction on an unturned box, in degrees clockwise from east. */
@@ -85,6 +90,9 @@ function keysFor(kind: "move" | Handle): (keyof Box)[] {
   if (kind.includes("s")) keys.push("h");
   return keys;
 }
+
+/** Screen pixels per unit, kept to where the page still reads. */
+const zoomed = (k: number) => Math.min(8 * UNIT, Math.max(0.1 * UNIT, k));
 
 function snap(v: number, free: boolean) {
   return free ? Math.round(v * UNIT) / UNIT : Math.round(v / GRID) * GRID;
@@ -163,6 +171,10 @@ export function Artboard(p: {
     setHeld((all) => (all[id] && (n === undefined || all[id].n === n) ? Object.fromEntries(Object.entries(all).filter(([k]) => k !== id)) : all));
   let drag: Drag | null = null;
   let drags = 0;
+  /** The fingers on the artboard, where each is now, and the pinch two of them make: how far
+   *  apart they began, their middle then and the view then. */
+  const fingers = new Map<number, { x: number; y: number }>();
+  let pinch: { d: number; cx: number; cy: number; view: { k: number; x: number; y: number } } | null = null;
 
   let fittedFor = "";
   const fit = () => {
@@ -208,7 +220,11 @@ export function Artboard(p: {
 
   onMount(() => {
     // fits once the artboard first has a size, and again for each page opened
-    const watch = new ResizeObserver(() => (fittedFor !== p.page.id ? fit() : draw()));
+    const watch = new ResizeObserver(() => {
+      if (fittedFor !== p.page.id) return fit();
+      draw();
+      keep();
+    });
     watch.observe(host);
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -217,7 +233,7 @@ export function Artboard(p: {
       const [px, py] = [e.clientX - r.left, e.clientY - r.top];
       // a wheel's notch, a trackpad's glide and a pinch all zoom, never by a leap
       const dy = Math.max(-120, Math.min(120, e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY));
-      const k = Math.min(8 * UNIT, Math.max(0.1 * UNIT, v.k * Math.exp(-dy * 0.002)));
+      const k = zoomed(v.k * Math.exp(-dy * 0.002));
       setView({ k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k });
     };
     host.addEventListener("wheel", wheel, { passive: false });
@@ -245,7 +261,41 @@ export function Artboard(p: {
     }
   });
 
+  // a second finger puts back what the first began and pinches, and the pinch ends when either
+  // lifts, so the one left does nothing until it lifts too
+  const finger = (e: PointerEvent) => {
+    const at = (m: PointerEvent) => fingers.set(m.pointerId, { x: m.clientX, y: m.clientY });
+    at(e);
+    follow(e, {
+      move: (m) => {
+        at(m);
+        if (pinch) pinchTo();
+      },
+      end: () => {
+        fingers.delete(e.pointerId);
+        pinch = null;
+      },
+    });
+    if (fingers.size !== 2) return fingers.size > 2;
+    cancel();
+    const [a, b] = [...fingers.values()];
+    const r = host.getBoundingClientRect();
+    pinch = { d: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)), cx: (a.x + b.x) / 2 - r.left, cy: (a.y + b.y) / 2 - r.top, view: view() };
+    return true;
+  };
+  // the point of the page under the fingers' middle stays under it as they spread and move
+  const pinchTo = () => {
+    if (!pinch || fingers.size !== 2) return;
+    const [a, b] = [...fingers.values()];
+    const r = host.getBoundingClientRect();
+    const [cx, cy] = [(a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top];
+    const v = pinch.view;
+    const k = zoomed((v.k * Math.hypot(b.x - a.x, b.y - a.y)) / pinch.d);
+    setView({ k, x: cx - ((pinch.cx - v.x) * k) / v.k, y: cy - ((pinch.cy - v.y) * k) / v.k });
+  };
+
   const down = (e: PointerEvent) => {
+    if (e.pointerType === "touch" && finger(e)) return;
     const target = e.target as HTMLElement;
     const v = view();
     // a field being typed in commits before the canvas takes over
@@ -517,6 +567,24 @@ export function Artboard(p: {
     });
     onCleanup(() => cancelAnimationFrame(frame));
   });
+  // the one picked element stays in sight: picked out of it, as from the layers, or covered as
+  // the artboard shrinks, as under a phone's sheet. One a press picks stays put under it.
+  const keep = () => {
+    const id = one();
+    const el = id && !drag && host.querySelector(`.page-layer [data-id="${id}"]`);
+    if (!el) return;
+    const [r, b] = [host.getBoundingClientRect(), el.getBoundingClientRect()];
+    // along one side: wholly in with a margin, or one too big to fit at least partly in
+    const into = (a0: number, a1: number, size: number) => {
+      const m = Math.min(16, size / 4);
+      if (a1 - a0 > size - 2 * m) return a0 > size - m || a1 < m ? m - a0 : 0;
+      return a0 < m ? m - a0 : a1 > size - m ? size - m - a1 : 0;
+    };
+    const [dx, dy] = [into(b.left - r.left, b.right - r.left, r.width), into(b.top - r.top, b.bottom - r.top, r.height)];
+    const v = view();
+    if (dx !== 0 || dy !== 0) setView({ ...v, x: v.x + dx, y: v.y + dy });
+  };
+  createEffect(on(one, () => queueMicrotask(keep), { defer: true }));
   const turnsOf = (id: string): Turns => {
     const el = host.querySelector(`.page-layer [data-id="${id}"]`);
     const angle = (x: globalThis.Element) => parseFloat(getComputedStyle(x).rotate) || 0;
@@ -556,7 +624,10 @@ export function Artboard(p: {
   const grips = (id: string) => {
     const m = shape(id) ? measured()[id] : undefined;
     const e = find(p.page.children, id);
-    return HANDLES.filter((h) => !(m && m.height < 2 && /^[ns]$/.test(h)) && !(m && m.width < 2 && /^[ew]$/.test(h)) && (shape(id) || (!!e && resizable(e, h))));
+    const b = !shape(id) && fingered ? absolute(p.page, id, overrides) : undefined;
+    const [w, h] = m ? [m.width, m.height] : b ? [b.w * view().k, b.h * view().k] : [Infinity, Infinity];
+    const short = (g: Handle) => fingered && ((w < SIDE && /^[ns]$/.test(g)) || (h < SIDE && /^[ew]$/.test(g)));
+    return HANDLES.filter((g) => !(m && m.height < 2 && /^[ns]$/.test(g)) && !(m && m.width < 2 && /^[ew]$/.test(g)) && !short(g) && (shape(id) || (!!e && resizable(e, g))));
   };
   // the point shows once the element says how it turns
   const turns = (id: string) => {

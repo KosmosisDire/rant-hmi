@@ -896,7 +896,7 @@ table.grid td.name > span {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
 }
 
 .sheet {
@@ -921,7 +921,7 @@ table.grid td.name > span {
 
 .sheet-grip {
   flex: 0 0 auto;
-  height: 28px;
+  height: var(--grip);
   touch-action: none;
   cursor: grab;
 }

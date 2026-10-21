@@ -5,3 +5,6 @@
 window.addEventListener("contextmenu", (e) => e.preventDefault(), true);
 
 window.addEventListener("pointerdown", (e) => (document.documentElement.dataset.pointer = e.pointerType), true);
+
+/** Whether the main pointer is a finger, as tokens.css sizes for it. */
+export const fingered = matchMedia("(pointer: coarse)").matches;

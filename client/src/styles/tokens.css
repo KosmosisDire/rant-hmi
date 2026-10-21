@@ -33,6 +33,7 @@
 
   --float: rgba(27, 27, 27, 0.94);
   --shadow: rgba(10, 0, 0, 0.39);
+  --scrim: rgba(0, 0, 0, 0.45);
   --stripe: rgba(0, 0, 0, 0.08);
   --cell-hover: rgba(255, 255, 255, 0.04);
 
@@ -43,6 +44,8 @@
   --pad: 12px;
   --radius: 5px;
   --scrollbar: 8px;
+  /* what a phone's sheet shows of itself when it is down */
+  --grip: 28px;
 
   /* what a finger needs more room for: a table row, a list row, a button, a field, a menu
      line and a head */

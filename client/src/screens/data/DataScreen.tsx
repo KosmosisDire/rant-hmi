@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { Edge } from "../../ui/Sidebars";
+import { Edge, Sidebar } from "../../ui/Sidebars";
 import { ComputedTable } from "./Computed";
 import { MeshImports } from "./MeshImports";
 import { Inspector } from "./Inspector";
@@ -37,9 +37,9 @@ export function DataScreen(p: { onOpen: (page: string) => void }) {
   };
   return (
     <>
-      <aside class="sidebar left">
+      <Sidebar side="left">
         <MeshTree {...picking} />
-      </aside>
+      </Sidebar>
       <Edge side="left" />
       <section class="detail data-detail">
         <MeshImports {...picking} />
@@ -49,9 +49,9 @@ export function DataScreen(p: { onOpen: (page: string) => void }) {
         <ThemeTable {...picking} />
       </section>
       <Edge side="right" />
-      <aside class="sidebar right">
+      <Sidebar side="right">
         <Inspector {...picking} />
-      </aside>
+      </Sidebar>
     </>
   );
 }

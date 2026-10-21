@@ -325,48 +325,10 @@
   color: var(--dim);
 }
 
-/* ------------------------------------------------------------------ phones */
-
-/* A phone gives the four tabs equal room, each its icon over its name, and counts the
-   nodes in place of naming them. */
-@media (max-width: 600px) {
-  .topbar {
-    gap: 2px;
-    padding: 0 4px;
-  }
-
-  .logo,
-  .tab .count,
-  .statusbar .node {
-    display: none;
-  }
-
-  .tabs {
-    flex: 1;
-    margin-right: 0;
-  }
-
-  .tab {
-    flex: 1 1 0;
-    flex-direction: column;
-    justify-content: center;
-    gap: 2px;
-    padding: 0 2px;
-    font-size: 10px;
-  }
-
-  .tab:not(:last-child) {
-    border-right: 0;
-  }
-
-  .statusbar .nodes {
-    display: inline-flex;
-  }
-}
-
 /* ------------------------------------------------------------------ narrow screens */
 
-@media (max-width: 900px) {
+/* Wider than a phone yet too narrow for both sidebars beside the detail, it stacks them. */
+@media (width > 600px) and (width <= 900px) {
   body {
     overflow: auto;
   }
@@ -397,5 +359,96 @@
   .app.left-closed .sidebar.left,
   .app.right-closed .sidebar.right {
     display: none;
+  }
+}
+
+/* ------------------------------------------------------------------ phones */
+
+/* A phone gives the four tabs equal room, each its icon over its name, and counts the nodes
+   in place of naming them. The detail fills the screen down to the sheet, as tall as it rests.
+   As the explorer's, the left sidebar is a drawer over the detail and the right one that sheet. */
+@media (max-width: 600px) {
+  .topbar {
+    gap: 2px;
+    padding: 0 4px;
+  }
+
+  .logo,
+  .tab .count,
+  .statusbar .node,
+  .edge {
+    display: none;
+  }
+
+  .tabs {
+    flex: 1;
+    margin-right: 0;
+  }
+
+  .tab {
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 0 2px;
+    font-size: 10px;
+  }
+
+  .tab:not(:last-child) {
+    border-right: 0;
+  }
+
+  .statusbar .nodes {
+    display: inline-flex;
+  }
+
+  .detail {
+    padding-bottom: var(--sheet, 0px);
+  }
+
+  /* hidden once it has slid away, so nothing in it takes a tap or a tab */
+  .sidebar.left {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 6;
+    width: min(86%, 340px);
+    border-right: 0;
+    border-radius: 0 16px 16px 0;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.2s ease-out, visibility 0s 0.2s;
+  }
+
+  .app.drawer-open .sidebar.left {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.2s ease-out;
+  }
+
+  .drawer-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    background: var(--scrim);
+  }
+
+  .sheet.dock {
+    position: absolute;
+    z-index: 4;
+  }
+
+  .sheet.dock .sheet-content {
+    padding: 0;
+  }
+
+  .sheet.dock .sidebar.right {
+    width: auto;
+    overflow: visible;
+    background: none;
+    border: 0;
+    box-shadow: none;
+    transition: none;
   }
 }

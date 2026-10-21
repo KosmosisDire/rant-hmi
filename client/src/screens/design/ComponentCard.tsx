@@ -1,5 +1,6 @@
 // A component as a card in the Design sidebar: a live picture of it over its name. A click
-// opens it, and a drag places an instance on the open page, centred where it lands.
+// opens it, and a drag places an instance on the open page, centred where it lands. Either
+// puts a phone's drawer away.
 
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
@@ -9,6 +10,7 @@ import { UNIT } from "../../state/bind";
 import { openPage } from "../../state/view";
 import { addElement } from "./add";
 import { follow } from "../../ui/press";
+import { closeDrawer } from "../../ui/Sidebars";
 
 /** How far a press moves before it is a drag and no longer a click. */
 const SLOP = 6;
@@ -60,6 +62,7 @@ export function ComponentCard(p: { component: Page; open: boolean; page: Page | 
       if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < SLOP) return;
       card.setPointerCapture(e.pointerId);
       dragged = true;
+      closeDrawer();
     }
     setGhost({ x: e.clientX, y: e.clientY });
   };
@@ -84,7 +87,11 @@ export function ComponentCard(p: { component: Page; open: boolean; page: Page | 
       class="card"
       title={p.component.name}
       classList={{ selected: p.open, dragged: !!ghost() }}
-      onClick={() => !dragged && openPage(p.component.id)}
+      onClick={() => {
+        if (dragged) return;
+        openPage(p.component.id);
+        closeDrawer();
+      }}
       onPointerDown={down}
       onContextMenu={(e) => {
         end();

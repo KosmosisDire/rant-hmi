@@ -145,6 +145,31 @@
 .handle.sw { left: 0; top: 100%; cursor: nesw-resize; }
 .handle.w { left: 0; top: 50%; cursor: ew-resize; }
 
+/* a finger needs a bigger grip with room around it to land in, all outside the element so
+   a press anywhere on a small one still moves it */
+@media (pointer: coarse) {
+  .handle {
+    width: 13px;
+    height: 13px;
+    margin: -7px 0 0 -7px;
+  }
+
+  .handle::before {
+    content: "";
+    position: absolute;
+    inset: -11px;
+  }
+
+  .handle[data-handle*="n"] { margin-top: -13px; }
+  .handle[data-handle*="s"] { margin-top: 0; }
+  .handle[data-handle*="e"] { margin-left: 0; }
+  .handle[data-handle*="w"] { margin-left: -13px; }
+  .handle[data-handle*="n"]::before { bottom: 0; }
+  .handle[data-handle*="s"]::before { top: 0; }
+  .handle[data-handle*="e"]::before { left: 0; }
+  .handle[data-handle*="w"]::before { right: 0; }
+}
+
 .zoom {
   position: absolute;
   right: 12px;

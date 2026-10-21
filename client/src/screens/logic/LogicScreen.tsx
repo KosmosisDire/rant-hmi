@@ -14,7 +14,7 @@ import { putLocal, state } from "../../state/store";
 import { uses } from "../../state/uses";
 import { currentPage, openElement } from "../../state/view";
 import { DraftInput } from "../../ui/DraftInput";
-import { Edge } from "../../ui/Sidebars";
+import { Edge, Sidebar } from "../../ui/Sidebars";
 import { painted } from "../../ui/highlight";
 import { Activity, CopyPlus, Monitor, MonitorOff, PenTool, Plus, Power, Search, Timer, Trash, X, Zap } from "../../ui/icons";
 import { openMenu } from "../../ui/Menu";
@@ -166,7 +166,7 @@ export function LogicScreen(p: { shown: boolean }) {
   };
   return (
     <div class="screen logic" hidden={!p.shown}>
-      <aside class="sidebar left">
+      <Sidebar side="left">
         <div class="pane-head">
           <div class="filter">
             <Search size={14} />
@@ -219,7 +219,7 @@ export function LogicScreen(p: { shown: boolean }) {
             )}
           </Show>
         </div>
-      </aside>
+      </Sidebar>
       <Edge side="left" />
       <section class="detail">
         <Switch fallback={<div class="later">Pick a handler on the left.</div>}>
@@ -256,7 +256,7 @@ export function LogicScreen(p: { shown: boolean }) {
         </Switch>
       </section>
       <Edge side="right" />
-      <aside class="sidebar right">
+      <Sidebar side="right">
         <div class="pane-head">
           <span class="head-title">Uses</span>
         </div>
@@ -284,7 +284,7 @@ export function LogicScreen(p: { shown: boolean }) {
             <div class="field-hint where-runs">{where()}</div>
           </Show>
         </div>
-      </aside>
+      </Sidebar>
     </div>
   );
 }
