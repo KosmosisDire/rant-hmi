@@ -17,7 +17,8 @@ import { FIT, picture, PictureView } from "../ui/Picture";
 import { follow } from "../ui/press";
 import { componentAct, type Act } from "./act";
 import { svgOf } from "./markup";
-import { POINTER, TIMED } from "../state/events";
+import { EVENTS } from "../protocol/events";
+import { eventInfo } from "../state/events";
 
 export interface Box {
   x: number;
@@ -85,7 +86,7 @@ export function viewBox(v: unknown): [number, number, number, number] | null {
 const COPIES = 500;
 
 /** The events a press on the element itself starts, which make it look pressable. */
-const PRESSES = POINTER.filter((e) => e !== "outside");
+const PRESSES = EVENTS.filter((e) => e.from === "pointer" && e.name !== "outside").map((e) => e.name);
 
 /** The instance pressed last, drawn above the others so what it opens is never hidden. */
 const [raised, setRaised] = createSignal<Element | null>(null);
@@ -269,12 +270,13 @@ function usePress(p: ElementProps & { at?: At }) {
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
   const fire = (event: string, payload: Pointer) => p.act?.fire(p.element, event, payload, p.at);
   // a hold's or a repeat's time, an expression read where the element sits
-  const msOf = (event: string) => {
+  const msOf = (event: string, setting: string) => {
     const h = p.element.handlers.find((x) => x.event === event);
     if (!h) return undefined;
-    const r = resolve(h.ms || String(TIMED[event].ms), p.scope);
+    const fallback = Number(eventInfo(event)?.settings.find((s) => s.name === setting)?.default);
+    const r = resolve(h.attrs[setting] || String(fallback), p.scope);
     const n = r.ok ? Number(r.value) : NaN;
-    return Number.isFinite(n) ? n : TIMED[event].ms;
+    return Number.isFinite(n) ? n : fallback;
   };
   let self: globalThis.Element | undefined;
   let landed: { e: PointerEvent; at: Pointer } | undefined;
@@ -293,10 +295,10 @@ function usePress(p: ElementProps & { at?: At }) {
     fire("press", { ...at });
     fire("drag", { ...at });
     let last: PointerEvent = e;
-    const ms = msOf("hold");
+    const ms = msOf("hold", "after");
     const held = ms === undefined ? undefined : setTimeout(() => fire("hold", pointer(el, last, on)), ms);
     // a repeat runs at once, then on each beat until the press ends
-    const every = msOf("repeat");
+    const every = msOf("repeat", "every");
     if (every !== undefined) fire("repeat", { ...at });
     const beat = every === undefined ? undefined : setInterval(() => fire("repeat", pointer(el, last, on)), Math.max(every, QUICKEST));
     // a drag goes out at most once a frame, with the latest place

@@ -77,11 +77,15 @@ function edited(s: State, e: Edit) {
       if (!el) return;
       if (e.code === null) {
         if (at >= 0) el.handlers.splice(at, 1);
-      } else if (at >= 0) {
-        Object.assign(el.handlers[at], { code: e.code, ms: e.ms ?? el.handlers[at].ms });
-      } else {
-        el.handlers.push({ event: e.event, code: e.code, ms: e.ms ?? "" });
+        return;
       }
+      const attrs = { ...el.handlers[at]?.attrs };
+      for (const [k, v] of Object.entries(e.attrs ?? {})) {
+        if (v?.trim()) attrs[k] = v.trim();
+        else delete attrs[k];
+      }
+      if (at >= 0) Object.assign(el.handlers[at], { code: e.code, attrs });
+      else el.handlers.push({ event: e.event, code: e.code, attrs });
     }
   }
 }

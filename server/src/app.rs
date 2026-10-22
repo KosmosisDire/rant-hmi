@@ -14,6 +14,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{info, warn};
 
 use crate::authorize::{Who, authorize};
+use crate::events;
 use crate::lanes::{Lanes, PIECE};
 use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
@@ -39,9 +40,6 @@ const LOST: Duration = Duration::from_secs(5);
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
-/// Events a second of, while the first still runs, is ignored. Any other is a stream, such as a
-/// drag or a joystick's move, whose latest must land, so it waits for the run.
-const ONCE: [&str; 6] = ["tap", "press", "release", "hold", "repeat", "outside"];
 
 /// What a screen's connection hands the loop.
 pub enum Inbound {
@@ -722,7 +720,7 @@ impl App {
         let Some(h) = e.handlers.iter().find(|h| h.event == event) else { return };
         let index = at.as_ref().map(|(i, _)| *i);
         if self.runs.values().any(|r| r.page == page && r.id == id && r.index == index && r.event == event) {
-            if !ONCE.contains(&event.as_str()) {
+            if !events::find(&event).is_some_and(|e| e.once) {
                 self.waiting.insert((page, id, index, event), (session, payload, at));
             }
             return;

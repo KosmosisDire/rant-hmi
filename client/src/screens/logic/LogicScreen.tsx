@@ -245,8 +245,8 @@ export function LogicScreen(p: { shown: boolean }) {
                     code={h().h.code}
                     onCode={(code) => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code })}
                     onRemove={() => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code: null })}
-                    ms={h().h.ms}
-                    onMs={(ms) => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code: h().h.code, ms })}
+                    attrs={h().h.attrs}
+                    onAttr={(name, text) => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code: h().h.code, attrs: { [name]: text || null } })}
                     removeTitle={`Remove the ${h().h.event} handler`}
                     place={h().pg.interface ? "component" : "handler"}
                     names={namesOf(h().pg)}

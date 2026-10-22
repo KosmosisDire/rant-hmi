@@ -18,7 +18,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addSends("confirm");
   await d.add("frame", { Name: "face", x: "0", y: "0", w: "100%", h: "100%", Fill: "root.pressed ? fill.darken(0.15) : fill", Radius: "radius", Overflow: '"hidden"' });
   await d.handler("tap", 'if (!holdMs) emit("confirm");');
-  await d.handler("hold", 'if (holdMs) emit("confirm");', "holdMs || 1e9");
+  await d.handler("hold", 'if (holdMs) emit("confirm");', { "After ms": "holdMs || 1e9" });
   await d.add("frame", { Name: "progress", x: "0", y: "0", w: "(holdMs ? 100 * Math.min(root.heldFor / holdMs, 1) : 0)%", h: "100%", Fill: "holdColour", Radius: "" });
   await d.select("face");
   await d.add("frame", { Name: "content", x: "0", y: "0", w: "100%", h: "100%", Fill: "", Radius: "" });

@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod authorize;
+pub mod events;
 pub mod lanes;
 pub mod files;
 pub mod flight;

@@ -99,7 +99,8 @@ A screen opens a WebRTC connection beside its socket where it can, for speed and
 - `style` holds the rest as CSS, with lengths in units: `layout: "down"; gap: 1; padding: 1`
   lays out a frame's parts. CSS in quotes is taken as written: `box-shadow: "0 2px 8px #0008"`.
 - `<on event="...">` holds a handler: `tap`, `press`, `release`, `hold`, `repeat`, `drag` or
-  `outside`. Its `p` holds `x` and `y` across the element, 0 to 1.
+  `outside`. Its `p` holds `x` and `y` across the element, 0 to 1. A hold runs
+  `after="ms"`, 500 when left out, and a repeat `every="ms"`, 100. Each is an expression.
 - `repeat="6"` or `repeat="Jobs"` draws an element once per item, reading `index` and `item`.
 - `<svg>` holds shapes, `<markup>` SVG made by code, `<media src="Camera"/>` a camera or a
   picture, and `<input>` a field to type in.

@@ -32,7 +32,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
     'emit("move", { x: kx, y: -ky });',
   ].join("\n"));
   await d.handler("release", 'kx = 0;\nky = 0;\nemit("move", { x: 0, y: 0 });\nemit("held", { x: 0, y: 0 });');
-  await d.handler("repeat", 'emit("held", { x: kx, y: -ky });', "repeatMs");
+  await d.handler("repeat", 'emit("held", { x: kx, y: -ky });', { "Every ms": "repeatMs" });
   await d.addShape("circle", { Name: "ring", "Centre x": "10", "Centre y": "10", Radius: "travel", Fill: '"none"', Stroke: "lineColour", Thickness: "0.2", Dashes: '"0.4 0.6"' });
   await d.css('pointer-events: "none"');
   await d.addShape("circle", { Name: "knob", "Centre x": "10 + kx * travel", "Centre y": "10 + ky * travel", Radius: "3", Fill: "base.pressed ? colour : knobColour", Stroke: "$text", Thickness: "0.2" });

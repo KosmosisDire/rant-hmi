@@ -252,12 +252,14 @@ export function designer(page) {
     },
 
     /** Gives the selected element a handler with this code, and a hold its time. */
-    async handler(event, code, ms) {
+    /** Gives the selected element a handler for `event`, and its settings as `{ label: text }`. */
+    async handler(event, code, settings = {}) {
       if ((await d.code(event).count()) === 0) await d.addEvent(event);
       const box = d.code(event);
       await box.fill(code);
       await box.press("Control+Enter");
-      if (ms !== undefined) await commit(right().locator(".event", { has: page.locator(".event-name", { hasText: new RegExp(`^${event}$`) }) }).locator(".event-when input"), ms);
+      const card = right().locator(".event", { has: page.locator(".event-name", { hasText: new RegExp(`^${event}$`) }) });
+      for (const [label, text] of Object.entries(settings)) await commit(card.locator(".event-when .field", { has: page.locator("label", { hasText: label }) }).locator("input"), text);
     },
   };
   return d;

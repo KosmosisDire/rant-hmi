@@ -4,7 +4,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Handler, Input, Interface, Local, Page, Shows, Sizing, Tag, rank};
+use super::{Element, Handler, Input, Interface, Local, Page, Shows, Sizing, Tag, check_handler};
+use crate::events::{self, rank};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 const ATTRS: [&str; 7] = ["name", "repeat", "x", "y", "w", "h", "origin"];
@@ -106,11 +107,9 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
             out.push_str(">\n");
             let inner = "  ".repeat(depth + 1);
             for h in &e.handlers {
-                let time = match crate::pages::time_word(&h.event) {
-                    Some(word) if !h.ms.is_empty() => format!(" {word}={}", quote(&h.ms)),
-                    _ => String::new(),
-                };
-                block(out, &inner, &format!("<on event=\"{}\"{time}>", h.event), &h.code, "</on>");
+                // settings in the order the event lists them
+                let settings: String = events::settings(&h.event).iter().filter_map(|s| Some(format!(" {}={}", s.name, quote(h.attrs.get(s.name)?)))).collect();
+                block(out, &inner, &format!("<on event=\"{}\"{settings}>", h.event), &h.code, "</on>");
             }
             if let Some(text) = text {
                 out.push_str(&format!("{inner}{text}\n"));
@@ -403,28 +402,14 @@ impl Reader<'_> {
                 return Ok(out);
             }
             self.expect("<on")?;
-            let mut event = None;
-            let mut time = None;
-            for (k, v) in self.attrs()? {
-                match k.as_str() {
-                    "event" => event = Some(v),
-                    "after" | "every" => time = Some((k, v)),
-                    other => return Err(self.error(&format!("<on> takes no attribute {other}"))),
-                }
-            }
-            let event = event.ok_or_else(|| self.error("<on> needs an event"))?;
-            // a hold waits after, a repeat runs every, and no other event takes a time
-            let ms = match time {
-                Some((k, v)) if crate::pages::time_word(&event) == Some(k.as_str()) => v,
-                Some((k, _)) => return Err(self.error(&format!("a {event} handler takes no {k}"))),
-                None => String::new(),
-            };
+            let mut attrs: BTreeMap<String, String> = self.attrs()?.into_iter().collect();
+            let event = attrs.remove("event").ok_or_else(|| self.error("<on> needs an event"))?;
+            attrs.retain(|_, v| !v.trim().is_empty());
             self.expect(">")?;
             let n = block_end(self.rest(), "</on>", self.opens_block()).ok_or_else(|| self.error("<on> never closes"))?;
-            if out.iter().any(|h: &Handler| h.event == event) {
-                return Err(self.error(&format!("a second {event} handler")));
-            }
-            out.push(Handler { event, code: dedent(&self.rest()[..n]), ms });
+            let h = Handler { event, code: dedent(&self.rest()[..n]), attrs };
+            check_handler(&out, &h).map_err(|e| self.error(&e))?;
+            out.push(h);
             self.at += n;
             self.expect("</on>")?;
             out.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
@@ -563,7 +548,7 @@ mod tests {
         let page = parse(text, "button").unwrap();
         let i = page.interface.as_ref().unwrap();
         assert_eq!(i.variables, [Local { name: "open".into(), start: "false".into() }]);
-        assert_eq!(page.children[0].handlers[0].ms, "holdMs");
+        assert_eq!(page.children[0].handlers[0].attrs["after"], "holdMs");
         assert_eq!(write(&page, &[]), text);
     }
 
@@ -646,8 +631,8 @@ mod tests {
 </page>
 ", "a").unwrap();
         let mut half = page.clone();
-        half.children[0].handlers.push(Handler { event: "tap".into(), code: "open(\"".into(), ms: String::new() });
-        half.children.push(Element { id: "e2".into(), tag: Tag::Span, component: None, props: [("text".to_string(), "\"Hi".to_string())].into(), handlers: vec![Handler { event: "tap".into(), code: "log(`".into(), ms: String::new() }], children: Vec::new() });
+        half.children[0].handlers.push(Handler { event: "tap".into(), code: "open(\"".into(), attrs: BTreeMap::new() });
+        half.children.push(Element { id: "e2".into(), tag: Tag::Span, component: None, props: [("text".to_string(), "\"Hi".to_string())].into(), handlers: vec![Handler { event: "tap".into(), code: "log(`".into(), attrs: BTreeMap::new() }], children: Vec::new() });
         let again = parse(&write(&half, &[]), "a").unwrap();
         assert_eq!(again.children[0].handlers[0].code, "open(\"");
         assert_eq!(again.children[1].handlers[0].code, "log(`");
@@ -763,14 +748,18 @@ mod tests {
         props
     }
 
-    /// Handlers in the order a read sorts them, a hold's or a repeat's sometimes with its time.
+    /// Handlers in the order a read sorts them, each sometimes with its settings.
     fn some_handlers(rng: &mut Rng, tag: Tag) -> Vec<Handler> {
-        let events: &[&str] = if tag == Tag::Input { &["change"] } else { &crate::pages::POINTER };
         let mut out = Vec::new();
-        for e in events {
+        for e in events::EVENTS.iter().filter(|e| (e.from == events::Sender::Entry) == (tag == Tag::Input)) {
             if rng.below(4) == 0 {
-                let ms = if crate::pages::time_word(e).is_some() && rng.below(2) == 0 { rng.pick(&VALUES) } else { String::new() };
-                out.push(Handler { event: (*e).to_owned(), code: rng.pick(&CODE), ms });
+                let mut attrs = BTreeMap::new();
+                for s in e.settings {
+                    if rng.below(2) == 0 {
+                        attrs.insert(s.name.to_owned(), rng.pick(&VALUES));
+                    }
+                }
+                out.push(Handler { event: e.name.to_owned(), code: rng.pick(&CODE), attrs });
             }
         }
         out

@@ -3,13 +3,16 @@
 
 import { children, type Node, tree } from "../lang/arith.js";
 import type { Element } from "../protocol/Element";
+import type { EventInfo } from "../protocol/EventInfo";
+import { EVENTS } from "../protocol/events";
 import type { Page } from "../protocol/Page";
+import type { Sender } from "../protocol/Sender";
 import type { When } from "../protocol/When";
 import type { Suggestion } from "./complete";
 import { component } from "./store";
 
-/** What a pointer does to any element but an input. `outside` is a press anywhere else. */
-export const POINTER = ["tap", "press", "release", "hold", "repeat", "drag", "outside"];
+/** The event `name` as the backend lists it, unless a component sends it. */
+export const eventInfo = (name: string): EventInfo | undefined => EVENTS.find((e) => e.name === name);
 
 /** What `p` holds: its fields, or else the one value a component sends, as its code says it. */
 export interface Brought {
@@ -19,55 +22,28 @@ export interface Brought {
 
 const field = (label: string, type: string): Suggestion => ({ label, insert: label, icon: "member", type });
 
-const AT: Brought = {
-  fields: [
-    field("x", "across it, 0 to 1"),
-    field("y", "down it, 0 to 1"),
-    field("angle", "degrees around its centre, 0 up"),
-    field("on", "the part pressed, by name"),
-    field("inside", "true while over it"),
-  ],
-};
-
-/** Each pointer event, in a few words. */
-const POINTER_WORDS: Record<string, string> = {
-  tap: "pressed and let go on it",
-  press: "pressed down",
-  release: "let go, anywhere",
-  hold: "held down a while",
-  repeat: "again and again while pressed",
-  drag: "moved while pressed",
-  outside: "a press anywhere else",
-};
-
-/** The events that take a time: its words, and the ms it is when left empty. */
-export const TIMED: Record<string, { label: string; ms: number }> = {
-  hold: { label: "After ms", ms: 500 },
-  repeat: { label: "Every ms", ms: 100 },
-};
-
-/** One event an element may handle, and whose it is: the pointer's, or its component's. */
+/** One event an element may handle, and whose it is: the backend's, or its component's. */
 export interface Offered {
   event: string;
   words: string;
-  from: "pointer" | "entry" | "component";
+  from: Sender | "component";
 }
 
-/** What an element hears: an entry what is typed in, others the pointer, and an instance
+/** What an element hears: an input what is typed in, others the pointer, and an instance
  *  also its component's events, first. */
 export function offered(e: Element): Offered[] {
-  if (e.tag === "input") return [{ event: "change", words: "a value entered", from: "entry" }];
   const c = e.tag === "use" ? component(e.component ?? "") : undefined;
   const own = (c?.interface?.events ?? []).map((event): Offered => ({ event, words: sendsWords(c!, event), from: "component" }));
-  return [...own, ...POINTER.map((event): Offered => ({ event, words: POINTER_WORDS[event], from: "pointer" }))];
+  const heard = EVENTS.filter((x) => (x.from === "entry") === (e.tag === "input"));
+  return [...own, ...heard.map((x): Offered => ({ event: x.name, words: x.words, from: x.from }))];
 }
 
 /** What `p` brings when `event` happens to `e`, or nothing when it brings nothing. */
 export function brings(e: Element, event: string): Brought | undefined {
-  if (e.tag === "input" && event === "change") return { fields: [field("value", "what was entered")] };
   const c = e.tag === "use" ? component(e.component ?? "") : undefined;
   if (c?.interface?.events.includes(event)) return sends(c, event);
-  return POINTER.includes(event) ? AT : undefined;
+  const known = eventInfo(event);
+  return known && known.brings.length > 0 ? { fields: known.brings.map(([name, words]) => field(name, words)) } : undefined;
 }
 
 /** What `p` brings to the HMI's own handler. */

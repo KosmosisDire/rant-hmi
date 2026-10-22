@@ -8,7 +8,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const pad = await hmi.addElement(pageId, "div", { name: "Pad", x: "44", y: "44", w: "220", h: "132", background: "#2a2f35" });
   await hmi.setHandler(pageId, pad, "press", "lostHeld = 1;");
   await hmi.setHandler(pageId, pad, "release", "lostHeld = 0;");
-  await hmi.setHandler(pageId, pad, "repeat", "lostBeats = lostBeats + 1;", "100");
+  await hmi.setHandler(pageId, pad, "repeat", "lostBeats = lostBeats + 1;", { every: "100" });
   const cdp = await page.context().newCDPSession(page);
   // a move the browser reports with no button down, though it never sent the release
   const bare = (x, y) => cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0 });

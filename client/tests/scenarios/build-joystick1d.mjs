@@ -26,7 +26,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Escape");
   await d.handler("drag", ["// the knob goes where the finger is along the track, as far as its reach", "kx = Math.max(-1, Math.min(1, ((p.x - 0.5) * 2) / reach));", 'emit("move", { x: kx });'].join("\n"));
   await d.handler("release", 'kx = 0;\nemit("move", { x: 0 });\nemit("held", { x: 0 });');
-  await d.handler("repeat", 'emit("held", { x: kx });', "repeatMs");
+  await d.handler("repeat", 'emit("held", { x: kx });', { "Every ms": "repeatMs" });
   await d.add("frame", { Name: "span", Origin: '"0% 50%"', x: "(50 - reach * 50)%", y: "50%", w: "(reach * 100)%", h: "0", Fill: "", Radius: "" });
   await d.css('border-top-width: 0.2\nborder-top-style: "dashed"\nborder-top-color: lineColour\npointer-events: "none"');
   await d.select("track");

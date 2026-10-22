@@ -2,8 +2,9 @@
 
 import { For, type JSX, Show } from "solid-js";
 import type { Place } from "../../lang/api.js";
+import type { Handler } from "../../protocol/Handler";
 import { complete, signature, type Suggestion } from "../../state/complete";
-import { type Brought, type Offered, pOf, TIMED } from "../../state/events";
+import { type Brought, eventInfo, type Offered, pOf } from "../../state/events";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, X, Zap } from "../../ui/icons";
 
@@ -33,13 +34,14 @@ export function EventCard(p: {
   brings?: Brought;
   /** Each new number puts the caret in the code. */
   focus?: number;
-  /** A hold's wait or a repeat's period, an expression in ms, and its write. */
-  ms?: string;
-  onMs?: (text: string) => void;
+  /** The settings its event takes, as written, and the write of one, empty for its default. */
+  attrs?: Handler["attrs"];
+  onAttr?: (name: string, text: string) => void;
   /** The trigger's settings, between the head and the code. */
   children?: JSX.Element;
 }) {
   const reads = () => (p.brings ? [...(p.also ?? []), pOf(p.brings)] : p.also);
+  const settings = () => (p.onAttr ? (eventInfo(p.name)?.settings ?? []) : []);
   return (
     <div class="event">
       <div class="event-head">
@@ -74,15 +76,17 @@ export function EventCard(p: {
           </button>
         </Show>
       </div>
-      <Show when={p.onMs && TIMED[p.name]}>
-        {(t) => (
-          <div class="event-when">
-            <div class="field">
-              <label>{t().label}</label>
-              <DraftInput value={p.ms ?? ""} placeholder={String(t().ms)} onCommit={(text) => p.onMs?.(text.trim())} complete={(text, c) => complete(text, c, "expression", p.names, p.also)} />
-            </div>
-          </div>
-        )}
+      <Show when={settings().length > 0}>
+        <div class="event-when">
+          <For each={settings()}>
+            {(s) => (
+              <div class="field">
+                <label>{s.label}</label>
+                <DraftInput value={p.attrs?.[s.name] ?? ""} placeholder={s.default} onCommit={(text) => p.onAttr?.(s.name, text.trim())} complete={(text, c) => complete(text, c, "expression", p.names, p.also)} />
+              </div>
+            )}
+          </For>
+        </div>
       </Show>
       {p.children}
       <DraftInput
