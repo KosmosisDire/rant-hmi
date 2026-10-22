@@ -1,10 +1,10 @@
-import { createSignal, For, type JSX, Show } from "solid-js";
+import { createEffect, createSignal, For, type JSX, on, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { edit } from "../../state/change";
-import { remembered } from "../../state/remember";
+import { remembered, rememberedWords } from "../../state/remember";
 import { freeName } from "../../state/names";
 import { startPage, state } from "../../state/store";
 import { openPage } from "../../state/view";
@@ -46,6 +46,12 @@ function FoldHead(p: { title: string; pane: keyof typeof folds; first?: boolean;
 }
 
 const shown = (pane: keyof typeof folds) => folds[pane][0]() === "open";
+
+/** The frames folded away in the layers, each as its page's id and its own. */
+const [closed, setClosed] = rememberedWords("layers-closed");
+
+/** How far each level of the layers steps in. */
+const INDENT = 12;
 
 /** The left sidebar: the pages, and the open page's elements as layers. */
 export function Outline(p: { page: Page | undefined; selected: string[]; onPick: Pick; onEdit: (id: string, key: string) => void }) {
@@ -164,6 +170,19 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
   let press: { id: string; y: number } | null = null;
   const [dragging, setDragging] = createSignal<string[]>([]);
   const [spot, setSpot] = createSignal<Spot | null>(null);
+  const key = (id: string) => `${p.page.id} ${id}`;
+  const shut = (id: string) => closed().includes(key(id));
+  const fold = (id: string) => setClosed(shut(id) ? closed().filter((k) => k !== key(id)) : [...closed(), key(id)]);
+  // what is picked shows its row, the frames around it opening, though a frame folded after stays so
+  createEffect(
+    on(
+      () => p.selected,
+      (picked) => {
+        const around = new Set(picked.flatMap((id) => (chain(p.page.children, id) ?? []).slice(0, -1).map((e) => key(e.id))));
+        if (closed().some((k) => around.has(k))) setClosed(closed().filter((k) => !around.has(k)));
+      },
+    ),
+  );
 
   const spotAt = (y: number, ids: string[]): Spot | null => {
     const rows = [...host.querySelectorAll<HTMLElement>(".list-row[data-id]")].map((row) => ({ id: row.dataset.id!, open: row.dataset.open !== undefined, r: row.getBoundingClientRect() }));
@@ -230,6 +249,8 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
         selected={p.selected}
         dragging={dragging()}
         spot={spot()}
+        shut={shut}
+        onFold={fold}
         onPick={p.onPick}
         onEdit={p.onEdit}
         onMenu={(e, id) => {
@@ -240,7 +261,7 @@ function LayerList(p: { page: Page; selected: string[]; onPick: Pick; onEdit: (i
           elementMenu(e, p.page, p.selected, p.onPick, id);
         }}
       />
-      <Show when={spot()?.line}>{(l) => <div class="drop-line" style={{ top: `${l().y}px`, left: `${14 + l().depth * 14}px` }} />}</Show>
+      <Show when={spot()?.line}>{(l) => <div class="drop-line" style={{ top: `${l().y}px`, left: `${8 + l().depth * INDENT}px` }} />}</Show>
     </div>
   );
 }
@@ -251,6 +272,9 @@ function Layers(p: {
   selected: string[];
   dragging: string[];
   spot: Spot | null;
+  /** Whether a frame is folded, its parts hidden. */
+  shut: (id: string) => boolean;
+  onFold: (id: string) => void;
   onPick: Pick;
   onEdit: (id: string, key: string) => void;
   onMenu: (e: MouseEvent, id: string) => void;
@@ -264,19 +288,35 @@ function Layers(p: {
             classList={{ selected: p.selected.includes(e.id), dragged: p.dragging.includes(e.id), "drop-inside": p.spot?.into === e.id }}
             data-id={e.id}
             data-frame={e.tag === "div" || e.tag === "group" || e.tag === "svg" || e.tag === "g" ? "" : undefined}
-            data-open={e.children.length > 0 ? "" : undefined}
+            data-open={e.children.length > 0 && !p.shut(e.id) ? "" : undefined}
             onClick={(ev) => p.onPick(e.id, ev.shiftKey || ev.ctrlKey || ev.metaKey)}
             onDblClick={() => p.onEdit(e.id, "name")}
             onContextMenu={(ev) => p.onMenu(ev, e.id)}
           >
-            <span style={{ width: `${p.depth * 14}px` }} />
+            <span style={{ width: `${p.depth * INDENT}px` }} />
+            {/* a frame folds by its caret, and a press on the rest picks it */}
+            <Show when={e.children.length > 0} fallback={<span class="caret" />}>
+              <span
+                class="caret open-caret"
+                title={p.shut(e.id) ? "Show what it holds" : "Hide what it holds"}
+                onClick={(c) => {
+                  c.stopPropagation();
+                  p.onFold(e.id);
+                }}
+                onDblClick={(c) => c.stopPropagation()}
+              >
+                <Show when={p.shut(e.id)} fallback={<ChevronDown size={12} />}>
+                  <ChevronRight size={12} />
+                </Show>
+              </span>
+            </Show>
             <span class="layer-icon">
               <TagIcon tag={e.tag} size={13} />
             </span>
             <span class="list-label">{e.props.name ?? e.id}</span>
           </button>
-          <Show when={e.children.length > 0}>
-            <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} onPick={p.onPick} onEdit={p.onEdit} onMenu={p.onMenu} />
+          <Show when={e.children.length > 0 && !p.shut(e.id)}>
+            <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} shut={p.shut} onFold={p.onFold} onPick={p.onPick} onEdit={p.onEdit} onMenu={p.onMenu} />
           </Show>
         </>
       )}

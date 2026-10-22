@@ -13,7 +13,12 @@ export function rememberedNumber(key: string, initial: number): Signal<number> {
   return remember(key, initial, (saved) => (saved.trim() !== "" && Number.isFinite(Number(saved)) ? Number(saved) : null));
 }
 
-function remember<T extends string | number>(key: string, initial: T, read: (saved: string) => T | null): Signal<T> {
+/** Words, such as the frames folded away in the layers. */
+export function rememberedWords(key: string): Signal<string[]> {
+  return remember<string[]>(key, [], (saved) => saved.split("\n").filter((w) => w !== ""), (v) => v.join("\n"));
+}
+
+function remember<T extends string | number | string[]>(key: string, initial: T, read: (saved: string) => T | null, write: (v: T) => string = String): Signal<T> {
   let start = initial;
   try {
     const saved = localStorage.getItem(`rant-hmi.${key}`);
@@ -24,7 +29,7 @@ function remember<T extends string | number>(key: string, initial: T, read: (sav
   const [get, set] = createSignal<T>(start);
   const save = ((v: T) => {
     try {
-      localStorage.setItem(`rant-hmi.${key}`, String(v));
+      localStorage.setItem(`rant-hmi.${key}`, write(v));
     } catch {
       // storage is off: the setting lasts until reload
     }

@@ -47,10 +47,11 @@
   /* what a phone's sheet shows of itself when it is down */
   --grip: 28px;
 
-  /* what a finger needs more room for: a table row, a list row, a button, a field, a menu
-     line and a head */
+  /* what a finger needs more room for: a table row, a list row, a layer, a button, a field,
+     a menu line and a head */
   --row: 28px;
   --list: 32px;
+  --layer: 24px;
   --hit: 24px;
   --field: 30px;
   --item: 26px;
@@ -63,6 +64,7 @@
   :root {
     --row: 38px;
     --list: 44px;
+    --layer: 38px;
     --hit: 40px;
     --field: 38px;
     --item: 40px;

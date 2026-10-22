@@ -302,6 +302,25 @@
   position: relative;
 }
 
+/* Layers are a tight tree, so a deep page still shows much of itself. */
+.layers .list-row {
+  gap: 4px;
+  width: calc(100% - 8px);
+  height: var(--layer);
+  margin: 0 4px;
+  padding: 0 6px 0 4px;
+}
+
+.layers .caret {
+  width: 14px;
+}
+
+/* a caret that folds reaches a little past its zone, so names still line up */
+.layers .open-caret {
+  width: 20px;
+  margin: 0 -3px;
+}
+
 /* Where dragged layers land between rows, from the depth they land at to the right edge. */
 .drop-line {
   position: absolute;
