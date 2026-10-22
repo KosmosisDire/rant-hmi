@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import { inApp } from "../net/link";
 import { number } from "../state/format";
 import { state } from "../state/store";
 
@@ -12,7 +13,7 @@ export function StatusBar() {
   const active = () => state.peers.filter((p) => p.active);
   return (
     <footer class="statusbar">
-      <span class="stat" title={state.channels ? "Reached over WebRTC data channels" : "Reached over the socket alone"}>
+      <span class="stat" title={state.channels ? "Reached over WebRTC data channels" : inApp ? "Reached in this app, with no network" : "Reached over the socket alone"}>
         <span class="dot" classList={{ ok: state.link === "open", warn: state.link === "connecting", bad: state.link === "closed" }} />
         {link()}
       </span>

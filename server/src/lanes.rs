@@ -196,6 +196,11 @@ impl Lanes {
         self.ready.notify_one();
     }
 
+    /// Whether the loop is done with them.
+    pub fn closed(&self) -> bool {
+        self.inner.lock().expect("lanes").closed
+    }
+
     /// The next piece, taken from the lane whose turn it is. Waits for one, or None once
     /// closed and empty.
     pub async fn next(&self) -> Option<Bytes> {

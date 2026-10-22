@@ -1,9 +1,9 @@
-// The link to the backend: one socket, CBOR both ways, and a WebRTC data connection offered
-// over it: a reliable ordered channel, a best effort one, and the video of each import the
-// screen plays, which plays on a plain http page where WebCodecs cannot. The socket carries
-// everything the channels do not, a video's frames too while WebRTC brings none, and
-// reconnects by itself, at once when the page shows again. The round trip for the status bar
-// is timed the way a person's actions go.
+// The link to the backend: one socket, or in rant-hmi-app the window's own link (link.ts), CBOR
+// both ways, and over a network a WebRTC data connection offered over it: a reliable ordered
+// channel, a best effort one, and the video of each import the screen plays, which plays on a
+// plain http page where WebCodecs cannot. The link carries everything the channels do not, a
+// video's frames too while WebRTC brings none, and reconnects by itself, at once when the page
+// shows again. The round trip for the status bar is timed the way a person's actions go.
 
 import { Decoder, Encoder } from "cbor-x";
 import { type Accessor, createSignal, type Setter, untrack } from "solid-js";
@@ -11,6 +11,7 @@ import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import { cameBack, notify, receive, setState, state } from "../state/store";
 import { decodes, Decoded } from "./decode";
+import { type Link, openLink } from "./link";
 
 /** 20 times a second, so the round trip shown is a fresh one. */
 const ROUND_TRIP_EVERY_MS = 50;
@@ -20,7 +21,7 @@ const CHANNELS_WAIT_MS = 10_000;
 /** Failed channels are offered again after this, doubling each time up to a minute. */
 const CHANNELS_RETRY_MS = 2000;
 const CHANNELS_RETRY_MAX_MS = 60_000;
-/** A ping on the channels unanswered this long means they broke, so the socket takes over. */
+/** A ping on the channels unanswered this long means they broke, so the link takes over. */
 const CHANNELS_SILENT_MS = 1000;
 
 /** What a person does on a running page, which goes on the reliable channel while it is open,
@@ -38,7 +39,7 @@ declare module "cbor-x" {
 // 64 bit integer, as a Timestamp is, a number the page's math can add, never a BigInt
 const cbor = { encoder: new Encoder({ useRecords: false }), decoder: new Decoder({ mapsAsObjects: true, useRecords: false, int64AsNumber: true }) };
 
-let socket: WebSocket | null = null;
+let link: Link | null = null;
 let beat: number | undefined;
 let retry: number | undefined;
 let tries = 0;
@@ -53,7 +54,7 @@ interface Channels {
   again: boolean;
 }
 
-/** A video as an element shows it: the stream WebRTC brings, and the frames from the socket
+/** A video as an element shows it: the stream WebRTC brings, and the frames from the link
  *  decoded here while WebRTC brings none. */
 export interface Playing {
   stream: Accessor<MediaStream | null>;
@@ -66,7 +67,7 @@ interface Video extends Playing {
   setDecoded: Setter<Decoded | null>;
   /** Where it comes in on the data connection, once offered there. */
   transceiver: RTCRtpTransceiver | null;
-  /** Its frames come over WebRTC, so the socket need not bring them. */
+  /** Its frames come over WebRTC, so the link need not bring them. */
   live: boolean;
 }
 
@@ -80,36 +81,33 @@ let channelsTries = 0;
 let unanswered: number | null = null;
 /** The last round trip timed, which the next ping tells the backend. */
 let timed: number | undefined;
-/** The videos whose frames the socket brings, as last asked. */
+/** The videos whose frames the link brings, as last asked. */
 let asked = "";
 /** WebRTC did not open, or broke, and has not opened again since. */
 const [stuck, setStuck] = createSignal(false);
 
 export function connect() {
-  if (socket) return;
+  if (link) return;
   clearTimeout(retry);
-  const scheme = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${scheme}://${location.host}/ws`);
-  ws.binaryType = "arraybuffer";
-  socket = ws;
   setState("link", "connecting");
-  ws.onopen = () => {
-    tries = 0;
-    setState("link", "open");
-    beat = window.setInterval(ping, ROUND_TRIP_EVERY_MS);
-  };
-  const join = joiner();
-  ws.onmessage = (e) => join(e.data as ArrayBuffer);
-  ws.onclose = () => {
-    clearInterval(beat);
-    socket = null;
-    closeChannels();
-    setState({ link: "closed", rttMs: null });
-    retry = window.setTimeout(connect, Math.min(RETRY_MAX_MS, 200 * 2 ** tries++));
-  };
+  link = openLink({
+    opened() {
+      tries = 0;
+      setState("link", "open");
+      beat = window.setInterval(ping, ROUND_TRIP_EVERY_MS);
+    },
+    heard: joiner(),
+    closed() {
+      clearInterval(beat);
+      link = null;
+      closeChannels();
+      setState({ link: "closed", rttMs: null });
+      retry = window.setTimeout(connect, Math.min(RETRY_MAX_MS, 200 * 2 ** tries++));
+    },
+  });
 }
 
-/** Joins what the socket or the reliable channel brings into messages. Each comes in pieces,
+/** Joins what the link or the reliable channel brings into messages. Each comes in pieces,
  *  `[u16 lane][u8 more]` then its share, the lanes taking turns as the backend's lanes.rs
  *  sends them, so a small message never waits behind a whole picture. */
 function joiner(): (data: ArrayBuffer) => void {
@@ -179,18 +177,16 @@ export function send(msg: ClientMsg): boolean {
     channels.reliable.send(cbor.encoder.encode(msg));
     return true;
   }
-  if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(cbor.encoder.encode(msg));
-    return true;
-  }
+  if (link?.send(cbor.encoder.encode(msg))) return true;
   if (msg.type !== "ping") notify("The HMI is out of reach, so that was not done.", "warn");
   return false;
 }
 
-/** Offers the data channels over the socket. They count once both are open. */
+/** Offers the data channels over the link, where a network lies under it. They count once both
+ *  are open. */
 async function openChannels() {
   closeChannels();
-  if (state.link !== "open") return;
+  if (state.link !== "open" || !link?.network) return;
   if (typeof RTCPeerConnection === "undefined") return setStuck(true);
   // the null the backend sends for no username would reach the browser as the word null
   const iceServers = (state.project?.ice ?? []).map(({ urls, username, credential }) => (username == null ? { urls } : { urls, username, credential: credential ?? "" }));
@@ -212,7 +208,7 @@ async function openChannels() {
       if (channels === c && c.reliable.readyState === "open" && c.bestEffort.readyState === "open") {
         channelsTries = 0;
         setStuck(false);
-        // the backend holds what the channel brings until this, so the socket's come first
+        // the backend holds what the channel brings until this, so the link's come first
         send({ type: "on_channels" });
         setState("channels", true);
       }
@@ -277,7 +273,7 @@ async function offer(c: Channels, msg: (sdp: string) => ClientMsg) {
 }
 
 /** The backend's answer completes the offer. Without one to the first the backend cannot make
- *  channels, so the screen stays on its socket until it connects again. Without one to a later
+ *  channels, so the screen stays on its link until it connects again. Without one to a later
  *  offer the connection is gone, so it is made again. */
 function answered(answer: string | null) {
   const c = channels;
@@ -298,7 +294,7 @@ function answered(answer: string | null) {
 }
 
 /** Starts or joins playing an import's video, over WebRTC once the data connection is open,
- *  and from frames on the socket until WebRTC brings it. An effect calls it, so it tracks none
+ *  and from frames on the link until WebRTC brings it. An effect calls it, so it tracks none
  *  of what it reads: its decoder, set here, would run that effect again, and stop it. */
 export function play(alias: string): Playing {
   return untrack(() => {
@@ -330,7 +326,7 @@ export function stopPlaying(alias: string) {
   });
 }
 
-/** Asks the socket for the frames of each video WebRTC does not bring, where this page can
+/** Asks the link for the frames of each video WebRTC does not bring, where this page can
  *  decode them, and decodes them. */
 function askFrames() {
   const aliases = decodes ? [...videos].flatMap(([alias, v]) => (v.live ? [] : [alias])).sort() : [];
@@ -343,7 +339,7 @@ function askFrames() {
     }
   }
   const key = aliases.join("\n");
-  if (key === asked || socket?.readyState !== WebSocket.OPEN) return;
+  if (key === asked || state.link !== "open") return;
   asked = key;
   send({ type: "frames", aliases });
 }
@@ -371,7 +367,7 @@ function closeChannels() {
   setState("channels", false);
 }
 
-/** The channels broke while the socket stays, so the backend hears it there at once, and they
+/** The channels broke while the link stays, so the backend hears it there at once, and they
  *  are offered again a while later. */
 function channelsFailed() {
   const used = state.channels;
@@ -383,5 +379,5 @@ function channelsFailed() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && !socket) connect();
+  if (document.visibilityState === "visible" && !link) connect();
 });

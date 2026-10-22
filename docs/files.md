@@ -86,6 +86,22 @@ gamepads and to decode video itself.
   the host. A browser warns about it until told to trust it.
 - `--cert` and `--key` take a real certificate and its key, as PEM files.
 
+## In a window
+
+`rant-hmi-app` shows an HMI's operator screen in a window of its own. Built from source for
+now, on Windows:
+
+```
+cargo run --manifest-path app/Cargo.toml -- path/to/my-hmi --loopback
+cargo run --manifest-path app/Cargo.toml -- http://host:6739
+```
+
+- Given a folder it runs that project in the same process as its screen, with no network
+  between them. It listens on no port, so no other screen and no editor reach it.
+- Given an address it shows that HMI's screen, as a browser would.
+- The window is the system's own webview, WebView2 on Windows 10 and 11. It keeps its data in
+  `~/.rant/hmi/webview`.
+
 ## Pages
 
 ```html
