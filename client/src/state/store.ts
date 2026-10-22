@@ -1,8 +1,8 @@
-// What the backend told this screen, in one store. Every server message lands through
-// receive(), and reconcile keeps object identity so only what changed redraws.
+// What the backend told this screen, in one store, and the values beside it. Every server message
+// lands through receive(), and reconcile keeps object identity so only what changed redraws.
 
-import { batch } from "solid-js";
-import { createStore, produce, reconcile } from "solid-js/store";
+import { batch, createSignal, type Signal, untrack } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import type { Computed } from "../protocol/Computed";
 import type { EntityInfo } from "../protocol/EntityInfo";
 import type { EnumInfo } from "../protocol/EnumInfo";
@@ -64,7 +64,6 @@ export interface State {
   rules: Rule[];
   tokens: Token[];
   entities: EntityInfo[];
-  values: Record<string, Live>;
   peers: PeerInfo[];
   pages: Page[];
   /** What this screen's last edit made, to open or select. `n` counts, so the same id twice
@@ -90,7 +89,6 @@ export const [state, setState] = createStore<State>({
   rules: [],
   tokens: [],
   entities: [],
-  values: {},
   peers: [],
   pages: [],
   made: null,
@@ -158,35 +156,31 @@ export function receive(msg: ServerMsg) {
     case "samples": {
       // a record's value is its samples, appended and pruned here as the backend keeps them
       const keep = (state.records.find((r) => r.name === msg.name)?.keep_s ?? 0) * 1000;
-      if (msg.whole || !Array.isArray(state.values[msg.name]?.value)) {
-        setState("values", msg.name, { value: msg.samples as unknown as Value, known: true });
+      const had = untrack(cell(values, msg.name)[0])?.value as Sample[] | undefined;
+      if (msg.whole || !Array.isArray(had)) {
+        give(msg.name, msg.samples as unknown as Value, true);
         break;
       }
-      setState(
-        "values",
-        msg.name,
-        "value",
-        produce((list) => {
-          const all = list as unknown as Sample[];
-          all.push(...msg.samples);
-          const last = all[all.length - 1]?.t ?? 0;
-          let old = 0;
-          while (old < all.length && all[old].t < last - keep) old++;
-          if (old > 0) all.splice(0, old);
-        }),
-      );
+      const all = [...had, ...msg.samples];
+      const last = all[all.length - 1]?.t ?? 0;
+      let old = 0;
+      while (old < all.length && all[old].t < last - keep) old++;
+      give(msg.name, all.slice(old) as unknown as Value, true);
       break;
     }
     case "mesh":
       setState("entities", reconcile(msg.entities, { key: "name" }));
       break;
     case "values":
-      for (const u of msg.values) {
-        if ((batches.get(u.alias) ?? 0) > msg.seq) continue;
-        batches.set(u.alias, msg.seq);
-        setState("values", u.alias, reconcile({ value: u.value, known: u.known }));
-        if (promised[u.alias] && same(promised[u.alias]!.value, u.value)) settle(u.alias);
-      }
+      batch(() => {
+        for (const u of msg.values) {
+          if ((batches.get(u.alias) ?? 0) > msg.seq) continue;
+          batches.set(u.alias, msg.seq);
+          give(u.alias, u.value, u.known);
+          const p = untrack(cell(promised, u.alias)[0]);
+          if (p && same(p.value, u.value)) settle(u.alias);
+        }
+      });
       break;
     case "health":
       setState("peers", reconcile(msg.peers, { key: "id" }));
@@ -236,16 +230,65 @@ export function receive(msg: ServerMsg) {
  *  the write, should the system's value never come to match, as when a rule changes it again. */
 const KEPT_MS = 1000;
 
+/** Each value as the system last gave it, by name, in a signal of its own and as plain data,
+ *  frozen so no reader changes it. Not in the store, where a value is read through proxies that
+ *  make a signal for every field read: an expression walking a point cloud made thousands each
+ *  update. */
+const values = new Map<string, Signal<Live | undefined>>();
+
 /** What the screen wrote to its own variables, shown over the system's value until that comes
  *  to match, so what it draws never waits on the round trip nor steps back through older
  *  values on their way back. */
-const [promised, setPromised] = createStore<Record<string, { value: Value } | undefined>>({});
+const promised = new Map<string, Signal<{ value: Value } | undefined>>();
+
+/** The signal holding `name`'s in `cells`, made the first time it is read or given. */
+function cell<T>(cells: Map<string, Signal<T | undefined>>, name: string): Signal<T | undefined> {
+  let c = cells.get(name);
+  if (!c) cells.set(name, (c = createSignal<T | undefined>(undefined)));
+  return c;
+}
+
+/** Gives `alias` its value, holding on to every part of the one before that it equals, so what
+ *  reads an unchanged part sees the very thing it saw and stays as it is. */
+function give(alias: string, value: Value, known: boolean) {
+  const [now, set] = cell(values, alias);
+  const was = untrack(now);
+  const next = shared(was?.value, value) as Value;
+  if (!was || was.value !== next || was.known !== known) set({ value: next, known });
+}
+
+/** A list or a map, not text, a number or bytes. */
+const holds = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !ArrayBuffer.isView(v);
+
+/** `next` made frozen in place, each part of it that equals the same part of `was` taken from
+ *  `was`, and `was` itself when it all does. What is frozen already was shared before. */
+function shared(was: unknown, next: unknown): unknown {
+  if (was === next || !holds(next) || Object.isFrozen(next)) return next;
+  const old = holds(was) && Array.isArray(was) === Array.isArray(next) ? was : undefined;
+  let same = old !== undefined;
+  if (Array.isArray(next)) {
+    const before = old as unknown[] | undefined;
+    same &&= before!.length === next.length;
+    for (let i = 0; i < next.length; i++) {
+      next[i] = shared(before?.[i], next[i]);
+      same &&= next[i] === before![i];
+    }
+  } else {
+    const keys = Object.keys(next);
+    same &&= Object.keys(old!).length === keys.length;
+    for (const k of keys) {
+      next[k] = shared(old?.[k], next[k]);
+      same &&= next[k] === old![k];
+    }
+  }
+  return same ? was : Object.freeze(next);
+}
 /** When each promise was made, and its lapse once the system has had it. */
 const pending = new Map<string, { at: number; lapse?: ReturnType<typeof setTimeout> }>();
 
 /** Shows `value` as `alias`'s at once, as the screen wrote it, until the system's matches. */
 export function promise(alias: string, value: Value) {
-  setPromised(alias, { value });
+  cell(promised, alias)[1]({ value: shared(undefined, value) as Value });
   clearTimeout(pending.get(alias)?.lapse);
   pending.set(alias, { at: performance.now() });
 }
@@ -259,7 +302,7 @@ export function cameBack(sent: number) {
 function settle(alias: string) {
   clearTimeout(pending.get(alias)?.lapse);
   pending.delete(alias);
-  setPromised(alias, undefined);
+  cell(promised, alias)[1](undefined);
 }
 
 /** Whether two values hold the same, the order of their fields aside. */
@@ -272,9 +315,9 @@ function same(a: unknown, b: unknown): boolean {
 
 /** A mesh import is shown as known only while the backend link is up too. */
 export function live(alias: string): Live {
-  const p = promised[alias];
+  const p = cell(promised, alias)[0]();
   if (p) return { value: p.value, known: state.link === "open" };
-  const v = state.values[alias];
+  const v = cell(values, alias)[0]();
   return { value: v?.value ?? null, known: state.link === "open" && !!v?.known };
 }
 
