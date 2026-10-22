@@ -15,7 +15,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const [was, third] = [await d.box(parts[1]), await d.box(parts[2])];
   const near = (a, b) => Math.abs(a.x - b.x) < 1.5 && Math.abs(a.y - b.y) < 1.5;
 
-  await d.el(parts[1]).click();
+  await d.pick(parts[1]);
   check((await d.field("x").count()) === 0, "a part the column lays out offers x");
   await right.locator(".ghost", { hasText: "Place it freely" }).click();
   await eventually(() => props(hmi, pageId, parts[1]).position === '"absolute"', "the part placed freely");

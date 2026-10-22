@@ -79,13 +79,27 @@ export function laidOut(page: Page, id: string): boolean {
 /** Whether an element is a group, of elements or of a diagram's shapes, picked whole first. */
 export const isGroup = (e: Element | undefined) => e?.tag === "group" || e?.tag === "g";
 
-/** What a click on `hit` picks: the outermost group around it the selection has not entered,
- *  so a group is picked whole before what it holds. */
-export function pickAt(page: Page, hit: string, selected: string[]): string {
-  for (const e of chain(page.children, hit) ?? []) {
-    if (e.id !== hit && isGroup(e) && !selected.some((id) => id === e.id || find(e.children, id))) return e.id;
-  }
-  return hit;
+/** What lies under a point to pick from, given what is hit there front to back: for each, the
+ *  elements around it from the outermost in, each once. */
+export function stackAt(page: Page, hits: string[]): string[] {
+  const out: string[] = [];
+  for (const hit of hits) for (const e of chain(page.children, hit) ?? []) if (!out.includes(e.id)) out.push(e.id);
+  return out;
+}
+
+/** Whether the selection is on an element or inside it. */
+export function entered(page: Page, id: string, selected: string[]): boolean {
+  const e = find(page.children, id);
+  return selected.some((s) => s === id || (!!e && !!find(e.children, s)));
+}
+
+/** What a click picks from a point's `stack`: past the one element selected there, so each
+ *  click goes one further in or beneath and then around again, else the outermost there the
+ *  selection has not entered, so a frame or group is picked whole before what it holds. */
+export function pickFrom(page: Page, stack: string[], selected: string[]): string | undefined {
+  const one = selected.length === 1 && stack.includes(selected[0]) ? selected[0] : undefined;
+  if (one) return stack[(stack.indexOf(one) + 1) % stack.length];
+  return stack.find((id) => !entered(page, id, selected)) ?? stack[0];
 }
 
 /** The frame an element sits in, null for the page. */

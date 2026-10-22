@@ -50,6 +50,13 @@ export function designer(page) {
       return page.locator(`.artboard .el[data-id="${id}"]`);
     },
 
+    /** Picks an element on the canvas, clicking on it again until the picks, which go from the
+     *  outermost there inward, come to it. */
+    async pick(id) {
+      for (let n = 0; n < 8 && (await selected()) !== id; n++) await d.el(id).click();
+      if ((await selected()) !== id) throw new Error(`clicking ${id} never picked it, it picked ${await selected()}`);
+    },
+
     async box(id) {
       return d.el(id).boundingBox();
     },

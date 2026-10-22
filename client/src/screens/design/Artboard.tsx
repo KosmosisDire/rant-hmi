@@ -13,10 +13,10 @@ import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
 import { onResize } from "../../ui/size";
 import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
-import { chain, find } from "../../state/elements";
+import { find } from "../../state/elements";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
-import { absolute, boxOf, boxText, childrenOf, flowed, isGroup, laidOut, literal, moveTo, originOf, parentOf, pickAt, roomOf, scopeOf, sendEdits, setProps, showProps, tops } from "./tree";
+import { absolute, boxOf, boxText, childrenOf, entered, flowed, laidOut, literal, moveTo, originOf, parentOf, pickFrom, roomOf, scopeOf, sendEdits, setProps, showProps, stackAt, tops } from "./tree";
 
 /** Places snap to whole units. A finer one is typed as a fraction, or dragged with Alt, which
  *  lands on pixels, a tenth of a unit. */
@@ -50,8 +50,8 @@ function cursorOf(h: Handle, turn: number): string {
 const KEYS: [string, string][] = [
   ["Wheel", "zoom about the pointer"],
   ["Drag on empty space", "pan, as the middle button does"],
-  ["Click", "select"],
-  ["Click a group", "select it whole, click again for the part"],
+  ["Click", "select the outermost element there"],
+  ["Click again", "the next one there, further in, then beneath"],
   ["Shift or Ctrl click", "add to the selection or take away"],
   ["Shift drag on empty space", "add what lies wholly inside"],
   ["Ctrl A", "select everything on the page"],
@@ -69,12 +69,12 @@ const KEYS: [string, string][] = [
 ];
 
 /** A pan, a box drawn to select, a part dragged along its frame's flow to `slot`, or a move or
- *  resize of `ids` led by the one under the pointer. `enter` is what a press inside a selected
- *  group picks when it lets go unmoved. */
+ *  resize of `ids` led by the one under the pointer. `enter` is what a press on the selected
+ *  element picks when it lets go unmoved: the next one at that point. */
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "box"; sx: number; sy: number }
-  | { kind: "reorder"; id: string; parent: string; flow: Flow; sx: number; sy: number; slot: number | null }
+  | { kind: "reorder"; id: string; parent: string; flow: Flow; sx: number; sy: number; slot: number | null; enter?: string }
   | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string; turn: Turns }
   | { kind: "shape"; how: "move" | Handle; id: string; sx: number; sy: number; base: Element; screen: DOMMatrix; outline: DOMRect; props: Record<string, string> | null; enter?: string };
 
@@ -292,6 +292,13 @@ export function Artboard(p: {
     setView({ k, x: cx - ((pinch.cx - v.x) * k) / v.k, y: cy - ((pinch.cy - v.y) * k) / v.k });
   };
 
+  // what this page draws under a point, front to back, each element once
+  const hitsAt = (x: number, y: number) => {
+    const layer = host.querySelector(".page-layer");
+    const ids = document.elementsFromPoint(x, y).map((el) => (layer?.contains(el) ? el.closest(".el[data-id]")?.getAttribute("data-id") : null));
+    return [...new Set(ids.filter((id): id is string => !!id))];
+  };
+
   const down = (e: PointerEvent) => {
     if (e.pointerType === "touch" && finger(e)) return;
     const target = e.target as HTMLElement;
@@ -302,10 +309,13 @@ export function Artboard(p: {
       drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
     } else if (e.button === 0) {
       const handle = target.closest("[data-handle]")?.getAttribute("data-handle") as Handle | null;
-      const deepest = target.closest(".el[data-id]")?.getAttribute("data-id") ?? null;
-      const hit = deepest && pickAt(p.page, deepest, p.selected);
-      // a selected group the press is inside, which it moves rather than picking into at once
-      const holder = deepest && hit ? p.selected.find((id) => id !== hit && isGroup(find(p.page.children, id)) && !!find(find(p.page.children, id)!.children, deepest)) : undefined;
+      const hits = hitsAt(e.clientX, e.clientY);
+      const stack = stackAt(p.page, hits);
+      const hit = pickFrom(p.page, stack, p.selected);
+      // the one element selected, which a press there moves, picking the next when it lets go
+      const held = p.selected.length === 1 && stack.includes(p.selected[0]) ? p.selected[0] : undefined;
+      // several selected move together, led by the one pressed
+      const leader = p.selected.length > 1 ? stack.find((id) => p.selected.includes(id)) : undefined;
       // a group moves by what it holds, led by the box around them
       const start = (kind: "move" | Handle, lead: string, group: Element[], enter?: string) => {
         const all = group.flatMap((g) => (g.tag === "group" ? [g, ...leaves(g)] : [g]));
@@ -326,26 +336,25 @@ export function Artboard(p: {
       } else if (handle && p.selected.length === 1) {
         const one = find(p.page.children, p.selected[0]);
         if (one && resizable(one, handle)) start(handle, one.id, [one]);
-      } else if (hit && (e.shiftKey || e.ctrlKey || e.metaKey)) {
-        return p.onPick(hit, true);
-      } else if (holder && hit && shape(holder)) {
-        startShape("move", holder);
-        if (drag?.kind === "shape") drag.enter = hit;
-      } else if (holder && hit) {
+      } else if (hits.length > 0 && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+        // adds the outermost in front the selection has not entered, or takes away the front one
+        const front = stackAt(p.page, hits.slice(0, 1));
+        return p.onPick(front.find((id) => !entered(p.page, id, p.selected)) ?? hits[0], true);
+      } else if (leader) {
         const group = tops(p.page, p.selected).filter((g) => movable(g, ["x", "y"]));
-        if (group.some((g) => g.id === holder)) start("move", holder, group, hit);
-        else p.onPick(hit);
-      } else if (hit && shape(hit)) {
-        p.onPick(hit);
-        startShape("move", hit);
+        if (group.some((g) => g.id === leader)) start("move", leader, group);
       } else if (hit) {
-        // a press on one of several selected moves them all, any other picks it alone
-        const keep = p.selected.length > 1 && p.selected.includes(hit);
-        if (!keep) p.onPick(hit);
-        const group = (keep ? tops(p.page, p.selected) : [find(p.page.children, hit)!]).filter((g) => movable(g, ["x", "y"]));
-        const flow = keep ? undefined : flowAround(hit);
-        if (group.some((g) => g.id === hit)) start("move", hit, group);
-        else if (flow) drag = { kind: "reorder", id: hit, parent: parentOf(p.page, hit)!, flow, sx: e.clientX, sy: e.clientY, slot: null };
+        // what the press moves: the one selected there, else what it picks
+        const one = held ?? hit;
+        const enter = held && hit;
+        if (!held) p.onPick(hit);
+        const flow = flowAround(one);
+        if (shape(one)) {
+          startShape("move", one);
+          if (drag?.kind === "shape") drag.enter = enter;
+        } else if (movable(find(p.page.children, one)!, ["x", "y"])) start("move", one, [find(p.page.children, one)!], enter);
+        else if (flow) drag = { kind: "reorder", id: one, parent: parentOf(p.page, one)!, flow, sx: e.clientX, sy: e.clientY, slot: null, enter };
+        else if (enter) p.onPick(enter);
       } else if (e.shiftKey) {
         drag = { kind: "box", sx: e.clientX, sy: e.clientY };
       } else {
@@ -426,7 +435,8 @@ export function Artboard(p: {
     if (d?.kind === "reorder") {
       setSlotLine(null);
       const at = childrenOf(p.page, d.parent).findIndex((c) => c.id === d.id);
-      return d.slot !== null && d.slot !== at && moveTo(p.page, d.id, d.parent, d.slot);
+      if (d.slot !== null && d.slot !== at) return moveTo(p.page, d.id, d.parent, d.slot);
+      return d.enter && p.onPick(d.enter);
     }
     if (d?.kind === "shape") {
       const moved = !!d.props && Object.entries(d.props).some(([k, v]) => d.base.props[k] !== v);
@@ -662,10 +672,10 @@ export function Artboard(p: {
       onPointerDown={down}
       onContextMenu={(e) => {
         cancel();
-        const deepest = (e.target as HTMLElement).closest(".el[data-id]")?.getAttribute("data-id");
-        // inside what is selected, as a selected group's part, the menu acts on the selection
-        const around = deepest ? p.selected.find((id) => chain(p.page.children, deepest)?.some((x) => x.id === id)) : undefined;
-        const hit = around ?? (deepest && pickAt(p.page, deepest, p.selected));
+        const stack = stackAt(p.page, hitsAt(e.clientX, e.clientY));
+        // on what is selected, or inside it, the menu acts on the selection
+        const around = stack.find((id) => p.selected.includes(id));
+        const hit = around ?? pickFrom(p.page, stack, p.selected);
         const [r, v] = [host.getBoundingClientRect(), view()];
         const at = { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
         if (hit) elementMenu(e, p.page, p.selected, p.onPick, hit, at);

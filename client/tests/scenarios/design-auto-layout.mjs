@@ -55,7 +55,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // a part the row lays out: its ring where it is drawn, and grips that size a fill as a number
   await set(parts[2], { w: "fill" });
   await shows("the last part to fill its line", async () => (await at(parts[2])).join() === "1,6,13,4");
-  await d.el(parts[2]).click();
+  await d.pick(parts[2]);
   const [ring, drawn] = [await page.locator(".artboard .ring").boundingBox(), await d.box(parts[2])];
   check(Math.abs(ring.x - drawn.x) < 2 && Math.abs(ring.y - drawn.y) < 2 && Math.abs(ring.width - drawn.width) < 2, "the ring is not where the part is drawn");
   check((await page.locator(".artboard .ring .handle").count()) === 8, "a part the row lays out offers no grips");
