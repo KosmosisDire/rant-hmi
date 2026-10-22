@@ -6,7 +6,8 @@ import { Decoder } from "cbor-x";
 
 const decoder = new Decoder({ mapsAsObjects: true, useRecords: false, int64AsNumber: true });
 
-/** Notes what the channels send, and holds the socket's frames back `__hold` ms, in order. */
+/** Notes what the channels send, and holds the socket's frames back `__hold` ms, in order,
+ *  noting when the switch to the channels goes. */
 function tap() {
   window.__sent = [];
   const write = RTCDataChannel.prototype.send;
@@ -21,7 +22,10 @@ function tap() {
     if (!window.__hold) return send.call(this, data);
     last = Math.max(Date.now() + window.__hold, last);
     const copy = data.slice(0);
-    setTimeout(() => send.call(this, copy), last - Date.now());
+    setTimeout(() => {
+      if (new TextDecoder().decode(copy).includes("on_channels")) window.__switched ??= Date.now();
+      send.call(this, copy);
+    }, last - Date.now());
   };
 }
 
@@ -45,12 +49,14 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   const link = screen.locator(".statusbar .stat").first();
   await eventually(async () => (await link.getAttribute("title")) === "Reached over WebRTC data channels", "the screen's channels to open", 8000);
 
-  // the press goes at once on the channel, its switch on the socket comes 1.5 s later
+  // the press goes at once on the channel, and runs only once the switch held back on the socket goes
   const pressed = Date.now();
   await screen.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await eventually(() => hmi.state.values.pads?.value === 1, "the press to run", 5000);
-  const waited = Date.now() - pressed;
-  check(waited > 1000, `the press ran ${waited} ms after it went, before the socket said it switched`);
+  const ran = Date.now();
+  const switched = await screen.evaluate(() => window.__switched);
+  check(pressed < switched, "the switch went before the press, so nothing was held");
+  check(ran >= switched, `the press ran ${switched - ran} ms before the socket said it switched`);
 
   await screen.evaluate(() => (window.__hold = 0));
   await screen.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
