@@ -2,6 +2,7 @@
 // #hex reading as text. Reading an unknown value stops it, so the unknown look shows instead.
 
 import { createSignal, getListener, onCleanup } from "solid-js";
+import { unwrap } from "solid-js/store";
 import { arith } from "../lang/arith.js";
 import { isHex, tokens } from "../lang/lex";
 import { LIBRARY, setClock } from "../lang/math.js";
@@ -227,6 +228,15 @@ export const systemScope: Scope = {
   missing: (name) => say(MISSING, name),
 };
 
+/** `whole` with its field at `path`, as `a.b`, made `value`, or `value` for no path. */
+function withField(whole: unknown, path: string, value: unknown): unknown {
+  if (path === "") return value;
+  const [head, ...rest] = path.split(".");
+  const at = (whole && typeof whole === "object" ? whole : {}) as Record<string, unknown>;
+  const inner = withField(at[head], rest.join("."), value);
+  return Array.isArray(at) ? at.map((v, i) => (i === Number(head) ? inner : v)) : { ...at, [head]: inner };
+}
+
 /** A page reads what the system does, and what a screen reads of its own. */
 export const pageScope: Scope = onScreen(systemScope);
 
@@ -411,6 +421,30 @@ export function runHandler(code: string, scope: Scope, emit: (name: string, payl
   const own: Record<string, unknown> = { p, emit };
   // the run reads back what it wrote, as the backend's runs do, before the binding catches up
   const written = new Map<string, unknown>();
+  const write = (key: string, value: unknown) => {
+    scope.set(key, "", value);
+    written.set(key, value);
+  };
+  // as on the system, each read is a fresh copy whose fields take assignment by writing the
+  // whole back with the field changed, so `jogVel[index] = 1` writes jogVel. What cannot be
+  // copied, as the screen's `keys`, is read as it is.
+  const wrap = (key: string, value: unknown, path: string[] = []): unknown => {
+    if (value === null || typeof value !== "object" || ArrayBuffer.isView(value)) return value;
+    let copy = value;
+    try {
+      if (path.length === 0) copy = structuredClone(unwrap(value));
+    } catch {
+      return value;
+    }
+    return new Proxy(copy, {
+      get: (target, k) => (typeof k === "symbol" ? Reflect.get(target, k) : wrap(key, Reflect.get(target, k), [...path, k])),
+      set: (target, k, v) => {
+        if (typeof k === "symbol") return false;
+        write(key, withField(written.has(key) ? written.get(key) : unwrap(scope.get(key)), [...path, k].join("."), v));
+        return Reflect.set(target, k, v);
+      },
+    });
+  };
   const names = new Proxy(
     {},
     {
@@ -419,14 +453,13 @@ export function runHandler(code: string, scope: Scope, emit: (name: string, payl
       get: (_, key) => {
         if (typeof key !== "string") return undefined;
         if (key in own) return own[key];
-        if (written.has(key)) return written.get(key);
-        if (scope.has(key)) return scope.get(key);
+        if (written.has(key)) return wrap(key, written.get(key));
+        if (scope.has(key)) return wrap(key, scope.get(key));
         throw new ReferenceError(scope.missing(key));
       },
       set: (_, key, value) => {
         if (typeof key !== "string" || !scope.has(key)) throw new ReferenceError(scope.missing(String(key)));
-        scope.set(key, "", value);
-        written.set(key, value);
+        write(key, value);
         return true;
       },
     },
