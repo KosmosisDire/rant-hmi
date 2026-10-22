@@ -17,15 +17,15 @@ pub struct Client {
     pub address: rant::String<48>,
     /// When it connected.
     pub connected_at: Timestamp,
-    /// The last round trip to it and back, in ms, 0 until one is measured. Timed on its data
-    /// channels while it has them.
+    /// The last round trip to it and back, in ms, 0 until one is measured. Timed over WebRTC
+    /// while that is open.
     pub ping_ms: f64,
     /// How much the round trip wavers, in ms, smoothed as RTP does: each new one moves it a
     /// sixteenth of the way to how far that round trip was from the last.
     pub jitter_ms: f64,
-    /// Whether its WebRTC data channels are open. Without them all goes over its socket, and
-    /// no video plays.
-    pub data_channels: bool,
+    /// Whether its WebRTC connection is open. Without it all goes over its socket, its video
+    /// as frames the screen decodes itself.
+    pub webrtc: bool,
 }
 
 /// The HMI's own state.
@@ -53,7 +53,7 @@ pub fn clients_value(list: &[Client]) -> Value {
                     ("connected_at", Value::Int(c.connected_at.us.into())),
                     ("ping_ms", c.ping_ms.into()),
                     ("jitter_ms", c.jitter_ms.into()),
-                    ("data_channels", c.data_channels.into()),
+                    ("webrtc", c.webrtc.into()),
                 ])
             })
             .collect(),

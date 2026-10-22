@@ -1181,7 +1181,7 @@ impl App {
                 connected_at: s.since,
                 ping_ms: s.ping.map_or(0.0, |p| p.as_secs_f64() * 1000.0),
                 jitter_ms: s.jitter,
-                data_channels: s.channels,
+                webrtc: s.channels,
             })
             .collect();
         clients.sort_by_key(|c| c.id);

@@ -76,7 +76,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     // a ping waits for what is on the way, where a pile of pictures took seconds
     const middle = pings[Math.floor(pings.length / 2)];
     check(middle < 500, `the slow screen's round trip runs ${Math.round(middle)} ms in the middle, from ${pings.map(Math.round).join(" ")}`);
-    check(!slow().data_channels, "the slow screen's data channels came up, so its socket was not the one tested");
+    check(!slow().webrtc, "the slow screen's data channels came up, so its socket was not the one tested");
 
     // a small value goes in its own lane, so it waits behind a piece of a picture at most
     const shown = screen.locator(`.run-layer:not([hidden]) .el[data-id="${note}"]`);

@@ -42,7 +42,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
 
   // a slow channel shows in the round trip, as the socket would not
   await screen.evaluate(() => (window.__delay = 200));
-  await eventually(() => mine()?.data_channels && mine().ping_ms > 190, "the backend to list the channel's round trip", 3000);
+  await eventually(() => mine()?.webrtc && mine().ping_ms > 190, "the backend to list the channel's round trip", 3000);
   await eventually(async () => Number((await link.innerText()).match(/(\d+) ms/)?.[1]) > 150, "the status bar to show the channel's round trip", 3000);
   await screen.evaluate(() => (window.__delay = 0));
 
@@ -54,7 +54,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await screen.evaluate(() => (window.__drop = true));
   await eventually(async () => (await link.getAttribute("title")) !== OVER_CHANNELS, "the screen to give up its quiet channels", 3000);
   await eventually(() => hmi.state.values.held?.value === 0, "what the screen held to be let go", 1000);
-  await eventually(() => mine()?.data_channels === false, "the backend to list the screen without channels");
+  await eventually(() => mine()?.webrtc === false, "the backend to list the screen without channels");
   check(/^System/.test(await link.innerText()), "the screen lost its socket with its channels");
   await screen.mouse.up();
 
