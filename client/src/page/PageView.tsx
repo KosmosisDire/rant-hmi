@@ -15,10 +15,10 @@ import { createSize } from "../ui/size";
 import { ImagePlay, VideoOff } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { follow } from "../ui/press";
-import { componentAct, type Act } from "./act";
+import { componentAct, type Act, QUICKEST, timeOf } from "./act";
+import { useKeys } from "./keys";
 import { svgOf } from "./markup";
 import { EVENTS } from "../protocol/events";
-import { eventInfo } from "../state/events";
 
 export interface Box {
   x: number;
@@ -91,8 +91,6 @@ const PRESSES = EVENTS.filter((e) => e.from === "pointer" && e.name !== "outside
 /** The instance pressed last, drawn above the others so what it opens is never hidden. */
 const [raised, setRaised] = createSignal<Element | null>(null);
 
-/** How often a repeat may run at the most, in ms, as the HMI's own timers. */
-const QUICKEST = 50;
 
 /** CSS lengths that read a bare number in units. */
 const SIDES = ["top", "right", "bottom", "left"];
@@ -260,8 +258,8 @@ function Placed(p: ElementProps) {
   );
 }
 
-/** What pressing an element does: it shows pressed at once and sends press, drag, hold,
- *  release and tap. The release is heard on the window, so letting go anywhere ends a press,
+/** What pressing an element does, its keys aside: it shows pressed at once and sends press,
+ *  drag, hold, release and tap. The release is heard on the window, so letting go anywhere ends a press,
  *  and a tap needs the release over the element. Where a press lands is read as it goes down
  *  the page, before any handler changes the page as it comes back up: Firefox before 125
  *  drops the rest of a touch when its pressed shape restyles and is measured in pointerdown. */
@@ -272,11 +270,7 @@ function usePress(p: ElementProps & { at?: At }) {
   // a hold's or a repeat's time, an expression read where the element sits
   const msOf = (event: string, setting: string) => {
     const h = p.element.handlers.find((x) => x.event === event);
-    if (!h) return undefined;
-    const fallback = Number(eventInfo(event)?.settings.find((s) => s.name === setting)?.default);
-    const r = resolve(h.attrs[setting] || String(fallback), p.scope);
-    const n = r.ok ? Number(r.value) : NaN;
-    return Number.isFinite(n) ? n : fallback;
+    return h && timeOf(h, setting, p.scope);
   };
   let self: globalThis.Element | undefined;
   let landed: { e: PointerEvent; at: Pointer } | undefined;
@@ -348,6 +342,7 @@ function usePress(p: ElementProps & { at?: At }) {
     self = el;
     el.addEventListener("pointerdown", read as EventListener, true);
   };
+  useKeys(p, () => self);
   return { pressed, live, down, ref };
 }
 

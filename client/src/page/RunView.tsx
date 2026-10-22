@@ -42,7 +42,8 @@ export function RunView(p: { active: boolean }) {
   createEffect(() => p.active && size.measure());
   onMount(() => {
     size.track(host);
-    const key = (e: KeyboardEvent) => p.active && e.key === "Escape" && back();
+    // an Escape a handler names is the handler's
+    const key = (e: KeyboardEvent) => p.active && e.key === "Escape" && !e.defaultPrevented && back();
     window.addEventListener("keydown", key);
     onCleanup(() => window.removeEventListener("keydown", key));
   });
@@ -63,7 +64,8 @@ export function RunView(p: { active: boolean }) {
         {(pg, n) => {
           const shown = () => layout(pg, n());
           return (
-            <div class="run-layer" classList={{ stacked: !!shown().stack }} data-page={pg.id} hidden={n() < base()}>
+            // a page under another is covered, so its elements hear no keys
+            <div class="run-layer" classList={{ stacked: !!shown().stack }} data-page={pg.id} hidden={n() < base()} inert={n() < pages().length - 1}>
               <Show when={n() > base()}>
                 <div class="run-backdrop" onPointerDown={() => n() === pages().length - 1 && back()} />
               </Show>
