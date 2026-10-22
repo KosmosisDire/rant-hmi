@@ -6,7 +6,7 @@
 // is timed the way a person's actions go.
 
 import { Decoder, Encoder } from "cbor-x";
-import { type Accessor, createSignal, type Setter } from "solid-js";
+import { type Accessor, createSignal, type Setter, untrack } from "solid-js";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import { notify, receive, setState, state } from "../state/store";
@@ -297,31 +297,36 @@ function answered(answer: string | null) {
 }
 
 /** Starts or joins playing an import's video, over WebRTC once the data connection is open,
- *  and from frames on the socket until WebRTC brings it. */
+ *  and from frames on the socket until WebRTC brings it. An effect calls it, so it tracks none
+ *  of what it reads: its decoder, set here, would run that effect again, and stop it. */
 export function play(alias: string): Playing {
-  let v = videos.get(alias);
-  if (!v) {
-    const [stream, setStream] = createSignal<MediaStream | null>(null);
-    const [decoded, setDecoded] = createSignal<Decoded | null>(null);
-    v = { users: 0, stream, setStream, decoded, setDecoded, transceiver: null, live: false };
-    videos.set(alias, v);
-    askFrames();
-    void offerVideos();
-  }
-  v.users++;
-  return v;
+  return untrack(() => {
+    let v = videos.get(alias);
+    if (!v) {
+      const [stream, setStream] = createSignal<MediaStream | null>(null);
+      const [decoded, setDecoded] = createSignal<Decoded | null>(null);
+      v = { users: 0, stream, setStream, decoded, setDecoded, transceiver: null, live: false };
+      videos.set(alias, v);
+      askFrames();
+      void offerVideos();
+    }
+    v.users++;
+    return v;
+  });
 }
 
 /** Leaves playing an import's video, which ends once nothing on this screen shows it. */
 export function stopPlaying(alias: string) {
-  const v = videos.get(alias);
-  if (!v || --v.users > 0) return;
-  videos.delete(alias);
-  v.decoded()?.close();
-  askFrames();
-  if (!v.transceiver) return;
-  v.transceiver.stop();
-  void offerVideos();
+  untrack(() => {
+    const v = videos.get(alias);
+    if (!v || --v.users > 0) return;
+    videos.delete(alias);
+    v.decoded()?.close();
+    askFrames();
+    if (!v.transceiver) return;
+    v.transceiver.stop();
+    void offerVideos();
+  });
 }
 
 /** Asks the socket for the frames of each video WebRTC does not bring, where this page can
