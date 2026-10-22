@@ -1,5 +1,5 @@
 //! The Rant HMI backend: one Rant node on the system that serves the editor and every
-//! screen. docs/design.md in the repository holds the design.
+//! screen. docs/files.md in the repository shows the project it runs.
 
 pub mod app;
 pub mod authorize;
