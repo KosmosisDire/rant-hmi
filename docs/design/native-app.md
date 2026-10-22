@@ -99,9 +99,9 @@ everything over the link, video frames too, exactly as a screen whose WebRTC fai
 
 ### Binaries
 
-`rant-hmi` stays the server and never links a webview: a headless Linux box has no GTK. A second
-binary of the same crate, `rant-hmi-app`, needs the cargo feature `window`, and is built where a
-desktop is (Windows and macOS first).
+`rant-hmi` stays the server and never links a webview: a headless Linux box has no GTK. The app,
+`rant-hmi-app`, is a package of its own in `app/`, on the server's library, built where a desktop
+is (Windows and macOS first).
 
 ```
 rant-hmi-app <project>          runs it here and shows its operator screen
@@ -132,8 +132,8 @@ id, and runs it as any project: no second way to read a project.
 ## Slices
 
 1. The window in process: `rant-hmi-app <project>`, the `Door`, the link, the client's link
-   shape. A scenario drives the real window through WebView2's debugging port.
-2. The screen alone: `rant-hmi-app <address>`.
+   shape. Built.
+2. The screen alone: `rant-hmi-app <address>`. Built with the first, as they share the window.
 3. Pack: one exe holding the client and the project.
 4. Release: CI builds the app on Windows and macOS, the package carries it, docs and the agent
    skill. A macOS bundle, Linux on WebKitGTK, an icon.
@@ -146,3 +146,58 @@ id, and runs it as any project: no second way to read a project.
 - Trusting the HMI's own certificate in the screen alone, by its fingerprint.
 - Installers: Tauri's bundler makes MSI, DMG and AppImage from a wry app, worth taking later.
 - Windows Server and 10 LTSC lack the WebView2 runtime: ship its bootstrapper, or say so.
+- Every HMI's node is named `hmi`, so an app and a server on one mesh clash. Name the node
+  after the project?
+
+## As built
+
+### Slices 1 and 2, the window and the screen alone
+
+- Backend: `Door` (app.rs) numbers screens from one count for `web.rs` and the link.
+  `Hmi::start` opens the project, the node and any port, and `Hmi::run(stop)` runs until stop:
+  Ctrl C for the server, the window closing or Ctrl C for the app. `App::run` takes what feeds
+  it as one `Sources`. `kept()` moved from tls.rs to lib.rs, as the webview's data shares the
+  folder.
+- `link.rs`: the link as an axum router, the client's files from the same service `web.rs`
+  serves, and `/link`. A poll answers every piece ready, up to about 1 MB, waits 10 s at most,
+  and counts as heard, as a pong does. A session's lanes are kept until read out, as a
+  socket's writer keeps them, so the last message a dropped session was sent still arrives.
+- The app is the package `app/` (wry 0.57, tao 0.37), with a workspace and lock of its own.
+  wry's Linux crates pin exact old `toml_edit` and `toml_datetime` (through glib-macros and
+  proc-macro-crate 2), and cargo resolves every platform at once, so in the server's lock they
+  took the server's `toml` from 0.8.23 back to 0.8.2 on every build. Apart, the server's lock
+  only gains `tower` for its tests, and only the app's backend reads TOML with 0.8.2. The
+  backend runs on a thread with its own runtime and the window on the main thread. Each
+  request on the window's scheme goes to the router in a task. A start that fails shows why in
+  the window. Closing the window ends the screens' sessions and the node, then the process.
+- Client: `net/link.ts`, which `connection.ts` now opens. In the app no WebRTC is offered. The
+  editor's status bar says "Reached in this app, with no network".
+- Tests: cargo tests drive the link (order both ways, a poll that waits, the last message of a
+  dropped session, a body cut short). Scenario app-window runs the `linked` example, which
+  serves the app's link over http on loopback, so headless Chrome drives the real client
+  through it: it reads and writes the demo line, reloads into a new session, opens no socket,
+  and the editor's status bar says so. Then the real window: its screen connects and keeps its
+  one session past the 5 s a silent screen is lost in, the process listens on no TCP port, and
+  closing the window ends the app by itself. Then the window shows a running HMI's screen by
+  its address, and a project that cannot open leaves the window saying why until it is closed.
+  A client that never takes the app link fails it, so does an app that never says it is there,
+  and so does an app whose failed start closed the window at once, a bug the last part found.
+- WebView2 here (runtime 155) opens no debugging port, whether asked through its variable or
+  the option, so the window itself is checked through the app's log. The app passes
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` on, which wry's own arguments would replace, for a
+  machine where it works.
+
+Choices worth a second look:
+
+- The app's own package and lock, so its backend reads TOML with an older `toml` than the
+  server's. Moving the server to `toml` 1.x would let the app share its workspace again.
+- The app is a windows subsystem exe, so double clicked it opens no console. Its log reaches
+  only a pipe that started it.
+- The window opens at 1280 by 800 and takes its title from the page.
+- A screen in the app gets every video as frames over the link, decoded with WebCodecs, since
+  it has no WebRTC.
+- The screen alone refuses the HMI's own self signed certificate, as WebView2 does. Use http
+  there for now.
+- Not yet: packing one exe (slice 3), so the app still needs the client folder beside it
+  (`--client`), and CI does not build the app. macOS should build as is but is untried, and
+  Linux needs WebKitGTK.
