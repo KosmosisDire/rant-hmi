@@ -5,7 +5,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
@@ -24,7 +23,6 @@ use crate::rules;
 use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
-use crate::web::PING_EVERY;
 use crate::value::Value;
 use crate::rtc::{FromRtc, MESSAGE_MAX, ToRtc};
 
@@ -37,14 +35,10 @@ const SILENCE: Duration = Duration::from_millis(500);
 /// A screen silent this long is lost. A busy page stops reading its socket a while, which
 /// is no reason to start it over.
 const LOST: Duration = Duration::from_secs(5);
-/// A screen this many bytes behind gets no values until it catches up, then all at once, so
-/// a slow link carries a camera at the rate it can and nothing piles up.
-const BEHIND: usize = 1 << 20;
-/// A screen whose socket takes this much longer there and back than it can is behind too: what
-/// waits in the network and its buffers, which the bytes queued here never show.
-const LATE: Duration = Duration::from_millis(100);
-/// The least round trip seen this far back is what the socket can do.
-const TRIPS: Duration = Duration::from_secs(10);
+/// A screen with this many batches of small values waiting for its socket gets no more, and
+/// then all values at once in place of those waiting, so a link that stalls a while never
+/// carries what is no longer so.
+const BEHIND: usize = 8;
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
@@ -62,64 +56,53 @@ pub enum Inbound {
     Close { session: u32 },
 }
 
-/// A screen's way out, in lanes that take turns (`lanes.rs`). `queued` counts the bytes its
-/// socket has not taken yet, which the socket's writer takes off as it sends.
+/// A screen's way out, in lanes that take turns (`lanes.rs`), which its socket sends as fast
+/// as the screen confirms them.
 pub struct Outbox {
     lanes: Arc<Lanes>,
-    queued: Arc<AtomicUsize>,
     /// The lane of each import whose value is too big to share a message.
     own: RefCell<HashMap<String, u16>>,
-    /// Values were left out while the screen was behind, so it needs them all.
+    /// Small values were left out while too many waited, so the screen needs them all.
     stale: Cell<bool>,
-    /// Its socket's round trip runs late, or will once nothing answers by `due`.
-    late: Cell<bool>,
-    due: Cell<Option<Instant>>,
 }
 
 impl Outbox {
-    pub fn new(lanes: Arc<Lanes>, queued: Arc<AtomicUsize>) -> Outbox {
-        Outbox { lanes, queued, own: RefCell::default(), stale: Cell::new(false), late: Cell::new(false), due: Cell::new(None) }
+    pub fn new(lanes: Arc<Lanes>) -> Outbox {
+        Outbox { lanes, own: RefCell::default(), stale: Cell::new(false) }
     }
 
     /// Sends what is not values.
     fn send(&self, bytes: Bytes) {
-        self.put(CONTROL, bytes, false);
+        self.lanes.put(CONTROL, bytes, false);
     }
 
-    /// Sends values, but leaves them out while the screen is behind, since newer ones replace
-    /// them. With `alone`, one import's value too big to share a message goes in that
-    /// import's own lane, which keeps only the latest.
+    /// Sends values. Small ones share a lane, left out while the screen is behind. With
+    /// `alone`, one import's value too big to share a message goes in that import's own lane,
+    /// which keeps only the latest.
     fn values(&self, alone: Option<&str>, bytes: Bytes) {
-        if self.late() || self.queued.load(Ordering::Relaxed) > BEHIND {
-            self.stale.set(true);
+        let Some(alias) = alone else {
+            match self.lanes.waiting(VALUES) < BEHIND {
+                true => self.lanes.put(VALUES, bytes, false),
+                false => self.stale.set(true),
+            }
             return;
-        }
-        let Some(alias) = alone else { return self.put(VALUES, bytes, false) };
+        };
         let lane = {
             let mut own = self.own.borrow_mut();
             let next = VALUES + 1 + own.len() as u16;
             *own.entry(alias.to_owned()).or_insert(next)
         };
-        self.put(lane, bytes, true);
+        self.lanes.put(lane, bytes, true);
     }
 
-    fn put(&self, lane: u16, bytes: Bytes, latest: bool) {
-        self.queued.fetch_add(bytes.len(), Ordering::Relaxed);
-        let gone = self.lanes.put(lane, bytes, latest);
-        self.queued.fetch_sub(gone, Ordering::Relaxed);
-    }
-
-    fn late(&self) -> bool {
-        self.late.get() || self.due.get().is_some_and(|due| Instant::now() > due)
-    }
-
-    /// True once a screen that missed values has caught up, and then only once.
-    fn caught_up(&self) -> bool {
-        let caught = self.stale.get() && !self.late() && self.queued.load(Ordering::Relaxed) < BEHIND / 2;
-        if caught {
-            self.stale.set(false);
+    /// True once for a screen that missed small values. Those still waiting are dropped, as
+    /// all values follow.
+    fn missed(&self) -> bool {
+        let missed = self.stale.replace(false);
+        if missed {
+            self.lanes.clear(VALUES);
         }
-        caught
+        missed
     }
 }
 
@@ -138,8 +121,6 @@ struct Session {
     ping: Option<Duration>,
     /// How much the round trip wavers, in ms, smoothed.
     jitter: f64,
-    /// The socket's round trips of late, oldest first.
-    trips: VecDeque<(Instant, Duration)>,
     /// Whether its WebRTC data channels are open.
     channels: bool,
     /// Whether it sends on its channels, and what they brought before it said so.
@@ -160,19 +141,6 @@ impl Session {
             self.jitter += ((rtt.as_secs_f64() - last.as_secs_f64()).abs() * 1000.0 - self.jitter) / 16.0;
         }
         self.ping = Some(rtt);
-    }
-
-    /// A round trip on the socket, which says whether it runs late, and when the next ping's
-    /// answer is due, which the socket runs late without.
-    fn socket_trip(&mut self, rtt: Duration) {
-        let now = Instant::now();
-        self.trips.push_back((now, rtt));
-        while self.trips.front().is_some_and(|(at, _)| now.duration_since(*at) > TRIPS) {
-            self.trips.pop_front();
-        }
-        let least = self.trips.iter().map(|(_, t)| *t).min().unwrap_or(rtt);
-        self.out.late.set(rtt > least + LATE);
-        self.out.due.set(Some(now - rtt + PING_EVERY + least + LATE));
     }
 }
 
@@ -360,7 +328,7 @@ impl App {
             Inbound::Open { session, out, local, remote } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, trips: VecDeque::new(), channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
+                self.sessions.insert(session, Session { out, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -373,12 +341,9 @@ impl App {
             Inbound::Heard { session, ping } => {
                 if let Some(s) = self.sessions.get_mut(&session) {
                     s.heard = Instant::now();
-                    if let Some(ping) = ping {
-                        s.socket_trip(ping);
-                        // the screen times its channels while it has them
-                        if !s.channels {
-                            s.timed(ping);
-                        }
+                    // the screen times its channels while it has them
+                    if let Some(ping) = ping.filter(|_| !s.channels) {
+                        s.timed(ping);
                     }
                 }
             }
@@ -1191,8 +1156,8 @@ impl App {
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
             self.publish_status();
         }
-        let caught: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.out.caught_up()).map(|(id, _)| *id).collect();
-        for session in caught {
+        let missed: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.out.missed()).map(|(id, _)| *id).collect();
+        for session in missed {
             self.put_values(Some(session), self.all_values(session));
         }
         let silent: Vec<(u32, Duration)> = self.sessions.iter().map(|(id, s)| (*id, s.heard.elapsed())).filter(|(_, t)| *t > SILENCE).collect();
@@ -1505,37 +1470,25 @@ mod tests {
 
     /// What waits in a screen's lanes, each message small enough for one piece.
     fn sent(lanes: &Lanes) -> Vec<Bytes> {
-        std::iter::from_fn(|| lanes.take()).map(|(piece, _)| piece.slice(3..)).collect()
+        std::iter::from_fn(|| lanes.take()).map(|piece| piece.slice(3..)).collect()
     }
 
     #[test]
-    fn a_screen_behind_misses_values_but_nothing_else_then_hears_it_caught_up() {
+    fn a_screen_behind_misses_small_values_until_all_go_in_their_place() {
         let lanes = Arc::new(Lanes::default());
-        let queued = Arc::new(AtomicUsize::new(BEHIND + 1));
-        let out = Outbox::new(lanes.clone(), queued.clone());
-        out.values(Some("Cam"), Bytes::from_static(b"picture"));
-        out.values(None, Bytes::from_static(b"values"));
-        out.send(Bytes::from_static(b"page"));
-        assert_eq!(sent(&lanes), vec![Bytes::from_static(b"page")]);
-        assert!(!out.caught_up());
-        queued.store(0, Ordering::Relaxed);
-        assert!(out.caught_up());
-        assert!(!out.caught_up());
-        out.values(Some("Cam"), Bytes::from_static(b"picture"));
-        assert_eq!(sent(&lanes), vec![Bytes::from_static(b"picture")]);
-    }
-
-    #[test]
-    fn a_screen_whose_socket_runs_late_misses_values_until_it_is_on_time() {
-        let lanes = Arc::new(Lanes::default());
-        let out = Outbox::new(lanes.clone(), Arc::new(AtomicUsize::new(0)));
-        out.late.set(true);
+        let out = Outbox::new(lanes.clone());
+        for n in 0..BEHIND + 1 {
+            out.values(None, Bytes::from(vec![n as u8]));
+        }
+        assert_eq!(lanes.waiting(VALUES), BEHIND);
+        // a picture and what is not values still go
         out.values(Some("Cam"), Bytes::from_static(b"picture"));
         out.send(Bytes::from_static(b"page"));
-        assert_eq!(sent(&lanes), vec![Bytes::from_static(b"page")]);
-        assert!(!out.caught_up());
-        out.late.set(false);
-        assert!(out.caught_up());
+        assert!(out.missed());
+        assert!(!out.missed());
+        out.values(None, Bytes::from_static(b"all"));
+        let all = [Bytes::from_static(b"page"), Bytes::from_static(b"all"), Bytes::from_static(b"picture")];
+        assert_eq!(sent(&lanes), all);
     }
 
     #[test]
@@ -1546,14 +1499,13 @@ mod tests {
         assert!(shared.is_some());
         assert_eq!(alone.iter().map(|(alias, _)| alias.as_str()).collect::<Vec<_>>(), vec!["Cam"]);
         let lanes = Arc::new(Lanes::default());
-        let queued = Arc::new(AtomicUsize::new(0));
-        let out = Outbox::new(lanes.clone(), queued.clone());
+        let out = Outbox::new(lanes.clone());
         out.values(Some("Cam"), Bytes::from_static(b"one"));
         out.values(Some("Other"), Bytes::from_static(b"two"));
-        // the newer replaces the one waiting, and what waits counts only it
+        // the newer replaces the one waiting
         out.values(Some("Cam"), Bytes::from_static(b"three"));
-        assert_eq!(queued.load(Ordering::Relaxed), 8);
-        let lanes_of: Vec<(u16, Bytes)> = std::iter::from_fn(|| lanes.take()).map(|(p, _)| (u16::from_le_bytes([p[0], p[1]]), p.slice(3..))).collect();
+        assert_eq!(lanes.waiting(VALUES + 1), 1);
+        let lanes_of: Vec<(u16, Bytes)> = std::iter::from_fn(|| lanes.take()).map(|p| (u16::from_le_bytes([p[0], p[1]]), p.slice(3..))).collect();
         assert_eq!(lanes_of, vec![(VALUES + 1, Bytes::from_static(b"three")), (VALUES + 2, Bytes::from_static(b"two"))]);
     }
 }

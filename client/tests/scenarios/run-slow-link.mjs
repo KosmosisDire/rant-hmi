@@ -1,14 +1,18 @@
-// A screen on a link slower than what it is sent keeps a short round trip: once its socket's
-// round trip runs late it gets no values until it catches up, then the latest of all, so a
-// camera comes at the rate the link carries and nothing waits behind a pile of pictures. The
-// screen has no WebRTC, so all it gets comes on its socket, through a link of 150 KB/s while
-// the label camera sends about 300.
+// A screen on a link slower than what it is sent keeps a short round trip and hears a small
+// value at once: its socket keeps on the way what the link carries in its shortest round trip
+// and 100 ms more, a camera's pictures go in pieces in a lane of their own, the newest only,
+// and a small value waits for one piece of a picture at most. The screen has no WebRTC, so all
+// it gets comes on its socket, through a link of 150 KB/s while the label camera sends 300.
 
 import net from "node:net";
 
 export default async function ({ page, hmi, sys, check, eventually }) {
   await hmi.import("SlowCam", "Line1/LabelCam");
   await hmi.import("SlowClients", "Hmi/Clients");
+  hmi.send({ type: "set_variable", name: "slowNote", variable: { name: "slowNote", start: 0, per: "hmi" } });
+  const pageId = await hmi.addPage("Slow link");
+  const note = await hmi.addElement(pageId, "span", { name: "note", x: "2", y: "2", w: "30", h: "4", text: "slowNote" });
+  hmi.send({ type: "set_start", page: pageId });
   const port = Number(new URL(sys.url).port);
   // the link: at most 150 KB/s toward the screen, the backend read no further while 16 KB
   // wait, so it feels the link push back as TCP does
@@ -69,10 +73,23 @@ export default async function ({ page, hmi, sys, check, eventually }) {
       if (slow()) pings.push(slow().ping_ms);
     }
     pings.sort((a, b) => a - b);
-    // what follows a picture waits for it, 400 ms at this rate, where a pile of them took seconds
+    // a ping waits for what is on the way, where a pile of pictures took seconds
     const middle = pings[Math.floor(pings.length / 2)];
-    check(middle < 1000, `the slow screen's round trip runs ${Math.round(middle)} ms in the middle, from ${pings.map(Math.round).join(" ")}`);
+    check(middle < 500, `the slow screen's round trip runs ${Math.round(middle)} ms in the middle, from ${pings.map(Math.round).join(" ")}`);
     check(!slow().data_channels, "the slow screen's data channels came up, so its socket was not the one tested");
+
+    // a small value goes in its own lane, so it waits behind a piece of a picture at most
+    const shown = screen.locator(`.run-layer:not([hidden]) .el[data-id="${note}"]`);
+    const took = [];
+    for (let n = 1; n <= 7; n++) {
+      const start = Date.now();
+      hmi.set("slowNote", n);
+      await shown.filter({ hasText: new RegExp(`^${n}$`) }).waitFor({ timeout: 10000 });
+      took.push(Date.now() - start);
+      await screen.waitForTimeout(150);
+    }
+    took.sort((a, b) => a - b);
+    check(took[3] < 400, `a small value took ${took[3]} ms in the middle to show, from ${took.join(" ")}`);
   } finally {
     await context.close();
     for (const end of links) end();

@@ -3,8 +3,8 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -17,6 +17,7 @@ use axum::response::Response;
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{MissedTickBehavior, interval};
 use axum::http::{HeaderValue, header};
@@ -25,6 +26,7 @@ use tower_http::set_header::SetResponseHeader;
 use tracing::{error, warn};
 
 use crate::app::{Inbound, Outbox};
+use crate::flight::Flight;
 use crate::lanes::Lanes;
 use crate::protocol::ClientMsg;
 
@@ -92,39 +94,65 @@ async fn upgrade(ws: WebSocketUpgrade, State(shared): State<Shared>, ConnectInfo
     ws.on_upgrade(move |socket| screen(socket, shared, reached))
 }
 
+/// What a socket has on its way, shared by its reader, which hears the pongs, and its writer,
+/// which waits for them when the way is full.
+#[derive(Default)]
+struct Way {
+    flight: Mutex<Flight>,
+    heard: Notify,
+}
+
 /// One screen's socket: binary CBOR frames in become messages for the loop, and what the
-/// loop sends goes out in pieces of its lanes. When the loop drops the screen, its lanes
-/// close and the socket closes once they are sent.
+/// loop sends goes out in pieces of its lanes, as fast as the screen confirms them
+/// (`flight.rs`). When the loop drops the screen, its lanes close and the socket closes once
+/// they are sent.
 async fn screen(socket: WebSocket, shared: Shared, reached: Reached) {
     let session = shared.next.fetch_add(1, Ordering::Relaxed);
     let lanes = Arc::new(Lanes::default());
-    let queued = Arc::new(AtomicUsize::new(0));
     let (local, remote) = (reached.local, reached.remote);
-    if shared.inbound.send(Inbound::Open { session, out: Outbox::new(lanes.clone(), queued.clone()), local, remote }).is_err() {
+    if shared.inbound.send(Inbound::Open { session, out: Outbox::new(lanes.clone()), local, remote }).is_err() {
         return;
     }
     let (mut sink, mut stream) = socket.split();
-    // each ping carries when it left, in us since the socket opened, which its pong brings back
     let born = Instant::now();
+    let now = move || born.elapsed().as_micros() as u64;
+    let way = Arc::new(Way::default());
+    let writing = way.clone();
     let writer = tokio::spawn(async move {
-        let mut ping = interval(PING_EVERY);
-        ping.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let way = writing;
+        let ping = || Message::Ping(Bytes::copy_from_slice(&way.flight.lock().expect("flight").ping(now())));
+        let mut tick = interval(PING_EVERY);
+        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
-            let (frame, sent) = tokio::select! {
-                piece = lanes.next() => match piece {
-                    Some((piece, carried)) => (Message::Binary(piece), carried),
-                    None => break,
-                },
-                _ = ping.tick() => (Message::Ping(Bytes::copy_from_slice(&(born.elapsed().as_micros() as u64).to_le_bytes())), 0),
+            let heard = way.heard.notified();
+            let (room, asking) = {
+                let f = way.flight.lock().expect("flight");
+                (f.room(), f.asking())
             };
-            let failed = sink.send(frame).await.is_err();
-            queued.fetch_sub(sent, Ordering::Relaxed);
-            if failed {
+            let frame = if !room && !asking {
+                // the way is full, so a ping at once, whose pong opens it as soon as it can
+                ping()
+            } else {
+                tokio::select! {
+                    piece = lanes.next(), if room => match piece {
+                        Some(piece) => {
+                            way.flight.lock().expect("flight").wrote(piece.len());
+                            Message::Binary(piece)
+                        }
+                        None => break,
+                    },
+                    _ = heard, if !room => continue,
+                    _ = tick.tick() => ping(),
+                }
+            };
+            if sink.send(frame).await.is_err() {
                 break;
             }
         }
         let _ = sink.close().await;
     });
+    // the loop hears a round trip once a ping's time at most, though the writer pings more
+    let mut told: Option<Instant> = None;
     while let Some(Ok(frame)) = stream.next().await {
         match frame {
             Message::Binary(data) => match ciborium::from_reader::<ClientMsg, _>(data.as_ref()) {
@@ -134,8 +162,12 @@ async fn screen(socket: WebSocket, shared: Shared, reached: Reached) {
                 Err(e) => warn!("screen {session} sent what this backend cannot read: {e}"),
             },
             Message::Pong(data) => {
-                let left = <[u8; 8]>::try_from(data.as_ref()).ok().map(|b| Duration::from_micros(u64::from_le_bytes(b)));
-                let _ = shared.inbound.send(Inbound::Heard { session, ping: left.map(|l| born.elapsed().saturating_sub(l)) });
+                let ping = way.flight.lock().expect("flight").pong(&data, now());
+                way.heard.notify_one();
+                if told.is_none_or(|t| t.elapsed() >= PING_EVERY) {
+                    told = Some(Instant::now());
+                    let _ = shared.inbound.send(Inbound::Heard { session, ping });
+                }
             }
             Message::Close(_) => break,
             _ => {}
