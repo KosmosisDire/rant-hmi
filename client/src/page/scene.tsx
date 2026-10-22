@@ -11,6 +11,7 @@ import {
   Color,
   CylinderGeometry,
   DirectionalLight,
+  Float32BufferAttribute,
   GridHelper,
   Group,
   HemisphereLight,
@@ -52,7 +53,8 @@ interface Read {
   number(key: string): number | undefined;
   flag(key: string): boolean | undefined;
   vector(key: string): Vec3 | undefined;
-  points(key: string): Vec3[] | undefined;
+  /** Each point's x, y and z after the one before, as three.js draws them. */
+  points(key: string): Float32Array | undefined;
   colour(key: string): Colour | undefined;
   pose(key: string): Pose | undefined;
   text(key: string): string | undefined;
@@ -60,6 +62,22 @@ interface Read {
   /** Says why `key` cannot show, as when what it names cannot be had. */
   fail(key: string, why: string): void;
   readonly drawn: Drawn;
+}
+
+/** A list of points as three.js draws them, each one's x, y and z after the one before, read in
+ *  one pass, or undefined unless every point has numbers x, y and z. Other fields a point has,
+ *  as a lidar's intensity, are passed over. A cloud of thousands is read each time it moves. */
+function positions(v: unknown): Float32Array | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out = new Float32Array(v.length * 3);
+  for (let i = 0; i < v.length; i++) {
+    const p = v[i] as { x?: unknown; y?: unknown; z?: unknown } | null;
+    if (typeof p?.x !== "number" || typeof p.y !== "number" || typeof p.z !== "number") return undefined;
+    out[3 * i] = p.x;
+    out[3 * i + 1] = p.y;
+    out[3 * i + 2] = p.z;
+  }
+  return out;
 }
 
 function reader(props: Element["props"], defaults: Record<string, string>, scope: Scope): Read {
@@ -84,7 +102,7 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
     number: (key) => as(key, "a number", (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)),
     flag: (key) => as(key, "true or false", (v) => (typeof v === "boolean" ? v : undefined)),
     vector: (key) => as(key, "a 3D vector", vector),
-    points: (key) => as(key, "a list of 3D vectors", (v) => (Array.isArray(v) && v.every((p) => vector(p)) ? (v as Vec3[]) : undefined)),
+    points: (key) => as(key, "a list of points, each with numbers x, y and z", positions),
     colour: (key) => as(key, "a colour", colourOf),
     pose: (key) => as(key, "a pose, a position and an orientation each optional", poseOf),
     text: (key) => as(key, "text", (v) => (typeof v === "string" ? v : undefined)),
@@ -276,7 +294,7 @@ const KINDS: Record<Part, Kind> = {
       const list = read.points("points");
       if (list) {
         drawn.geometry.dispose();
-        drawn.geometry = new BufferGeometry().setFromPoints(list as Vector3[]);
+        drawn.geometry = new BufferGeometry().setAttribute("position", new Float32BufferAttribute(list, 3));
       }
       const size = read.number("size");
       if (drawn instanceof Points && size !== undefined) drawn.material.size = size;
