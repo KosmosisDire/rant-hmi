@@ -1,13 +1,13 @@
 // A page handler that touches only the screen's own variables runs on the screen. Through a
-// link that holds every byte 300 ms each way, a view it drags follows the pointer within a frame
-// and never steps back as the system's older values come in, and the system has the value once
-// they have. A handler that touches a shared variable runs on the system, so its view waits for
+// link that holds every byte 600 ms each way, a round trip over a second, a view it drags follows
+// the pointer within a frame and never steps back as the system's older values come in, and the
+// system has the value once they have. A handler that touches a shared variable runs on the system, so its view waits for
 // the round trip.
 
 import net from "node:net";
 
 /** How long the link holds what it carries, each way. */
-const DELAY = 300;
+const DELAY = 600;
 
 export default async function ({ page, hmi, check, eventually, sys }) {
   hmi.send({ type: "set_variable", name: "hereX", variable: { name: "hereX", start: 0, per: "screen" } });

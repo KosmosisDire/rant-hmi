@@ -233,8 +233,8 @@ export function receive(msg: ServerMsg) {
 }
 
 /** A mesh import is shown as known only while the backend link is up too. */
-/** How long the screen shows what it wrote to its own variable should the system's value never
- *  come to match, as when a rule changes it again. */
+/** How long past twice the link's round trip the screen shows what it wrote to its own variable
+ *  should the system's value never come to match, as when a rule changes it again. */
 const KEPT_MS = 1000;
 
 /** What the screen wrote to its own variables, shown over the system's value until that comes
@@ -247,7 +247,7 @@ const lapses = new Map<string, ReturnType<typeof setTimeout>>();
 export function promise(alias: string, value: Value) {
   setPromised(alias, { value });
   clearTimeout(lapses.get(alias));
-  lapses.set(alias, setTimeout(() => settle(alias), KEPT_MS));
+  lapses.set(alias, setTimeout(() => settle(alias), KEPT_MS + 2 * (state.rttMs ?? 0)));
 }
 
 function settle(alias: string) {
