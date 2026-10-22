@@ -252,8 +252,18 @@ function given(path: string[], place: Place, names?: Suggestion[], also?: Sugges
   const token = path[0].startsWith("$") && THEMED.includes(place) ? tokens().find((t) => t.label === path[0]) : undefined;
   if (token) return path.length === 1 ? (token.members ?? []) : [];
   const own = [...(names ?? []), ...(also ?? [])].find((n) => n.label === path[0]);
-  if (own || names) return path.length === 1 ? (own?.members ?? []) : [];
-  return members(path, place);
+  if (own) return path.length === 1 ? (own.members ?? []) : [];
+  // the language's names read in every place, the mesh's only where code names nothing else
+  return language(path, place) ?? (names ? [] : members(path, place));
+}
+
+/** What one of the language's own names offers after a dot: the fields of a value it lists,
+ *  or what one of JavaScript's own holds. Undefined for any other name. */
+function language(path: string[], place: Place): Suggestion[] | undefined {
+  const a = apiIn(place).find((x) => x.name === path[0] && (x.fields || x.standard));
+  if (!a) return undefined;
+  if (path.length > 1) return [];
+  return a.fields ? a.fields.map((f): Suggestion => ({ label: f.name, insert: f.name, icon: "member", type: f.words })) : held((globalThis as Record<string, unknown>)[a.name]);
 }
 
 function top(place: Place): Suggestion[] {
@@ -328,10 +338,6 @@ function members(path: string[], place: Place): Suggestion[] {
   const kind = state.enums.find((e) => e.name === root);
   if (kind) return rest.length === 0 ? [options(kind.options)] : rest.join() === "options" ? methods([...kind.options], true) : [];
   const imp = state.imports.find((i) => i.alias === root);
-  const holds = apiIn(place).find((a) => a.name === root && a.fields);
-  if (holds && !imp) return rest.length === 0 ? holds.fields!.map((f): Suggestion => ({ label: f.name, insert: f.name, icon: "member", type: f.words })) : [];
-  const standard = apiIn(place).find((a) => a.name === root && a.standard);
-  if (standard && !imp && rest.length === 0) return held((globalThis as Record<string, unknown>)[root]);
   if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && rest.length === 0) return [SEND, ...members(path, "expression")];
   let value: Value | null = live(root).value;
   const known = live(root).known;

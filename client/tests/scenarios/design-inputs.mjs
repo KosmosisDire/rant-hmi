@@ -33,6 +33,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Enter");
   await eventually(async () => (await d.el(label).textContent()) === "50%", "the component to read its default");
 
+  // after a dot the language's own names offer theirs, in a component as on a page
+  await text.fill("");
+  await page.keyboard.type("time.");
+  await eventually(async () => (await page.locator(".suggest .suggest-name").allTextContents()).join() === "now", "now offered after time. in a component");
+  await page.keyboard.press("Escape");
+
   await d.setField("Text", "Speed");
   await page.locator(".field-note", { hasText: "Speed is no input, variable or part of Meter" }).waitFor();
   await d.setField("Text", 'level + "%"');
