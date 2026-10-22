@@ -237,20 +237,29 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
 
   // the conveyor runs only while Convey is held, carrying its box left
   const before = value("DistanceD");
-  const slat = async () => (await el(belt).locator('.el[data-name="slat"]').nth(1).boundingBox()).x;
+  // a slat's step each frame: it runs left and jumps back one spacing a cycle, too short a cycle
+  // for readings taken from here, which can land at the same point of it each time
+  const steps = () =>
+    el(belt)
+      .locator('.el[data-name="slat"]')
+      .nth(1)
+      .evaluate(
+        (e) =>
+          new Promise((done) => {
+            const xs = [];
+            const frame = () => (xs.push(e.getBoundingClientRect().x), xs.length < 24 ? requestAnimationFrame(frame) : done(xs.slice(1).map((x, i) => x - xs[i])));
+            requestAnimationFrame(frame);
+          }),
+      );
   await hold(buttons.Convey, 600, async () => {
     await eventually(() => value("ConveyorGo") === true && value("DistanceD") < before, "the box to move while Convey is held");
-    const from = await slat();
-    const seen = [];
-    await eventually(
-      async () => (seen.push(await slat()), seen.at(-1) < from),
-      () => `the belt to move left while the conveyor runs, from ${from} it read ${seen.slice(-10).join(" ")} with ConveyorGo ${value("ConveyorGo")}`,
-    );
+    const seen = await steps();
+    const [left, right] = [seen.filter((s) => s < 0).length, seen.filter((s) => s > 0).length];
+    check(left > 2 * right, `the belt to move left while the conveyor runs, its slat stepped ${seen.map(Math.round).join(" ")} with ConveyorGo ${value("ConveyorGo")}`);
   });
   await eventually(() => value("ConveyorGo") === false, "the conveyor to stop at the release");
-  const stopped = await slat();
-  await page.waitForTimeout(200);
-  check((await slat()) === stopped, "the belt still once the conveyor stops");
+  const still = await steps();
+  check(still.every((s) => s === 0), `the belt still once the conveyor stops, its slat stepped ${still.map(Math.round).join(" ")}`);
   const box = await el(belt).locator('.el[data-name="box"]').boundingBox();
   const whole = await el(belt).boundingBox();
   check(box.x > whole.x && box.x + box.width <= whole.x + whole.width + 1, `the box sits on the belt: ${JSON.stringify(box)} in ${JSON.stringify(whole)}`);
