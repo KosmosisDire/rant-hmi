@@ -86,10 +86,24 @@ gamepads and to decode video itself.
   the host. A browser warns about it until told to trust it.
 - `--cert` and `--key` take a real certificate and its key, as PEM files.
 
+## As an app
+
+The download button in the editor's top bar gets the HMI as an app for a device: open the
+editor on the device, pick what the app does, and download it. The app is one file with
+everything it needs, so nothing is installed first.
+
+- **Platform**: this device's is picked. The server offers a platform once it has its runtime.
+- **Runs**: in the app, the HMI and its logic run on the device with no server, on the domain
+  the server is on. On this server, the app shows the server's screen, trusting its own
+  certificate.
+- **Opens**: in a window or full screen. F11 switches between the two.
+
+The first start unpacks the app into `~/.rant/hmi/unpacked`, which takes a few seconds, and later
+starts begin at once. An app is the HMI as it was when downloaded: download it again for a newer one.
+
 ## In a window
 
-`rant-hmi-app` shows an HMI's operator screen in a window of its own, on Chromium from Electron.
-Built from source for now:
+From source, `rant-hmi-app` is the window those apps run, on Chromium from Electron:
 
 ```
 cd app && npm install && npm run build
@@ -99,10 +113,12 @@ npx electron . http://host:6739
 
 - Given a folder it runs that project in the same process as its window, with no network
   between them. It listens on no port, so no other screen and no editor reach it.
-- Given an address it shows that HMI's screen, as a browser would.
-- F11 fills the screen with the window and gives it back. `--fullscreen` opens it so, for a
-  panel or a handheld.
+- Given an address it shows that HMI's screen, as a browser would, and tries again while it
+  does not answer.
+- `--fullscreen` opens it full screen, and F11 switches.
 - It keeps the window's data in `~/.rant/hmi/window`.
+- `npm run runtime` builds this host's runtime for apps and puts it where this host's server
+  builds apps from, `~/.rant/hmi/runtimes/<version>/<platform>`.
 
 ## Pages
 

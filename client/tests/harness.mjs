@@ -2,14 +2,16 @@
 // own loopback domain and port, with a fresh copy of the test project, and a headless Chrome to
 // drive.
 
-import { execFileSync, spawn } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cp } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { _electron, chromium } from "playwright-core";
-import { built } from "../../app/addon.mjs";
+import { built, platform, program } from "../../app/addon.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(here, "..", "..");
@@ -93,6 +95,7 @@ export async function startSystem({ empty, slot = 0 } = {}) {
   return {
     url,
     ws: `ws://127.0.0.1:${portOf(slot)}/ws`,
+    domain: Number(domain),
     project,
     home,
     backend,
@@ -122,20 +125,22 @@ function electron() {
 /** What rant-hmi-app takes to run `project` here, with a demo line of its own on `domain`. */
 function appRunning(project, domain) {
   const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", String(domain)]);
-  return { line, args: [project, "--domain", String(domain), "--loopback", "--client", CLIENT] };
+  return { line, args: [project, `--domain=${domain}`, "--loopback", `--client=${CLIENT}`] };
 }
 
-/** What the app's environment adds: the addon, and a home of its own, where the window keeps its
- *  data. Electron runs as plain Node where ELECTRON_RUN_AS_NODE is set, as a VS Code extension's
- *  children inherit it. */
-const appEnv = (home) => ({ HMI_ADDON: ADDON, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: undefined });
+/** What the app's environment adds: the addon, unless it brings its own, and a home of its own,
+ *  where the window keeps its data. Electron runs as plain Node where ELECTRON_RUN_AS_NODE is set,
+ *  as a VS Code extension's children inherit it. */
+const appEnv = (home, addon = ADDON) => ({ HMI_ADDON: addon, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: undefined });
 
 /** rant-hmi-app showing `what`, a project with a demo line on `domain`, an HMI's address or null for
- *  nothing, in a window Playwright drives, started in `cwd` with `more` arguments. Its debugging
- *  ports listen, so `openApp` checks what the app does alone. */
-export async function driveApp(what, { home, domain = null, more = [], cwd = ROOT }) {
+ *  nothing, in a window Playwright drives, started in `cwd` with `more` arguments. It runs from
+ *  source, or from `runtime`, a runtime an app unpacked. Its debugging ports listen, so `openApp`
+ *  checks what the app does alone. */
+export async function driveApp(what, { home, domain = null, more = [], cwd = ROOT, runtime = null }) {
   const { line, args } = domain === null ? { line: null, args: what === null ? [] : [what] } : appRunning(what, domain);
-  const app = await _electron.launch({ executablePath: electron(), args: [APP, ...args, ...more], cwd, env: environment(appEnv(home)) });
+  const from = runtime ? { executablePath: join(runtime, program("electron")), args: [...args, ...more], env: environment(appEnv(home, undefined)) } : { executablePath: electron(), args: [APP, ...args, ...more], env: environment(appEnv(home)) };
+  const app = await _electron.launch({ ...from, cwd });
   const child = app.process();
   child.log = "";
   child.stdout.on("data", (d) => (child.log += d));
@@ -185,6 +190,42 @@ export async function openApp(project, { home, domain }) {
     stop() {
       app.kill();
       line.kill();
+    },
+  };
+}
+
+/** A program run to its end without blocking, as the runner standing still stalls every worker. */
+const run$ = promisify(execFile);
+
+/** This host's runtime for apps, which `npm run runtime` in app builds, put where the server
+ *  keeping its files in `home` builds apps from. */
+export async function giveRuntime(home) {
+  const from = join(ROOT, "target", "app", platform);
+  if (!existsSync(join(from, "runtime.id"))) throw new Error(`no ${platform} runtime for apps: run npm run runtime in app`);
+  const version = /^version = "(.+)"/m.exec(readFileSync(join(ROOT, "server", "Cargo.toml"), "utf8"))[1];
+  // copied without blocking, as the runner standing still stalls every worker
+  await cp(from, join(home, ".rant", "hmi", "runtimes", version, platform), { recursive: true });
+}
+
+/** An app the editor downloaded, started as a person starts it, on a device whose home is `home`.
+ *  Its window is Electron's, from the runtime it unpacks there, a child of the app. */
+export function startDownloaded(file, home) {
+  const app = run(file, [], { HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: undefined }, { shown: true });
+  const find = `Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | Where-Object { $_.CommandLine -like '*${home}*' -and $_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.ProcessId }`;
+  const windows = async () => (await run$("powershell", ["-NoProfile", "-Command", find])).stdout.split(/\s+/).filter(Boolean);
+  return {
+    app,
+    /** Closes its window as a person does, true once the app ended by itself. */
+    async close() {
+      const ended = exited(app);
+      const found = await windows();
+      for (const pid of found) await run$("taskkill", ["/PID", pid]);
+      return found.length > 0 && (await ended);
+    },
+    /** Ends the app and its window, which outlives the app when only the app is ended. */
+    async stop() {
+      if (app.exitCode === null) await run$("taskkill", ["/F", "/T", "/PID", String(app.pid)]).catch(() => {});
+      for (const pid of await windows()) await run$("taskkill", ["/F", "/T", "/PID", pid]).catch(() => {});
     },
   };
 }

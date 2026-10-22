@@ -6,6 +6,8 @@ import { theme, toggleTheme } from "../state/theme";
 import { TABS, type Tab } from "../state/view";
 import { Logo } from "../ui/marks";
 import { SidebarToggle } from "../ui/Sidebars";
+import { inApp } from "../net/link";
+import { GetApp } from "./GetApp";
 
 const LOOK = {
   data: { label: "Data", icon: Database },
@@ -32,6 +34,10 @@ export function TopBar(p: { tab: Tab; onTab: (t: Tab) => void }) {
           )}
         </For>
       </nav>
+      {/* an app has no server to build apps */}
+      <Show when={!inApp}>
+        <GetApp />
+      </Show>
       <a class="bar-btn" href="/run" target="_blank" title="Open the operator's screen, as a phone or panel shows it">
         <ExternalLink size={16} />
       </a>

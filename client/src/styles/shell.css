@@ -512,3 +512,40 @@
     transform: translateX(-30%);
   }
 }
+
+/* Getting the app: each choice under its label with a line on what it means, the download last. */
+.popover.get-app {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 360px;
+  padding: 2px 12px 12px;
+}
+
+.popover.get-app.in-sheet {
+  width: 100%;
+}
+
+.get-app .menu-head {
+  padding-left: 0;
+}
+
+.get-app label {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.get-app .about {
+  margin: 0;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.get-app .button {
+  gap: 6px;
+  margin-top: 12px;
+  margin-bottom: 4px;
+  text-decoration: none;
+}
