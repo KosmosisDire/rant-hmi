@@ -11,12 +11,12 @@ import type { Spec } from "./ShapeFields";
 import { parentOf } from "./tree";
 
 /** The parts the inspector and the menu add, in the order they list them. */
-export const PART_KINDS: Part[] = ["box", "sphere", "cylinder", "points", "axes", "grid", "anchor"];
+export const PART_KINDS: Part[] = ["box", "sphere", "cylinder", "points", "arrow", "axes", "grid", "model", "anchor"];
 
 /** How far one pixel of scrub moves each length, angle or share. */
 const STEPS: Record<string, number> = { size: 0.05, radius: 0.05, length: 0.05, step: 0.1, opacity: 0.01, yaw: 0.02, pitch: 0.02, distance: 0.1 };
 
-const LABELS: Record<string, string> = { color: "Colour" };
+const LABELS: Record<string, string> = { color: "Colour", src: "Source" };
 
 /** A field for each of `defaults`, its kind and its placeholder the code it takes when left out. */
 const fields = (defaults: Record<string, string>): Spec[] =>
@@ -45,6 +45,8 @@ const STARTS: Record<Part, Record<string, string>> = {
   cylinder: { name: "Cylinder", pose: STANDS },
   points: { name: "Points", points: "[vec(-1, 0, 0.5), vec(0, 0, 1), vec(1, 0, 0.5)]", size: "0.1" },
   grid: { name: "Grid" },
+  arrow: { name: "Arrow", vector: "vec(0, 0, 1)" },
+  model: { name: "Model" },
 };
 
 /** Adds a part into the scene or anchor `at` is, or beside it when it is a part. */

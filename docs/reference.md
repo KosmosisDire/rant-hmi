@@ -62,7 +62,7 @@ A component's interface comes first in its file:
 | `group` | parts picked and moved as one, with no box of its own |
 | a component's name, as `<Gauge>` | an instance of that component |
 | `path` `circle` `ellipse` `rect` `line` `polyline` `polygon` `text` `g` | shapes, in a diagram only |
-| `anchor` `axes` `box` `sphere` `cylinder` `points` `grid` | 3D parts, in a scene only |
+| `anchor` `axes` `box` `sphere` `cylinder` `points` `grid` `arrow` `model` | 3D parts, in a scene only |
 
 A frame, a group, a diagram, a `g`, a scene and an `anchor` hold parts. Any element but a 3D
 part holds handlers, each an `<on event="...">` ([Events](#events)).
@@ -158,13 +158,17 @@ each an expression.
 | `points` | `points` | a list of vectors, as a Double3 list from the mesh |
 | `joined` | `points` | `true` to draw one line through them instead of dots |
 | `step` | `grid` | the gap between its lines, `1` |
-| `color` | every part but `anchor` and `axes` | any colour a page takes, `$accent`, or `$border` for a grid |
+| `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
+| `src` | `model` | the URL of a glTF file, `.glb` or `.gltf` |
+| `joints` | `model` | its named nodes moved from where the file puts them: `{ Elbow: 0.5 }` turns one by radians about its own z, `{ Slide: { position: vec(0, 0, 0.2) } }` moves one by a pose |
+| `color` | every part but `anchor`, `axes` and `model` | any colour a page takes, `$accent`, or `$border` for a grid |
 | `opacity` | `box`, `sphere`, `cylinder` | `1` |
 
 - An `anchor` draws nothing. It places what it holds by its pose, as a frame of a TF tree.
 - `axes` shows x, y and z in red, green and blue. A `grid` lies on its xy plane, centred on
   its pose.
 - A box, a sphere and a cylinder sit centred on their pose.
+- A model file loads once however many parts show it, and draws in its own materials.
 - A value that cannot be read gives way to the default, and the editor says why on the
   scene. A part whose values are not known yet draws nothing.
 - The camera moves only by its properties, so a person turns it through handlers on the

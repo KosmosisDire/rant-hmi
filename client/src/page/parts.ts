@@ -16,6 +16,8 @@ export const PARTS = {
   cylinder: { radius: "0.5", length: "1", color: "$accent", opacity: "1" },
   points: { points: "[]", size: "0.05", joined: "false", color: "$accent" },
   grid: { size: "10", step: "1", color: "$border" },
+  arrow: { vector: "vec(1, 0, 0)", color: "$accent" },
+  model: { src: '""', joints: "{}" },
 } satisfies Partial<Record<Tag, Record<string, string>>>;
 
 export type Part = keyof typeof PARTS;

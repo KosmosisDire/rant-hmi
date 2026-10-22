@@ -841,7 +841,7 @@ mod tests {
     fn random_held(rng: &mut Rng, ids: &mut usize, depth: usize, home: Home) -> Vec<Element> {
         let (tags, keys): ([Tag; 5], &[&str]) = match home {
             Home::Diagram => ([Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G], &["name", "cx", "r", "fill", "stroke", "d", "transform"]),
-            _ => ([Tag::Box, Tag::Sphere, Tag::Points, Tag::Grid, Tag::Anchor], &["name", "repeat", "pose", "size", "color", "points"]),
+            _ => ([Tag::Box, Tag::Model, Tag::Points, Tag::Arrow, Tag::Anchor], &["name", "repeat", "pose", "size", "color", "points", "src", "joints"]),
         };
         let mut out = Vec::new();
         for _ in 0..rng.below(3) {

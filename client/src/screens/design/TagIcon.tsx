@@ -14,11 +14,13 @@ import {
   CodeXml,
   Component,
   Cylinder,
+  FileBox,
   Folder,
   Globe,
   Grid3x3,
   ImagePlay,
   Minus,
+  MoveUpRight,
   Pentagon,
   RectangleHorizontal,
   Rotate3d,
@@ -57,6 +59,8 @@ export const TAG_WORDS: Record<Tag, string> = {
   cylinder: "cylinder",
   points: "points",
   grid: "grid",
+  arrow: "arrow",
+  model: "model",
 };
 
 /** Each tag's icon, a frame's the square the rest fall back to. */
@@ -86,6 +90,8 @@ const ICONS: Partial<Record<Tag, (p: { size: number }) => JSX.Element>> = {
   cylinder: Cylinder,
   points: ChartScatter,
   grid: Grid3x3,
+  arrow: MoveUpRight,
+  model: FileBox,
 };
 
 export function TagIcon(p: { tag: Tag; size: number }) {

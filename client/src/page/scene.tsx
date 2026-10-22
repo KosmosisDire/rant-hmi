@@ -2,8 +2,9 @@
 // three.js object whose properties are live expressions, placed by its pose from what holds
 // it, and a camera orbits a point. It draws when what it shows changes, at most once a frame.
 
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { type Accessor, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import {
+  ArrowHelper,
   AxesHelper,
   BoxGeometry,
   BufferGeometry,
@@ -22,12 +23,15 @@ import {
   PerspectiveCamera,
   Points,
   PointsMaterial,
+  PropertyBinding,
+  Quaternion,
   Scene,
   SphereGeometry,
   SRGBColorSpace,
   Vector3,
   WebGLRenderer,
 } from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { Element } from "../protocol/Element";
 import type { Value } from "../protocol/Value";
 import { resolve, type Scope } from "../state/bind";
@@ -51,6 +55,10 @@ interface Read {
   points(key: string): Vec3[] | undefined;
   colour(key: string): Colour | undefined;
   pose(key: string): Pose | undefined;
+  text(key: string): string | undefined;
+  joints(key: string): Record<string, number | Pose> | undefined;
+  /** Says why `key` cannot show, as when what it names cannot be had. */
+  fail(key: string, why: string): void;
   readonly drawn: Drawn;
 }
 
@@ -79,6 +87,14 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
     points: (key) => as(key, "a list of 3D vectors", (v) => (Array.isArray(v) && v.every((p) => vector(p)) ? (v as Vec3[]) : undefined)),
     colour: (key) => as(key, "a colour", colourOf),
     pose: (key) => as(key, "a pose, a position and an orientation each optional", poseOf),
+    text: (key) => as(key, "text", (v) => (typeof v === "string" ? v : undefined)),
+    joints: (key) =>
+      as(key, "names each with an angle or a pose", (v) => {
+        if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+        const each = Object.values(v).every((j) => (typeof j === "number" && Number.isFinite(j)) || (typeof j === "object" && j !== null && poseOf(j)));
+        return each ? (v as Record<string, number | Pose>) : undefined;
+      }),
+    fail: (key, why) => faults.push(`${key}: ${why}`),
     get drawn() {
       return { faults, unknown };
     },
@@ -153,17 +169,79 @@ function solid(geometry: BufferGeometry, shape: (o: Object3D, read: Read) => voi
 /** A length three.js can scale by, never quite nothing, so a solid's normals stay sound. */
 const scale = (n: number) => Math.max(Math.abs(n), 1e-6);
 
-/** Puts `next` in place of what a part's group held, freeing that. */
-function swap(o: Object3D, next: Object3D) {
+/** Puts `next`, if any, in place of what a part's group held, freeing that. */
+function swap(o: Object3D, next?: Object3D) {
   for (const c of [...o.children]) {
     o.remove(c);
     free(c);
   }
-  o.add(next);
+  if (next) o.add(next);
+}
+
+/** A model file as it loads: its scene, why it cannot be had, or null while it comes. */
+type Loaded = { scene: Object3D } | { error: string } | null;
+
+// each model file is loaded once, however many parts show it
+const models = new Map<string, Accessor<Loaded>>();
+function loaded(src: string): Loaded {
+  let got = models.get(src);
+  if (!got) {
+    const [value, set] = createSignal<Loaded>(null);
+    models.set(src, (got = value));
+    new GLTFLoader().loadAsync(src).then(
+      (m) => set({ scene: m.scene }),
+      (e) => set({ error: `${src} cannot be loaded: ${e instanceof Error ? e.message : String(e)}` }),
+    );
+  }
+  return got();
+}
+
+const [X, Z] = [new Vector3(1, 0, 0), new Vector3(0, 0, 1)];
+
+/** Turns each named node of a model from where its file puts it: by an angle about its own z,
+ *  or by a pose. A node no longer named goes back. */
+function bend(model: Object3D, joints: Record<string, number | Pose>, read: Read) {
+  const rest: Map<Object3D, { position: Vector3; quaternion: Quaternion }> = (model.userData.rest ??= new Map());
+  for (const [node, r] of rest) {
+    node.position.copy(r.position);
+    node.quaternion.copy(r.quaternion);
+  }
+  for (const [name, j] of Object.entries(joints)) {
+    // the loader spells a node's name as an animation would
+    const node = model.getObjectByName(PropertyBinding.sanitizeNodeName(name));
+    if (!node) {
+      read.fail("joints", `the model has no node ${name}`);
+      continue;
+    }
+    if (!rest.has(node)) rest.set(node, { position: node.position.clone(), quaternion: node.quaternion.clone() });
+    const { position: at, orientation: turn } = typeof j === "number" ? { position: undefined, orientation: undefined } : j;
+    if (at) node.position.add(new Vector3(at.x, at.y, at.z).applyQuaternion(node.quaternion));
+    if (typeof j === "number") node.quaternion.multiply(new Quaternion().setFromAxisAngle(Z, j));
+    else if (turn) node.quaternion.multiply(new Quaternion(turn.x, turn.y, turn.z, turn.w).normalize());
+  }
 }
 
 const KINDS: Record<Part, Kind> = {
   anchor: { make: () => new Group(), show: () => {} },
+  arrow: {
+    make: () => {
+      const arrow = new ArrowHelper();
+      // three.js shares an arrow's shapes among all arrows
+      SHARED.add(arrow.line.geometry).add(arrow.cone.geometry);
+      return arrow;
+    },
+    show: (o, read) => {
+      const arrow = o as ArrowHelper;
+      const v = read.vector("vector");
+      if (v) {
+        const length = Math.hypot(v.x, v.y, v.z);
+        if (length > 0) arrow.setDirection(new Vector3(v.x, v.y, v.z).divideScalar(length));
+        arrow.setLength(scale(length), scale(length * 0.2), scale(length * 0.08));
+      }
+      paint(arrow.line.material as Painted, read);
+      paint(arrow.cone.material as Painted, read);
+    },
+  },
   axes: {
     make: () => new AxesHelper(1),
     show: (o, read) => {
@@ -222,11 +300,35 @@ const KINDS: Record<Part, Kind> = {
       if (grid) paint(grid.material as Painted, read);
     },
   },
+  // a glTF file, its scene shared with every part showing it and its named nodes turned
+  model: {
+    make: () => new Group(),
+    show: (o, read) => {
+      const src = read.text("src");
+      if (src === undefined) return;
+      if (o.userData.src !== src) {
+        o.userData.src = src;
+        swap(o);
+      }
+      const got = src.trim() === "" ? null : loaded(src);
+      if (got && "error" in got) return read.fail("src", got.error);
+      if (got && o.children.length === 0) {
+        const copy = got.scene.clone();
+        copy.userData.shared = true;
+        // a glTF file is y up by its standard, and a scene z up
+        copy.quaternion.setFromAxisAngle(X, Math.PI / 2);
+        o.add(copy);
+      }
+      const joints = read.joints("joints");
+      if (joints && o.children[0]) bend(o.children[0], joints, read);
+    },
+  },
 };
 
-/** Frees what a part's own drawing holds on the GPU, never another part's or a shared shape. */
+/** Frees what a part's own drawing holds on the GPU, never another part's, a shared shape or
+ *  a model's file. */
 function free(o: Object3D, root = o) {
-  if (o !== root && o.userData.part) return;
+  if (o.userData.shared || (o !== root && o.userData.part)) return;
   if (o instanceof Mesh || o instanceof Line || o instanceof Points) {
     if (!SHARED.has(o.geometry)) o.geometry.dispose();
     (o.material as Material).dispose();

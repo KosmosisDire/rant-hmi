@@ -232,10 +232,13 @@ pub enum Tag {
     Cylinder,
     Points,
     Grid,
+    Arrow,
+    /// A glTF file, its named nodes turned by joints.
+    Model,
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-pub(crate) const WORDS: [(Tag, &str); 25] = [
+pub(crate) const WORDS: [(Tag, &str); 27] = [
     (Tag::Div, "div"),
     (Tag::Group, "group"),
     (Tag::Span, "span"),
@@ -261,6 +264,8 @@ pub(crate) const WORDS: [(Tag, &str); 25] = [
     (Tag::Cylinder, "cylinder"),
     (Tag::Points, "points"),
     (Tag::Grid, "grid"),
+    (Tag::Arrow, "arrow"),
+    (Tag::Model, "model"),
 ];
 
 impl Tag {
@@ -272,7 +277,7 @@ impl Tag {
     pub fn home(self) -> Home {
         match self {
             Tag::Path | Tag::Circle | Tag::Ellipse | Tag::Rect | Tag::Line | Tag::Polyline | Tag::Polygon | Tag::SvgText | Tag::G => Home::Diagram,
-            Tag::Anchor | Tag::Axes | Tag::Box | Tag::Sphere | Tag::Cylinder | Tag::Points | Tag::Grid => Home::Scene,
+            Tag::Anchor | Tag::Axes | Tag::Box | Tag::Sphere | Tag::Cylinder | Tag::Points | Tag::Grid | Tag::Arrow | Tag::Model => Home::Scene,
             _ => Home::Page,
         }
     }
