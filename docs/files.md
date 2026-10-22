@@ -88,19 +88,21 @@ gamepads and to decode video itself.
 
 ## In a window
 
-`rant-hmi-app` shows an HMI's operator screen in a window of its own. Built from source for
-now, on Windows:
+`rant-hmi-app` shows an HMI's operator screen in a window of its own, on Chromium from Electron.
+Built from source for now:
 
 ```
-cargo run --manifest-path app/Cargo.toml -- path/to/my-hmi --loopback
-cargo run --manifest-path app/Cargo.toml -- http://host:6739
+cd app && npm install && npm run build
+npm start -- path/to/my-hmi --loopback
+npm start -- http://host:6739
 ```
 
-- Given a folder it runs that project in the same process as its screen, with no network
+- Given a folder it runs that project in the same process as its window, with no network
   between them. It listens on no port, so no other screen and no editor reach it.
 - Given an address it shows that HMI's screen, as a browser would.
-- The window is the system's own webview, WebView2 on Windows 10 and 11. It keeps its data in
-  `~/.rant/hmi/webview`.
+- F11 fills the screen with the window and gives it back. `--fullscreen` opens it so, for a
+  panel or a handheld.
+- It keeps the window's data in `~/.rant/hmi/window`.
 
 ## Pages
 

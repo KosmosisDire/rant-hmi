@@ -1,0 +1,14 @@
+{
+  "name": "rant-hmi-app",
+  "version": "0.0.1",
+  "private": true,
+  "description": "An HMI's operator screen in a window of its own",
+  "main": "main.mjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "44.9.3"
+  }
+}
