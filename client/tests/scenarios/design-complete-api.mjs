@@ -18,11 +18,17 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.el(text).click();
   const list = page.locator(".suggest .suggest-name");
   const names = () => list.allTextContents();
-  // the first letters of a name, short of the whole, which needs no list
+  // the first letters of a name, short of the whole, which needs no list, and one more while
+  // the list is full of names other scenarios left, as keysArmed crowds out keys
   const offered = async (box, name, want, what) => {
-    await box.fill("");
-    await page.keyboard.type(name.slice(0, Math.max(1, Math.min(3, name.length - 1))));
-    await eventually(async () => (await names()).includes(want), async () => `${what}: ${want} among ${(await names()).join(", ")}`);
+    let now = [];
+    for (let n = Math.max(1, Math.min(3, name.length - 1)); n <= name.length; n++) {
+      await box.fill("");
+      await page.keyboard.type(name.slice(0, n));
+      await eventually(async () => (now = await names()).length > 0, () => `${what}: a list for ${name.slice(0, n)}`);
+      if (now.includes(want) || now.length < 12) break;
+    }
+    check(now.includes(want), `${what}: ${want} among ${now.join(", ")}`);
   };
 
   // an expression: each name the list gives it, by its first letters
