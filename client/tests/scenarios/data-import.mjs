@@ -2,6 +2,8 @@
 // follow, changes its intent, and finds each entity picked starts the import form over.
 
 export default async function ({ page, hmi, d, check, eventually }) {
+  // the entities it picks start unimported, whatever scenarios ran on this system before
+  for (const i of hmi.state.imports.filter((x) => ["Robot/Pose", "Line1/Conveyor", "Line1/Jog"].includes(x.entity))) await hmi.unimport(i.alias);
   await d.tab("Data");
   // the mesh starts as its folders alone
   await page.locator(".screen:not([hidden]) .sidebar.left .list-row.branch").first().waitFor();

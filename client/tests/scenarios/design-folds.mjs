@@ -8,7 +8,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const left = page.locator(".screen:not([hidden]) .sidebar.left");
   const head = (word) => left.locator("button.fold", { hasText: word });
   const layer = left.locator(".list-row", { hasText: "Folded box" });
-  const pageRow = left.locator(".pages .list-row", { hasText: "Folds" });
+  const pageRow = left.locator(".pages .list-row", { has: page.getByText("Folds", { exact: true }) });
   await layer.waitFor();
 
   await head("Layers").click();
