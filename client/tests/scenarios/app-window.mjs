@@ -4,10 +4,10 @@
 // Started as a person starts it, the screen keeps its one session and the
 // process listens on no port, and closing the window ends the HMI, then the app. Given an HMI's
 // address the window shows that HMI's screen, which connects to it as a browser's does. A project
-// that cannot open leaves the window saying why.
+// that cannot open leaves the window saying why, and so does nothing to show.
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -126,6 +126,19 @@ export default async function ({ sys, check, eventually }) {
       check(await failed.close(), `the failed app did not end as its window closed:\n${failed.process.log}`);
     } finally {
       failed.stop();
+    }
+
+    // given nothing to show it says what to give it, and never makes the folder it runs in a project
+    const here = join(temp, "here");
+    mkdirSync(here);
+    const bare = await driveApp(null, { home, cwd: here });
+    try {
+      await bare.window.getByText("Give it a project folder or an HMI's address").waitFor();
+      check(readdirSync(here).length === 0, `the app made ${readdirSync(here).join(", ")} where it ran`);
+      check(await bare.close(), `the app given nothing did not end as its window closed:
+${bare.process.log}`);
+    } finally {
+      bare.stop();
     }
   } finally {
     // the window's browser lets go of its files a while after the app ends

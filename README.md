@@ -28,7 +28,7 @@ screen.
 ```
 cd client && npm install && npm run build && cd ..
 cargo run -p rant-hmi -- path/to/my-hmi
-cd app && npm install && npm run build && npm start -- ../path/to/my-hmi   # in a window of its own
+cd app && npm install && npm run build && npx electron . ../path/to/my-hmi   # in a window of its own
 ```
 
 ## Example

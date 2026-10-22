@@ -265,7 +265,11 @@ Chosen: a launcher with archives appended.
   The window's data goes to `~/.rant/hmi/window`. A start that fails shows a page saying why.
   The last window closed stops the backend, then the app quits.
 - Arguments are read by name and the first plain one, passing over the switches Electron and
-  Chromium take and the app's folder when run from source.
+  Chromium take and the app's folder when run from source. With nothing to show the window says
+  what to give it, since the folder it runs in would become a project, as the server makes one.
+- From source it runs as `npx electron . <project>`. No npm script: Windows PowerShell drops the
+  `--` of `npm start -- ...`, so npm took `--loopback` as its own and the app joined the network
+  (the user hit it, 2026-10-22).
 - Full screen (the user asked, 2026-10-22): F11 toggles it, as in a browser, since the window
   has no menu, and `--fullscreen` opens the window so. The build sheet can write it in later.
   F11 is caught before the page sees it, so a page cannot use F11.
@@ -277,8 +281,9 @@ Chosen: a launcher with archives appended.
   shows a running HMI's screen by its address, never told it is in the app, and a project that
   cannot open leaves the window saying why. F11 fills the screen and gives it back, pressed
   through Electron's own input, since Playwright's keys reach the page past the window, and
-  the app opened with `--fullscreen` fills it. Removing the preload fails it, so does closing
-  without stopping the backend, a wrong key, or the flag ignored. The `linked` example went, as nothing needs it now.
+  the app opened with `--fullscreen` fills it. Given nothing it says what to give it and leaves
+  its folder empty. Removing the preload fails it, so does closing without stopping the
+  backend, a wrong key, the flag ignored, or the folder it runs in taken as the project. The `linked` example went, as nothing needs it now.
 - Traps found: this shell inherits `ELECTRON_RUN_AS_NODE=1` from VS Code's extension host,
   which makes Electron plain Node, so the harness clears it. Playwright starts Electron through
   `cmd.exe` on Windows, so a kill ends only cmd and the harness ends the whole tree. Playwright
@@ -293,5 +298,8 @@ Choices worth a second look:
 - The addon only for the MSVC target on Windows, and out of the default members.
 - The window opens at 1280 by 800, keeps its menu hidden, and takes its title from the page.
 - F11 belongs to the window, not to pages.
+- Two apps at once share the window's data folder, so the second cannot make its cache and
+  says so, and their nodes clash as `hmi` (seen as Rant's duplicate-authority warning). Both
+  wait on the node name question.
 - The scenario shows real windows on the desktop, full screen for a moment, as the WebView2
   one did.

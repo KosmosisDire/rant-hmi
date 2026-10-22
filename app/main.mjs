@@ -14,11 +14,11 @@ const SCHEME = "hmi";
 /** The Rant logo from RANT/design/logo made square, in every size Windows asks for on Windows. */
 const ICON = join(here, process.platform === "win32" ? "icon.ico" : "icon.png");
 
-/** What to show and how: `rant-hmi-app [folder or address] [--client dir] [--domain n] [--loopback]
+/** What to show and how: `rant-hmi-app <folder or address> [--client dir] [--domain n] [--loopback]
  *  [--fullscreen]`. The switches Electron and Chromium take are passed over, as is the app's own folder when run
- *  from source. */
+ *  from source. With nothing to show, `show` is null, since the folder it runs in would become a project. */
 function parse(argv) {
-  const a = { show: ".", client: join(here, "..", "client", "dist"), domain: 0, loopback: false, fullscreen: false };
+  const a = { show: null, client: join(here, "..", "client", "dist"), domain: 0, loopback: false, fullscreen: false };
   const shown = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--client") a.client = argv[++i];
@@ -48,7 +48,7 @@ function fault(why) {
 }
 
 const args = parse(process.argv.slice(1).filter((arg) => resolve(arg) !== app.getAppPath()));
-const address = /^https?:\/\//.test(args.show) ? args.show.replace(/\/+$/, "") : null;
+const address = /^https?:\/\//.test(args.show ?? "") ? args.show.replace(/\/+$/, "") : null;
 const backend = loadBackend();
 
 // what must be set before Electron is ready: a standard and secure scheme, so the page is a secure context where
@@ -74,6 +74,7 @@ async function show() {
   let title = "Rant HMI";
   let url;
   try {
+    if (!args.show) throw new Error("Give it a project folder or an HMI's address: rant-hmi-app path/to/my-hmi, or rant-hmi-app http://host:6739.");
     if (address) url = `${address}/run`;
     else {
       title = await runHere();

@@ -93,8 +93,8 @@ Built from source for now:
 
 ```
 cd app && npm install && npm run build
-npm start -- path/to/my-hmi --loopback
-npm start -- http://host:6739
+npx electron . path/to/my-hmi --loopback
+npx electron . http://host:6739
 ```
 
 - Given a folder it runs that project in the same process as its window, with no network
