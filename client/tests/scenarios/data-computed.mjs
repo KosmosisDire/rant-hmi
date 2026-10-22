@@ -23,6 +23,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await field("Is").locator(".field-note", { hasText: "squareRoot names no mesh import" }).waitFor();
   await write("Is", "Speed * 100");
   await eventually(async () => (await field("Is").locator(".field-note").count()) === 0, "the note to go once the getter works");
+  // the system works it out, which reads no theme, so no token is offered
+  check(hmi.state.tokens.length > 0, "the project has no token to leave out");
+  const is = field("Is").locator("input");
+  await is.fill("");
+  await is.pressSequentially("$");
+  await page.waitForTimeout(300);
+  check((await page.locator(".suggest").count()) === 0, `a computed value is offered ${await page.locator(".suggest .suggest-name").allTextContents()}`);
+  await is.press("Escape");
+  await eventually(async () => (await is.inputValue()) === "Speed * 100", "Escape to keep the getter");
   await write("Unit", "%");
   await field("Writes").locator("select").selectOption("Speed");
   await eventually(() => percent()?.set?.target === "Speed", "its setter");

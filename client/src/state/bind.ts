@@ -172,10 +172,9 @@ function themed(s: Scope): Scope {
   };
 }
 
-/** A page reads its mesh imports, variables, records and computed values, live, and the mesh's
- *  enums, and writes those it may on the backend. */
-export const pageScope: Scope = themed({
-  // the theme around it reads the tokens
+/** What the system's own expressions read: the mesh imports, variables, records and computed
+ *  values, live, and the mesh's enums. It writes those it may on the backend. */
+export const systemScope: Scope = {
   has: (name) => (named(name)?.of ?? "token") !== "token",
   get: (name) => {
     // its options a fresh list at each read, as a value's are
@@ -186,7 +185,7 @@ export const pageScope: Scope = themed({
   },
   set: (name, path, value) => {
     const n = named(name);
-    if (!n || n.of === "token") throw new ReferenceError(pageScope.missing(name));
+    if (!n || n.of === "token") throw new ReferenceError(systemScope.missing(name));
     if (n.fixed) throw new TypeError(n.fixed);
     if (n.of === "computed" && path !== "") throw new TypeError(say(WHOLE, name));
     send({ type: "set", alias: name, path, value: value as Value });
@@ -196,7 +195,10 @@ export const pageScope: Scope = themed({
     return !!n && n.of !== "token" && !n.fixed;
   },
   missing: (name) => say(MISSING, name),
-});
+};
+
+/** A page reads what the system does, and the theme's tokens. */
+export const pageScope: Scope = themed(systemScope);
 
 /** A bare name and the fields after it, as a two way binding is written: `Settings.target`. */
 const BARE = /^\s*([A-Za-z_$][\w$]*)((?:\.[A-Za-z_$][\w$]*)*)\s*$/;

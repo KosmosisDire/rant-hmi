@@ -7,11 +7,12 @@ import { LOCAL } from "../../protocol/rules";
 import { change } from "../../state/change";
 import { complete, type Suggestion } from "../../state/complete";
 import { freeLocal } from "../../state/names";
+import { systemScope } from "../../state/bind";
 import { live, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Sigma } from "../../ui/icons";
 import { Preview } from "../../ui/Preview";
-import { Field } from "../design/Field";
+import { Field, type Where, WhereContext } from "../design/Field";
 import type { Picking } from "./DataScreen";
 import { changing, ItemPane, ItemTable, type Kind, NameField } from "./Items";
 import { UsedBy } from "./UsedBy";
@@ -70,6 +71,9 @@ export function ComputedTable(p: Picking) {
   );
 }
 
+/** Where a computed value's fields stand: the system works them out. */
+const WHERE = (): Where => ({ scope: systemScope, handlers: "handler", expressions: "system" });
+
 export function ComputedView(p: { computed: Computed; picking: Picking }) {
   const change = changing(COMPUTED, () => p.computed, p.picking);
   const words = (t: string) => (t.trim() === "" ? undefined : t.trim());
@@ -78,7 +82,9 @@ export function ComputedView(p: { computed: Computed; picking: Picking }) {
       <div class="section">Computed</div>
       <NameField value={p.computed.name} shape={LOCAL} onCommit={(name) => change({ name })} />
       {/* the field says why the getter gives nothing, as a property's does; one left empty keeps what it had */}
-      <Field label="Is" value={p.computed.get} placeholder="Duty / 40 * 100" onWrite={(get) => get !== null && change({ get: get.trim() })} />
+      <WhereContext.Provider value={WHERE}>
+        <Field label="Is" value={p.computed.get} placeholder="Duty / 40 * 100" onWrite={(get) => get !== null && change({ get: get.trim() })} />
+      </WhereContext.Provider>
       <div class="field">
         <label>Unit</label>
         <DraftInput value={p.computed.unit ?? ""} placeholder="%" onCommit={(t) => change({ unit: words(t) })} />
@@ -112,7 +118,7 @@ export function ComputedView(p: { computed: Computed; picking: Picking }) {
               placeholder="v * 0.4"
               accept={(t) => t.trim() !== ""}
               onCommit={(value) => change({ set: { target: s().target, value: value.trim() } })}
-              complete={(t, c) => complete(t, c, "expression", undefined, [NEW_VALUE])}
+              complete={(t, c) => complete(t, c, "system", undefined, [NEW_VALUE])}
             />
           </div>
         )}

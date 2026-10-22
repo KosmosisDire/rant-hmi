@@ -1,7 +1,8 @@
 // A handler as one card: what starts it and what the event brings it, then its code.
 
 import { For, type JSX, Show } from "solid-js";
-import { complete, type Place, signature, type Suggestion } from "../../state/complete";
+import type { Place } from "../../lang/api.js";
+import { complete, signature, type Suggestion } from "../../state/complete";
 import { type Brought, type Offered, pOf, TIMED } from "../../state/events";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, X, Zap } from "../../ui/icons";

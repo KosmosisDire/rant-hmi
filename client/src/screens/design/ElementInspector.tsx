@@ -95,8 +95,8 @@ export function ElementInspector(p: { page: Page | undefined; selected: string[]
   const element = createMemo(() => (p.page && p.selected.length === 1 ? find(p.page.children, p.selected[0]) : undefined));
   const where = createMemo((): Where => {
     const doc = p.page;
-    if (!doc?.interface) return { scope: pageScope, place: "handler" };
-    return { scope: docScope(doc), names: componentNames(doc), place: "component" };
+    if (!doc?.interface) return { scope: pageScope, handlers: "handler", expressions: "expression" };
+    return { scope: docScope(doc), names: componentNames(doc), handlers: "component", expressions: "expression" };
   });
   return (
     <Show when={p.page}>
@@ -410,7 +410,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             value={p.element.props.markup ?? ""}
             placeholder={['`<svg viewBox="0 0 100 100">', '  <circle cx="50" cy="50" r="${Speed * 40}"/>', '</svg>`'].join("\n")}
             onCommit={(t) => setProps(p.page, p.element.id, { markup: t.trim() === "" ? null : t })}
-            complete={(t, c) => complete(t, c, "expression", where().names, where().also)}
+            complete={(t, c) => complete(t, c, where().expressions, where().names, where().also)}
           />
         </Show>
         <Show when={shape()}>
@@ -692,12 +692,12 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
                 ms={h().ms}
                 onMs={(ms) => write(event, h().code, ms)}
                 removeTitle={`Remove the ${event} handler`}
-                place={where().place}
+                place={where().handlers}
                 names={where().names}
                 also={where().also}
                 brings={brings(p.element, event)}
                 focus={p.focus(event)}
-                placeholder={where().place === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
+                placeholder={where().handlers === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
               />
             )}
           </Show>
@@ -743,7 +743,7 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
 }
 
 /** What an input's default and a variable's start complete: the theme's tokens and the math. */
-const constants = (text: string, caret: number) => complete(text, caret, "expression", []);
+const constants = (text: string, caret: number) => complete(text, caret, "theme", []);
 
 /** A name an input or a component's variable may take. */
 const localName = (t: string) => fits(INPUT, t.trim());
@@ -791,7 +791,7 @@ function Inputs(p: { page: string; inputs: Input[] }) {
             </div>
             <div class="field input-default">
               <label>Default</label>
-              <DraftInput value={i.default} onCommit={(d) => write(i.name, { ...i, default: d })} complete={constants} hint={(t, c) => signature(t, c, "expression")} />
+              <DraftInput value={i.default} onCommit={(d) => write(i.name, { ...i, default: d })} complete={constants} hint={(t, c) => signature(t, c, "theme")} />
             </div>
           </div>
         )}
@@ -827,7 +827,7 @@ function Variables(p: { page: string; variables: Local[] }) {
             </div>
             <div class="field input-default">
               <label>Start</label>
-              <DraftInput value={v.start} onCommit={(start) => write(v.name, { ...v, start })} complete={constants} hint={(t, c) => signature(t, c, "expression")} />
+              <DraftInput value={v.start} onCommit={(start) => write(v.name, { ...v, start })} complete={constants} hint={(t, c) => signature(t, c, "theme")} />
             </div>
           </div>
         )}

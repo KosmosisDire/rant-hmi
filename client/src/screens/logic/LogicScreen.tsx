@@ -336,7 +336,7 @@ function RuleDetail(p: { rule: Rule }) {
                   <>
                     <div class="field rule-field">
                       <label>Condition</label>
-                      <DraftInput value={w().condition} placeholder="Speed > 1.5" onCommit={(condition) => when({ condition })} complete={(t, c) => complete(t, c, "expression")} />
+                      <DraftInput value={w().condition} placeholder="Speed > 1.5" onCommit={(condition) => when({ condition })} complete={(t, c) => complete(t, c, "system")} />
                     </div>
                     <div class="field rule-field">
                       <label>For ms</label>
@@ -349,7 +349,7 @@ function RuleDetail(p: { rule: Rule }) {
                 {(w) => (
                   <div class="field rule-field">
                     <label>What</label>
-                    <DraftInput value={w().name} placeholder="Running" onCommit={(name) => when({ name: name.trim() })} complete={(t, c) => complete(t, c, "expression")} />
+                    <DraftInput value={w().name} placeholder="Running" onCommit={(name) => when({ name: name.trim() })} complete={(t, c) => complete(t, c, "system")} />
                   </div>
                 )}
               </Match>

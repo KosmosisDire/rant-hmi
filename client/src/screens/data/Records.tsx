@@ -78,7 +78,7 @@ export function RecordView(p: { record: Record; picking: Picking }) {
       <NameField value={p.record.name} shape={LOCAL} onCommit={(name) => change({ name })} />
       <div class="field">
         <label>Records</label>
-        <DraftInput value={p.record.source} placeholder="Speed" accept={(t) => t.trim() !== ""} onCommit={(source) => change({ source: source.trim() })} complete={(t, c) => complete(t, c, "expression")} />
+        <DraftInput value={p.record.source} placeholder="Speed" accept={(t) => t.trim() !== ""} onCommit={(source) => change({ source: source.trim() })} complete={(t, c) => complete(t, c, "system")} />
       </div>
       <div class="field">
         <label>Every ms</label>

@@ -8,7 +8,7 @@ import { change } from "../../state/change";
 import { tokenScope, tokenValue } from "../../state/bind";
 import { freeName } from "../../state/names";
 import { state } from "../../state/store";
-import { Field, kindOf, WhereContext } from "../design/Field";
+import { Field, kindOf, type Where, WhereContext } from "../design/Field";
 import type { Picking } from "./DataScreen";
 import { changing, ItemPane, ItemTable, type Kind, NameField } from "./Items";
 
@@ -78,7 +78,7 @@ export function ThemeTable(p: Picking) {
 }
 
 /** Where a token's fields stand: they read other tokens and the math, and complete those. */
-const WHERE = () => ({ scope: tokenScope, names: [], place: "expression" as const });
+const WHERE = (): Where => ({ scope: tokenScope, names: [], handlers: "theme", expressions: "theme" });
 
 export function TokenView(p: { token: Token; picking: Picking }) {
   const change = changing(TOKENS, () => p.token, p.picking);

@@ -2,9 +2,10 @@
 // where it runs. Completion and the call hint read this, and tests hold each place's real names
 // to it, so no function goes without either.
 
-/** Where code runs: a property's expression, a page's handler on the system, a component's
- *  handler in its instance. A name with no `places` is read everywhere, as the math is. */
-export const PLACES = ["expression", "handler", "component"];
+/** Where code runs: a property's expression where a screen draws it, a token, default or start
+ *  alike on every screen, an expression the system works out, a page's handler there, a
+ *  component's handler in its instance. A name with no `places` is read everywhere. */
+export const PLACES = ["expression", "theme", "system", "handler", "component"];
 
 /** One name. `takes` lists a function's parameters in order, `?` marking one that may be left
  *  out and `...` the rest; a name without it is a value, and `fields` what it holds. `standard`

@@ -1,6 +1,6 @@
 // Types for api.js, which stays plain JS so the system's tests read it as well.
 
-export type Place = "expression" | "handler" | "component";
+export type Place = "expression" | "theme" | "system" | "handler" | "component";
 
 export interface Name {
   name: string;

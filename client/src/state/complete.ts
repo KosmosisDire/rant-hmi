@@ -1,7 +1,7 @@
 // What may be typed next at the caret: names, then after a dot the fields with their type and
 // live value. It reads only the text before the caret, so the code need not parse.
 
-import { apiIn } from "../lang/api.js";
+import { apiIn, type Place } from "../lang/api.js";
 import { tokens as lex } from "../lang/lex";
 import { kind, LIBRARY, METHODS_OF } from "../lang/math.js";
 import type { FieldInfo } from "../protocol/FieldInfo";
@@ -32,15 +32,14 @@ export interface Completion {
   items: Suggestion[];
 }
 
-/** Where code runs: a property's expression reads, a page's handler also acts on the
- *  backend, and a component's handler acts on its own inputs and sends events. */
-export type Place = "expression" | "handler" | "component";
-
 const MOST = 12;
 const WORD = /[A-Za-z0-9_$]/;
 
-/** The theme's tokens, which every place but a backend handler reads, in the editor's mode,
- *  each with what its value offers after a dot, as a colour's methods. */
+/** The places that read the theme's tokens: all code a screen works out. */
+const THEMED: Place[] = ["expression", "theme", "component"];
+
+/** The theme's tokens, in the editor's mode, each with what its value offers after a dot, as a
+ *  colour's methods. */
 function tokens(): Suggestion[] {
   return state.tokens.map((t) => {
     let value: Value | null = null;
@@ -109,7 +108,7 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   const items =
     before[from - 1] === "."
       ? given(chain(before.slice(0, from - 1)), place, names, also)
-      : [...(names ?? top(place)), ...(also ?? []), ...(place === "handler" ? [] : tokens()), ...own(place)];
+      : [...(names ?? top(place)), ...(also ?? []), ...(THEMED.includes(place) ? tokens() : []), ...own(place)];
   return matching(items, word, from);
 }
 
@@ -250,7 +249,7 @@ export function componentNames(c: Page): Suggestion[] {
 /** After a dot, what the name before it offers: one given its members, else an import's or
  *  variable's fields where code reads those. */
 function given(path: string[], place: Place, names?: Suggestion[], also?: Suggestion[]): Suggestion[] {
-  const token = path[0].startsWith("$") && place !== "handler" ? tokens().find((t) => t.label === path[0]) : undefined;
+  const token = path[0].startsWith("$") && THEMED.includes(place) ? tokens().find((t) => t.label === path[0]) : undefined;
   if (token) return path.length === 1 ? (token.members ?? []) : [];
   const own = [...(names ?? []), ...(also ?? [])].find((n) => n.label === path[0]);
   if (own || names) return path.length === 1 ? (own?.members ?? []) : [];
@@ -262,8 +261,8 @@ function top(place: Place): Suggestion[] {
     const v = live(n.name);
     switch (n.of) {
       case "import": {
-        // an expression only reads, so nothing it could call is offered there
-        if (place === "expression" && (n.kind === "function" || n.kind === "task")) return [];
+        // only a handler calls, so nothing it could call is offered elsewhere
+        if (place !== "handler" && (n.kind === "function" || n.kind === "task")) return [];
         const t = entity(state.imports.find((i) => i.alias === n.name)?.entity ?? "")?.schema;
         const insert = n.kind === "function" ? `await ${n.name}(` : n.name;
         return [{ label: n.name, insert, icon: n.kind!, type: t?.name || bareType(t?.fields) || n.kind, value: v.value, known: v.known }];

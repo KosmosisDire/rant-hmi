@@ -5,7 +5,8 @@
 
 import { createContext, createMemo, createSignal, For, type JSX, Match, Show, Switch, useContext } from "solid-js";
 import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
-import { complete, type Place, signature, type Suggestion } from "../../state/complete";
+import type { Place } from "../../lang/api.js";
+import { complete, signature, type Suggestion } from "../../state/complete";
 import { capital } from "../../state/format";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
@@ -23,13 +24,14 @@ import { EASES, type Motion, motionOf, transitions, withMotion } from "./motion"
 export interface Where {
   scope: Scope;
   names?: Suggestion[];
-  /** Where a handler here runs. */
-  place: Place;
+  /** Where a handler here runs, and where an expression here is worked out. */
+  handlers: Place;
+  expressions: Place;
   /** Names it reads besides, as a repeat's `index` and `item`. */
   also?: Suggestion[];
 }
 
-export const WhereContext = createContext<() => Where>((): Where => ({ scope: pageScope, place: "handler" }));
+export const WhereContext = createContext<() => Where>((): Where => ({ scope: pageScope, handlers: "handler", expressions: "expression" }));
 
 /** What a field holds, which says what its lead does. */
 export type Kind = "number" | "colour" | "choice" | "point" | "flag" | "text" | "any";
@@ -220,8 +222,8 @@ function ValueBox(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => 
         placeholder={p.placeholder}
         focus={p.focus}
         onCommit={p.onWrite}
-        complete={p.plain ? undefined : (t, c) => complete(t, c, "expression", where().names, where().also)}
-        hint={p.plain ? undefined : (t, c) => signature(t, c, "expression")}
+        complete={p.plain ? undefined : (t, c) => complete(t, c, where().expressions, where().names, where().also)}
+        hint={p.plain ? undefined : (t, c) => signature(t, c, where().expressions)}
       />
       <Show when={!p.plain}>
         <Lead {...p} field={field} />
