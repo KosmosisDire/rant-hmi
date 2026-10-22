@@ -493,7 +493,7 @@ function ElementView(p: ElementProps & { at?: At }) {
         <Match when={look().markup}>{(m) => <>{m()}</>}</Match>
         <Match when={look().media}>{(m) => <MediaView alias={m().alias} src={m().src} fit={m().fit} />}</Match>
         <Match when={p.element.tag === "use"}>
-          <Instance element={p.element} scope={p.scope} design={p.design} act={p.act} />
+          <Instance element={p.element} scope={p.scope} design={p.design} act={p.act} at={p.at} />
         </Match>
         <Match when={p.element.tag === "input"}>
           <InputBox element={p.element} scope={p.scope} value={look().value} act={p.act} />
@@ -793,7 +793,7 @@ function local(el: globalThis.Element, e: PointerEvent): { x: number; y: number;
 /** A component in an instance's box, scaled to fit and centred. While a pointer is down on it,
  *  what it writes shows at once, and after release what its bindings say. It keeps its own
  *  variables, and which of its parts the pointer presses or is over. */
-function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: Act }) {
+function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: Act; at?: At }) {
   const name = () => p.element.component ?? "";
   const [held, setHeld] = createSignal<Map<string, unknown> | null>(null);
   const hold = (e: PointerEvent) => {
@@ -816,7 +816,7 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
     <Show when={component(name())} fallback={<div class="instance-missing">{name()} is missing</div>}>
       {(c) => {
         const scope = componentScope(c(), { props: p.element.props, outer: p.scope, own, kept: p.act ? kept : undefined });
-        const act = p.act && componentAct(c(), scope, p.element, p.act);
+        const act = p.act && componentAct(c(), scope, p.element, p.act, p.at);
         // a control whose values are all bound one way, and whose instance handles nothing,
         // only shows: it takes no input and does not look pressable
         const bindable = () => c().interface?.inputs.filter((i) => i.bindable) ?? [];

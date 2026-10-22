@@ -38,14 +38,15 @@ export function pageAct(page: string): Act {
   };
 }
 
-/** A component's events, run here. `emit` sends one out as the instance's own. */
-export function componentAct(c: Page, scope: Scope, instance: Element, outer: Act): Act {
+/** A component's events, run here. `emit` sends one out as the instance's own, from `copy`
+ *  when the instance repeats. */
+export function componentAct(c: Page, scope: Scope, instance: Element, outer: Act, copy?: At): Act {
   return {
     fire: (e, event, payload, at) => {
       const h = e.handlers.find((x) => x.event === event);
       const here = within(scope, at);
       if (!h || !heard(h, here)) return;
-      const emit = (name: string, sent?: unknown) => outer.fire(instance, String(name), sent);
+      const emit = (name: string, sent?: unknown) => outer.fire(instance, String(name), sent, copy);
       runHandler(h.code, here, emit, payload ?? null, `${c.name} ${e.props.name ?? e.id} ${event}`);
     },
   };
