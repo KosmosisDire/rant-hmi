@@ -70,7 +70,7 @@ export function makeComponent(page: Page, ids: string[]) {
           if (!to) {
             to = freeName(joined(text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "x", "y", "w", "h", "origin", "rotate", "text"].includes(n) || inputs.some((i) => i.name === n));
             renamed.set(text, to);
-            inputs.push({ name: to, default: "0", bindable: false });
+            inputs.push({ name: to, default: "0", bindable: false, type: "" });
           }
           return to;
         })

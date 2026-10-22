@@ -1,6 +1,6 @@
 <component name="Readout" size="20x8" sizing="fill">
   <prop name="label" default='"Value"'/>
-  <prop name="value" default="0"/>
+  <prop name="value" default="0" type="number string enum"/>
   <prop name="unit" default='""'/>
   <prop name="digits" default="1"/>
   <prop name="fill" default="$panel"/>
@@ -10,6 +10,6 @@
   <prop name="radius" default="$radius"/>
   <div id="e1" name="card" x="0" y="0" w="100%" h="100%" style='align: "center left"; background: fill; border-radius: radius; gap: 0.2; layout: "down"; padding: 1.5'>
     <span id="e2" name="caption" x="1" y="1" w="hug" h="hug" style="color: labelColour; font-size: 1.3">label</span>
-    <span id="e3" name="reading" x="3" y="3" w="hug" h="hug" style="color: textColour; font-size: textSize; font-weight: 600">value.toFixed(digits) + " " + unit</span>
+    <span id="e3" name="reading" x="3" y="3" w="hug" h="hug" style="color: textColour; font-size: textSize; font-weight: 600">(typeof value === "number" ? value.toFixed(digits) : String(value)) + (unit ? " " + unit : "")</span>
   </div>
 </component>

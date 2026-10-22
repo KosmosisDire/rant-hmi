@@ -11,4 +11,9 @@ default: string,
 /**
  * The component may write it back through the instance's binding.
  */
-bindable: boolean, };
+bindable: boolean, 
+/**
+ * The types it takes, apart by single spaces, by which the editor offers the component for
+ * an import. Empty says nothing.
+ */
+type: string, };

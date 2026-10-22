@@ -1,5 +1,6 @@
 // Adding elements: what each kind starts as, and where a new one lands.
 
+import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { edit } from "../../state/change";
@@ -9,7 +10,7 @@ import { childrenOf } from "./tree";
 
 /** What a new element starts as: visible, on the grid, plainly named, in units, and in the
  *  theme's tokens. A diagram starts empty, its shapes added from the inspector. */
-export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup", Record<string, string>> = {
+export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup" | "canvas" | "scene", Record<string, string>> = {
   div: { name: "Frame", w: "16", h: "8", background: "$panel", "border-radius": "$radius" },
   span: { name: "Text", w: "16", h: "4", text: '"Text"', color: "$text", "font-size": "$textSize" },
   input: {
@@ -28,6 +29,17 @@ export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup
   media: { name: "Media", w: "32", h: "24", fit: '"meet"' },
   svg: { name: "Diagram", w: "16", h: "16" },
   markup: { name: "SVG", w: "16", h: "16", markup: '`<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="${$accent}"/></svg>`' },
+  canvas: { name: "Canvas", w: "16", h: "16", draw: ["ctx.fillStyle = $accent;", "ctx.beginPath();", "ctx.arc(width / 2, height / 2, min(width, height) * 0.4, 0, 2 * PI);", "ctx.fill();"].join("\n") },
+  scene: { name: "Scene", w: "32", h: "24", background: "$panel", "border-radius": "$radius" },
+};
+
+/** What a new element holds from the start: a scene a floor and the axes of its origin, so it
+ *  shows which way it looks. */
+const HOLDS: Partial<Record<Tag, Pick<Element, "tag" | "props">[]>> = {
+  scene: [
+    { tag: "grid", props: { name: "Floor" } },
+    { tag: "axes", props: { name: "Origin" } },
+  ],
 };
 
 /** The kinds a person adds, in the order the layers bar and the menu offer them. */
@@ -38,6 +50,8 @@ export const KINDS: [keyof typeof STARTS, string][] = [
   ["media", "Media"],
   ["svg", "Diagram"],
   ["markup", "SVG"],
+  ["canvas", "Canvas"],
+  ["scene", "Scene"],
 ];
 
 /** Adds an element to `parent`, the page for null: at `at` in it, on the grid, else at the
@@ -51,6 +65,7 @@ export function addElement(page: Page, parent: string | null, tag: Tag, props: R
     while (childrenOf(page, parent).some((e) => number(e.props.x) === n && number(e.props.y) === n)) n += 2 * GRID;
     spot = { x: n, y: n };
   }
-  const element = { id: "", tag, component, props: { ...props, x: String(spot.x), y: String(spot.y) }, handlers: [], children: [] };
+  const children = (HOLDS[tag] ?? []).map((c): Element => ({ id: "", component: null, handlers: [], children: [], tag: c.tag, props: { ...c.props } }));
+  const element: Element = { id: "", tag, component, props: { ...props, x: String(spot.x), y: String(spot.y) }, handlers: [], children };
   edit({ kind: "add_element", page: page.id, parent, index: null, element });
 }

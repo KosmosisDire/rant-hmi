@@ -473,6 +473,49 @@ export function runHandler(code: string, scope: Scope, emit: ((name: string, pay
   });
 }
 
+const drawers = new Map<string, ((scope: object, ...math: unknown[]) => void) | string>();
+
+/** Runs a canvas's draw code with `own`, its context and size, over a scope it only reads. Run
+ *  in a tracking scope, it follows what the code read, as an expression does. */
+export function runDraw(code: string, scope: Scope, own: Record<string, unknown>): Resolved {
+  let fn = drawers.get(code);
+  if (fn === undefined) {
+    fn = make<(scope: object, ...math: unknown[]) => void>(`with (scope) {\n${code}\n}`, 1);
+    drawers.set(code, fn);
+  }
+  if (typeof fn === "string") return { ok: false, error: fn };
+  const names = new Proxy(
+    {},
+    {
+      // every name but the browser's own and math's stays here, so a stray one never becomes a global
+      has: (_, key) => typeof key === "string" && (key in own || scope.has(key) || !(key in globalThis || key in LIBRARY)),
+      get: (_, key) => {
+        if (typeof key !== "string") return undefined;
+        if (key in own) return own[key];
+        if (scope.has(key)) return scope.get(key);
+        throw new ReferenceError(scope.missing(key));
+      },
+      set: (_, key) => {
+        const name = String(key);
+        throw key in own || scope.has(name) ? new TypeError(`${name} cannot be set while drawing, which only reads`) : new ReferenceError(scope.missing(name));
+      },
+    },
+  );
+  try {
+    fn(names, ...MATH);
+    return { ok: true, value: undefined };
+  } catch (e) {
+    return failed(e, scope);
+  }
+}
+
+/** Why code that threw `e` gave nothing: a value unknown yet, or its error in words. */
+function failed(e: unknown, scope: Scope): Resolved {
+  if (e instanceof Unknown) return { ok: false, unknown: e.alias };
+  if (e instanceof ReferenceError) return { ok: false, error: e.message.replace(/^(\S+) is not defined$/, (_, name: string) => scope.missing(name)) };
+  return { ok: false, error: (e as Error).message ?? String(e) };
+}
+
 /** The source with each #hex outside strings and comments made a string. */
 function colours(src: string): string {
   let [out, at] = ["", 0];
@@ -503,9 +546,7 @@ export function resolve(value: string | undefined, scope: Scope = pageScope): Re
   try {
     return { ok: true, value: fn(proxy(scope), ...MATH) };
   } catch (e) {
-    if (e instanceof Unknown) return { ok: false, unknown: e.alias };
-    if (e instanceof ReferenceError) return { ok: false, error: e.message.replace(/^(\S+) is not defined$/, (_, name: string) => scope.missing(name)) };
-    return { ok: false, error: (e as Error).message ?? String(e) };
+    return failed(e, scope);
   }
 }
 

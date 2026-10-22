@@ -13,6 +13,7 @@ import { partNames, tokenValue } from "./bind";
 import { fields, typeLabel } from "./format";
 import { names } from "./names";
 import { entity, live, state } from "./store";
+import { KIND_WORDS, typesIn } from "./types";
 
 export interface Suggestion {
   label: string;
@@ -95,6 +96,22 @@ export const REPEAT: Suggestion[] = [
   { label: "item", insert: "item", icon: "local", type: "the copy's item" },
 ];
 
+/** What a canvas's draw code reads of the canvas: its context, by the name tutorials use for
+ *  it, with the context's own after a dot, its size and what the code keeps. */
+export function drawing(context: "2d" | "webgl2"): Suggestion[] {
+  const [name, of] = context === "2d" ? ["ctx", globalThis.CanvasRenderingContext2D] : ["gl", globalThis.WebGL2RenderingContext];
+  // its methods and constants, then the properties it reads or sets through accessors
+  const properties = Object.entries(Object.getOwnPropertyDescriptors(of?.prototype ?? {}))
+    .filter(([n, d]) => d.get && /^[a-z]/.test(n))
+    .map(([n]): Suggestion => ({ label: n, insert: n, icon: "member", type: "" }));
+  return [
+    { label: name, insert: name, icon: "local", type: `the ${context} context`, members: [...held(of?.prototype), ...properties] },
+    { label: "width", insert: "width", icon: "local", type: "its width in units" },
+    { label: "height", insert: "height", icon: "local", type: "its height in units" },
+    { label: "keep", insert: "keep", icon: "local", type: "what it makes once, kept between draws" },
+  ];
+}
+
 /** The completion at `caret`, or null where none fits, such as inside a string. `names` stand
  *  for the mesh imports where code reads something else, as a component reads its own, and
  *  `also` adds to them, as a repeat adds `index` and `item`. */
@@ -154,6 +171,15 @@ export function completeCss(text: string, caret: number, names?: Suggestion[], a
   let from = caret;
   while (from > spot.start && /[A-Za-z-]/.test(text[from - 1])) from--;
   return matching(cssProperties(), text.slice(from, caret), from);
+}
+
+/** The completion in an input's list of types: the kind words, then each type the mesh names. */
+export function completeType(text: string, caret: number): Completion | null {
+  let from = caret;
+  while (from > 0 && /\w/.test(text[from - 1])) from--;
+  const kinds = KIND_WORDS.map(([w, words]): Suggestion => ({ label: w, insert: w, icon: "member", type: words }));
+  const named = [...new Set(state.entities.flatMap((e) => (e.schema ? typesIn(e.schema) : [])))].sort();
+  return matching([...kinds, ...named.map((n): Suggestion => ({ label: n, insert: n, icon: "member", type: "a type on the mesh" }))], text.slice(from, caret), from);
 }
 
 /** The call the caret is inside, in a CSS line's value. */

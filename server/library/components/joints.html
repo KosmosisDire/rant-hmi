@@ -1,0 +1,10 @@
+<component name="Joints" size="36x18" sizing="fill">
+  <prop name="state" default="{ position: [0, 0.6, -0.4, 1.2, 0, -0.8], velocity: [], effort: [] }" type="JointState"/>
+  <prop name="names" default="[]"/>
+  <prop name="min" default="-180"/>
+  <prop name="max" default="180"/>
+  <prop name="digits" default="1"/>
+  <prop name="colour" default="$accent"/>
+  <prop name="fill" default="$panel"/>
+  <Bars id="e1" name="Bars" x="0" y="0" w="100%" h="100%" colour="colour" digits="digits" fill="fill" labels='names.length ? names : state.position.map((_, i) => "Joint " + (i + 1))' max="max" min="min" unit='"°"' values="state.position.map(degrees)"/>
+</component>

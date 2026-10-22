@@ -1,8 +1,35 @@
 // The icon and the word for what an element is, as the layers and the inspector show it.
 
-import { Match, Switch } from "solid-js";
+import type { JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import type { Tag } from "../../protocol/Tag";
-import { ChartSpline, Circle, CodeXml, Component, Folder, ImagePlay, Minus, Pentagon, RectangleHorizontal, Shapes, Spline, Square, TextCursorInput, Type } from "../../ui/icons";
+import {
+  Anchor,
+  Axis3d,
+  Box,
+  Brush,
+  ChartScatter,
+  ChartSpline,
+  Circle,
+  CodeXml,
+  Component,
+  Cylinder,
+  FileBox,
+  Folder,
+  Globe,
+  Grid3x3,
+  ImagePlay,
+  Minus,
+  MoveUpRight,
+  Pentagon,
+  RectangleHorizontal,
+  Rotate3d,
+  Shapes,
+  Spline,
+  Square,
+  TextCursorInput,
+  Type,
+} from "../../ui/icons";
 
 /** What each tag is called in the editor. */
 export const TAG_WORDS: Record<Tag, string> = {
@@ -13,6 +40,7 @@ export const TAG_WORDS: Record<Tag, string> = {
   media: "media",
   svg: "diagram",
   markup: "SVG",
+  canvas: "canvas",
   path: "path",
   circle: "circle",
   ellipse: "ellipse",
@@ -23,50 +51,49 @@ export const TAG_WORDS: Record<Tag, string> = {
   text: "text",
   g: "group",
   group: "group",
+  scene: "scene",
+  anchor: "anchor",
+  axes: "axes",
+  box: "box",
+  sphere: "sphere",
+  cylinder: "cylinder",
+  points: "points",
+  grid: "grid",
+  arrow: "arrow",
+  model: "model",
+};
+
+/** Each tag's icon, a frame's the square the rest fall back to. */
+const ICONS: Partial<Record<Tag, (p: { size: number }) => JSX.Element>> = {
+  span: Type,
+  text: Type,
+  use: Component,
+  input: TextCursorInput,
+  svg: Shapes,
+  markup: CodeXml,
+  canvas: Brush,
+  media: ImagePlay,
+  path: Spline,
+  circle: Circle,
+  ellipse: Circle,
+  rect: RectangleHorizontal,
+  line: Minus,
+  polyline: ChartSpline,
+  polygon: Pentagon,
+  g: Folder,
+  group: Folder,
+  scene: Rotate3d,
+  anchor: Anchor,
+  axes: Axis3d,
+  box: Box,
+  sphere: Globe,
+  cylinder: Cylinder,
+  points: ChartScatter,
+  grid: Grid3x3,
+  arrow: MoveUpRight,
+  model: FileBox,
 };
 
 export function TagIcon(p: { tag: Tag; size: number }) {
-  return (
-    <Switch fallback={<Square size={p.size} />}>
-      <Match when={p.tag === "span" || p.tag === "text"}>
-        <Type size={p.size} />
-      </Match>
-      <Match when={p.tag === "use"}>
-        <Component size={p.size} />
-      </Match>
-      <Match when={p.tag === "input"}>
-        <TextCursorInput size={p.size} />
-      </Match>
-      <Match when={p.tag === "svg"}>
-        <Shapes size={p.size} />
-      </Match>
-      <Match when={p.tag === "markup"}>
-        <CodeXml size={p.size} />
-      </Match>
-      <Match when={p.tag === "media"}>
-        <ImagePlay size={p.size} />
-      </Match>
-      <Match when={p.tag === "path"}>
-        <Spline size={p.size} />
-      </Match>
-      <Match when={p.tag === "circle" || p.tag === "ellipse"}>
-        <Circle size={p.size} />
-      </Match>
-      <Match when={p.tag === "rect"}>
-        <RectangleHorizontal size={p.size} />
-      </Match>
-      <Match when={p.tag === "line"}>
-        <Minus size={p.size} />
-      </Match>
-      <Match when={p.tag === "polyline"}>
-        <ChartSpline size={p.size} />
-      </Match>
-      <Match when={p.tag === "polygon"}>
-        <Pentagon size={p.size} />
-      </Match>
-      <Match when={p.tag === "g" || p.tag === "group"}>
-        <Folder size={p.size} />
-      </Match>
-    </Switch>
-  );
+  return <Dynamic component={ICONS[p.tag] ?? Square} size={p.size} />;
 }

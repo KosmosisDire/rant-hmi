@@ -1,0 +1,12 @@
+<component name="Lamp" size="12x3" sizing="fill">
+  <prop name="value" default="true" type="bool"/>
+  <prop name="label" default='"Lamp"'/>
+  <prop name="onColour" default="$green"/>
+  <prop name="offColour" default="$panel3"/>
+  <prop name="textColour" default="$text"/>
+  <prop name="textSize" default="1.5"/>
+  <div id="e1" name="face" x="0" y="0" w="100%" h="100%" style='align: "center left"; gap: 1; layout: "right"'>
+    <div id="e2" name="light" x="1" y="1" w="2" h="2" style="background: value ? onColour : offColour; border-radius: $radiusPill"/>
+    <span id="e3" name="caption" x="3" y="3" w="fill" h="hug" style="color: textColour; font-size: textSize">label</span>
+  </div>
+</component>

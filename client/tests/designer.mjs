@@ -34,6 +34,15 @@ export function designer(page) {
     const id = await selected();
     return id && id !== before ? id : null;
   }, what);
+  // one of a kind added from the inspector's row, as a shape to a diagram or a part to a scene
+  const addFrom = async (row, word, fields) => {
+    const before = await selected();
+    await right().locator(".ghost", { hasText: row }).click();
+    await page.locator(".popover .menu-item", { hasText: new RegExp(`^${word}$`) }).click();
+    const id = await made(before, `a new ${word}`);
+    await d.set(fields);
+    return id;
+  };
 
   const d = {
     async tab(name) {
@@ -55,6 +64,30 @@ export function designer(page) {
     async pick(id) {
       for (let n = 0; n < 8 && (await selected()) !== id; n++) await d.el(id).click();
       if ((await selected()) !== id) throw new Error(`clicking ${id} never picked it, it picked ${await selected()}`);
+    },
+
+    /** The colour on the screen at a share across and down an element, as red, green and blue. */
+    async colour(el, fx, fy) {
+      const png = (await el.screenshot()).toString("base64");
+      return page.evaluate(
+        async ([png, fx, fy]) => {
+          const img = new Image();
+          img.src = `data:image/png;base64,${png}`;
+          await img.decode();
+          const c = new OffscreenCanvas(img.width, img.height).getContext("2d");
+          c.drawImage(img, 0, 0);
+          return [...c.getImageData(Math.floor(img.width * fx), Math.floor(img.height * fy), 1, 1).data.slice(0, 3)];
+        },
+        [png, fx, fy],
+      );
+    },
+
+    /** Waits for the colour at a share across and down an element to be one `want` takes. */
+    async shows(el, fx, fy, want, what) {
+      let seen;
+      await until(async () => want((seen = await d.colour(el, fx, fy))), what).catch((e) => {
+        throw new Error(`${e.message}, not ${seen}`);
+      });
     },
 
     async box(id) {
@@ -119,14 +152,16 @@ export function designer(page) {
       await d.set({ w: String(w), h: String(h) });
     },
 
-    /** Adds an input to the open component, from its inspector with nothing selected. */
-    async addInput(name, start, twoWay = false) {
+    /** Adds an input to the open component, from its inspector with nothing selected, written
+     *  back when `twoWay`, taking the types `type` names. */
+    async addInput(name, start, { twoWay = false, type = "" } = {}) {
       const before = await right().locator(".handler[data-input]").count();
       await right().locator('button[title="Add an input"]').click();
       const row = right().locator(".handler[data-input]").nth(before);
       await commit(row.locator(".input-name"), name);
       const named = right().locator(`.handler[data-input="${name}"]`);
       await commit(named.locator(".input-default input"), start);
+      if (type) await commit(named.locator(".input-type input"), type);
       if (twoWay) await named.locator(".check input").check();
     },
 
@@ -184,24 +219,25 @@ export function designer(page) {
       return id;
     },
 
-    /** Picks a row of the layers pane's + menu, and one of its submenu when `then` names it. */
-    async addRow(row, then) {
+    /** Picks a row of the layers pane's + menu, through the submenu each row before it opens. */
+    async addRow(...rows) {
       await left().locator('button[title="Add an element"]').click();
       const item = (menu, words) => menu.locator(".menu-item", { has: page.locator(".menu-label", { hasText: new RegExp(`^${words}$`) }) });
       const menus = page.locator(".popover.menu");
-      if (!then) return item(menus.first(), row).click();
-      await item(menus.first(), row).hover();
-      await item(menus.nth(1), then).click();
+      for (const [n, words] of rows.entries()) {
+        const row = item(menus.nth(n), words);
+        await (n < rows.length - 1 ? row.hover() : row.click());
+      }
     },
 
     /** Adds a shape from the inspector of a diagram, a group or a shape. */
     async addShape(kind, fields = {}) {
-      const before = await selected();
-      await right().locator(".ghost", { hasText: "Add shape" }).click();
-      await page.locator(".popover .menu-item", { hasText: new RegExp(`^${kind === "g" ? "group" : kind}$`) }).click();
-      const id = await made(before, `a new ${kind}`);
-      await d.set(fields);
-      return id;
+      return addFrom("Add shape", kind === "g" ? "group" : kind, fields);
+    },
+
+    /** Adds a 3D part from the inspector of a scene, an anchor or a part. */
+    async addPart(kind, fields = {}) {
+      return addFrom("Add part", kind, fields);
     },
 
     /** Places an instance of a component, from the layers bar. */
@@ -211,6 +247,14 @@ export function designer(page) {
       const id = await made(before, `an instance of ${component}`);
       await d.set(fields);
       return id;
+    },
+
+    /** Shows an import from the layers bar, as the rows name it: the import, its fields, then
+     *  the component. Gives the new instance's id. */
+    async show(...rows) {
+      const before = await selected();
+      await d.addRow("Show an import", ...rows);
+      return made(before, `a view through ${rows.join(", ")}`);
     },
 
     /** Sets the selected element's more CSS, or a shape's more attributes, one per line. */
@@ -251,8 +295,6 @@ export function designer(page) {
       await left().locator(".list-row[data-id]", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) }).first().click();
     },
 
-    /** Gives the selected element a handler with this code, and a hold its time. */
-    /** Gives the selected element a handler for `event`, and its settings as `{ label: text }`. */
     /** Writes the code of the element's handler for `event` that takes any, added when it has
      *  none, then each setting by its label. A new one comes after those for its event, and a
      *  card keeps its place when its filter changes. */

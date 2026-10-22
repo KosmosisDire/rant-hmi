@@ -7,7 +7,7 @@
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.addComponent("Slider", 27, 4);
   await d.sizing("Fill");
-  await d.addInput("value", "0", true);
+  await d.addInput("value", "0", { twoWay: true, type: "number" });
   await d.addInput("min", "0");
   await d.addInput("max", "100");
   await d.addInput("step", "1");

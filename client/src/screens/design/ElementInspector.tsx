@@ -1,5 +1,6 @@
 import { createMemo, createSignal, For, Show, useContext } from "solid-js";
-import { cssFault, OWN, SHAPES } from "../../page/PageView";
+import { CONTEXTS, cssFault, homeOf, OWN } from "../../page/PageView";
+import { isPart } from "../../page/parts";
 import type { Element } from "../../protocol/Element";
 import { SENDERS } from "../../protocol/events";
 import type { Handler } from "../../protocol/Handler";
@@ -10,7 +11,8 @@ import { COMPONENT, EVENT, INPUT } from "../../protocol/rules";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
 import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
-import { complete, completeCss, componentNames, REPEAT, signature, signatureCss } from "../../state/complete";
+import { complete, completeCss, completeType, componentNames, drawing, REPEAT, signature, signatureCss } from "../../state/complete";
+import { typeList } from "../../state/types";
 import { brings, filterWords, handlerKey, type Offered, offered, settingOf } from "../../state/events";
 import { fits, freeName } from "../../state/names";
 import { edit, show } from "../../state/change";
@@ -44,7 +46,9 @@ import {
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, keysOf, kindOf, type Moving, PADDING, PartsField, Points, POINTS, RADIUS, type Where, WhereContext } from "./Field";
-import { AddShape, GEOMETRY, ORIGINS, PAINT, ROTATE, shapeKeys, type Spec, TURN } from "./ShapeFields";
+import { AddRow } from "./AddRow";
+import { addPart, cameraFields, PART_KINDS, partFields, partKeys } from "./SceneFields";
+import { addShape, GEOMETRY, ORIGINS, PAINT, ROTATE, SHAPE_KINDS, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { absolute, type Align, align, boxOf, boxText, flowed, originEdits, roomOf, scopeOf, sendEdits, setProps, showProps, spread, tops } from "./tree";
 
@@ -260,12 +264,12 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     onWrite: (t: string | null) => setProps(p.page, p.element.id, { [key]: t }),
     onShow: (t: string) => showProps(p.page, p.element.id, { [key]: t }),
     // a frame's own properties are CSS, which the browser may drop, and of an instance's only its turn
-    check: !shape() && !OWN.has(key) && (!instance() || key === "rotate") ? (v: unknown) => cssFault(key, v) : undefined,
+    check: placed() && !OWN.has(key) && (!instance() || key === "rotate") ? (v: unknown) => cssFault(key, v) : undefined,
     motion: moving(key),
   });
   // how a property's changes animate, in the element's transition, where it draws as CSS
   const moving = (key: string): Moving | undefined => {
-    if (!ANIMATES[key] || shape() || grouped() || (instance() && !BOX.has(key))) return undefined;
+    if (!ANIMATES[key] || !placed() || grouped() || (instance() && !BOX.has(key))) return undefined;
     return {
       property: ANIMATES[key],
       get transition() {
@@ -280,8 +284,17 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const instance = () => p.element.tag === "use";
   const input = () => p.element.tag === "input";
   const diagram = () => p.element.tag === "svg";
-  const shape = () => SHAPES.has(p.element.tag);
+  // a shape draws in a diagram and a part in a scene, the rest is placed on the page
+  const placed = () => homeOf(p.element.tag) === "page";
+  const shape = () => homeOf(p.element.tag) === "diagram";
+  const part = () => homeOf(p.element.tag) === "scene";
+  const scene = () => p.element.tag === "scene";
   const grouped = () => p.element.tag === "group";
+  // the context a canvas draws with, which its draw code completes for
+  const context = () => {
+    const r = resolve(p.element.props.context, where().scope);
+    return r.ok && r.value === "webgl2" ? "webgl2" : "2d";
+  };
   // a frame that lays it out places it, so its x and y wait, unless it is placed freely
   const room = () => {
     const doc = pageOf(p.page);
@@ -336,7 +349,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
     return t && want === key ? t.n : undefined;
   };
   // the properties no field names, as CSS lines, or a shape's as attribute lines
-  const named = () => (shape() ? shapeKeys(p.element.tag) : instance() ? BOX_NAMED : NAMED);
+  const named = () => (shape() ? shapeKeys(p.element.tag) : isPart(p.element.tag) ? partKeys(p.element.tag) : instance() ? BOX_NAMED : NAMED);
   const inputs = () => new Set(component(p.element.component ?? "")?.interface?.inputs.map((i) => i.name));
   const loose = (k: string) => !OWN.has(k) && !named().has(k) && !(instance() && inputs().has(k));
   return (
@@ -362,7 +375,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         >
           <Field {...prop("repeat")} label="Repeat" placeholder="a list, or a count" />
         </Show>
-        <Show when={!shape() && !grouped()}>
+        <Show when={placed() && !grouped()}>
           <div class="section">Placement</div>
           <div class="placement">
             <For each={flowing() ? ["w", "h"] : ["x", "y", "w", "h"]}>
@@ -415,6 +428,19 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             complete={(t, c) => complete(t, c, where().expressions, where().names, where().also)}
           />
         </Show>
+        <Show when={p.element.tag === "canvas"}>
+          <div class="section">Canvas</div>
+          <Field {...prop("context")} label="Context" kind="choice" options={CONTEXTS.map((c) => `"${c}"`)} placeholder='"2d"' />
+          <DraftInput
+            multiline
+            code
+            class="editor code"
+            value={p.element.props.draw ?? ""}
+            placeholder={["ctx.fillStyle = $accent;", "ctx.fillRect(0, 0, width * Speed, height);"].join("\n")}
+            onCommit={(t) => setProps(p.page, p.element.id, { draw: t.trim() === "" ? null : t })}
+            complete={(t, c) => complete(t, c, where().expressions, where().names, [...(where().also ?? []), ...drawing(context())])}
+          />
+        </Show>
         <Show when={shape()}>
           <div class="section">{TAG_WORDS[p.element.tag]}</div>
           <For each={GEOMETRY[p.element.tag] ?? []}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} focus={typed(key)} />}</For>
@@ -424,7 +450,16 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">More attributes</div>
           <LooseProps page={p.page} element={p.element} loose={loose} placeholder="stroke-linejoin: round" css={false} />
         </Show>
-        <Show when={(diagram() || shape()) && pageOf(p.page)}>{(pg) => <AddShape page={pg()} element={p.element} />}</Show>
+        <Show when={(diagram() || shape()) && pageOf(p.page)}>{(pg) => <AddRow section="Shapes" label="Add shape" kinds={SHAPE_KINDS} onAdd={(tag) => addShape(pg(), p.element, tag)} />}</Show>
+        <Show when={scene()}>
+          <div class="section">Camera</div>
+          <For each={cameraFields()}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
+        </Show>
+        <Show when={part()}>
+          <div class="section">{TAG_WORDS[p.element.tag]}</div>
+          <For each={isPart(p.element.tag) ? partFields(p.element.tag) : []}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
+        </Show>
+        <Show when={(scene() || part()) && pageOf(p.page)}>{(pg) => <AddRow section="Parts" label="Add part" kinds={PART_KINDS} onAdd={(tag) => addPart(pg(), p.element, tag)} />}</Show>
         <Show when={instance()}>
           <div class="section">Component</div>
           <div class="field">
@@ -465,7 +500,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={text() || input()}>
           <For each={TEXT_LOOK.filter(([, key]) => text() || key !== "align-content")}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
         </Show>
-        <Show when={!instance() && !shape() && !grouped()}>
+        <Show when={placed() && !instance() && !grouped()}>
           <div class="section">Look</div>
           <Field {...prop("background")} {...LOOK[0][2]} label="Fill" />
           <BorderField props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} />
@@ -474,7 +509,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">More CSS</div>
           <LooseProps page={p.page} element={p.element} loose={loose} placeholder="box-shadow: 0 0.2 0.8 $border" css />
         </Show>
-        <Show when={!grouped()}>
+        <Show when={!grouped() && !part()}>
           <Events page={p.page} element={p.element} focus={(key) => typed(`on:${key}`)} />
         </Show>
       </div>
@@ -769,12 +804,13 @@ function ListHead(p: { title: string; add: string; onAdd: () => void }) {
   );
 }
 
-/** A component's inputs, each a box: its name, whether it may be written back, its default. */
+/** A component's inputs, each a box: its name, whether it may be written back, its default and
+ *  the types it takes. */
 function Inputs(p: { page: string; inputs: Input[] }) {
   const write = (name: string, input: Input | null) => edit({ kind: "set_input", page: p.page, name, input });
   const add = () => {
     const name = freeName("input", (n) => p.inputs.some((i) => i.name === n));
-    write(name, { name, default: "0", bindable: false });
+    write(name, { name, default: "0", bindable: false, type: "" });
   };
   return (
     <>
@@ -801,6 +837,17 @@ function Inputs(p: { page: string; inputs: Input[] }) {
             <div class="field input-default">
               <label>Default</label>
               <DraftInput value={i.default} onCommit={(d) => write(i.name, { ...i, default: d })} complete={constants} hint={(t, c) => signature(t, c, "theme")} />
+            </div>
+            <div class="field input-type">
+              <label>Type</label>
+              <DraftInput
+                value={i.type}
+                accept={typeList}
+                placeholder="any"
+                title="The types it takes, apart by spaces, so the editor offers the component for an import of one"
+                onCommit={(type) => write(i.name, { ...i, type })}
+                complete={completeType}
+              />
             </div>
           </div>
         )}

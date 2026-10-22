@@ -55,9 +55,50 @@ A component's interface comes first in its file:
 
 | Tag | Attributes | Is |
 | --- | --- | --- |
-| `<prop>` | `name`, `default`, `bindable="true"` | an input each instance sets as an attribute. A bindable one writes back to the name the instance gives it |
+| `<prop>` | `name`, `default`, `type`, `bindable="true"` | an input each instance sets as an attribute. A bindable one writes back to the name the instance gives it |
 | `<event>` | `name` | an event its code sends with `emit`, heard on the instance by `<on event>` |
 | `<var>` | `name`, `start` | each instance's own state on each screen |
+
+### Input types
+
+An input's `type` lists the types it takes, apart by spaces, as `type="Pose"` or
+`type="number string"`. The editor's Show an import, beside Place a component, then offers the
+component for each import and field of one of those types, placed with that input set to it.
+
+| Name | Takes |
+| --- | --- |
+| `number` | any number |
+| `bool`, `string`, `enum`, `struct` | any of that kind |
+| `f64`, `u8` and the other number kinds | that kind only |
+| `Pose`, `Color`, an enum's name | that type, by its name on the mesh |
+| any of these with `[]` | a list of it, as `number[]` or `Pose[]` |
+
+- An input with no type takes any value, but is offered for no import.
+- The first input whose type fits takes the import.
+- A bindable input is offered only for a variable imported to write.
+
+### Standard components
+
+A new project starts with these, each made in the editor as any component is, so it can be
+opened, restyled or copied. A view takes what it shows as an input. A list of one view, as a
+Lamp per item, is the view placed with `repeat`.
+
+| Component | Shows | Takes |
+| --- | --- | --- |
+| `Readout` | a number with its unit, or text such as an enum's option | `value`: `number string enum` |
+| `Gauge` | a number on an arc | `value`: `number` |
+| `Plot` | a record over time | `values` |
+| `Lamp` | true or false | `value`: `bool` |
+| `Bar` | a number between two limits, filled from zero | `value`: `number` |
+| `Bars` | a list of numbers, a Bar each with its label and reading | `values`: `number[]`, `labels` |
+| `Joints` | a JointState's angles in degrees, named by its JointNames | `state`: `JointState`, `names` |
+| `Pose` | a Pose's position and its roll, pitch and yaw | `value`: `Pose` |
+| `Position` | a 2D point or pose, or a list of them, on a plane y up | `value`: `Double2 Float2 Int2 Pose2D`, each also as a list |
+| `Swatch` | a Color, or colour text | `value`: `Color string` |
+| `Table` | a list of structs or of lists, every key of the first row unless `columns` names them | `rows`: `struct[]` |
+
+`Toggle` (`bool`), `Slider` and `Knob` (`number`), `Dropdown` and `ModeSwitch` set the name
+their `value` is bound to. `Button`, `Joystick` and `Joystick1D` send events.
 
 ## Elements
 
@@ -69,12 +110,15 @@ A component's interface comes first in its file:
 | `media` | a camera, a video or a picture |
 | `svg` | a diagram of shapes, drawn in its own units |
 | `markup` | SVG that code gives as text |
+| `canvas` | what its code draws, in 2D or with WebGL |
+| `scene` | a 3D view of parts |
 | `group` | parts picked and moved as one, with no box of its own |
 | a component's name, as `<Gauge>` | an instance of that component |
 | `path` `circle` `ellipse` `rect` `line` `polyline` `polygon` `text` `g` | shapes, in a diagram only |
+| `anchor` `axes` `box` `sphere` `cylinder` `points` `grid` `arrow` `model` | 3D parts, in a scene only |
 
-A frame, a group, a diagram and a `g` hold parts. Any element holds handlers, each an
-`<on event="...">` ([Events](#events)).
+A frame, a group, a diagram, a `g`, a scene and an `anchor` hold parts. Any element but a 3D
+part holds handlers, each an `<on event="...">` ([Events](#events)).
 
 ## Properties
 
@@ -115,6 +159,73 @@ give.
 | `fit` | `media`, `svg` | how it fits its box: `"meet"` whole, the default, `"slice"` filling it cut to size, or `"stretch"` |
 | `viewbox` | `svg` | the box its shapes draw in, `"x y width height"`. Left out, they draw in units from its corner |
 | `markup` | `markup` | SVG as text, or a list of texts, written as the tag's body |
+| `context` | `canvas` | `"2d"`, the default, or `"webgl2"` |
+| `draw` | `canvas` | the code that draws on it, written as the tag's body |
+
+### Canvas
+
+```html
+<canvas id="e1" name="Level" x="2" y="2" w="4" h="16">
+  ctx.fillStyle = $accent;
+  ctx.fillRect(0, height * (1 - Level), width, height * Level);
+</canvas>
+```
+
+- Draw code reads what an expression reads, and `ctx` with `"2d"` or `gl` with `"webgl2"`,
+  `width` and `height` in units, and `keep`, an object kept between draws for what the code
+  makes once: `keep.points ??= gl.createBuffer()`.
+- In 2D one unit is one and each draw starts clear. With WebGL the viewport is the whole
+  canvas, and the code clears it.
+- It draws again when its box or anything the code read changes, at most once a frame, and
+  every frame while it reads `time.now`.
+- It only reads: setting a name there throws.
+
+### Scenes
+
+```html
+<scene id="e1" name="Cell" x="2" y="2" w="40" h="30" yaw="-2" style="background: $panel">
+  <grid id="e2" name="Floor"/>
+  <anchor id="e3" name="Arm" pose="Arm">
+    <box id="e4" name="Link" pose="{ position: vec(0.5, 0, 0) }" size="vec(1, 0.1, 0.1)"/>
+  </anchor>
+</scene>
+```
+
+A scene draws its parts with three.js, in metres with z up, lit from above and from the
+camera. Its CSS `background` shows behind them. Each part's every property is an attribute,
+each an expression.
+
+| Property | Of | Takes |
+| --- | --- | --- |
+| `target` | `scene` | the point its camera looks at and orbits, `vec(0, 0, 0)` when left out |
+| `yaw` | `scene` | how far round from x the camera is, in radians, `-2` when left out |
+| `pitch` | `scene` | how far up the camera is, in radians, `0.5` when left out |
+| `distance` | `scene` | how far the camera is from `target`, `5` when left out |
+| `pose` | every part | where it sits and how it turns from what holds it: a Pose, as `Arm` for a Pose import, or `{ position: vec(0, 0, 1) }`, each half optional |
+| `size` | `box` | its edges, a vector, `vec(1, 1, 1)` |
+| `size` | `axes` | how long its arrows are, `1` |
+| `size` | `points` | how wide each dot is, `0.05` |
+| `size` | `grid` | how wide it is, `10` |
+| `radius` | `sphere`, `cylinder` | `0.5` |
+| `length` | `cylinder` | along its z, `1` |
+| `points` | `points` | a list of vectors, as a Double3 list from the mesh |
+| `joined` | `points` | `true` to draw one line through them instead of dots |
+| `step` | `grid` | the gap between its lines, `1` |
+| `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
+| `src` | `model` | the URL of a glTF file, `.glb` or `.gltf` |
+| `joints` | `model` | its named nodes moved from where the file puts them: `{ Elbow: 0.5 }` turns one by radians about its own z, `{ Slide: { position: vec(0, 0, 0.2) } }` moves one by a pose |
+| `color` | every part but `anchor`, `axes` and `model` | any colour a page takes, `$accent`, or `$border` for a grid |
+| `opacity` | `box`, `sphere`, `cylinder` | `1` |
+
+- An `anchor` draws nothing. It places what it holds by its pose, as a frame of a TF tree.
+- `axes` shows x, y and z in red, green and blue. A `grid` lies on its xy plane, centred on
+  its pose.
+- A box, a sphere and a cylinder sit centred on their pose.
+- A model file loads once however many parts show it, and draws in its own materials.
+- A value that cannot be read gives way to the default, and the editor says why on the
+  scene. A part whose values are not known yet draws nothing.
+- The camera moves only by its properties, so a person turns it through handlers on the
+  scene: `turn = turn - p.dx * 4` on drag, with `yaw="turn"` and `turn` a screen variable.
 
 ### Shapes
 

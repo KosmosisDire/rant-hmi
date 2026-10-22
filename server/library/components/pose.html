@@ -1,0 +1,14 @@
+<component name="Pose" size="48x18" sizing="fill">
+  <prop name="value" default="{ position: vec(0.4, 0, 0.3), orientation: fromEuler(0, 0, 0.5) }" type="Pose"/>
+  <prop name="digits" default="2"/>
+  <prop name="angleDigits" default="1"/>
+  <prop name="fill" default="$panel"/>
+  <div id="e1" name="rows" x="0" y="0" w="100%" h="100%" style='gap: 1; layout: "down"'>
+    <div id="e2" name="position" x="1" y="1" w="fill" h="fill" style='gap: 1; layout: "right"'>
+      <Readout id="e3" name="Readout" repeat="[value.position.x, value.position.y, value.position.z]" x="1" y="1" w="fill" h="fill" digits="digits" fill="fill" label='["X", "Y", "Z"][index]' unit='"m"' value="item"/>
+    </div>
+    <div id="e4" name="orientation" x="3" y="3" w="fill" h="fill" style='gap: 1; layout: "right"'>
+      <Readout id="e5" name="Readout" repeat="Object.values(value.orientation.euler()).map(degrees)" x="1" y="1" w="fill" h="fill" digits="angleDigits" fill="fill" label='["Roll", "Pitch", "Yaw"][index]' unit='"°"' value="item"/>
+    </div>
+  </div>
+</component>

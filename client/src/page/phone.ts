@@ -8,7 +8,8 @@ import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import { docScope, type Flow, flowOf, isNumber, isPercent, originAt, percentOf, placement, repeatScope, resolve, type Scope, sizeWord, UNIT } from "../state/bind";
 import { component } from "../state/store";
-import { type Box, copiesOf, leaves, union } from "./PageView";
+import { type Box, leaves, union } from "./PageView";
+import { copiesOf } from "./repeat";
 
 /** The margin round the page and the space between its blocks, in units: 16 px. */
 const GAP = 1.6;

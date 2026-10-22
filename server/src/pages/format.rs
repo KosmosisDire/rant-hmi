@@ -4,8 +4,9 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Handler, Input, Interface, Local, Page, Shows, Sizing, Tag, check_handler};
+use super::{Element, Handler, Home, Input, Interface, Local, Page, Shows, Sizing, Tag, check_handler};
 use crate::events::{self, rank};
+use crate::rules;
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 pub(crate) const ATTRS: [&str; 7] = ["name", "repeat", "x", "y", "w", "h", "origin"];
@@ -17,8 +18,13 @@ const VALUE: &str = "value";
 const VIEWBOX: &str = "viewbox";
 const SRC: &str = "src";
 const FIT: &str = "fit";
-/// What a markup element draws, an expression kept as its body, a block as a handler's code is.
+/// What a markup element draws, an expression, and the code that draws on a canvas.
 const MARKUP: &str = "markup";
+const DRAW: &str = "draw";
+/// A canvas's context, "2d" or "webgl2".
+const CONTEXT: &str = "context";
+/// The point a scene's camera orbits, how far round and up it is, and how far away.
+const CAMERA: [&str; 4] = ["target", "yaw", "pitch", "distance"];
 
 /// What a tag keeps as attributes of its own, besides `ATTRS`.
 pub(crate) fn own_attrs(tag: Tag) -> &'static [&'static str] {
@@ -26,7 +32,18 @@ pub(crate) fn own_attrs(tag: Tag) -> &'static [&'static str] {
         Tag::Input => &[VALUE],
         Tag::Svg => &[VIEWBOX, FIT],
         Tag::Media => &[SRC, FIT],
+        Tag::Canvas => &[CONTEXT],
+        Tag::Scene => &CAMERA,
         _ => &[],
+    }
+}
+
+/// The property a tag keeps as its body, a block as a handler's code is.
+fn code_of(tag: Tag) -> Option<&'static str> {
+    match tag {
+        Tag::Markup => Some(MARKUP),
+        Tag::Canvas => Some(DRAW),
+        _ => None,
     }
 }
 
@@ -42,7 +59,8 @@ pub fn write(page: &Page, components: &[Page]) -> String {
     let mut out = format!("<{root} name={} size=\"{}x{}\"{shows}{sizing}{fill}>\n", quote(&page.name), page.width, page.height);
     for i in page.interface.iter().flat_map(|i| &i.inputs) {
         let bindable = if i.bindable { " bindable=\"true\"" } else { "" };
-        out.push_str(&format!("  <prop name={} default={}{bindable}/>\n", quote(&i.name), quote(&i.default)));
+        let types = if i.r#type.is_empty() { String::new() } else { format!(" type={}", quote(&i.r#type)) };
+        out.push_str(&format!("  <prop name={} default={}{types}{bindable}/>\n", quote(&i.name), quote(&i.default)));
     }
     for e in page.interface.iter().flat_map(|i| &i.events) {
         out.push_str(&format!("  <event name={}/>\n", quote(e)));
@@ -62,8 +80,8 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
     out.push_str(&"  ".repeat(depth));
     out.push_str(&format!("<{tag} id={}", quote(&e.id)));
     let body = matches!(e.tag, Tag::Span | Tag::SvgText);
-    if e.tag.is_shape() {
-        // a shape's every property is an SVG attribute, its name first
+    if e.tag.home() != Home::Page {
+        // a shape's or a part's every property is an attribute, its name first
         let attrs = e.props.iter().filter(|(k, _)| !(body && k.as_str() == TEXT));
         for (k, v) in attrs.clone().filter(|(k, _)| k.as_str() == "name").chain(attrs.filter(|(k, _)| k.as_str() != "name")) {
             out.push_str(&format!(" {k}={}", quote(v)));
@@ -83,7 +101,7 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
         }
         // a text input is an instance's like any other, while a span's text is its body
         let rest = e.props.iter().filter(|(k, _)| {
-            !ATTRS.contains(&k.as_str()) && (e.tag == Tag::Use || k.as_str() != TEXT) && !own.contains(&k.as_str()) && !(e.tag == Tag::Markup && k.as_str() == MARKUP)
+            !ATTRS.contains(&k.as_str()) && (e.tag == Tag::Use || k.as_str() != TEXT) && !own.contains(&k.as_str()) && code_of(e.tag) != Some(k.as_str())
         });
         // an instance's inputs are attributes of their own, the rest CSS on its box as a frame's
         // style is. Without its component each stays an attribute.
@@ -99,10 +117,10 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
         }
     }
     let text = e.props.get(TEXT).filter(|_| body);
-    let markup = e.props.get(MARKUP).filter(|_| e.tag == Tag::Markup);
+    let code = code_of(e.tag).and_then(|k| e.props.get(k));
     match text {
         Some(text) if e.handlers.is_empty() => out.push_str(&format!(">{text}</{tag}>\n")),
-        _ if e.handlers.is_empty() && e.children.is_empty() && markup.is_none() => out.push_str("/>\n"),
+        _ if e.handlers.is_empty() && e.children.is_empty() && code.is_none() => out.push_str("/>\n"),
         _ => {
             out.push_str(">\n");
             let inner = "  ".repeat(depth + 1);
@@ -114,7 +132,7 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
             if let Some(text) = text {
                 out.push_str(&format!("{inner}{text}\n"));
             }
-            if let Some(code) = markup {
+            if let Some(code) = code {
                 lines(out, &inner, code);
             }
             for child in &e.children {
@@ -335,11 +353,12 @@ impl Reader<'_> {
             if !self.eat("<prop") {
                 return Ok(out);
             }
-            let mut input = Input { name: String::new(), default: String::new(), bindable: false };
+            let mut input = Input { name: String::new(), default: String::new(), bindable: false, r#type: String::new() };
             for (k, v) in self.attrs()? {
                 match k.as_str() {
                     "name" => input.name = v,
                     "default" => input.default = v,
+                    "type" => input.r#type = rules::types(&v).map_err(|e| self.error(&e))?,
                     "bindable" => input.bindable = v == "true",
                     other => return Err(self.error(&format!("<prop> takes no attribute {other}"))),
                 }
@@ -434,6 +453,25 @@ impl Reader<'_> {
         }
     }
 
+    /// The body up to `</word>` as the property `key`: a text kept on one line, code as the
+    /// block it may be.
+    fn body(&mut self, word: &str, key: &str, block: bool, props: &mut BTreeMap<String, String>) -> Result<(), String> {
+        let code = key != TEXT;
+        if code {
+            // the gap before took the first line's indent, which dedent measures against the rest
+            self.at = self.s[..self.at].trim_end_matches([' ', '\t']).len();
+        }
+        let closing = format!("</{word}>");
+        let n = block_end(self.rest(), &closing, block).ok_or_else(|| self.error(&format!("<{word}> never closes")))?;
+        let body = &self.rest()[..n];
+        let value = if code { dedent(body) } else { body.trim().to_owned() };
+        if !value.trim().is_empty() {
+            props.insert(key.to_owned(), value);
+        }
+        self.at += n;
+        self.expect(&closing)
+    }
+
     fn element(&mut self) -> Result<Element, String> {
         self.expect("<")?;
         let word = self.word()?;
@@ -448,7 +486,7 @@ impl Reader<'_> {
         for (k, v) in self.attrs()? {
             match k.as_str() {
                 "id" => id = Some(v),
-                k if (tag == Tag::Use && k != "style") || tag.is_shape() => {
+                k if (tag == Tag::Use && k != "style") || tag.home() != Home::Page => {
                     props.insert(k.to_owned(), v);
                 }
                 k if own_attrs(tag).contains(&k) => {
@@ -477,24 +515,12 @@ impl Reader<'_> {
             let block = self.opens_block();
             handlers = self.handlers()?;
             match tag {
-                Tag::Div | Tag::Group | Tag::Svg | Tag::G => children = self.children(&word)?,
-                Tag::Span | Tag::SvgText | Tag::Markup => {
-                    if tag == Tag::Markup {
-                        // the gap before took the first line's indent, which dedent measures against the rest
-                        self.at = self.s[..self.at].trim_end_matches([' ', '\t']).len();
-                    }
-                    let closing = format!("</{word}>");
-                    let n = block_end(self.rest(), &closing, block).ok_or_else(|| self.error(&format!("<{word}> never closes")))?;
-                    let body = &self.rest()[..n];
-                    // a text is kept on one line, markup as the block of code it may be
-                    let (key, value) = if tag == Tag::Markup { (MARKUP, dedent(body)) } else { (TEXT, body.trim().to_owned()) };
-                    if !value.trim().is_empty() {
-                        props.insert(key.to_owned(), value);
-                    }
-                    self.at += n;
-                    self.expect(&closing)?;
-                }
-                _ => self.expect(&format!("</{word}>"))?,
+                _ if tag.inside().is_some() => children = self.children(&word)?,
+                Tag::Span | Tag::SvgText => self.body(&word, TEXT, block, &mut props)?,
+                _ => match code_of(tag) {
+                    Some(key) => self.body(&word, key, block, &mut props)?,
+                    None => self.expect(&format!("</{word}>"))?,
+                },
             }
         }
         Ok(Element { id, tag, component, props, handlers, children })
@@ -553,6 +579,17 @@ mod tests {
     }
 
     #[test]
+    fn an_input_keeps_the_types_it_takes() {
+        let text = "<component name=\"Spot\" size=\"10x10\">\n  <prop name=\"value\" default=\"vec(0, 0)\" type=\"Double2 Pose2D[]\" bindable=\"true\"/>\n  <prop name=\"min\" default=\"0\"/>\n</component>\n";
+        let page = parse(text, "spot").unwrap();
+        let types: Vec<&str> = page.interface.as_ref().unwrap().inputs.iter().map(|i| i.r#type.as_str()).collect();
+        assert_eq!(types, ["Double2 Pose2D[]", ""]);
+        assert_eq!(write(&page, &[]), text);
+        let bad = text.replace("Pose2D[]", "Pose2D,");
+        assert!(parse(&bad, "spot").unwrap_err().contains("\"Pose2D,\" is not a type"));
+    }
+
+    #[test]
     fn a_diagram_keeps_its_shapes_with_every_value_an_attribute() {
         let text = "<page name=\"A\" size=\"1408x792\">\n  <svg id=\"e1\" name=\"Gauge\" x=\"44\" y=\"44\" w=\"176\" h=\"176\" viewbox='\"0 0 100 100\"' style=\"opacity: 0.9\">\n    <circle id=\"e2\" name=\"track\" cx=\"50\" cy=\"50\" fill='\"none\"' r=\"40\" stroke=\"#3a4046\" stroke-width=\"8\"/>\n    <g id=\"e3\" transform=\"`rotate(${Speed * 90} 50 50)`\">\n      <line id=\"e4\" x1=\"50\" x2=\"50\" y1=\"50\" y2=\"14\">\n        <on event=\"tap\">\n          log(1);\n        </on>\n      </line>\n    </g>\n    <text id=\"e5\" x=\"50\" y=\"80\">Speed.toFixed(1)</text>\n  </svg>\n</page>\n";
         let page = parse(text, "a").unwrap();
@@ -584,6 +621,51 @@ mod tests {
         assert!(e.props["markup"].ends_with("</svg>` // never \"</markup>\""));
         assert_eq!((e.tag, e.handlers[0].code.as_str(), e.props["opacity"].as_str()), (Tag::Markup, "log(1);", "0.9"));
         assert!(!page.children[1].props.contains_key("markup"));
+        assert_eq!(write(&page, &[]), text);
+    }
+
+    #[test]
+    fn a_canvas_keeps_its_context_and_its_drawing_as_its_body() {
+        let text = r#"<page name="A" size="1408x792">
+  <canvas id="e1" x="4" context='"webgl2"' style="opacity: 0.9">
+    <on event="press">
+      log(p.x);
+    </on>
+    gl.clearColor(0, 0, Speed, 1);
+    if (Speed > 1) {
+      gl.clear(gl.COLOR_BUFFER_BIT); // never "</canvas>"
+    }
+  </canvas>
+  <canvas id="e2" x="0"/>
+</page>
+"#;
+        let page = parse(text, "a").unwrap();
+        let e = &page.children[0];
+        assert_eq!((e.tag, e.props["context"].as_str(), e.props["opacity"].as_str()), (Tag::Canvas, "\"webgl2\"", "0.9"));
+        assert_eq!(e.props["draw"], "gl.clearColor(0, 0, Speed, 1);\nif (Speed > 1) {\n  gl.clear(gl.COLOR_BUFFER_BIT); // never \"</canvas>\"\n}");
+        assert_eq!(e.handlers[0].code, "log(p.x);");
+        assert!(!page.children[1].props.contains_key("draw"));
+        assert_eq!(write(&page, &[]), text);
+    }
+
+    #[test]
+    fn a_scene_keeps_its_camera_and_its_parts_every_property_as_attributes() {
+        let text = r#"<page name="A" size="1408x792">
+  <scene id="e1" name="Cell" x="4" w="40" target="vec(0, 0, 1)" yaw="-2" distance="5" style="background: $panel">
+    <grid id="e2" color="$border" size="10"/>
+    <anchor id="e3" name="Arm" pose="Arm.pose" repeat="Arms">
+      <box id="e4" name="Link" color="$accent" size="vec(1, 0.2, 0.2)"/>
+      <axes id="e5"/>
+    </anchor>
+  </scene>
+</page>
+"#;
+        let page = parse(text, "a").unwrap();
+        let scene = &page.children[0];
+        assert_eq!((scene.tag, scene.props["target"].as_str(), scene.props["background"].as_str()), (Tag::Scene, "vec(0, 0, 1)", "$panel"));
+        let arm = &scene.children[1];
+        assert_eq!((arm.tag, arm.props["pose"].as_str(), arm.props["repeat"].as_str()), (Tag::Anchor, "Arm.pose", "Arms"));
+        assert_eq!((arm.children[0].tag, arm.children[0].props["size"].as_str()), (Tag::Box, "vec(1, 0.2, 0.2)"));
         assert_eq!(write(&page, &[]), text);
     }
 
@@ -769,17 +851,22 @@ mod tests {
         out
     }
 
-    fn random_shapes(rng: &mut Rng, ids: &mut usize, depth: usize) -> Vec<Element> {
+    /// Shapes for a diagram or parts for a scene, a group of them holding more.
+    fn random_held(rng: &mut Rng, ids: &mut usize, depth: usize, home: Home) -> Vec<Element> {
+        let (tags, keys): ([Tag; 5], &[&str]) = match home {
+            Home::Diagram => ([Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G], &["name", "cx", "r", "fill", "stroke", "d", "transform"]),
+            _ => ([Tag::Box, Tag::Model, Tag::Points, Tag::Arrow, Tag::Anchor], &["name", "repeat", "pose", "size", "color", "points", "src", "joints"]),
+        };
         let mut out = Vec::new();
         for _ in 0..rng.below(3) {
             *ids += 1;
-            let tag = [Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G][rng.below(5)];
-            let mut props = some_props(rng, &["name", "cx", "r", "fill", "stroke", "d", "transform"]);
+            let tag = tags[rng.below(5)];
+            let mut props = some_props(rng, keys);
             if tag == Tag::SvgText {
                 props.insert(TEXT.to_owned(), rng.pick(&VALUES));
             }
             let id = format!("e{ids}");
-            let children = if tag == Tag::G && depth < 3 { random_shapes(rng, ids, depth + 1) } else { Vec::new() };
+            let children = if tag.inside().is_some() && depth < 3 { random_held(rng, ids, depth + 1, home) } else { Vec::new() };
             out.push(Element { id, tag, component: None, props, handlers: some_handlers(rng, tag), children });
         }
         out
@@ -788,7 +875,7 @@ mod tests {
     fn random_element(rng: &mut Rng, ids: &mut usize, depth: usize) -> Element {
         *ids += 1;
         let id = format!("e{ids}");
-        let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Use, Tag::Group][rng.below(8)];
+        let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Canvas, Tag::Scene, Tag::Use, Tag::Group][rng.below(10)];
         let keys: Vec<&str> = ATTRS.iter().chain(STYLE.iter()).copied().collect();
         let mut props = some_props(rng, &keys);
         let mut children = Vec::new();
@@ -811,10 +898,14 @@ mod tests {
             }
             Tag::Svg => {
                 props.insert(VIEWBOX.to_owned(), "\"0 0 100 100\"".to_owned());
-                children = random_shapes(rng, ids, depth);
+                children = random_held(rng, ids, depth, Home::Diagram);
             }
-            Tag::Markup if rng.below(4) > 0 => {
-                props.insert(MARKUP.to_owned(), rng.pick(&CODE));
+            Tag::Scene => {
+                props.insert(CAMERA[rng.below(4)].to_owned(), rng.pick(&VALUES));
+                children = random_held(rng, ids, depth, Home::Scene);
+            }
+            Tag::Markup | Tag::Canvas if rng.below(4) > 0 => {
+                props.insert(code_of(tag).unwrap().to_owned(), rng.pick(&CODE));
             }
             Tag::Use => {
                 component = Some("Meter".to_owned());
@@ -829,7 +920,7 @@ mod tests {
     fn random_page(rng: &mut Rng) -> Page {
         let mut ids = 0;
         let interface = (rng.below(3) == 0).then(|| Interface {
-            inputs: vec![Input { name: "level".into(), default: rng.pick(&VALUES), bindable: rng.below(2) == 0 }],
+            inputs: vec![Input { name: "level".into(), default: rng.pick(&VALUES), bindable: rng.below(2) == 0, r#type: ["", "number", "Pose Pose[]"][rng.below(3)].into() }],
             events: vec!["change".into()],
             variables: vec![Local { name: "state".into(), start: rng.pick(&VALUES) }],
             sizing: if rng.below(2) == 0 { Sizing::Fill } else { Sizing::Scale },

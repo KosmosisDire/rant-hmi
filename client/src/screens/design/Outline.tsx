@@ -16,7 +16,7 @@ import { ComponentCard } from "./ComponentCard";
 import type { Pick } from "./DesignScreen";
 import { addMenu, elementMenu, layersMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
-import { childrenOf, holds, moveAll, parentOf, tops } from "./tree";
+import { childrenOf, holds, isHolder, moveAll, parentOf, tops } from "./tree";
 import { follow } from "../../ui/press";
 import { closeDrawer } from "../../ui/Sidebars";
 
@@ -287,7 +287,7 @@ function Layers(p: {
             class="list-row"
             classList={{ selected: p.selected.includes(e.id), dragged: p.dragging.includes(e.id), "drop-inside": p.spot?.into === e.id }}
             data-id={e.id}
-            data-frame={e.tag === "div" || e.tag === "group" || e.tag === "svg" || e.tag === "g" ? "" : undefined}
+            data-frame={isHolder(e.tag) ? "" : undefined}
             data-open={e.children.length > 0 && !p.shut(e.id) ? "" : undefined}
             onClick={(ev) => p.onPick(e.id, ev.shiftKey || ev.ctrlKey || ev.metaKey)}
             onDblClick={() => p.onEdit(e.id, "name")}
