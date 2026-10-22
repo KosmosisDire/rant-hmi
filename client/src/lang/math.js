@@ -339,4 +339,13 @@ export const LIBRARY = {
   __div,
   __neg,
   __method,
+  __fn,
 };
+
+/** The library's functions, which a call by name reaches though a name of the page's own,
+ *  as a component's `max` input, hides the plain name. */
+export const FUNCTION_NAMES = Object.keys(LIBRARY).filter((k) => !k.startsWith("__") && typeof LIBRARY[k] === "function");
+
+function __fn(name, ...args) {
+  return LIBRARY[name](...args);
+}

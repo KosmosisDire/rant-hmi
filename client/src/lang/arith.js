@@ -1,12 +1,15 @@
 // The operator rewrite, as PaperScript does it on acorn's parse: each + - * / and unary minus in
 // code becomes a call into math.js, and so does a call by one of its method names, so vectors,
 // quaternions and poses take arithmetic and methods while numbers and text behave as JS has them.
+// A call by a library function's name always reaches it, so `max(a, b)` works where `max` alone
+// is a component's input.
 
 import { parse } from "./acorn/acorn.mjs";
-import { METHOD_NAMES } from "./math.js";
+import { FUNCTION_NAMES, METHOD_NAMES } from "./math.js";
 
 const OPS = { "+": "__add", "-": "__sub", "*": "__mul", "/": "__div" };
 const METHODS = new Set(METHOD_NAMES);
+const FUNCTIONS = new Set(FUNCTION_NAMES);
 
 /** The script `src` with its arithmetic and math method calls routed through math.js, line for
  *  line as it was. Where it does not parse, a SyntaxError says why. Code given `before`, the
@@ -76,6 +79,7 @@ function emit(src, node) {
       if (!node.optional && c.type === "MemberExpression" && !c.computed && !optional(c) && c.object.type !== "Super" && METHODS.has(c.property.name)) {
         return `__method(${at(c.object)}, "${c.property.name}"${rest(c, node.arguments)})`;
       }
+      if (!node.optional && c.type === "Identifier" && FUNCTIONS.has(c.name)) return `__fn("${c.name}"${rest(c, node.arguments)})`;
       break;
     }
   }

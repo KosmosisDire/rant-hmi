@@ -18,7 +18,9 @@ backend runs the same file.
 | `fromEuler(roll, pitch, yaw)` | a quaternion, in radians |
 | `mix(a, b, t)` | a colour from `a` toward `b` |
 
-A project's own name hides one of these, so no import or variable may take one.
+A project's own name hides one of these, so no import or variable may take one. A
+component's input may, as a knob's `min` and `max`: the plain name is the input, and a call
+such as `max(a, b)` is always the function.
 
 ## Time
 
