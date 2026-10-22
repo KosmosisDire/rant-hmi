@@ -17,7 +17,7 @@ use axum::response::Response;
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{MissedTickBehavior, interval};
 use axum::http::{HeaderValue, header};
 use tower_http::services::{ServeDir, ServeFile};
@@ -25,6 +25,7 @@ use tower_http::set_header::SetResponseHeader;
 use tracing::{error, warn};
 
 use crate::app::{Inbound, Outbox};
+use crate::lanes::Lanes;
 use crate::protocol::ClientMsg;
 
 /// How often the socket pings its screen, so its round trip is new 20 times a second. The
@@ -92,13 +93,14 @@ async fn upgrade(ws: WebSocketUpgrade, State(shared): State<Shared>, ConnectInfo
 }
 
 /// One screen's socket: binary CBOR frames in become messages for the loop, and what the
-/// loop sends goes out. When the loop drops the screen, its sender ends and the socket closes.
+/// loop sends goes out in pieces of its lanes. When the loop drops the screen, its lanes
+/// close and the socket closes once they are sent.
 async fn screen(socket: WebSocket, shared: Shared, reached: Reached) {
     let session = shared.next.fetch_add(1, Ordering::Relaxed);
-    let (out, mut outgoing) = unbounded_channel::<Bytes>();
+    let lanes = Arc::new(Lanes::default());
     let queued = Arc::new(AtomicUsize::new(0));
     let (local, remote) = (reached.local, reached.remote);
-    if shared.inbound.send(Inbound::Open { session, out: Outbox::new(out, queued.clone()), local, remote }).is_err() {
+    if shared.inbound.send(Inbound::Open { session, out: Outbox::new(lanes.clone(), queued.clone()), local, remote }).is_err() {
         return;
     }
     let (mut sink, mut stream) = socket.split();
@@ -108,14 +110,13 @@ async fn screen(socket: WebSocket, shared: Shared, reached: Reached) {
         let mut ping = interval(PING_EVERY);
         ping.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
-            let frame = tokio::select! {
-                frame = outgoing.recv() => match frame {
-                    Some(frame) => Message::Binary(frame),
+            let (frame, sent) = tokio::select! {
+                piece = lanes.next() => match piece {
+                    Some((piece, carried)) => (Message::Binary(piece), carried),
                     None => break,
                 },
-                _ = ping.tick() => Message::Ping(Bytes::copy_from_slice(&(born.elapsed().as_micros() as u64).to_le_bytes())),
+                _ = ping.tick() => (Message::Ping(Bytes::copy_from_slice(&(born.elapsed().as_micros() as u64).to_le_bytes())), 0),
             };
-            let sent = if let Message::Binary(b) = &frame { b.len() } else { 0 };
             let failed = sink.send(frame).await.is_err();
             queued.fetch_sub(sent, Ordering::Relaxed);
             if failed {

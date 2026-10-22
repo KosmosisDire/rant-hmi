@@ -19,7 +19,16 @@ export class Hmi {
     this.ws.binaryType = "arraybuffer";
     this.state = { imports: [], variables: [], records: [], computed: [], enums: [], rules: [], pages: [], entities: [], values: {}, peers: [], tokens: [] };
     this.waiters = [];
-    this.ws.onmessage = (e) => this.receive(decoder.decode(new Uint8Array(e.data)));
+    // each message comes in pieces, `[u16 lane][u8 more]` then its share, joined per lane
+    this.parts = new Map();
+    this.ws.onmessage = (e) => {
+      const bytes = new Uint8Array(e.data);
+      const lane = bytes[0] | (bytes[1] << 8);
+      const parts = [...(this.parts.get(lane) ?? []), bytes.subarray(3)];
+      if (bytes[2] === 1) return this.parts.set(lane, parts);
+      this.parts.delete(lane);
+      this.receive(decoder.decode(parts.length === 1 ? parts[0] : Buffer.concat(parts)));
+    };
     this.ws.onopen = () => {
       // the heartbeat: a silent screen is dropped
       this.beat = setInterval(() => this.send({ type: "ping", t: performance.now() }), 100);

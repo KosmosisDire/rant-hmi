@@ -24,6 +24,23 @@ function tap() {
   });
 }
 
+/** The socket's frames as its messages: each frame is `[u16 lane][u8 more]` then its share
+ *  of a message, joined per lane. */
+function joined(frames) {
+  const parts = new Map();
+  const out = [];
+  for (const f of frames) {
+    const lane = f[0] | (f[1] << 8);
+    const so = [...(parts.get(lane) ?? []), ...f.slice(3)];
+    if (f[2] === 1) parts.set(lane, so);
+    else {
+      parts.delete(lane);
+      out.push(["socket", so]);
+    }
+  }
+  return out;
+}
+
 /** The aliases each way brought values for. */
 function aliases(messages) {
   const ways = {};
@@ -46,7 +63,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await context.addInitScript(tap);
   const screen = await context.newPage();
   const socket = [];
-  screen.on("websocket", (ws) => ws.on("framereceived", (f) => typeof f.payload !== "string" && socket.push(["socket", Array.from(f.payload)])));
+  screen.on("websocket", (ws) => ws.on("framereceived", (f) => typeof f.payload !== "string" && socket.push(Array.from(f.payload))));
   await screen.goto(sys.url);
   const link = screen.locator(".statusbar .stat").first();
   await eventually(async () => (await link.getAttribute("title")) === "Reached over WebRTC data channels", "the screen's channels to open");
@@ -60,7 +77,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   hmi.set("note", "abc");
   await eventually(async () => (await shown.innerText()) === "3", "the screen to show the variable");
   await screen.waitForTimeout(500);
-  const ways = aliases([...(await screen.evaluate(() => window.__heard)), ...socket]);
+  const ways = aliases([...(await screen.evaluate(() => window.__heard)), ...joined(socket)]);
   const by = (alias) => Object.keys(ways).filter((w) => ways[w].has(alias)).join(" and ");
   check(by("Joints") === "best-effort", `the best effort topic came by ${by("Joints")}`);
   check(by("note") === "reliable", `the variable came by ${by("note")}`);
@@ -76,7 +93,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await eventually(async () => (await shown.innerText()) === "20000", "the screen to show the big value");
   await screen.waitForTimeout(600);
   check((await shown.innerText()) === "20000", "the older value held back on its channel replaced the newer one");
-  const late = aliases([...(await screen.evaluate(() => window.__heard)), ...socket]);
+  const late = aliases([...(await screen.evaluate(() => window.__heard)), ...joined(socket)]);
   check(late.socket?.has("note") && late.reliable?.has("note"), `the big value on the socket and the small on the channel, by ${JSON.stringify(Object.keys(late))}`);
   await context.close();
 }

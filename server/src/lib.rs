@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod authorize;
+pub mod lanes;
 pub mod files;
 pub mod library;
 pub mod list;

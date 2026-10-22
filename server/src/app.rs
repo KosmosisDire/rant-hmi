@@ -1,7 +1,7 @@
 //! The backend's one loop. It owns the project, the mesh and every screen's session, so
 //! nothing is shared and nothing locks.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{info, warn};
 
 use crate::authorize::{Who, authorize};
+use crate::lanes::{CONTROL, Lanes, PIECE, VALUES};
 use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::logic::{Rule, When};
@@ -61,11 +62,13 @@ pub enum Inbound {
     Close { session: u32 },
 }
 
-/// A screen's way out. `queued` counts the bytes its socket has not taken yet, which the
-/// socket's writer takes off as it sends.
+/// A screen's way out, in lanes that take turns (`lanes.rs`). `queued` counts the bytes its
+/// socket has not taken yet, which the socket's writer takes off as it sends.
 pub struct Outbox {
-    tx: UnboundedSender<Bytes>,
+    lanes: Arc<Lanes>,
     queued: Arc<AtomicUsize>,
+    /// The lane of each import whose value is too big to share a message.
+    own: RefCell<HashMap<String, u16>>,
     /// Values were left out while the screen was behind, so it needs them all.
     stale: Cell<bool>,
     /// Its socket's round trip runs late, or will once nothing answers by `due`.
@@ -74,18 +77,37 @@ pub struct Outbox {
 }
 
 impl Outbox {
-    pub fn new(tx: UnboundedSender<Bytes>, queued: Arc<AtomicUsize>) -> Outbox {
-        Outbox { tx, queued, stale: Cell::new(false), late: Cell::new(false), due: Cell::new(None) }
+    pub fn new(lanes: Arc<Lanes>, queued: Arc<AtomicUsize>) -> Outbox {
+        Outbox { lanes, queued, own: RefCell::default(), stale: Cell::new(false), late: Cell::new(false), due: Cell::new(None) }
+    }
+
+    /// Sends what is not values.
+    fn send(&self, bytes: Bytes) {
+        self.put(CONTROL, bytes, false);
+    }
+
+    /// Sends values: with `alone`, one import's value too big to share a message, on that
+    /// import's own lane.
+    fn values(&self, alone: Option<&str>, bytes: Bytes) {
+        let lane = match alone {
+            None => VALUES,
+            Some(alias) => {
+                let mut own = self.own.borrow_mut();
+                let next = VALUES + 1 + own.len() as u16;
+                *own.entry(alias.to_owned()).or_insert(next)
+            }
+        };
+        self.put(lane, bytes, true);
     }
 
     /// Sends, but leaves values out while the screen is behind, since newer ones replace them.
-    fn put(&self, bytes: Bytes, values: bool) {
+    fn put(&self, lane: u16, bytes: Bytes, values: bool) {
         if values && (self.late() || self.queued.load(Ordering::Relaxed) > BEHIND) {
             self.stale.set(true);
             return;
         }
         self.queued.fetch_add(bytes.len(), Ordering::Relaxed);
-        let _ = self.tx.send(bytes);
+        self.lanes.put(lane, bytes);
     }
 
     fn late(&self) -> bool {
@@ -99,6 +121,12 @@ impl Outbox {
             self.stale.set(false);
         }
         caught
+    }
+}
+
+impl Drop for Outbox {
+    fn drop(&mut self) {
+        self.lanes.close();
     }
 }
 
@@ -1349,7 +1377,7 @@ impl App {
 
     fn send(&self, session: u32, msg: &ServerMsg) {
         if let Some(s) = self.sessions.get(&session) {
-            s.out.put(encode(msg), false);
+            s.out.send(encode(msg));
         }
     }
 
@@ -1359,13 +1387,14 @@ impl App {
         }
         let text = encode(msg);
         for s in self.sessions.values() {
-            s.out.put(text.clone(), false);
+            s.out.send(text.clone());
         }
     }
 
-    /// Sends values to one screen, or with None to every screen. A screen with channels gets a
-    /// best effort topic's on the best effort channel and the rest on the reliable one, any too
-    /// big for a channel on its socket.
+    /// Sends values to one screen, or with None to every screen. On a socket the values small
+    /// enough share a message and each larger one goes alone in its import's lane. A screen
+    /// with channels gets a best effort topic's on the best effort channel and the rest on the
+    /// reliable one, any too big for a channel on its socket.
     fn put_values(&self, to: Option<u32>, values: Vec<ValueUpdate>) {
         let seq = self.seq.get() + 1;
         self.seq.set(seq);
@@ -1373,7 +1402,7 @@ impl App {
             Some(id) => self.sessions.get(&id).map(|s| (id, s)).into_iter().collect(),
             None => self.sessions.iter().map(|(id, s)| (*id, s)).collect(),
         };
-        let whole = sessions.iter().any(|(_, s)| !s.channels).then(|| encode(&ServerMsg::Values { values: values.clone(), seq }));
+        let socket = sessions.iter().any(|(_, s)| !s.channels).then(|| apart(&values, seq));
         let mut split = Vec::new();
         if sessions.iter().any(|(_, s)| s.channels) {
             let (best_effort, reliable): (Vec<_>, Vec<_>) = values.into_iter().partition(|v| self.mesh.best_effort(&v.alias));
@@ -1382,17 +1411,22 @@ impl App {
         }
         for (id, s) in sessions {
             if !s.channels {
-                if let Some(whole) = &whole {
-                    s.out.put(whole.clone(), true);
+                if let Some((shared, alone)) = &socket {
+                    if let Some(bytes) = shared {
+                        s.out.values(None, bytes.clone());
+                    }
+                    for (alias, bytes) in alone {
+                        s.out.values(Some(alias), bytes.clone());
+                    }
                 }
                 continue;
             }
             for (way, bytes) in &split {
                 match way {
-                    Some(reliable) => {
+                    Way::Channel(reliable) => {
                         let _ = self.rtc.send(ToRtc::Send { session: id, reliable: *reliable, bytes: bytes.clone() });
                     }
-                    None => s.out.put(bytes.clone(), true),
+                    Way::Socket(alias) => s.out.values(Some(alias), bytes.clone()),
                 }
             }
         }
@@ -1404,21 +1438,48 @@ fn known(name: &str, value: &Value) -> ValueUpdate {
     ValueUpdate { alias: name.to_owned(), value: Some(value.clone()), known: true }
 }
 
+/// Values as messages for a socket: those that fit a piece together in one, and each larger
+/// one alone with its import's name.
+fn apart(values: &[ValueUpdate], seq: u64) -> (Option<Bytes>, Vec<(String, Bytes)>) {
+    let whole = encode(&ServerMsg::Values { values: values.to_vec(), seq });
+    if whole.len() <= PIECE {
+        return (Some(whole), Vec::new());
+    }
+    let (mut small, mut alone) = (Vec::new(), Vec::new());
+    for v in values {
+        let bytes = encode(&ServerMsg::Values { values: vec![v.clone()], seq });
+        if bytes.len() <= PIECE {
+            small.push(v.clone());
+        } else {
+            alone.push((v.alias.clone(), bytes));
+        }
+    }
+    ((!small.is_empty()).then(|| encode(&ServerMsg::Values { values: small, seq })), alone)
+}
+
+/// Where a message for a screen with channels goes: on a channel, reliable or not, or on its
+/// socket in the lane of the import whose value is too big for a channel.
+enum Way {
+    Channel(bool),
+    Socket(String),
+}
+
 /// Values as messages for a channel, `reliable` or not, one batch when it fits. Else each value
-/// is its own, and one too big for a channel goes by none, which is the socket.
-fn pieces(values: Vec<ValueUpdate>, seq: u64, reliable: bool) -> Vec<(Option<bool>, Bytes)> {
+/// is its own, and one too big for a channel goes on the socket.
+fn pieces(values: Vec<ValueUpdate>, seq: u64, reliable: bool) -> Vec<(Way, Bytes)> {
     if values.is_empty() {
         return Vec::new();
     }
     let batch = encode(&ServerMsg::Values { values: values.clone(), seq });
     if batch.len() <= MESSAGE_MAX {
-        return vec![(Some(reliable), batch)];
+        return vec![(Way::Channel(reliable), batch)];
     }
     values
         .into_iter()
         .map(|v| {
+            let alias = v.alias.clone();
             let bytes = encode(&ServerMsg::Values { values: vec![v], seq });
-            ((bytes.len() <= MESSAGE_MAX).then_some(reliable), bytes)
+            (if bytes.len() <= MESSAGE_MAX { Way::Channel(reliable) } else { Way::Socket(alias) }, bytes)
         })
         .collect()
 }
@@ -1442,36 +1503,54 @@ fn since_epoch() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc::unbounded_channel;
+
+    /// What waits in a screen's lanes, each message small enough for one piece.
+    fn sent(lanes: &Lanes) -> Vec<Bytes> {
+        std::iter::from_fn(|| lanes.take()).map(|(piece, _)| piece.slice(3..)).collect()
+    }
 
     #[test]
     fn a_screen_behind_misses_values_but_nothing_else_then_hears_it_caught_up() {
-        let (tx, mut rx) = unbounded_channel();
+        let lanes = Arc::new(Lanes::default());
         let queued = Arc::new(AtomicUsize::new(BEHIND + 1));
-        let out = Outbox::new(tx, queued.clone());
-        out.put(Bytes::from_static(b"values"), true);
-        out.put(Bytes::from_static(b"page"), false);
-        assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"page"));
-        assert!(rx.try_recv().is_err());
+        let out = Outbox::new(lanes.clone(), queued.clone());
+        out.values(None, Bytes::from_static(b"values"));
+        out.send(Bytes::from_static(b"page"));
+        assert_eq!(sent(&lanes), vec![Bytes::from_static(b"page")]);
         assert!(!out.caught_up());
         queued.store(0, Ordering::Relaxed);
         assert!(out.caught_up());
         assert!(!out.caught_up());
-        out.put(Bytes::from_static(b"values"), true);
-        assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"values"));
+        out.values(None, Bytes::from_static(b"values"));
+        assert_eq!(sent(&lanes), vec![Bytes::from_static(b"values")]);
     }
 
     #[test]
     fn a_screen_whose_socket_runs_late_misses_values_until_it_is_on_time() {
-        let (tx, mut rx) = unbounded_channel();
-        let out = Outbox::new(tx, Arc::new(AtomicUsize::new(0)));
+        let lanes = Arc::new(Lanes::default());
+        let out = Outbox::new(lanes.clone(), Arc::new(AtomicUsize::new(0)));
         out.late.set(true);
-        out.put(Bytes::from_static(b"values"), true);
-        out.put(Bytes::from_static(b"page"), false);
-        assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"page"));
-        assert!(rx.try_recv().is_err());
+        out.values(Some("Cam"), Bytes::from_static(b"picture"));
+        out.send(Bytes::from_static(b"page"));
+        assert_eq!(sent(&lanes), vec![Bytes::from_static(b"page")]);
         assert!(!out.caught_up());
         out.late.set(false);
         assert!(out.caught_up());
+    }
+
+    #[test]
+    fn a_value_too_big_to_share_goes_alone_in_its_import_s_lane() {
+        let small = ValueUpdate { alias: "Speed".into(), value: Some(Value::Float(1.5)), known: true };
+        let big = ValueUpdate { alias: "Cam".into(), value: Some(Value::Bytes(vec![0; PIECE])), known: true };
+        let (shared, alone) = apart(&[small, big], 1);
+        assert!(shared.is_some());
+        assert_eq!(alone.iter().map(|(alias, _)| alias.as_str()).collect::<Vec<_>>(), vec!["Cam"]);
+        let lanes = Arc::new(Lanes::default());
+        let out = Outbox::new(lanes.clone(), Arc::new(AtomicUsize::new(0)));
+        out.values(Some("Cam"), Bytes::from_static(b"one"));
+        out.values(Some("Other"), Bytes::from_static(b"two"));
+        out.values(Some("Cam"), Bytes::from_static(b"three"));
+        let lanes_of: Vec<u16> = std::iter::from_fn(|| lanes.take()).map(|(p, _)| u16::from_le_bytes([p[0], p[1]])).collect();
+        assert_eq!(lanes_of, vec![VALUES + 1, VALUES + 2, VALUES + 1]);
     }
 }
