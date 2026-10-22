@@ -3,7 +3,7 @@
 // ends.
 
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from "solid-js";
-import { type Box, fitIn, leaves, PageView, pageGround, SHAPES } from "../../page/PageView";
+import { type Box, fitIn, leaves, PageView, pageGround, SHAPES, union } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
@@ -56,6 +56,7 @@ const KEYS: [string, string][] = [
   ["Shift drag on empty space", "add what lies wholly inside"],
   ["Ctrl A", "select everything on the page"],
   ["Drag", "move by whole units, Alt by pixels"],
+  ["Drag a grip", "resize, several or a group all together"],
   ["Arrows", "nudge a unit, Shift four, Alt a pixel"],
   ["Double click", "type into the element's field"],
   ["Delete", "remove"],
@@ -69,14 +70,19 @@ const KEYS: [string, string][] = [
 ];
 
 /** A pan, a box drawn to select, a part dragged along its frame's flow to `slot`, or a move or
- *  resize of `ids` led by the one under the pointer. `enter` is what a press on the selected
- *  element picks when it lets go unmoved: the next one at that point. */
+ *  resize of `ids` led by the one under the pointer, or scaled together by the box `around`
+ *  them. `enter` is what a press on the selected element picks when it lets go unmoved: the
+ *  next one at that point. */
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "box"; sx: number; sy: number }
   | { kind: "reorder"; id: string; parent: string; flow: Flow; sx: number; sy: number; slot: number | null; enter?: string }
-  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string; turn: Turns }
+  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string; turn: Turns; around?: Around }
   | { kind: "shape"; how: "move" | Handle; id: string; sx: number; sy: number; base: Element; screen: DOMMatrix; outline: DOMRect; props: Record<string, string> | null; enter?: string };
+
+/** The box around several elements or a group's parts on the page as a scale began, and how far
+ *  each one's room sits from the page's corner. */
+type Around = { base: Box; offsets: Record<string, { x: number; y: number }> };
 
 /** A box shown in place of an element's own until the page carries it. `n` names the drag
  *  that made it, so a finished drag never clears a newer one's box. */
@@ -124,6 +130,13 @@ function resized(e: Element, kind: Handle, b: Box, dx: number, dy: number, turn:
   // the origin moves so the far side, turned about it, lands where it was
   const [px, py] = turned(a.x - own.x - (z.x - now.x), a.y - own.y - (z.y - now.y), turn);
   return { x: b.x + own.x + px - now.x, y: b.y + own.y + py - now.y, w, h };
+}
+
+/** Where a point `v` along one side lands as the span from `from` of `size` becomes the one from
+ *  `to` of `next`: on the grid, unless it stays where it was. */
+function rescaled(v: number, from: number, size: number, to: number, next: number, free: boolean): number {
+  const at = to + (size > 0 ? ((v - from) * next) / size : v - from);
+  return Math.abs(at - v) < 1e-6 ? v : snap(at, free);
 }
 
 /** A shape scaled by a grip, about the far side of its outline. A flat side, as a level
@@ -322,6 +335,20 @@ export function Artboard(p: {
         const bases = Object.fromEntries(all.map((g) => [g.id, boxOf(g, roomOf(p.page, g.id))]));
         drag = { kind, lead, ids: all.map((g) => g.id), sx: e.clientX, sy: e.clientY, bases, boxes: { ...bases }, n: ++drags, enter, turn: turnsOf(lead) };
       };
+      // several, or a group's parts, scale by the box around them, each keeping its share of it
+      const scaleBy = (h: Handle, group: Element[]) => {
+        if (!scalable(group, h)) return;
+        start(h, group[0].id, group);
+        const d = drag;
+        if (!d || !("ids" in d)) return;
+        const offsets = Object.fromEntries(
+          d.ids.map((id) => {
+            const a = absolute(p.page, id);
+            return [id, { x: (a?.x ?? 0) - d.bases[id].x, y: (a?.y ?? 0) - d.bases[id].y }];
+          }),
+        );
+        d.around = { base: union(group.flatMap((g) => absolute(p.page, g.id) ?? [])), offsets };
+      };
       // a shape's own attributes move and scale it, in its diagram's units
       const startShape = (how: "move" | Handle, id: string) => {
         const el = host.querySelector(`.page-layer [data-id="${id}"]`);
@@ -335,7 +362,10 @@ export function Artboard(p: {
         startShape(handle, p.selected[0]);
       } else if (handle && p.selected.length === 1) {
         const one = find(p.page.children, p.selected[0]);
-        if (one && resizable(one, handle)) start(handle, one.id, [one]);
+        if (one?.tag === "group") scaleBy(handle, [one]);
+        else if (one && resizable(one, handle)) start(handle, one.id, [one]);
+      } else if (handle) {
+        scaleBy(handle, tops(p.page, p.selected));
       } else if (hits.length > 0 && (e.shiftKey || e.ctrlKey || e.metaKey)) {
         // adds the outermost in front the selection has not entered, or takes away the front one
         const front = stackAt(p.page, hits.slice(0, 1));
@@ -407,12 +437,27 @@ export function Artboard(p: {
     // the pointer's travel in the room the elements sit in, which frames around may turn
     const [rx, ry] = turned(dx / k, dy / k, -d.turn.room);
     const one = find(p.page.children, d.lead);
-    const moved =
-      d.kind === "move" || !one ? { ...lead, x: snap(lead.x + rx, e.altKey), y: snap(lead.y + ry, e.altKey) } : resized(one, d.kind, lead, rx, ry, d.turn.own, e.altKey);
-    // the others keep their places against the one under the pointer
-    for (const id of d.ids) {
-      const b = d.bases[id];
-      d.boxes[id] = id === d.lead ? moved : { ...b, x: b.x + moved.x - lead.x, y: b.y + moved.y - lead.y };
+    if (d.around && d.kind !== "move" && one) {
+      // unturned, the box's origin cancels out, so the lead's serves for the box around them all
+      const [was, now] = [d.around.base, resized(one, d.kind, d.around.base, rx, ry, 0, e.altKey)];
+      const [across, down] = [/[ew]/.test(d.kind), /[ns]/.test(d.kind)];
+      const least = e.altKey ? 1 / UNIT : GRID;
+      for (const id of d.ids) {
+        const [b, o] = [d.bases[id], d.around.offsets[id]];
+        const [x0, x1] = across ? [b.x, b.x + b.w].map((v) => rescaled(v + o.x, was.x, was.w, now.x, now.w, e.altKey) - o.x) : [b.x, b.x + b.w];
+        const [y0, y1] = down ? [b.y, b.y + b.h].map((v) => rescaled(v + o.y, was.y, was.h, now.y, now.h, e.altKey) - o.y) : [b.y, b.y + b.h];
+        d.boxes[id] = { x: x0, y: y0, w: Math.max(least, x1 - x0), h: Math.max(least, y1 - y0) };
+      }
+      // a group's box is the one around what it holds
+      for (const g of d.ids.map((id) => find(p.page.children, id))) if (g?.tag === "group") d.boxes[g.id] = union(leaves(g).map((l) => d.boxes[l.id]));
+    } else {
+      const moved =
+        d.kind === "move" || !one ? { ...lead, x: snap(lead.x + rx, e.altKey), y: snap(lead.y + ry, e.altKey) } : resized(one, d.kind, lead, rx, ry, d.turn.own, e.altKey);
+      // the others keep their places against the one under the pointer
+      for (const id of d.ids) {
+        const b = d.bases[id];
+        d.boxes[id] = id === d.lead ? moved : { ...b, x: b.x + moved.x - lead.x, y: b.y + moved.y - lead.y };
+      }
     }
     setHeld({ ...held(), ...Object.fromEntries(d.ids.map((id) => [id, { box: d.boxes[id], n: d.n }])) });
   };
@@ -455,9 +500,9 @@ export function Artboard(p: {
       }
       // a part its frame lays out keeps only its new size, a number now whatever it was
       for (const k of (e && flowed(e, room) ? ["w", "h"] : ["x", "y", "w", "h"]) as (keyof Box)[]) {
-        // a new size moves the origin, so x and y follow w and h
-        const changed = (key: keyof Box) => d.boxes[id][key] !== d.bases[id][key];
-        if (e && (changed(k) || (k === "x" && changed("w")) || (k === "y" && changed("h")))) props[k] = boxText(e, k, d.boxes[id], room);
+        // a new size moves the origin, so x and y follow w and h, and one that stays keeps its text
+        const text = e && boxText(e, k, d.boxes[id], room);
+        if (e && text !== boxText(e, k, d.bases[id], room)) props[k] = text!;
       }
       if (Object.keys(props).length > 0) edits.push({ kind: "set_props", page: p.page.id, id, props });
       else release(id, d.n);
@@ -541,6 +586,14 @@ export function Artboard(p: {
     const sizes = keys.filter((k) => k === "w" || k === "h");
     const places = flowed(e, roomOf(p.page, e.id)) ? [] : keys.filter((k) => k === "x" || k === "y");
     return literal(e, places) && sizes.every((k) => literal(e, [k]) || !!sizeWord(e.props[k]));
+  };
+  // what grips may scale together: along each side the grip moves, every part's place and
+  // size, so no frame's flow places one and no shape is among them
+  const scalable = (group: Element[], h: Handle) => {
+    const keys = [...(/[ew]/.test(h) ? (["x", "w"] as const) : []), ...(/[ns]/.test(h) ? (["y", "h"] as const) : [])];
+    return group
+      .flatMap(leaves)
+      .every((l) => !SHAPES.has(l.tag) && !flowed(l, roomOf(p.page, l.id)) && keys.every((k) => literal(l, [k]) || ((k === "w" || k === "h") && !!sizeWord(l.props[k]))));
   };
   // what holds the picked elements, outlined faintly so their bounds show
   const parents = () => [...new Set(p.selected.map((id) => parentOf(p.page, id)))].filter((id): id is string => !!id && !p.selected.includes(id));
@@ -634,16 +687,36 @@ export function Artboard(p: {
     const e = find(p.page.children, id);
     const b = !shape(id) && fingered ? absolute(p.page, id, overrides) : undefined;
     const [w, h] = m ? [m.width, m.height] : b ? [b.w * view().k, b.h * view().k] : [Infinity, Infinity];
-    const short = (g: Handle) => fingered && ((w < SIDE && /^[ns]$/.test(g)) || (h < SIDE && /^[ew]$/.test(g)));
-    return HANDLES.filter((g) => !(m && m.height < 2 && /^[ns]$/.test(g)) && !(m && m.width < 2 && /^[ew]$/.test(g)) && !short(g) && (shape(id) || (!!e && resizable(e, g))));
+    const fits = (g: Handle) => shape(id) || (!!e && (e.tag === "group" ? scalable([e], g) : resizable(e, g)));
+    return HANDLES.filter((g) => !(m && m.height < 2 && /^[ns]$/.test(g)) && !(m && m.width < 2 && /^[ew]$/.test(g)) && !short(g, w, h) && fits(g));
   };
+  /** Under a finger, whether a grip's side is too short on screen to hold it beside the others. */
+  const short = (g: Handle, w: number, h: number) => fingered && ((w < SIDE && /^[ns]$/.test(g)) || (h < SIDE && /^[ew]$/.test(g)));
   // the point shows once the element says how it turns
   const turns = (id: string) => {
     const e = find(p.page.children, id);
     return !!e && (e.props.rotate !== undefined || e.props.origin !== undefined);
   };
 
-  /** Where an element's ring goes on screen, on whole pixels so its thin line stays crisp. */
+  /** A box on the page as a ring on screen, on whole pixels so its thin line stays crisp. */
+  const onScreen = (b: Box) => {
+    const v = view();
+    const [left, top] = [Math.round(v.x + b.x * v.k), Math.round(v.y + b.y * v.k)];
+    const [right, bottom] = [Math.round(v.x + (b.x + b.w) * v.k), Math.round(v.y + (b.y + b.h) * v.k)];
+    return { left, top, width: right - left, height: bottom - top };
+  };
+  // several selected: the box around them, whose grips scale them together
+  const several = createMemo(() => (p.selected.length > 1 ? tops(p.page, p.selected) : []));
+  const around = () => {
+    const all = several();
+    if (all.length === 0 || all.some((e) => SHAPES.has(e.tag))) return undefined;
+    if (all.some((e) => laidOut(p.page, e.id))) measured();
+    const b = onScreen(union(all.flatMap((e) => absolute(p.page, e.id, overrides) ?? [])));
+    const handles = HANDLES.filter((g) => !short(g, b.width, b.height) && scalable(all, g));
+    return { style: { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` }, handles };
+  };
+
+  /** Where an element's ring goes on screen. */
   const ring = (id: string) => {
     if (shape(id)) {
       const m = measured()[id];
@@ -656,13 +729,11 @@ export function Artboard(p: {
     if (laidOut(p.page, id)) measured();
     const b = absolute(p.page, id, overrides);
     if (!b) return undefined;
-    const v = view();
-    const [left, top] = [Math.round(v.x + b.x * v.k), Math.round(v.y + b.y * v.k)];
-    const [right, bottom] = [Math.round(v.x + (b.x + b.w) * v.k), Math.round(v.y + (b.y + b.h) * v.k)];
+    const [v, s] = [view(), onScreen(b)];
     // a frame's ring turns with it
     const t = turn();
     const turned = t?.id === id && t.angle !== 0 ? { transform: `rotate(${t.angle}deg)`, "transform-origin": `${t.ox * v.k}px ${t.oy * v.k}px` } : {};
-    return { left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px`, ...turned };
+    return { left: `${s.left}px`, top: `${s.top}px`, width: `${s.width}px`, height: `${s.height}px`, ...turned };
   };
 
   return (
@@ -703,7 +774,7 @@ export function Artboard(p: {
           <Show when={ring(id)}>
             {(r) => (
               <div class="ring" style={r()}>
-                <Show when={p.selected.length === 1 && (!shape(id) || scales(id)) && find(p.page.children, id)?.tag !== "group"}>
+                <Show when={p.selected.length === 1 && (!shape(id) || scales(id))}>
                   <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} style={{ cursor: cursorOf(h, turn()?.id === id ? turn()!.angle + turn()!.room : 0) }} />}</For>
                 </Show>
               </div>
@@ -711,6 +782,13 @@ export function Artboard(p: {
           </Show>
         )}
       </For>
+      <Show when={around()}>
+        {(a) => (
+          <div class="ring around" style={a().style}>
+            <For each={a().handles}>{(h) => <span class={`handle ${h}`} data-handle={h} style={{ cursor: cursorOf(h, 0) }} />}</For>
+          </div>
+        )}
+      </Show>
       <Show when={turn() && turns(turn()!.id) && turn()}>{(t) => <div class="origin" style={{ left: `${t().at.x}px`, top: `${t().at.y}px` }} />}</Show>
       <div class="zoom">
         <button class="icon-btn mono" title="Show at 100%" onClick={actual} onPointerDown={(e) => e.stopPropagation()}>

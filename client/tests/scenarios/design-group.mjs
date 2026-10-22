@@ -29,7 +29,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const ring = await page.locator(".artboard .ring").boundingBox();
   const [ba, bb] = [await d.box(a), await d.box(b)];
   check(Math.abs(ring.x - ba.x) < 2 && Math.abs(ring.x + ring.width - (bb.x + bb.width)) < 2, "the group's ring is not the box around what it holds");
-  check((await page.locator(".artboard .ring .handle").count()) === 0, "a group shows grips");
+  check((await page.locator(".artboard .ring .handle").count()) === 8, "a group shows no grips to size what it holds");
 
   // a click picks the group, the next the part under the pointer
   await page.keyboard.press("Escape");

@@ -24,8 +24,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.mouse.up();
   await page.keyboard.up("Shift");
   await eventually(async () => (await head.textContent()) === "2 elements", "the inspector to count two");
-  check((await page.locator(".artboard .ring").count()) === 2, "a selected element has no ring");
-  check((await page.locator(".artboard .ring .handle").count()) === 0, "several show grips");
+  check((await page.locator(".artboard .ring:not(.around)").count()) === 2, "a selected element has no ring");
+  check((await page.locator(".artboard .ring:not(.around) .handle").count()) === 0, "one of several shows grips of its own");
+  check((await page.locator(".artboard .ring.around .handle").count()) === 8, "the box around several shows no grips");
   check((await page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-row.selected").count()) === 2, "the layers do not show both");
 
   await d.drag(b, 88, 44);

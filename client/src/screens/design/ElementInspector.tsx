@@ -121,9 +121,8 @@ const LINE_UP: [Align, string, typeof AlignStartVertical][] = [
   ["bottom", "Line up bottom edges", AlignEndHorizontal],
 ];
 
-/** Several selected elements: how many, lining them up, and removing them. */
+/** Several selected elements: how many, and lining them up. */
 function Several(p: { page: Page; ids: string[] }) {
-  const few = () => tops(p.page, p.ids).length < 3;
   return (
     <>
       <div class="pane-head">
@@ -131,26 +130,36 @@ function Several(p: { page: Page; ids: string[] }) {
         <span class="tag">selection</span>
       </div>
       <div class="pane-body pad">
-        <div class="section">Line up</div>
-        <div class="tool-row">
-          <For each={LINE_UP}>
-            {([how, title, Icon]) => (
-              <button class="icon-btn" title={title} onClick={() => align(p.page, p.ids, how)}>
-                <Icon size={15} />
-              </button>
-            )}
-          </For>
-        </div>
-        <div class="section">Spread</div>
-        <div class="tool-row">
-          <button class="icon-btn" title="Spread evenly across" disabled={few()} onClick={() => spread(p.page, p.ids, true)}>
-            <AlignHorizontalDistributeCenter size={15} />
-          </button>
-          <button class="icon-btn" title="Spread evenly down" disabled={few()} onClick={() => spread(p.page, p.ids, false)}>
-            <AlignVerticalDistributeCenter size={15} />
-          </button>
-        </div>
-        <div class="placeholder">Drag one to move them all, or nudge them with the arrows. Shift click adds an element or takes it away.</div>
+        <LineUp page={p.page} ids={p.ids} />
+        <div class="placeholder">Drag one to move them all, or nudge them with the arrows. The grips of the box around them size them all. Shift click adds an element or takes it away.</div>
+      </div>
+    </>
+  );
+}
+
+/** Lining up and spreading several elements, or what a group holds. */
+function LineUp(p: { page: Page; ids: string[] }) {
+  const few = () => tops(p.page, p.ids).length < 3;
+  return (
+    <>
+      <div class="section">Line up</div>
+      <div class="tool-row">
+        <For each={LINE_UP}>
+          {([how, title, Icon]) => (
+            <button class="icon-btn" title={title} onClick={() => align(p.page, p.ids, how)}>
+              <Icon size={15} />
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="section">Spread</div>
+      <div class="tool-row">
+        <button class="icon-btn" title="Spread evenly across" disabled={few()} onClick={() => spread(p.page, p.ids, true)}>
+          <AlignHorizontalDistributeCenter size={15} />
+        </button>
+        <button class="icon-btn" title="Spread evenly down" disabled={few()} onClick={() => spread(p.page, p.ids, false)}>
+          <AlignVerticalDistributeCenter size={15} />
+        </button>
       </div>
     </>
   );
@@ -340,7 +349,15 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
       <div class="pane-body pad">
         <div class="section">Element</div>
         <Field {...prop("name")} label="Name" plain focus={typed("name")} />
-        <Show when={!grouped()} fallback={<div class="placeholder">A group keeps what it holds together. A click picks it whole and another the part under the pointer, and each part keeps its own place. Ctrl Shift G ungroups it.</div>}>
+        <Show
+          when={!grouped()}
+          fallback={
+            <>
+              <LineUp page={pageOf(p.page)!} ids={p.element.children.map((c) => c.id)} />
+              <div class="placeholder">A group keeps what it holds together. A click picks it whole and another the part under the pointer, and its grips size all it holds. Ctrl Shift G ungroups it.</div>
+            </>
+          }
+        >
           <Field {...prop("repeat")} label="Repeat" placeholder="a list, or a count" />
         </Show>
         <Show when={!shape() && !grouped()}>
