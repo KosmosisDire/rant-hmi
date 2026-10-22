@@ -353,19 +353,21 @@ impl App {
             build: self.build.clone(),
         };
         self.send(session, &hello);
+        // every name a page reads comes before the pages, so a screen never draws one, nor
+        // works out where its handlers run, without them
         self.send(session, &self.whole(List::Imports));
-        self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
         self.send(session, &ServerMsg::Mesh { entities: self.mesh.entities() });
         for list in [List::Variables, List::Records, List::Computed] {
             self.send(session, &self.whole(list));
         }
         self.send(session, &ServerMsg::Enums { enums: self.enums.clone() });
+        self.send(session, &self.whole(List::Theme));
+        self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
         for r in &self.project.records {
             let samples = self.history.get(&r.name).map(|h| h.iter().cloned().collect()).unwrap_or_default();
             self.send(session, &ServerMsg::Samples { name: r.name.clone(), samples, whole: true });
         }
         self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
-        self.send(session, &self.whole(List::Theme));
         self.put_values(Some(session), self.all_values(session));
         self.send(session, &ServerMsg::Health { peers: self.mesh.peers() });
     }
