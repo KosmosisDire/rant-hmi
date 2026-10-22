@@ -44,6 +44,15 @@ const lastTimes = existsSync(timesFile) ? JSON.parse(readFileSync(timesFile, "ut
 const queue = [...files].sort((a, b) => (lastTimes[b] ?? Infinity) - (lastTimes[a] ?? Infinity) || a.localeCompare(b));
 const times = { ...lastTimes };
 let failed = 0;
+const running = new Set();
+// this process standing still, as when the machine pauses it, fails scenarios not at fault, as a
+// backend drops a test client silent 5 s, so a stall is told with what ran through it
+let beat = Date.now();
+setInterval(() => {
+  const still = Date.now() - beat - 250;
+  if (still > 1000) console.log(`STALL the runner stood still ${still} ms during ${[...running].join(", ")}`);
+  beat = Date.now();
+}, 250).unref();
 let slots = 0;
 let kept = null;
 
@@ -66,6 +75,7 @@ async function worker() {
     page.on("pageerror", (e) => errors.push(e.message));
     const hmi = await Hmi.connect(sys.ws);
     const started = Date.now();
+    running.add(name);
     try {
       await page.goto(sys.url);
       await page.locator(".statusbar", { hasText: "System" }).waitFor();
@@ -83,6 +93,7 @@ async function worker() {
       // the whole log too, kept now in case the run dies before its end
       writeFileSync(join(out, `${name}.backend.log`), sys.backend.log);
     }
+    running.delete(name);
     // a page that hangs fails its scenario, never the run
     await page.screenshot({ path: join(out, `${name}.png`) }).catch((e) => {
       failed++;
