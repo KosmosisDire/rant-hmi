@@ -1,5 +1,6 @@
 /target/
-/app/target/
+# the backend addon npm run build puts beside the app
+/app/rant-hmi.node
 node_modules/
 /client/dist/
 /client/tests/out/

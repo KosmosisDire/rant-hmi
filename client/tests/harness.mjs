@@ -4,10 +4,12 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
+import { _electron, chromium } from "playwright-core";
+import { built } from "../../app/addon.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(here, "..", "..");
@@ -34,8 +36,13 @@ function transcoder() {
 const domainOf = (slot) => (slot === 0 ? 153 : 154 + slot);
 const portOf = (slot) => 6761 + slot;
 
+/** This process's environment for a child, `extra` over it. A variable given as undefined is left out. */
+function environment(extra) {
+  return Object.fromEntries(Object.entries({ ...process.env, RUST_BACKTRACE: "1", NO_COLOR: "1", ...extra }).filter(([, v]) => v !== undefined));
+}
+
 function run(path, args, env = {}) {
-  const child = spawn(path, args, { cwd: ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RUST_BACKTRACE: "1", NO_COLOR: "1", ...env } });
+  const child = spawn(path, args, { cwd: ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: environment(env) });
   child.log = "";
   child.stdout.on("data", (d) => (child.log += d));
   child.stderr.on("data", (d) => (child.log += d));
@@ -98,20 +105,65 @@ export async function startSystem({ empty, slot = 0 } = {}) {
   };
 }
 
-/** rant-hmi-app's backend running `project`, with a demo line of its own on `domain`. With
- *  `port` its screens are served through the app's link over http there, by the linked
- *  example, for a browser to drive. Else it shows them in the app's own window, which WebView2
- *  here opens no debugging port to drive, so its log tells what the window did. */
-export async function startApp(project, { domain, port = null }) {
-  const home = join(project, "..", "home");
+/** rant-hmi-app's Electron, which `npm install` in app fetches, and the backend addon it loads,
+ *  as cargo builds it for tests. HMI_ADDON names another. */
+const APP = join(ROOT, "app");
+const ADDON = resolve(process.env.HMI_ADDON ?? built(join(ROOT, "target"), "debug"));
+function electron() {
+  try {
+    return createRequire(join(APP, "package.json"))("electron");
+  } catch {
+    throw new Error("no Electron for rant-hmi-app: run npm install in app");
+  }
+}
+
+/** What rant-hmi-app takes to run `project` here, with a demo line of its own on `domain`. */
+function appRunning(project, domain) {
   const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", String(domain)]);
-  const args = [project, "--domain", String(domain), "--loopback", "--client", CLIENT];
-  const app = port === null ? run(join(BUILD, `rant-hmi-app${exe}`), args, { HOME: home, USERPROFILE: home }) : run(join(BUILD, "examples", `linked${exe}`), [...args, "--port", String(port)]);
-  const url = port === null ? null : `http://127.0.0.1:${port}`;
+  return { line, args: [project, "--domain", String(domain), "--loopback", "--client", CLIENT] };
+}
+
+/** What the app's environment adds: the addon, and a home of its own, where the window keeps its
+ *  data. Electron runs as plain Node where ELECTRON_RUN_AS_NODE is set, as a VS Code extension's
+ *  children inherit it. */
+const appEnv = (home) => ({ HMI_ADDON: ADDON, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: undefined });
+
+/** rant-hmi-app showing `what`, a project with a demo line on `domain` or an HMI's address, in a
+ *  window Playwright drives, with `more` arguments. Its debugging ports listen, so `openApp` checks
+ *  what the app does alone. */
+export async function driveApp(what, { home, domain = null, more = [] }) {
+  const { line, args } = domain === null ? { line: null, args: [what] } : appRunning(what, domain);
+  const app = await _electron.launch({ executablePath: electron(), args: [APP, ...args, ...more], cwd: ROOT, env: environment(appEnv(home)) });
+  const child = app.process();
+  child.log = "";
+  child.stdout.on("data", (d) => (child.log += d));
+  child.stderr.on("data", (d) => (child.log += d));
+  return {
+    app,
+    process: child,
+    window: await app.firstWindow(),
+    /** Closes the window as a person does, true once the app ended by itself. */
+    async close() {
+      const ended = exited(child);
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+      line?.kill();
+      return ended;
+    },
+    stop() {
+      // Playwright starts Electron through cmd.exe here, so only ending that tree ends the app
+      if (child.exitCode === null) execFileSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" });
+      line?.kill();
+    },
+  };
+}
+
+/** rant-hmi-app running `project` with a demo line on `domain`, started as a person starts it,
+ *  once its screen has connected. Its log tells what the window did. */
+export async function openApp(project, { home, domain }) {
+  const { line, args } = appRunning(project, domain);
+  const app = run(electron(), [APP, ...args], appEnv(home));
   const start = Date.now();
-  for (;;) {
-    const ready = url ? await fetch(url).then((r) => r.ok, () => false) : app.log.includes("screen 1 connected");
-    if (ready) break;
+  while (!app.log.includes("screen 1 connected")) {
     if (Date.now() - start > 20000) {
       app.kill();
       line.kill();
@@ -121,9 +173,10 @@ export async function startApp(project, { domain, port = null }) {
   }
   return {
     app,
-    url,
+    /** Closes the window as a person does, true once the app ended by itself. */
     async close() {
-      const ended = await closeWindow(app);
+      const ended = exited(app);
+      execFileSync("taskkill", ["/PID", String(app.pid)], { stdio: "ignore" });
       line.kill();
       return ended;
     },
@@ -134,21 +187,13 @@ export async function startApp(project, { domain, port = null }) {
   };
 }
 
-/** rant-hmi-app given `what` alone: the address of an HMI elsewhere, or a project. */
-export function showApp(what, home) {
-  const app = run(join(BUILD, `rant-hmi-app${exe}`), [what], { HOME: home, USERPROFILE: home });
-  return { app, close: () => closeWindow(app), stop: () => app.kill() };
-}
-
-/** Closes an app's window as a person does, true once the app ended by itself. */
-async function closeWindow(app) {
-  execFileSync("taskkill", ["/PID", String(app.pid)], { stdio: "ignore" });
-  const ended = await new Promise((r) => {
-    if (app.exitCode !== null) return r(true);
-    app.once("exit", () => r(true));
+/** True once `child` ends by itself with nothing wrong, false if it has not within 10 s. */
+function exited(child) {
+  return new Promise((r) => {
+    if (child.exitCode !== null) return r(child.exitCode === 0);
+    child.once("exit", (code) => r(code === 0));
     setTimeout(() => r(false), 10000);
   });
-  return ended && app.exitCode === 0;
 }
 
 export function startBrowser() {
