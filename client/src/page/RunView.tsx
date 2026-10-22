@@ -1,5 +1,5 @@
-// A screen's open pages as an operator sees them: the top full page fits the screen, stacked
-// on a narrow one, and pages over it float at its scale above a dimmed backdrop.
+// A screen's open pages as an operator sees them: the top full page fits the screen, laid out
+// again on an upright one, and pages over it float at its scale above a dimmed backdrop.
 
 import { createEffect, For, onCleanup, onMount, Show } from "solid-js";
 import type { Page } from "../protocol/Page";
@@ -11,7 +11,8 @@ import { savePicture, showsPicture } from "../ui/Picture";
 import { pageAct } from "./act";
 import { UNIT } from "../state/bind";
 import { createSize } from "../ui/size";
-import { fitIn, PageView, stackedIn, stacks } from "./PageView";
+import { fitIn, PageView } from "./PageView";
+import { createPhonePage, reflows } from "./phone";
 
 export function RunView(p: { active: boolean }) {
   let host!: HTMLDivElement;
@@ -31,12 +32,6 @@ export function RunView(p: { active: boolean }) {
     return b ? fitIn(b.width * UNIT, b.height * UNIT, size()).k : 1;
   };
   const place = (pg: Page) => fitIn(pg.width * UNIT, pg.height * UNIT, size(), scale()).transform;
-  // a portrait screen reads a landscape page as its blocks one under another, at one zoom
-  const layout = (pg: Page, n: number) => {
-    if (n !== base() || size().w >= size().h || !stacks(pg)) return { transform: place(pg) };
-    const stack = stackedIn(pg, size());
-    return { transform: `scale(${stack.k})`, stack, height: stack.height * UNIT * stack.k };
-  };
 
   // measured at once when the tab shows, so its first frame is never drawn at no size
   createEffect(() => p.active && size.measure());
@@ -62,18 +57,17 @@ export function RunView(p: { active: boolean }) {
     >
       <For each={pages()}>
         {(pg, n) => {
-          const shown = () => layout(pg, n());
+          // a screen held upright shows a landscape page laid out again for its width, unzoomed
+          const phone = createPhonePage(() => (n() === base() && size().w < size().h && reflows(pg) ? pg : null), size);
           return (
             // a page under another is covered, so its elements hear no keys
-            <div class="run-layer" classList={{ stacked: !!shown().stack }} data-page={pg.id} hidden={n() < base()} inert={n() < pages().length - 1}>
+            <div class="run-layer" classList={{ phone: !!phone() }} data-page={pg.id} hidden={n() < base()} inert={n() < pages().length - 1}>
               <Show when={n() > base()}>
                 <div class="run-backdrop" onPointerDown={() => n() === pages().length - 1 && back()} />
               </Show>
-              <div class="run-page" classList={{ over: n() > base() }} style={{ transform: shown().transform }}>
-                <PageView page={pg} act={pageAct(pg.id)} overrides={shown().stack?.at} size={shown().stack} />
+              <div class="run-page" classList={{ over: n() > base() }} style={{ transform: phone() ? "none" : place(pg) }}>
+                <PageView page={phone() ?? pg} act={pageAct(pg.id)} grows={!!phone()} />
               </div>
-              {/* the stacked page's height, which it does not take once scaled */}
-              <Show when={shown().height}>{(h) => <div style={{ height: `${h()}px` }} />}</Show>
             </div>
           );
         }}

@@ -1,9 +1,10 @@
-// The page on its artboard, or as an upright phone stacks it: the wheel or a pinch zooms, a
+// The page on its artboard, or as an upright phone lays it out: the wheel or a pinch zooms, a
 // drag on empty space or with two fingers pans, elements move and resize on the grid (Alt
 // slips it), and a drag writes when it ends.
 
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from "solid-js";
-import { type Box, fitIn, leaves, PageView, pageGround, SHAPES, stackedIn, stacks, union } from "../../page/PageView";
+import { type Box, fitIn, leaves, PageView, pageGround, SHAPES, union } from "../../page/PageView";
+import { createPhonePage, reflows } from "../../page/phone";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
@@ -12,7 +13,7 @@ import { Keyboard, Smartphone } from "../../ui/icons";
 import { fingers } from "../../ui/fingers";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
-import { onResize } from "../../ui/size";
+import { createSize, onResize } from "../../ui/size";
 import { wheelPx, zoomBy } from "../../ui/wheel";
 import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
 import { find } from "../../state/elements";
@@ -100,14 +101,14 @@ function keysFor(kind: "move" | Handle): (keyof Box)[] {
   return keys;
 }
 
-/** An upright phone's screen in CSS pixels, the one the preview stacks a page for. */
+/** An upright phone's screen in CSS pixels, the one the preview lays a page out for. */
 const PHONE = { w: 390, h: 844 };
 
-/** Why a phone shows a page as it is, never stacked, or nothing when it stacks it. */
-function unstacked(page: Page): string | undefined {
+/** Why a phone shows a page as it is, or nothing when it lays it out again. */
+function asDesigned(page: Page): string | undefined {
   if (page.interface !== null) return "A component shows on a phone where its page places it";
   if (page.shows !== "full") return "A page over another shows on a phone as it is";
-  if (!stacks(page)) return "A page taller than wide shows on a phone as it is";
+  if (!reflows(page)) return "A page taller than wide shows on a phone as it is";
   return undefined;
 }
 
@@ -193,11 +194,16 @@ export function Artboard(p: {
   const [box, setBox] = createSignal<{ left: number; top: number; width: number; height: number } | null>(null);
   /** The line where a part dragged along a flow would go, on the page. */
   const [slotLine, setSlotLine] = createSignal<Box | null>(null);
-  /** Whether the page shows as an upright phone stacks it, and that stacking while it does. */
+  /** Whether the page shows as an upright phone lays it out, and that phone page while it does. */
   const [phoneOn, setPhoneOn] = createSignal(false);
-  const preview = createMemo(() => (phoneOn() && !unstacked(p.page) ? stackedIn(p.page, PHONE) : null));
-  const size = () => preview() ?? p.page;
-  const overrides = (id: string) => preview()?.at(id) ?? held()[id]?.box;
+  const preview = createPhonePage(() => (phoneOn() && !asDesigned(p.page) ? p.page : null), () => PHONE);
+  // a phone page is as tall as what it holds, so its ground is measured as drawn
+  const drawn = createSize();
+  const size = () => {
+    const phone = preview();
+    return phone ? { width: phone.width, height: Math.max(phone.height, drawn().h / UNIT) } : p.page;
+  };
+  const overrides = (id: string) => held()[id]?.box;
   const release = (id: string, n?: number) =>
     setHeld((all) => (all[id] && (n === undefined || all[id].n === n) ? Object.fromEntries(Object.entries(all).filter(([k]) => k !== id)) : all));
   let drag: Drag | null = null;
@@ -205,14 +211,16 @@ export function Artboard(p: {
   /** The pinch two fingers make: how far apart they began, their middle then and the view then. */
   let pinch: { d: number; cx: number; cy: number; view: { k: number; x: number; y: number } } | null = null;
 
-  // each page fits when it opens, and again as the preview comes or goes
+  // each page fits when it opens, and again as the preview comes or goes, a phone page by the
+  // phone's screen, however far down it runs
   let fittedFor = "";
   const fitKey = () => `${p.page.id}${preview() ? " phone" : ""}`;
   const fit = () => {
     const r = host.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return;
+    const screen = preview() ?? p.page;
     // a 32 px margin all round
-    const f = fitIn(size().width, size().height, { w: r.width - 64, h: r.height - 64 });
+    const f = fitIn(screen.width, screen.height, { w: r.width - 64, h: r.height - 64 });
     setView({ k: f.k, x: f.x + 32, y: f.y + 32 });
     fittedFor = fitKey();
   };
@@ -239,7 +247,7 @@ export function Artboard(p: {
     g.fillStyle = ground;
     g.fillRect(x0, y0, x1 - x0, y1 - y0);
     g.restore();
-    // the stacking places the blocks there, so no grid shows
+    // the phone lays the blocks out, so no grid shows
     if (preview()) return;
     const width = Math.max(1, Math.round(dpr));
     for (const [step, strength] of LEVELS) {
@@ -259,6 +267,7 @@ export function Artboard(p: {
       draw();
       keep();
     });
+    drawn.track(host.querySelector<HTMLElement>(".page-layer .page")!);
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       const v = view();
@@ -364,7 +373,7 @@ export function Artboard(p: {
         drag = { kind: "shape", how, id, sx: e.clientX, sy: e.clientY, base: { ...base, props }, screen, outline: el.getBBox(), props: null };
       };
       if (preview() && hit && !(e.shiftKey || e.ctrlKey || e.metaKey)) {
-        // the stacking places each block, so a press picks and a drag pans
+        // the phone lays out each block, so a press picks and a drag pans
         p.onPick(hit);
         drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
       } else if (handle && p.selected.length === 1 && shape(p.selected[0])) {
@@ -585,7 +594,9 @@ export function Artboard(p: {
   // a shape's attributes place it, and the page lays some elements out itself, so their rings
   // are measured from the drawn page, each frame while one is picked, as live values may move it
   const shape = (id: string) => SHAPES.has(find(p.page.children, id)?.tag ?? "");
-  const measuredOne = (id: string) => shape(id) || laidOut(p.page, id);
+  /** Whether an element's box is measured as drawn, turn and all: a shape's, and all on a phone page. */
+  const asDrawn = (id: string) => shape(id) || !!preview();
+  const measuredOne = (id: string) => asDrawn(id) || laidOut(p.page, id);
   // what a drag may move: numbers it can write, and a place no frame's flow sets
   const movable = (e: Element, keys: (keyof Box)[]) => literal(e, keys) && !flowed(e, roomOf(p.page, e.id));
   // what a grip may size: a size the page works out, as a hug's or a fill's, becomes a number,
@@ -720,28 +731,30 @@ export function Artboard(p: {
     const all = several();
     if (all.length === 0 || all.some((e) => SHAPES.has(e.tag))) return undefined;
     if (all.some((e) => laidOut(p.page, e.id))) measured();
-    const b = onScreen(union(all.flatMap((e) => absolute(p.page, e.id, overrides) ?? [])));
+    const b = onScreen(union(all.flatMap((e) => boxAt(e.id) ?? [])));
     const handles = preview() ? [] : HANDLES.filter((g) => !short(g, b.width, b.height) && scalable(all, g));
     return { style: { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` }, handles };
   };
 
+  /** An element's box on the page. */
+  const boxAt = (id: string): Box | undefined => {
+    if (!asDrawn(id)) return absolute(p.page, id, overrides);
+    const m = measured()[id];
+    if (!m) return undefined;
+    const [r, v] = [host.getBoundingClientRect(), view()];
+    return { x: (m.left - r.left - v.x) / v.k, y: (m.top - r.top - v.y) / v.k, w: m.width / v.k, h: m.height / v.k };
+  };
+
   /** Where an element's ring goes on screen. */
   const ring = (id: string) => {
-    if (shape(id)) {
-      const m = measured()[id];
-      const r = host.getBoundingClientRect();
-      if (!m) return undefined;
-      const [left, top] = [Math.round(m.left - r.left), Math.round(m.top - r.top)];
-      return { left: `${left}px`, top: `${top}px`, width: `${Math.round(m.right - r.left) - left}px`, height: `${Math.round(m.bottom - r.top) - top}px` };
-    }
     // laid out by the page, it is read again each frame
     if (laidOut(p.page, id)) measured();
-    const b = absolute(p.page, id, overrides);
+    const b = boxAt(id);
     if (!b) return undefined;
     const [v, s] = [view(), onScreen(b)];
-    // a frame's ring turns with it
+    // a frame's ring turns with it, unless measured as drawn
     const t = turn();
-    const turned = t?.id === id && t.angle !== 0 ? { transform: `rotate(${t.angle}deg)`, "transform-origin": `${t.ox * v.k}px ${t.oy * v.k}px` } : {};
+    const turned = t?.id === id && t.angle !== 0 && !asDrawn(id) ? { transform: `rotate(${t.angle}deg)`, "transform-origin": `${t.ox * v.k}px ${t.oy * v.k}px` } : {};
     return { left: `${s.left}px`, top: `${s.top}px`, width: `${s.width}px`, height: `${s.height}px`, ...turned };
   };
 
@@ -769,7 +782,7 @@ export function Artboard(p: {
     >
       <canvas class="artboard-grid" ref={grid} />
       <div class="page-layer" style={{ transform: `translate(${view().x}px, ${view().y}px) scale(${view().k / UNIT})` }}>
-        <PageView page={p.page} overrides={overrides} size={preview() ?? undefined} design />
+        <PageView page={preview() ?? p.page} overrides={overrides} grows={!!preview()} design />
       </div>
       <div class="veil" style={sheet()} />
       <Show when={box()}>{(b) => <div class="marquee" style={{ left: `${b().left}px`, top: `${b().top}px`, width: `${b().width}px`, height: `${b().height}px` }} />}</Show>
@@ -809,8 +822,8 @@ export function Artboard(p: {
         <button
           class="icon-btn"
           classList={{ on: !!preview() }}
-          disabled={!!unstacked(p.page)}
-          title={unstacked(p.page) ?? (preview() ? "Back to the page as designed" : "Show as an upright phone stacks it")}
+          disabled={!!asDesigned(p.page)}
+          title={asDesigned(p.page) ?? (preview() ? "Back to the page as designed" : "Show as an upright phone lays it out")}
           onClick={() => setPhoneOn(!preview())}
           onPointerDown={(e) => e.stopPropagation()}
         >

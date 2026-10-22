@@ -7,7 +7,7 @@ import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Scope, sizeWord, tokenValue, UNIT } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originCss, pageScope, percentOf, repeatScope, resolve, type Scope, sizeWord, tokenValue, UNIT } from "../state/bind";
 import { fields, short } from "../state/format";
 import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
 import { component, entity, live, notify, state } from "../state/store";
@@ -88,6 +88,12 @@ export function viewBox(v: unknown): [number, number, number, number] | null {
 /** At most this many copies of a repeat, so a mistaken one never floods the page. */
 const COPIES = 500;
 
+/** The item of each copy a repeat's value makes: a list's items, or a count's indexes. */
+export function copiesOf(v: unknown): unknown[] {
+  if (typeof v === "number") return Array.from({ length: Math.max(0, Math.min(COPIES, Math.floor(v))) }, (_, i) => i);
+  return Array.isArray(v) ? v.slice(0, COPIES) : [];
+}
+
 /** The events a press on the element itself starts, which make it look pressable. */
 const PRESSES = EVENTS.filter((e) => e.from === "pointer" && e.name !== "outside").map((e) => e.name);
 
@@ -130,62 +136,13 @@ const themeVars = createRoot(() =>
   }),
 );
 
-/** The space between blocks a narrow screen stacks, in units. */
-const GAP = 2;
-
-/** A page as a narrow screen shows it: its top level elements one under another in reading
- *  order, rows by how far down they start, left to right within a row. */
-function stacked(page: Page): { width: number; height: number; at: Overrides } {
-  // a box from its top left, as x and y place its origin
-  const box = (e: Element): Box => {
-    if (e.tag === "group") return union(e.children.map(box));
-    const at = (k: keyof Box) => placement(e.props[k], k === "x" || k === "w" ? page.width : page.height);
-    const [w, h] = [at("w"), at("h")];
-    const r = e.props.origin === undefined ? undefined : resolve(e.props.origin, pageScope);
-    const own = originAt(r?.ok ? r.value : undefined, w, h);
-    return { x: at("x") - own.x, y: at("y") - own.y, w, h };
-  };
-  const boxes = page.children.map((e) => ({ e, b: box(e) }));
-  boxes.sort((p, q) => p.b.y - q.b.y);
-  const order: typeof boxes = [];
-  for (let i = 0; i < boxes.length; ) {
-    // a row holds each block that starts before the first one in it ends
-    let j = i + 1;
-    while (j < boxes.length && boxes[j].b.y < boxes[i].b.y + boxes[i].b.h) j++;
-    order.push(...boxes.slice(i, j).sort((p, q) => p.b.x - q.b.x));
-    i = j;
-  }
-  const places = new Map<string, Box>();
-  let y = GAP;
-  for (const { e, b } of order) {
-    // what a group holds keeps its places within the group's box
-    for (const l of leaves(e)) {
-      const lb = box(l);
-      places.set(l.id, { ...lb, x: GAP + lb.x - b.x, y: y + lb.y - b.y });
-    }
-    y += b.h + GAP;
-  }
-  return { width: Math.max(1, ...order.map(({ b }) => b.w)) + 2 * GAP, height: y, at: (id) => places.get(id) };
-}
-
-/** Whether a screen held upright stacks this page when it shows it first: one wider than tall. */
-export const stacks = (page: Page) => page.width > page.height;
-
-/** A page stacked to fill an upright screen's width at one zoom, `k`. Its ground reaches the
- *  screen's foot even when its blocks end above it. */
-export function stackedIn(page: Page, screen: { w: number; h: number }) {
-  const stack = stacked(page);
-  const k = screen.w / (stack.width * UNIT);
-  return { ...stack, k, height: Math.max(stack.height, Math.floor(screen.h / k / UNIT)) };
-}
-
-/** A page, or a component drawn on its own with its inputs' defaults. `size` stands in for
- *  the page's own, as when a narrow screen stacks it. */
-export function PageView(p: { page: Page; overrides?: Overrides; size?: { width: number; height: number }; design?: boolean; act?: Act }) {
+/** A page, or a component drawn on its own with its inputs' defaults. One that `grows` is as
+ *  tall as what it holds, at least its own height, as a phone page is. */
+export function PageView(p: { page: Page; overrides?: Overrides; grows?: boolean; design?: boolean; act?: Act }) {
   const scope = createMemo(() => docScope(p.page));
-  const size = () => p.size ?? p.page;
+  const height = () => `${p.page.height * UNIT}px`;
   return (
-    <div class="page" classList={{ design: p.design }} style={{ ...themeVars(), width: `${size().width * UNIT}px`, height: `${size().height * UNIT}px`, "--page-ground": pageGround(p.page) }}>
+    <div class="page" classList={{ design: p.design }} style={{ ...themeVars(), width: `${p.page.width * UNIT}px`, height: p.grows ? undefined : height(), "min-height": p.grows ? height() : undefined, "--page-ground": pageGround(p.page) }}>
       <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} />}</For>
     </div>
   );
@@ -235,8 +192,7 @@ function Placed(p: ElementProps) {
     const r = p.element.props.repeat;
     if (!r?.trim()) return null;
     const got = resolve(r, p.scope);
-    const v = got.ok ? got.value : undefined;
-    const items = typeof v === "number" ? Array.from({ length: Math.max(0, Math.min(COPIES, Math.floor(v))) }, (_, i) => i) : Array.isArray(v) ? v.slice(0, COPIES) : [];
+    const items = copiesOf(got.ok ? got.value : undefined);
     return items.length === 0 && p.design ? [undefined] : items;
   });
   return (
