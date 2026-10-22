@@ -12,4 +12,8 @@ label: string,
 /**
  * What it is when left empty.
  */
-default: string, kind: SettingKind, };
+default: string, kind: SettingKind, 
+/**
+ * The values a filter may take, each with a few words, or none for any.
+ */
+options: readonly [string, string][], };

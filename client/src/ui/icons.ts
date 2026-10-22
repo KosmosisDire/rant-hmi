@@ -36,6 +36,7 @@ export { default as Download } from "lucide-solid/icons/download";
 export { default as ExternalLink } from "lucide-solid/icons/external-link";
 export { default as File } from "lucide-solid/icons/file";
 export { default as Folder } from "lucide-solid/icons/folder";
+export { default as Gamepad2 } from "lucide-solid/icons/gamepad-2";
 export { default as Grid3x3 } from "lucide-solid/icons/grid-3x3";
 export { default as Group } from "lucide-solid/icons/group";
 export { default as Hash } from "lucide-solid/icons/hash";

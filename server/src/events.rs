@@ -4,8 +4,10 @@
 use serde::Serialize;
 use ts_rs::TS;
 
+use crate::value::Value;
+
 /// What sends an event: the pointer, on any element but an input, an input's entry, or the
-/// keyboard, on any element.
+/// keyboard or a gamepad, on any element.
 #[derive(Serialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[ts(export)]
@@ -13,6 +15,7 @@ pub enum Sender {
     Pointer,
     Entry,
     Keyboard,
+    Gamepad,
 }
 
 /// How a setting is written: an expression the screen reads, or a filter, the value its event
@@ -35,6 +38,9 @@ pub struct SettingInfo {
     /// What it is when left empty.
     pub default: &'static str,
     pub kind: SettingKind,
+    /// The values a filter may take, each with a few words, or none for any.
+    #[ts(type = "readonly [string, string][]")]
+    pub options: &'static [(&'static str, &'static str)],
 }
 
 /// An event an element may handle.
@@ -52,7 +58,8 @@ pub struct EventInfo {
     /// What its `p` holds: each field's name and words.
     pub brings: &'static [(&'static str, &'static str)],
     /// The event that ends what this one begins, as a release ends a press. It takes the same
-    /// filters, and runs however the screen goes.
+    /// filters, and runs however the screen goes. A stream that ends itself, as axes, ends at
+    /// rest: every number it brings outside its filters 0.
     pub ends_with: Option<&'static str>,
 }
 
@@ -74,8 +81,27 @@ const KEYS: &[(&str, &str)] = &[
     ("alt", "true while Alt is down"),
 ];
 
+/// What a gamepad's button brings.
+const BUTTONS: &[(&str, &str)] = &[("button", "which, by where it sits, as \"south\""), ("pad", "which pad, 0 for the first")];
+
+/// What a gamepad's axes bring, each stick's y up as a Joystick's.
+const AXES: &[(&str, &str)] = &[
+    ("lx", "the left stick across, -1 to 1"),
+    ("ly", "the left stick up, -1 to 1"),
+    ("rx", "the right stick across, -1 to 1"),
+    ("ry", "the right stick up, -1 to 1"),
+    ("lt", "the left trigger, 0 to 1"),
+    ("rt", "the right trigger, 0 to 1"),
+    ("axes", "every axis as the pad gives it, down positive"),
+    ("pad", "which pad, 0 for the first"),
+];
+
 const fn expression(name: &'static str, label: &'static str, default: &'static str) -> SettingInfo {
-    SettingInfo { name, label, default, kind: SettingKind::Expression }
+    SettingInfo { name, label, default, kind: SettingKind::Expression, options: &[] }
+}
+
+const fn filter(name: &'static str, label: &'static str, options: &'static [(&'static str, &'static str)]) -> SettingInfo {
+    SettingInfo { name, label, default: "any", kind: SettingKind::Filter, options }
 }
 
 const AFTER: SettingInfo = expression("after", "After ms", "500");
@@ -83,9 +109,37 @@ const EVERY: SettingInfo = expression("every", "Every ms", "100");
 /// The screen sends its handler's event only while this is true.
 const WHILE: SettingInfo = expression("while", "While", "true");
 /// A key by what it types: "a", "A" with Shift, " " for Space.
-const KEY: SettingInfo = SettingInfo { name: "key", label: "Key", default: "any", kind: SettingKind::Filter };
+const KEY: SettingInfo = filter("key", "Key", &[]);
 /// A key by where it sits, "KeyA" whatever the layout makes it type.
-const CODE: SettingInfo = SettingInfo { name: "code", label: "Key code", default: "any", kind: SettingKind::Filter };
+const CODE: SettingInfo = filter("code", "Key code", &[]);
+/// A button by where it sits on the standard pad, whatever its maker prints on it.
+const BUTTON: SettingInfo = filter(
+    "button",
+    "Button",
+    &[
+        ("south", "A, Cross"),
+        ("east", "B, Circle"),
+        ("west", "X, Square"),
+        ("north", "Y, Triangle"),
+        ("lb", "left bumper, L1"),
+        ("rb", "right bumper, R1"),
+        ("lt", "left trigger, L2"),
+        ("rt", "right trigger, R2"),
+        ("back", "Back, Share"),
+        ("start", "Start, Options"),
+        ("ls", "left stick pressed"),
+        ("rs", "right stick pressed"),
+        ("up", "pad up"),
+        ("down", "pad down"),
+        ("left", "pad left"),
+        ("right", "pad right"),
+        ("home", "Guide, PS"),
+    ],
+);
+/// A pad by its place among those the screen has.
+const PAD: SettingInfo = filter("pad", "Pad", &[("0", "the first"), ("1", "the second"), ("2", "the third"), ("3", "the fourth")]);
+/// How far a stick or trigger moves before it counts, 0 to 1, past which it counts from 0.
+const DEADBAND: SettingInfo = expression("deadband", "Deadband", "0.1");
 
 /// What a handler for an event a component sends takes.
 pub const SENT: &[SettingInfo] = &[WHILE];
@@ -96,6 +150,10 @@ const fn pointer(name: &'static str, words: &'static str, once: bool, settings: 
 
 const fn keyboard(name: &'static str, words: &'static str, settings: &'static [SettingInfo]) -> EventInfo {
     EventInfo { name, from: Sender::Keyboard, words, once: true, settings, brings: KEYS, ends_with: None }
+}
+
+const fn gamepad(name: &'static str, words: &'static str, settings: &'static [SettingInfo]) -> EventInfo {
+    EventInfo { name, from: Sender::Gamepad, words, once: true, settings, brings: BUTTONS, ends_with: None }
 }
 
 /// Every event, in the order an element lists its handlers. A component's own come after.
@@ -112,6 +170,10 @@ pub const EVENTS: &[EventInfo] = &[
     EventInfo { ends_with: Some("keyup"), ..keyboard("keydown", "a key pressed", &[KEY, CODE, WHILE]) },
     keyboard("keyup", "a key let go", &[KEY, CODE]),
     keyboard("keyrepeat", "again and again while a key is down", &[KEY, CODE, EVERY, WHILE]),
+    EventInfo { ends_with: Some("buttonup"), ..gamepad("buttondown", "a gamepad button pressed", &[BUTTON, PAD, WHILE]) },
+    gamepad("buttonup", "a gamepad button let go", &[BUTTON, PAD]),
+    // once a frame while it moves, each handler past its own deadband, then once at rest
+    EventInfo { once: false, brings: AXES, ends_with: Some("axes"), ..gamepad("axes", "a gamepad's sticks or triggers moved", &[PAD, DEADBAND, WHILE]) },
 ];
 
 /// The event `name`, unless a component sends it.
@@ -124,14 +186,50 @@ pub fn settings(event: &str) -> &'static [SettingInfo] {
     find(event).map_or(SENT, |e| e.settings)
 }
 
+/// The setting `key` of `event`'s handlers.
+pub fn setting(event: &str, key: &str) -> Option<&'static SettingInfo> {
+    settings(event).iter().find(|s| s.name == key)
+}
+
 /// Whether `key` is a filter of `event`'s handlers.
 pub fn filters(event: &str, key: &str) -> bool {
-    settings(event).iter().any(|s| s.name == key && s.kind == SettingKind::Filter)
+    setting(event, key).is_some_and(|s| s.kind == SettingKind::Filter)
+}
+
+/// A field of what an event brings as a filter reads it: text as it is, a whole number or true
+/// and false as written.
+pub fn filter_text(v: &Value) -> Option<String> {
+    match v {
+        Value::Text(t) => Some(t.clone()),
+        Value::Int(_) | Value::Bool(_) => Some(v.to_string()),
+        _ => None,
+    }
 }
 
 /// The event `event` ends, when it ends one, as a release ends a press.
 pub fn ended_by(event: &str) -> Option<&'static EventInfo> {
     EVENTS.iter().find(|e| e.ends_with == Some(event))
+}
+
+/// Whether `event` is a stream that ends itself, at rest.
+pub fn ends_itself(event: &str) -> bool {
+    find(event).is_some_and(|e| e.ends_with == Some(e.name))
+}
+
+/// What `event` brings at rest: `p` with each number outside its filters 0, in lists too.
+pub fn rest(event: &str, p: &Value) -> Value {
+    fn zeroed(v: &Value) -> Value {
+        match v {
+            Value::Int(_) => Value::Int(0),
+            Value::Float(_) => Value::Float(0.0),
+            Value::List(items) => Value::List(items.iter().map(zeroed).collect()),
+            other => other.clone(),
+        }
+    }
+    match p {
+        Value::Map(fields) => Value::Map(fields.iter().map(|(k, v)| (k.clone(), if filters(event, k) { v.clone() } else { zeroed(v) })).collect()),
+        other => zeroed(other),
+    }
 }
 
 /// Where a handler goes in an element's list: these events first, in order, then by name.
@@ -164,11 +262,28 @@ mod tests {
     #[test]
     fn an_end_takes_the_filters_of_what_it_ends_and_no_while() {
         let names = |event: &str, kind: SettingKind| settings(event).iter().filter(|s| s.kind == kind).map(|s| s.name).collect::<Vec<_>>();
-        for e in EVENTS.iter().filter(|e| e.ends_with.is_some()) {
+        for e in EVENTS.iter().filter(|e| e.ends_with.is_some() && !ends_itself(e.name)) {
             let end = e.ends_with.unwrap();
             assert_eq!(names(e.name, SettingKind::Filter), names(end, SettingKind::Filter));
             assert!(names(end, SettingKind::Expression).is_empty() && ended_by(end).unwrap().name == e.name);
         }
         assert!(filters("keydown", "key") && !filters("keydown", "while") && ended_by("keydown").is_none());
+    }
+
+    #[test]
+    fn a_stream_that_ends_itself_rests_with_its_numbers_0_but_its_filters() {
+        let p = Value::from(serde_json::json!({ "lx": 0.5, "ly": 0, "axes": [0.5, -0.25], "pad": 1 }));
+        assert!(ends_itself("axes") && !ends_itself("buttondown") && ended_by("axes").unwrap().name == "axes");
+        let at_rest = rest("axes", &p);
+        assert_eq!(at_rest, Value::from(serde_json::json!({ "lx": 0.0, "ly": 0, "axes": [0.0, 0.0], "pad": 1 })));
+        assert_eq!(rest("axes", &at_rest), at_rest);
+    }
+
+    #[test]
+    fn a_filter_reads_text_and_whole_numbers() {
+        assert_eq!(filter_text(&Value::from(1)), Some("1".into()));
+        assert_eq!(filter_text(&Value::from("south")), Some("south".into()));
+        assert_eq!(filter_text(&Value::from(0.5)), None);
+        assert!(setting("buttondown", "button").unwrap().options.iter().any(|(o, _)| *o == "south"));
     }
 }

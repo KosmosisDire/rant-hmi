@@ -2,6 +2,6 @@
 
 /**
  * What sends an event: the pointer, on any element but an input, an input's entry, or the
- * keyboard, on any element.
+ * keyboard or a gamepad, on any element.
  */
-export type Sender = "pointer" | "entry" | "keyboard";
+export type Sender = "pointer" | "entry" | "keyboard" | "gamepad";

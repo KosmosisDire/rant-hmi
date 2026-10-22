@@ -7,7 +7,7 @@ import type { Handler } from "../protocol/Handler";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { type At, pageScope, repeatScope, resolve, runHandler, type Scope } from "../state/bind";
-import { endOf, handlerKey, settingsOf, takes } from "../state/events";
+import { endOf, handlerKey, rests, settingsOf, takes } from "../state/events";
 
 export interface Act {
   /** `at` is the copy of a repeated element it happened to, and `only` the one handler a
@@ -41,10 +41,11 @@ export function timeOf(h: Handler, setting: string, scope: Scope): number {
 }
 
 /** The element's handlers that take `event` bringing `p` and are heard now in `scope`, or
- *  `only` among them. */
+ *  `only` among them. A stream coming to rest is heard whatever its while, as an end is. */
 function hearing(e: Element, event: string, p: unknown, scope: Scope, only?: Handler) {
   const one = only && handlerKey(only.event, only.filter);
-  return e.handlers.filter((h) => takes(h, event, p) && (!one || handlerKey(h.event, h.filter) === one) && heard(h, scope));
+  const ends = rests(event, p);
+  return e.handlers.filter((h) => takes(h, event, p) && (!one || handlerKey(h.event, h.filter) === one) && (ends || heard(h, scope)));
 }
 
 /** A page's events, sent to the backend for the handlers there it hears. What begins or ends

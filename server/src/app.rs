@@ -142,7 +142,8 @@ struct HandlerKey {
 type Filter = BTreeMap<String, String>;
 
 /// An input a screen holds on an element, as a press or a key: the screen, page, element and
-/// copy of a repeat, the event that ends it, and what it brought that its end's filters read.
+/// copy of a repeat, the event that ends it, and what it brought that its end's filters read,
+/// or for a stream that ends itself, as axes, the filter of the handler that hears it.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Held {
     session: u32,
@@ -193,7 +194,8 @@ pub struct App {
     /// Pages opened to wait for an answer: the waiting call, and the screen that shows them.
     asks: HashMap<u64, u32>,
     /// What screens hold on elements with a handler for its end.
-    held: HashSet<Held>,
+    /// What each brings to its end should the screen be lost.
+    held: HashMap<Held, Value>,
     /// The latest stream event that came while its handler still ran. It runs when that run ends.
     waiting: HashMap<HandlerKey, Waiting>,
     /// When each timer rule is next due.
@@ -245,7 +247,7 @@ impl App {
             runs: HashMap::new(),
             next_run: 0,
             asks: HashMap::new(),
-            held: HashSet::new(),
+            held: HashMap::new(),
             waiting: HashMap::new(),
             timers: HashMap::new(),
             turned: HashMap::new(),
@@ -464,11 +466,11 @@ impl App {
                 }
             }
             ClientMsg::Fire { page, id, event, payload, index, item, heard } => {
-                self.follow_held(session, &page, &id, index, &event, &payload);
+                let on = HandlerKey { page, id, index, event, filter: Filter::new() };
+                self.follow_held(session, &on, &payload, &heard);
                 let at = index.map(|i| (i, item.unwrap_or(Value::Null)));
                 for filter in heard {
-                    let of = HandlerKey { page: page.clone(), id: id.clone(), index, event: event.clone(), filter };
-                    self.fire(session, of, payload.clone(), at.clone());
+                    self.fire(session, HandlerKey { filter, ..on.clone() }, payload.clone(), at.clone());
                 }
             }
             ClientMsg::Answer { ask, value } => {
@@ -749,16 +751,28 @@ impl App {
         self.pages.element(page, id).map(|e| e.handlers.iter().filter(|h| h.takes(event, p)).map(|h| h.filter.clone()).collect()).unwrap_or_default()
     }
 
-    /// Follows what a screen holds from the events that begin and end it, on an element with a
-    /// handler for the end, so that end still runs should the screen be lost.
-    fn follow_held(&mut self, session: u32, page: &str, id: &str, index: Option<u32>, event: &str, p: &Value) {
+    /// Follows what a screen holds from the events that begin and end it, `on` an element with a
+    /// handler for the end, so that end still runs should the screen be lost. A stream that ends
+    /// itself is held by each handler that `heard` it until it comes to rest.
+    fn follow_held(&mut self, session: u32, on: &HandlerKey, p: &Value, heard: &[Filter]) {
+        let (page, id, event) = (on.page.as_str(), on.id.as_str(), on.event.as_str());
         let Some(info) = events::find(event) else { return };
         let end = info.ends_with.unwrap_or(info.name);
-        let by = events::settings(end).iter().filter(|s| s.kind == events::SettingKind::Filter);
-        let by = by.filter_map(|s| Some((s.name.to_owned(), p.get(s.name)?.as_str()?.to_owned()))).collect();
-        let held = Held { session, page: page.to_owned(), id: id.to_owned(), index, end, by };
+        let at = |by: Filter| Held { session, page: page.to_owned(), id: id.to_owned(), index: on.index, end, by };
+        if events::ends_itself(event) {
+            let rest = events::rest(event, p);
+            for filter in heard {
+                match rest == *p {
+                    true => self.held.remove(&at(filter.clone())),
+                    false => self.held.insert(at(filter.clone()), rest.clone()),
+                };
+            }
+            return;
+        }
+        let read: Vec<(&str, &Value)> = events::settings(end).iter().filter(|s| s.kind == events::SettingKind::Filter).filter_map(|s| Some((s.name, p.get(s.name)?))).collect();
+        let held = at(read.iter().filter_map(|(k, v)| Some((k.to_string(), events::filter_text(v)?))).collect());
         if info.ends_with.is_some() && !self.taking(page, id, end, p).is_empty() {
-            self.held.insert(held);
+            self.held.insert(held, Value::map(read.into_iter().map(|(k, v)| (k, v.clone()))));
         } else if events::ended_by(event).is_some() {
             self.held.remove(&held);
         }
@@ -1289,15 +1303,21 @@ impl App {
         self.watch(session);
     }
 
-    /// Runs the end of what a screen holds, as a press's release, so a jog never outlives its
-    /// link. It brings what its filters read and `lost`.
+    /// Runs the end of what a screen holds, as a press's release or axes at rest, so a jog never
+    /// outlives its link. It brings what its filters read, or the stream at rest, and `lost`.
     fn let_go(&mut self, session: u32, why: &str) {
-        let held: Vec<Held> = self.held.iter().filter(|h| h.session == session).cloned().collect();
-        for h in held {
+        let held: Vec<(Held, Value)> = self.held.iter().filter(|(h, _)| h.session == session).map(|(h, p)| (h.clone(), p.clone())).collect();
+        for (h, brought) in held {
             self.held.remove(&h);
             warn!("screen {session} {why} holding {} on {}, so its {} runs", h.id, h.page, h.end);
-            let p = Value::map(h.by.into_iter().map(|(k, v)| (k, Value::Text(v))).chain([("lost".to_owned(), true.into())]));
-            for filter in self.taking(&h.page, &h.id, h.end, &p) {
+            let Value::Map(mut fields) = brought else { continue };
+            fields.push(("lost".to_owned(), true.into()));
+            let p = Value::Map(fields);
+            let ends = match events::ends_itself(h.end) {
+                true => vec![h.by.clone()],
+                false => self.taking(&h.page, &h.id, h.end, &p),
+            };
+            for filter in ends {
                 let of = HandlerKey { page: h.page.clone(), id: h.id.clone(), index: h.index, event: h.end.into(), filter };
                 self.fire(session, of, p.clone(), h.index.map(|i| (i, Value::Null)));
             }

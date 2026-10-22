@@ -142,7 +142,7 @@ impl Handler {
 
     /// Whether it runs for `event` bringing `p`: each of its filters equals the field of p it names.
     pub fn takes(&self, event: &str, p: &Value) -> bool {
-        self.event == event && self.filter.iter().all(|(k, v)| p.get(k).and_then(Value::as_str) == Some(v))
+        self.event == event && self.filter.iter().all(|(k, v)| p.get(k).and_then(events::filter_text).as_ref() == Some(v))
     }
 
     /// The setting `key` as written.
@@ -171,6 +171,13 @@ pub fn check_handler<'a>(others: impl IntoIterator<Item = &'a Handler>, h: &Hand
     let takes = |key: &str, filter: bool| events::settings(&h.event).iter().any(|s| s.name == key) && events::filters(&h.event, key) == filter;
     if let Some(key) = h.attrs.keys().find(|k| !takes(k, false)).or_else(|| h.filter.keys().find(|k| !takes(k, true))) {
         return Err(format!("a {} handler takes no {key}", h.event));
+    }
+    for (key, value) in &h.filter {
+        let options = events::setting(&h.event, key).map_or(&[][..], |s| s.options);
+        if !options.is_empty() && !options.iter().any(|(o, _)| o == value) {
+            let all: Vec<&str> = options.iter().map(|(o, _)| *o).collect();
+            return Err(format!("a {} handler's {key} is one of {}, not {value:?}", h.event, all.join(", ")));
+        }
     }
     match others.into_iter().any(|o| o.event == h.event && o.filter == h.filter) {
         true => Err(format!("a second {} handler{}", h.event, h.filter.iter().map(|(k, v)| format!(" for {k} {v:?}")).collect::<Vec<_>>().join(" and"))),

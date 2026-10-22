@@ -756,7 +756,11 @@ mod tests {
                 let mut h = Handler { code: rng.pick(&CODE), ..Handler::new(e.name, BTreeMap::new()) };
                 for s in e.settings {
                     if rng.below(2) == 0 {
-                        h.set(s.name, Some(&rng.pick(&VALUES)));
+                        let value = match s.options {
+                            [] => rng.pick(&VALUES),
+                            options => options[rng.below(options.len())].0.to_owned(),
+                        };
+                        h.set(s.name, Some(&value));
                     }
                 }
                 out.push(h);

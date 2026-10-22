@@ -21,6 +21,7 @@ once: boolean, settings: Array<SettingInfo>,
 brings: Array<[string, string]>, 
 /**
  * The event that ends what this one begins, as a release ends a press. It takes the same
- * filters, and runs however the screen goes.
+ * filters, and runs however the screen goes. A stream that ends itself, as axes, ends at
+ * rest: every number it brings outside its filters 0.
  */
 ends_with: string | null, };

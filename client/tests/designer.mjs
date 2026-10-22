@@ -271,7 +271,11 @@ export function designer(page) {
       for (const [label, text] of Object.entries(settings)) {
         const field = card.locator(".event-when .field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) }).locator("input");
         if ((await field.getAttribute("readonly")) === null) await commit(field, text);
-        else {
+        else if (await field.getAttribute("aria-haspopup")) {
+          // a filter with options offers them as a menu
+          await field.click();
+          await page.locator(".menu .menu-item", { has: page.locator(".menu-label", { hasText: new RegExp(`^${text}$`) }) }).click();
+        } else {
           // a key filter takes the key pressed, a capital with Shift
           await field.click();
           await page.keyboard.press(text === " " ? "Space" : /^[A-Z]$/.test(text) ? `Shift+${text}` : text);
