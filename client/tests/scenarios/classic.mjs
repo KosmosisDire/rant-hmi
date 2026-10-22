@@ -241,7 +241,11 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await hold(buttons.Convey, 600, async () => {
     await eventually(() => value("ConveyorGo") === true && value("DistanceD") < before, "the box to move while Convey is held");
     const from = await slat();
-    await eventually(async () => (await slat()) < from, "the belt to move left while the conveyor runs");
+    const seen = [];
+    await eventually(
+      async () => (seen.push(await slat()), seen.at(-1) < from),
+      () => `the belt to move left while the conveyor runs, from ${from} it read ${seen.slice(-10).join(" ")} with ConveyorGo ${value("ConveyorGo")}`,
+    );
   });
   await eventually(() => value("ConveyorGo") === false, "the conveyor to stop at the release");
   const stopped = await slat();
