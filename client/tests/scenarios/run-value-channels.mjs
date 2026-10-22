@@ -1,12 +1,12 @@
 // Once a screen has its data channels, values take the way their QoS asks: a best effort
-// topic's on the best effort channel, a variable's on the reliable one, and one too big for a
-// channel on the socket. A value that came the slow way never replaces a newer one.
+// topic's on the best effort channel and a variable's on the reliable one. One too big for a
+// message on a channel goes on the reliable one in pieces, never on the socket.
 
 import { Decoder } from "cbor-x";
 
 const decoder = new Decoder({ mapsAsObjects: true, useRecords: false, int64AsNumber: true });
 
-/** Notes what each channel brings, and holds it back `__delay` ms when set. */
+/** Notes what each channel brings. */
 function tap() {
   window.__heard = [];
   const make = RTCPeerConnection.prototype.createDataChannel;
@@ -15,36 +15,31 @@ function tap() {
     channel.addEventListener("message", (e) => window.__heard.push([label, Array.from(new Uint8Array(e.data))]));
     return channel;
   };
-  const handler = Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, "onmessage");
-  Object.defineProperty(RTCDataChannel.prototype, "onmessage", {
-    get: handler.get,
-    set(f) {
-      handler.set.call(this, (e) => (window.__delay ? setTimeout(() => f(e), window.__delay) : f(e)));
-    },
-  });
 }
 
-/** The socket's frames as its messages: each frame is `[u16 lane][u8 more]` then its share
- *  of a message, joined per lane. */
-function joined(frames) {
-  const parts = new Map();
-  const out = [];
-  for (const f of frames) {
-    const lane = f[0] | (f[1] << 8);
-    const so = [...(parts.get(lane) ?? []), ...f.slice(3)];
-    if (f[2] === 1) parts.set(lane, so);
-    else {
-      parts.delete(lane);
-      out.push(["socket", so]);
+/** The messages each way brought. The socket's and the reliable channel's come in pieces,
+ *  `[u16 lane][u8 more]` then a share of a message, joined per lane. */
+function messages(heard, socket) {
+  const out = heard.filter(([label]) => label === "best-effort");
+  for (const [way, frames] of [["reliable", heard.filter(([label]) => label === "reliable").map(([, f]) => f)], ["socket", socket]]) {
+    const parts = new Map();
+    for (const f of frames) {
+      const lane = f[0] | (f[1] << 8);
+      const so = [...(parts.get(lane) ?? []), ...f.slice(3)];
+      if (f[2] === 1) parts.set(lane, so);
+      else {
+        parts.delete(lane);
+        out.push([way, so]);
+      }
     }
   }
   return out;
 }
 
 /** The aliases each way brought values for. */
-function aliases(messages) {
+function aliases(heard, socket) {
   const ways = {};
-  for (const [way, bytes] of messages) {
+  for (const [way, bytes] of messages(heard, socket)) {
     const msg = decoder.decode(Uint8Array.from(bytes));
     if (msg.type !== "values") continue;
     ways[way] ??= new Set();
@@ -77,23 +72,19 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   hmi.set("note", "abc");
   await eventually(async () => (await shown.innerText()) === "3", "the screen to show the variable");
   await screen.waitForTimeout(500);
-  const ways = aliases([...(await screen.evaluate(() => window.__heard)), ...joined(socket)]);
+  const ways = aliases(await screen.evaluate(() => window.__heard), socket);
   const by = (alias) => Object.keys(ways).filter((w) => ways[w].has(alias)).join(" and ");
   check(by("Joints") === "best-effort", `the best effort topic came by ${by("Joints")}`);
   check(by("note") === "reliable", `the variable came by ${by("note")}`);
 
-  // the small value is held back on its channel, so the big one on the socket comes first
   socket.length = 0;
-  await screen.evaluate(() => {
-    window.__heard = [];
-    window.__delay = 300;
-  });
-  hmi.set("note", "a");
+  await screen.evaluate(() => (window.__heard = []));
   hmi.set("note", "x".repeat(20000));
   await eventually(async () => (await shown.innerText()) === "20000", "the screen to show the big value");
-  await screen.waitForTimeout(600);
-  check((await shown.innerText()) === "20000", "the older value held back on its channel replaced the newer one");
-  const late = aliases([...(await screen.evaluate(() => window.__heard)), ...joined(socket)]);
-  check(late.socket?.has("note") && late.reliable?.has("note"), `the big value on the socket and the small on the channel, by ${JSON.stringify(Object.keys(late))}`);
+  const heard = await screen.evaluate(() => window.__heard);
+  const big = aliases(heard, socket);
+  const came = Object.keys(big).filter((w) => big[w].has("note")).join(" and ");
+  check(came === "reliable", `the big value came by ${came}`);
+  check(heard.some(([label, f]) => label === "reliable" && f[2] === 1), "the big value came whole, not in pieces");
   await context.close();
 }

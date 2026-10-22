@@ -1,9 +1,10 @@
 //! The backend's one loop. It owns the project, the mesh and every screen's session, so
 //! nothing is shared and nothing locks.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -13,7 +14,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{info, warn};
 
 use crate::authorize::{Who, authorize};
-use crate::lanes::{CONTROL, Lanes, PIECE, VALUES};
+use crate::lanes::{Lanes, PIECE};
 use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::logic::{Rule, When};
@@ -24,7 +25,7 @@ use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
 use crate::value::Value;
-use crate::rtc::{FromRtc, MESSAGE_MAX, ToRtc};
+use crate::rtc::{FromRtc, MESSAGE_MAX, ToRtc, Way};
 
 /// How often changed values go out and the mesh is checked.
 const TICK: Duration = Duration::from_millis(33);
@@ -35,10 +36,6 @@ const SILENCE: Duration = Duration::from_millis(500);
 /// A screen silent this long is lost. A busy page stops reading its socket a while, which
 /// is no reason to start it over.
 const LOST: Duration = Duration::from_secs(5);
-/// A screen with this many batches of small values waiting for its socket gets no more, and
-/// then all values at once in place of those waiting, so a link that stalls a while never
-/// carries what is no longer so.
-const BEHIND: usize = 8;
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
@@ -56,59 +53,27 @@ pub enum Inbound {
     Close { session: u32 },
 }
 
-/// A screen's way out, in lanes that take turns (`lanes.rs`), which its socket sends as fast
-/// as the screen confirms them.
-pub struct Outbox {
-    lanes: Arc<Lanes>,
-    /// The lane of each import whose value is too big to share a message.
-    own: RefCell<HashMap<String, u16>>,
-    /// Small values were left out while too many waited, so the screen needs them all.
-    stale: Cell<bool>,
-}
+/// A screen's socket, in lanes that take turns (`lanes.rs`), which it sends as fast as the
+/// screen confirms them. They close when the screen goes.
+pub struct Outbox(Arc<Lanes>);
 
 impl Outbox {
     pub fn new(lanes: Arc<Lanes>) -> Outbox {
-        Outbox { lanes, own: RefCell::default(), stale: Cell::new(false) }
+        Outbox(lanes)
     }
+}
 
-    /// Sends what is not values.
-    fn send(&self, bytes: Bytes) {
-        self.lanes.put(CONTROL, bytes, false);
-    }
+impl Deref for Outbox {
+    type Target = Lanes;
 
-    /// Sends values. Small ones share a lane, left out while the screen is behind. With
-    /// `alone`, one import's value too big to share a message goes in that import's own lane,
-    /// which keeps only the latest.
-    fn values(&self, alone: Option<&str>, bytes: Bytes) {
-        let Some(alias) = alone else {
-            match self.lanes.waiting(VALUES) < BEHIND {
-                true => self.lanes.put(VALUES, bytes, false),
-                false => self.stale.set(true),
-            }
-            return;
-        };
-        let lane = {
-            let mut own = self.own.borrow_mut();
-            let next = VALUES + 1 + own.len() as u16;
-            *own.entry(alias.to_owned()).or_insert(next)
-        };
-        self.lanes.put(lane, bytes, true);
-    }
-
-    /// True once for a screen that missed small values. Those still waiting are dropped, as
-    /// all values follow.
-    fn missed(&self) -> bool {
-        let missed = self.stale.replace(false);
-        if missed {
-            self.lanes.clear(VALUES);
-        }
-        missed
+    fn deref(&self) -> &Lanes {
+        &self.0
     }
 }
 
 impl Drop for Outbox {
     fn drop(&mut self) {
-        self.lanes.close();
+        self.0.close();
     }
 }
 
@@ -1318,7 +1283,7 @@ impl App {
                 if let Some(rtt) = rtt.filter(|r| r.is_finite() && *r >= 0.0) {
                     s.timed(Duration::from_secs_f64(rtt / 1000.0));
                 }
-                let _ = self.rtc.send(ToRtc::Send { session, reliable: true, bytes: encode(&ServerMsg::Pong { t }) });
+                let _ = self.rtc.send(ToRtc::Send { session, way: Way::Control, bytes: encode(&ServerMsg::Pong { t }) });
             }
             FromRtc::Message { session, msg } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
@@ -1355,10 +1320,10 @@ impl App {
         }
     }
 
-    /// Sends values to one screen, or with None to every screen. On a socket the values small
-    /// enough share a message and each larger one goes alone in its import's lane. A screen
-    /// with channels gets a best effort topic's on the best effort channel and the rest on the
-    /// reliable one, any too big for a channel on its socket.
+    /// Sends values to one screen, or with None to every screen. On a socket, and on the
+    /// reliable channel of a screen with channels, the values small enough share a message and
+    /// each larger one goes alone in its import's lane. A screen with channels gets a best
+    /// effort topic's on its best effort channel, those that fit a message there.
     fn put_values(&self, to: Option<u32>, values: Vec<ValueUpdate>) {
         let seq = self.seq.get() + 1;
         self.seq.set(seq);
@@ -1367,30 +1332,19 @@ impl App {
             None => self.sessions.iter().map(|(id, s)| (*id, s)).collect(),
         };
         let socket = sessions.iter().any(|(_, s)| !s.channels).then(|| apart(&values, seq));
-        let mut split = Vec::new();
-        if sessions.iter().any(|(_, s)| s.channels) {
-            let (best_effort, reliable): (Vec<_>, Vec<_>) = values.into_iter().partition(|v| self.mesh.best_effort(&v.alias));
-            split = pieces(best_effort, seq, false);
-            split.extend(pieces(reliable, seq, true));
-        }
+        let channels = sessions.iter().any(|(_, s)| s.channels).then(|| ways(values, |alias| self.mesh.best_effort(alias), seq));
         for (id, s) in sessions {
-            if !s.channels {
-                if let Some((shared, alone)) = &socket {
-                    if let Some(bytes) = shared {
-                        s.out.values(None, bytes.clone());
-                    }
-                    for (alias, bytes) in alone {
-                        s.out.values(Some(alias), bytes.clone());
-                    }
+            if let (false, Some((shared, alone))) = (s.channels, &socket) {
+                if let Some(bytes) = shared {
+                    s.out.values(bytes.clone());
                 }
-                continue;
+                for (alias, bytes) in alone {
+                    s.out.alone(alias, bytes.clone());
+                }
             }
-            for (way, bytes) in &split {
-                match way {
-                    Way::Channel(reliable) => {
-                        let _ = self.rtc.send(ToRtc::Send { session: id, reliable: *reliable, bytes: bytes.clone() });
-                    }
-                    Way::Socket(alias) => s.out.values(Some(alias), bytes.clone()),
+            if let (true, Some(ways)) = (s.channels, &channels) {
+                for (way, bytes) in ways {
+                    let _ = self.rtc.send(ToRtc::Send { session: id, way: way.clone(), bytes: bytes.clone() });
                 }
             }
         }
@@ -1402,8 +1356,8 @@ fn known(name: &str, value: &Value) -> ValueUpdate {
     ValueUpdate { alias: name.to_owned(), value: Some(value.clone()), known: true }
 }
 
-/// Values as messages for a socket: those that fit a piece together in one, and each larger
-/// one alone with its import's name.
+/// Values as messages for lanes: those that fit a piece together in one, and each larger one
+/// alone with its import's name.
 fn apart(values: &[ValueUpdate], seq: u64) -> (Option<Bytes>, Vec<(String, Bytes)>) {
     let whole = encode(&ServerMsg::Values { values: values.to_vec(), seq });
     if whole.len() <= PIECE {
@@ -1421,31 +1375,31 @@ fn apart(values: &[ValueUpdate], seq: u64) -> (Option<Bytes>, Vec<(String, Bytes
     ((!small.is_empty()).then(|| encode(&ServerMsg::Values { values: small, seq })), alone)
 }
 
-/// Where a message for a screen with channels goes: on a channel, reliable or not, or on its
-/// socket in the lane of the import whose value is too big for a channel.
-enum Way {
-    Channel(bool),
-    Socket(String),
-}
-
-/// Values as messages for a channel, `reliable` or not, one batch when it fits. Else each value
-/// is its own, and one too big for a channel goes on the socket.
-fn pieces(values: Vec<ValueUpdate>, seq: u64, reliable: bool) -> Vec<(Way, Bytes)> {
-    if values.is_empty() {
-        return Vec::new();
+/// Values as messages for a screen with channels. A best effort topic's go on the best effort
+/// channel, one batch when it fits a message there, else each alone. The rest, and any too big
+/// for a message there, go on the reliable channel as `apart` cuts them.
+fn ways(values: Vec<ValueUpdate>, best_effort: impl Fn(&str) -> bool, seq: u64) -> Vec<(Way, Bytes)> {
+    let (fast, mut rest): (Vec<_>, Vec<_>) = values.into_iter().partition(|v| best_effort(&v.alias));
+    let mut out = Vec::new();
+    let batch = (!fast.is_empty()).then(|| encode(&ServerMsg::Values { values: fast.clone(), seq }));
+    match batch {
+        Some(batch) if batch.len() <= MESSAGE_MAX => out.push((Way::BestEffort, batch)),
+        _ => {
+            for v in fast {
+                let bytes = encode(&ServerMsg::Values { values: vec![v.clone()], seq });
+                match bytes.len() <= MESSAGE_MAX {
+                    true => out.push((Way::BestEffort, bytes)),
+                    false => rest.push(v),
+                }
+            }
+        }
     }
-    let batch = encode(&ServerMsg::Values { values: values.clone(), seq });
-    if batch.len() <= MESSAGE_MAX {
-        return vec![(Way::Channel(reliable), batch)];
+    if !rest.is_empty() {
+        let (shared, alone) = apart(&rest, seq);
+        out.extend(shared.map(|bytes| (Way::Values, bytes)));
+        out.extend(alone.into_iter().map(|(alias, bytes)| (Way::Alone(alias), bytes)));
     }
-    values
-        .into_iter()
-        .map(|v| {
-            let alias = v.alias.clone();
-            let bytes = encode(&ServerMsg::Values { values: vec![v], seq });
-            (if bytes.len() <= MESSAGE_MAX { Way::Channel(reliable) } else { Way::Socket(alias) }, bytes)
-        })
-        .collect()
+    out
 }
 
 fn encode(msg: &ServerMsg) -> Bytes {
@@ -1468,44 +1422,36 @@ fn since_epoch() -> Duration {
 mod tests {
     use super::*;
 
-    /// What waits in a screen's lanes, each message small enough for one piece.
-    fn sent(lanes: &Lanes) -> Vec<Bytes> {
-        std::iter::from_fn(|| lanes.take()).map(|piece| piece.slice(3..)).collect()
+    fn update(alias: &str, value: Value) -> ValueUpdate {
+        ValueUpdate { alias: alias.into(), value: Some(value), known: true }
     }
 
     #[test]
-    fn a_screen_behind_misses_small_values_until_all_go_in_their_place() {
-        let lanes = Arc::new(Lanes::default());
-        let out = Outbox::new(lanes.clone());
-        for n in 0..BEHIND + 1 {
-            out.values(None, Bytes::from(vec![n as u8]));
-        }
-        assert_eq!(lanes.waiting(VALUES), BEHIND);
-        // a picture and what is not values still go
-        out.values(Some("Cam"), Bytes::from_static(b"picture"));
-        out.send(Bytes::from_static(b"page"));
-        assert!(out.missed());
-        assert!(!out.missed());
-        out.values(None, Bytes::from_static(b"all"));
-        let all = [Bytes::from_static(b"page"), Bytes::from_static(b"all"), Bytes::from_static(b"picture")];
-        assert_eq!(sent(&lanes), all);
-    }
-
-    #[test]
-    fn a_value_too_big_to_share_goes_alone_in_its_import_s_lane() {
-        let small = ValueUpdate { alias: "Speed".into(), value: Some(Value::Float(1.5)), known: true };
-        let big = ValueUpdate { alias: "Cam".into(), value: Some(Value::Bytes(vec![0; PIECE])), known: true };
-        let (shared, alone) = apart(&[small, big], 1);
+    fn a_value_too_big_to_share_goes_alone() {
+        let (shared, alone) = apart(&[update("Speed", Value::Float(1.5)), update("Cam", Value::Bytes(vec![0; PIECE]))], 1);
         assert!(shared.is_some());
         assert_eq!(alone.iter().map(|(alias, _)| alias.as_str()).collect::<Vec<_>>(), vec!["Cam"]);
-        let lanes = Arc::new(Lanes::default());
-        let out = Outbox::new(lanes.clone());
-        out.values(Some("Cam"), Bytes::from_static(b"one"));
-        out.values(Some("Other"), Bytes::from_static(b"two"));
-        // the newer replaces the one waiting
-        out.values(Some("Cam"), Bytes::from_static(b"three"));
-        assert_eq!(lanes.waiting(VALUES + 1), 1);
-        let lanes_of: Vec<(u16, Bytes)> = std::iter::from_fn(|| lanes.take()).map(|p| (u16::from_le_bytes([p[0], p[1]]), p.slice(3..))).collect();
-        assert_eq!(lanes_of, vec![(VALUES + 1, Bytes::from_static(b"three")), (VALUES + 2, Bytes::from_static(b"two"))]);
+    }
+
+    #[test]
+    fn a_screen_with_channels_gets_a_best_effort_topic_s_there_and_the_rest_reliably() {
+        let kinds = |values: Vec<ValueUpdate>| -> Vec<String> {
+            ways(values, |alias| alias.starts_with("Fast"), 1)
+                .into_iter()
+                .map(|(way, _)| match way {
+                    Way::BestEffort => "best effort".into(),
+                    Way::Values => "values".into(),
+                    Way::Alone(alias) => alias,
+                    Way::Control => "control".into(),
+                })
+                .collect()
+        };
+        let joints = update("FastJoints", Value::Float(1.0));
+        let picture = update("FastCam", Value::Bytes(vec![0; MESSAGE_MAX]));
+        let note = update("note", Value::Float(2.0));
+        assert_eq!(kinds(vec![joints.clone(), note.clone()]), vec!["best effort", "values"]);
+        // too big for a message on the best effort channel, so it goes in pieces on the other
+        assert_eq!(kinds(vec![joints, picture]), vec!["best effort", "FastCam"]);
+        assert_eq!(kinds(vec![note]), vec!["values"]);
     }
 }

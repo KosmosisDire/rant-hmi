@@ -1,4 +1,5 @@
-//! What a screen is sent, in lanes that take turns, as Rant's transport sends a peer's topics:
+//! What a screen is sent on its socket, or on its reliable channel once it has channels, in
+//! lanes that take turns, as Rant's transport sends a peer's topics:
 //! each message is cut into pieces and each lane with work sends a piece's worth in its turn,
 //! so a small message never waits behind a whole picture, nor small ones behind each other.
 //! What is not values, then small values, go first when they have work, so a picture slows to
@@ -19,6 +20,10 @@ pub const PIECE: usize = 8 << 10;
 pub const CONTROL: u16 = 0;
 /// Values small enough to share a message. They go next whenever they have work.
 pub const VALUES: u16 = 1;
+/// A screen with this many batches of small values waiting gets no more, and then all values
+/// at once in place of those waiting, so a link that stalls a while never carries what is no
+/// longer so.
+const BEHIND: usize = 8;
 
 #[derive(Default)]
 struct Inner {
@@ -29,9 +34,14 @@ struct Inner {
     turn: VecDeque<u16>,
     spent: usize,
     closed: bool,
+    /// The lane of each import whose value is too big to share a message.
+    own: HashMap<String, u16>,
+    /// Small values were left out while too many waited, so the screen needs them all.
+    stale: bool,
 }
 
-/// One screen's lanes, filled by the app's loop and emptied by its socket's writer.
+/// One screen's lanes, filled by the app's loop and emptied by its socket's writer or the
+/// task that owns its channels.
 #[derive(Default)]
 pub struct Lanes {
     inner: Mutex<Inner>,
@@ -39,9 +49,44 @@ pub struct Lanes {
 }
 
 impl Lanes {
+    /// Sends what is not values.
+    pub fn send(&self, message: Bytes) {
+        self.put(CONTROL, message, false);
+    }
+
+    /// Sends small values, but leaves them out while too many wait.
+    pub fn values(&self, message: Bytes) {
+        if self.waiting(VALUES) >= BEHIND {
+            self.inner.lock().expect("lanes").stale = true;
+            return;
+        }
+        self.put(VALUES, message, false);
+    }
+
+    /// Sends one import's value too big to share a message, in that import's own lane, which
+    /// keeps only the latest.
+    pub fn alone(&self, alias: &str, message: Bytes) {
+        let lane = {
+            let mut l = self.inner.lock().expect("lanes");
+            let next = VALUES + 1 + l.own.len() as u16;
+            *l.own.entry(alias.to_owned()).or_insert(next)
+        };
+        self.put(lane, message, true);
+    }
+
+    /// True once for a screen that missed small values. Those still waiting are dropped, as
+    /// all values follow.
+    pub fn missed(&self) -> bool {
+        let missed = std::mem::take(&mut self.inner.lock().expect("lanes").stale);
+        if missed {
+            self.clear(VALUES);
+        }
+        missed
+    }
+
     /// Puts a message on a lane. With `latest` it replaces those waiting there, but not one
     /// that has begun to go.
-    pub fn put(&self, lane: u16, message: Bytes, latest: bool) {
+    fn put(&self, lane: u16, message: Bytes, latest: bool) {
         let mut l = self.inner.lock().expect("lanes");
         let Inner { lanes, at, turn, spent, .. } = &mut *l;
         let queue = lanes.entry(lane).or_default();
@@ -65,13 +110,13 @@ impl Lanes {
     }
 
     /// How many messages wait on a lane, not counting one begun.
-    pub fn waiting(&self, lane: u16) -> usize {
+    fn waiting(&self, lane: u16) -> usize {
         let l = self.inner.lock().expect("lanes");
         l.lanes.get(&lane).map_or(0, |q| q.len() - usize::from(l.at.contains_key(&lane)))
     }
 
     /// Drops the messages waiting on a lane, but not one begun.
-    pub fn clear(&self, lane: u16) {
+    fn clear(&self, lane: u16) {
         let mut l = self.inner.lock().expect("lanes");
         let Inner { lanes, at, turn, spent, .. } = &mut *l;
         if let Some(queue) = lanes.get_mut(&lane) {
@@ -224,6 +269,39 @@ mod tests {
         lanes.put(VALUES, vec![3; 10].into(), false);
         lanes.clear(VALUES);
         assert!(lanes.take().is_none());
+    }
+
+    /// What waits, each message small enough for one piece.
+    fn sent(lanes: &Lanes) -> Vec<Bytes> {
+        std::iter::from_fn(|| lanes.take()).map(|piece| piece.slice(3..)).collect()
+    }
+
+    #[test]
+    fn a_screen_behind_misses_small_values_until_all_go_in_their_place() {
+        let lanes = Lanes::default();
+        for n in 0..BEHIND + 1 {
+            lanes.values(Bytes::from(vec![n as u8]));
+        }
+        assert_eq!(lanes.waiting(VALUES), BEHIND);
+        // a picture and what is not values still go
+        lanes.alone("Cam", Bytes::from_static(b"picture"));
+        lanes.send(Bytes::from_static(b"page"));
+        assert!(lanes.missed());
+        assert!(!lanes.missed());
+        lanes.values(Bytes::from_static(b"all"));
+        let all = [Bytes::from_static(b"page"), Bytes::from_static(b"all"), Bytes::from_static(b"picture")];
+        assert_eq!(sent(&lanes), all);
+    }
+
+    #[test]
+    fn each_import_s_value_too_big_to_share_has_its_own_lane() {
+        let lanes = Lanes::default();
+        lanes.alone("Cam", Bytes::from_static(b"one"));
+        lanes.alone("Other", Bytes::from_static(b"two"));
+        // the newer replaces the one waiting
+        lanes.alone("Cam", Bytes::from_static(b"three"));
+        let lanes_of: Vec<(u16, Bytes)> = std::iter::from_fn(|| lanes.take()).map(|p| (lane_of(&p).0, p.slice(3..))).collect();
+        assert_eq!(lanes_of, vec![(VALUES + 1, Bytes::from_static(b"three")), (VALUES + 2, Bytes::from_static(b"two"))]);
     }
 
     #[tokio::test]

@@ -77,7 +77,6 @@ export function connect() {
   const ws = new WebSocket(`${scheme}://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
   socket = ws;
-  parts.clear();
   setState("link", "connecting");
   ws.onopen = () => {
     tries = 0;
@@ -86,7 +85,8 @@ export function connect() {
     channelsTries = 0;
     void openChannels();
   };
-  ws.onmessage = (e) => joined(e.data as ArrayBuffer);
+  const join = joiner();
+  ws.onmessage = (e) => join(e.data as ArrayBuffer);
   ws.onclose = () => {
     clearInterval(beat);
     socket = null;
@@ -96,30 +96,31 @@ export function connect() {
   };
 }
 
-/** The pieces of each lane's message so far. The socket brings each message in pieces,
+/** Joins what the socket or the reliable channel brings into messages. Each comes in pieces,
  *  `[u16 lane][u8 more]` then its share, the lanes taking turns as the backend's lanes.rs
  *  sends them, so a small message never waits behind a whole picture. */
-const parts = new Map<number, Uint8Array[]>();
-
-function joined(data: ArrayBuffer) {
-  const bytes = new Uint8Array(data);
-  const lane = bytes[0] | (bytes[1] << 8);
-  const piece = bytes.subarray(3);
-  const before = parts.get(lane);
-  if (bytes[2] === 1) {
-    if (before) before.push(piece);
-    else parts.set(lane, [piece]);
-    return;
-  }
-  if (!before) return heard(piece);
-  parts.delete(lane);
-  const whole = new Uint8Array(before.reduce((n, p) => n + p.length, piece.length));
-  let at = 0;
-  for (const p of [...before, piece]) {
-    whole.set(p, at);
-    at += p.length;
-  }
-  heard(whole);
+function joiner(): (data: ArrayBuffer) => void {
+  const parts = new Map<number, Uint8Array[]>();
+  return (data) => {
+    const bytes = new Uint8Array(data);
+    const lane = bytes[0] | (bytes[1] << 8);
+    const piece = bytes.subarray(3);
+    const before = parts.get(lane);
+    if (bytes[2] === 1) {
+      if (before) before.push(piece);
+      else parts.set(lane, [piece]);
+      return;
+    }
+    if (!before) return heard(piece);
+    parts.delete(lane);
+    const whole = new Uint8Array(before.reduce((n, p) => n + p.length, piece.length));
+    let at = 0;
+    for (const p of [...before, piece]) {
+      whole.set(p, at);
+      at += p.length;
+    }
+    heard(whole);
+  };
 }
 
 function heard(bytes: Uint8Array) {
@@ -172,9 +173,11 @@ async function openChannels() {
     again: videos.size > 0,
   };
   channels = c;
+  const join = joiner();
+  c.reliable.onmessage = (e) => join(e.data as ArrayBuffer);
+  c.bestEffort.onmessage = (e) => heard(new Uint8Array(e.data as ArrayBuffer));
   for (const ch of [c.reliable, c.bestEffort]) {
     ch.binaryType = "arraybuffer";
-    ch.onmessage = (e) => heard(new Uint8Array(e.data as ArrayBuffer));
     ch.onopen = () => {
       if (channels === c && c.reliable.readyState === "open" && c.bestEffort.readyState === "open") {
         channelsTries = 0;

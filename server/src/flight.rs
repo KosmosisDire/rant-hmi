@@ -1,24 +1,25 @@
-//! How much a screen's socket may have on its way, as the screen confirms it: each ping carries
-//! the bytes written before it, and its pong says they all arrived. The socket keeps on the way
-//! what the link carries in its shortest round trip and `MARGIN` more, so what it sends next
-//! waits that long at most and nothing piles up in buffers it cannot take back.
+//! How much a screen's socket or reliable channel may have on its way, as the screen confirms
+//! it: on the socket each ping carries the bytes written before it and its pong says they all
+//! arrived, and on the channel its acks say so. Each keeps on the way what the link carries in
+//! its shortest round trip and `MARGIN` more, so what it sends next waits that long at most
+//! and nothing piles up in buffers it cannot take back.
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
 use crate::lanes::PIECE;
 
-/// The least a socket may have on its way, so a link not measured yet still moves.
+/// The least that may be on the way, so a link not measured yet still moves.
 const LEAST: u64 = 2 * PIECE as u64;
-/// How long past the shortest round trip what a socket sends may wait on the way.
+/// How long past the shortest round trip what is sent may wait on the way.
 const MARGIN: u64 = 100_000;
-/// A rate is measured over at least this long, in us, so pongs that come together do not
-/// inflate it.
+/// A rate is measured over at least this long, in us, so confirmations that come together do
+/// not inflate it.
 const SPAN: u64 = 50_000;
 /// The highest rate this far back, in us, is what the link carries.
 const RATES: u64 = 1_000_000;
 
-/// One socket's bytes on the way. Times are in us since the socket opened.
+/// One way's bytes on the way. Times are in us since it opened.
 #[derive(Default)]
 pub struct Flight {
     written: u64,
@@ -26,11 +27,11 @@ pub struct Flight {
     /// When the last ping left, and when the newest one answered had.
     asked: u64,
     answered: u64,
-    /// The pongs of the last second: when each one's ping left, the bytes written before it,
-    /// and when it came back.
-    pongs: VecDeque<(u64, u64, u64)>,
-    /// The shortest round trip since the socket opened. A busy link never shows a shorter one
-    /// again, so an older one is not forgotten.
+    /// The confirmations of the last second: when the bytes confirmed had all left, how many,
+    /// and when they were confirmed.
+    heard: VecDeque<(u64, u64, u64)>,
+    /// The shortest round trip since it opened. A busy link never shows a shorter one again,
+    /// so an older one is not forgotten.
     least: Option<u64>,
     /// Bytes a us the link carried, and when each was measured.
     rates: VecDeque<(u64, f64)>,
@@ -59,28 +60,47 @@ impl Flight {
             return None;
         }
         let trip = now.checked_sub(sent)?;
-        self.least = Some(self.least.map_or(trip, |l| l.min(trip)));
-        self.confirmed = self.confirmed.max(written);
+        self.trip(trip);
         self.answered = self.answered.max(sent);
-        // the bytes since the last pong heard before this ping left, a span or more earlier,
-        // over the longer of the two gaps, as a link may hold pongs and let them go together
-        if let Some(&(s, w, c)) = self.pongs.iter().rev().find(|(s, _, c)| *c <= sent && s + SPAN <= sent) {
-            let over = (sent - s).max(now - c);
-            if written > w {
-                self.rates.push_back((now, (written - w) as f64 / over as f64));
+        self.heard(written, sent, now);
+        Some(Duration::from_micros(trip))
+    }
+
+    /// A round trip of `trip` us, timed some other way.
+    pub fn trip(&mut self, trip: u64) {
+        self.least = Some(self.least.map_or(trip, |l| l.min(trip)));
+    }
+
+    /// How many bytes the way says are still on it `now`, the rest confirmed.
+    pub fn on_way(&mut self, bytes: u64, now: u64) {
+        let confirmed = self.written.saturating_sub(bytes);
+        if confirmed > self.confirmed {
+            self.heard(confirmed, now, now);
+        }
+    }
+
+    /// `confirmed` bytes in all arrived, every one of them sent by `left`.
+    fn heard(&mut self, confirmed: u64, left: u64, now: u64) {
+        self.confirmed = self.confirmed.max(confirmed);
+        // the bytes since the last confirmation heard before these left, a span or more
+        // earlier, over the longer of the two gaps, as a link may hold confirmations and let
+        // them go together
+        if let Some(&(l, w, c)) = self.heard.iter().rev().find(|(l, _, c)| *c <= left && l + SPAN <= left) {
+            let over = (left - l).max(now - c);
+            if confirmed > w {
+                self.rates.push_back((now, (confirmed - w) as f64 / over as f64));
             }
         }
-        self.pongs.push_back((sent, written, now));
-        while self.pongs.front().is_some_and(|(.., c)| c + RATES < now) {
-            self.pongs.pop_front();
+        self.heard.push_back((left, confirmed, now));
+        while self.heard.front().is_some_and(|(.., c)| c + RATES < now) {
+            self.heard.pop_front();
         }
         while self.rates.front().is_some_and(|(at, _)| at + RATES < now) {
             self.rates.pop_front();
         }
-        Some(Duration::from_micros(trip))
     }
 
-    /// Whether the socket may write more.
+    /// Whether more may be written.
     pub fn room(&self) -> bool {
         self.written - self.confirmed < self.window()
     }
@@ -169,6 +189,22 @@ mod tests {
         assert!(f.window() > LEAST);
         pong(&mut f, 1_200_000, 1_201_000);
         assert_eq!(f.window(), LEAST);
+    }
+
+    #[test]
+    fn acks_confirm_what_the_way_no_longer_holds() {
+        let mut f = Flight::default();
+        f.wrote(1 << 20);
+        f.trip(10_000);
+        f.on_way(1 << 20, 0);
+        // 150 KB a second through a channel whose acks come each 20 ms
+        let rate = 150.0 * 1024.0 / 1e6;
+        for n in 1..=50u64 {
+            f.on_way((1 << 20) - (rate * (n * 20_000) as f64) as u64, n * 20_000);
+        }
+        let want = rate * 110_000.0;
+        assert!((f.window() as f64 - want).abs() < want * 0.05, "{} against {want}", f.window());
+        assert!(!f.room());
     }
 
     #[test]
