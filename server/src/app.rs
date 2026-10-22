@@ -158,11 +158,13 @@ struct Held {
 /// of a repeat it happened on.
 type Waiting = (u32, Value, Option<(u32, Value)>);
 
-/// A rule's condition: true since when, and whether it has fired since it turned true.
+/// A rule's condition: true since when, and whether it has fired since it turned true, for the
+/// condition and code it was judged with.
 #[derive(Default)]
 struct Turned {
     since: Option<Instant>,
     fired: bool,
+    of: Option<(When, String)>,
 }
 
 /// The project's named lists, each told to the engine and every screen whole.
@@ -819,8 +821,12 @@ impl App {
         for (id, ms) in every {
             self.timers.entry(id).or_insert(now + Duration::from_millis(ms.into()));
         }
+        // one edited since it was judged is judged anew, so its new condition or code fires
         let rules = &self.pages.rules;
-        self.turned.retain(|id, _| rules.iter().any(|r| &r.id == id));
+        self.turned.retain(|id, t| rules.iter().any(|r| &r.id == id && t.of.as_ref().is_some_and(|(w, c)| *w == r.when && *c == r.code)));
+        for r in rules.iter().filter(|r| matches!(r.when, When::Turns { .. })) {
+            self.turned.entry(r.id.clone()).or_insert_with(|| Turned { of: Some((r.when.clone(), r.code.clone())), ..Turned::default() });
+        }
         self.script.send(ToScript::Judge);
     }
 
@@ -828,10 +834,10 @@ impl App {
     fn judged(&mut self, truths: Vec<(String, bool)>) {
         let now = Instant::now();
         for (id, truth) in truths {
-            let t = self.turned.entry(id).or_default();
+            let Some(t) = self.turned.get_mut(&id) else { continue };
             match (truth, t.since) {
                 (true, None) => t.since = Some(now),
-                (false, _) => *t = Turned::default(),
+                (false, _) => (t.since, t.fired) = (None, false),
                 _ => {}
             }
         }
