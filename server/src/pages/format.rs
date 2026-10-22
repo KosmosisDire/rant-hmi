@@ -8,7 +8,7 @@ use super::{Element, Handler, Input, Interface, Local, Page, Shows, Sizing, Tag,
 use crate::events::{self, rank};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
-const ATTRS: [&str; 7] = ["name", "repeat", "x", "y", "w", "h", "origin"];
+pub(crate) const ATTRS: [&str; 7] = ["name", "repeat", "x", "y", "w", "h", "origin"];
 const TEXT: &str = "text";
 /// An input's value, an attribute as HTML writes it.
 const VALUE: &str = "value";
@@ -21,7 +21,7 @@ const FIT: &str = "fit";
 const MARKUP: &str = "markup";
 
 /// What a tag keeps as attributes of its own, besides `ATTRS`.
-fn own_attrs(tag: Tag) -> &'static [&'static str] {
+pub(crate) fn own_attrs(tag: Tag) -> &'static [&'static str] {
     match tag {
         Tag::Input => &[VALUE],
         Tag::Svg => &[VIEWBOX, FIT],

@@ -13,6 +13,8 @@ pub mod mesh;
 pub mod pages;
 pub mod project;
 pub mod protocol;
+#[cfg(test)]
+mod reference;
 pub mod rtc;
 pub mod rules;
 pub mod script;

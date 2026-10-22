@@ -221,7 +221,7 @@ pub enum Tag {
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-const WORDS: [(Tag, &str); 16] = [
+pub(crate) const WORDS: [(Tag, &str); 16] = [
     (Tag::Div, "div"),
     (Tag::Group, "group"),
     (Tag::Span, "span"),

@@ -144,6 +144,20 @@ pub fn reserved(name: &str) -> bool {
     names.iter().any(|n| n == name) || !binds(name)
 }
 
+/// What api.js exports, its names and the words for each place, for the reference sheet.
+#[cfg(test)]
+pub(crate) fn api() -> serde_json::Value {
+    let rt = Runtime::new().expect("QuickJS starts");
+    let ctx = Context::full(&rt).expect("QuickJS makes a context");
+    let text = ctx
+        .with(|ctx| {
+            let exports = module(&ctx, API)?;
+            ctx.json_stringify(exports)?.expect("api.js exports values").to_string()
+        })
+        .expect("api.js loads");
+    serde_json::from_str(&text).expect("api.js exports JSON")
+}
+
 /// Whether a handler can declare `name`, which strict and async code asks the most of.
 fn binds(name: &str) -> bool {
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {

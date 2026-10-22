@@ -2,10 +2,15 @@
 // where it runs. Completion and the call hint read this, and tests hold each place's real names
 // to it, so no function goes without either.
 
-/** Where code runs: a property's expression where a screen draws it, a token, default or start
- *  alike on every screen, an expression the system works out, a page's handler there, a
- *  component's handler in its instance. A name with no `places` is read everywhere. */
-export const PLACES = ["expression", "theme", "system", "handler", "component"];
+/** Where code runs, each in words. A token, an input's default and a variable's start read alike
+ *  on every screen. A name with no `places` is read everywhere. */
+export const PLACES = {
+  expression: "what a screen draws",
+  theme: "tokens, defaults and starts",
+  system: "what the system works out",
+  handler: "a page's handlers",
+  component: "a component's handlers",
+};
 
 /** One name. `takes` lists a function's parameters in order, `?` marking one that may be left
  *  out and `...` the rest; a name without it is a value, and `fields` what it holds. `standard`
@@ -17,7 +22,7 @@ export const API = [
   { name: "min", takes: ["...values"], words: "the least" },
   { name: "max", takes: ["...values"], words: "the most" },
   { name: "clamp", takes: ["x", "low", "high"], words: "x kept between low and high" },
-  { name: "lerp", takes: ["a", "b", "t"], words: "from a toward b by t" },
+  { name: "lerp", takes: ["a", "b", "t"], words: "from a toward b by t, numbers or vectors" },
   { name: "round", takes: ["x"], words: "the nearest whole number" },
   { name: "floor", takes: ["x"], words: "the whole number at or below" },
   { name: "ceil", takes: ["x"], words: "the whole number at or above" },
@@ -37,7 +42,7 @@ export const API = [
   { name: "radians", takes: ["degrees"], words: "degrees as radians" },
   { name: "PI", words: "half a turn, in radians" },
   { name: "vec", takes: ["x", "y", "z?"], words: "a 2D or 3D vector" },
-  { name: "fromEuler", takes: ["roll", "pitch", "yaw"], words: "a rotation from roll, pitch and yaw" },
+  { name: "fromEuler", takes: ["roll", "pitch", "yaw"], words: "a quaternion from roll, pitch and yaw in radians" },
   { name: "mix", takes: ["a", "b", "t"], words: "a colour from a toward b by t" },
   { name: "time", words: "the clock", fields: [{ name: "now", words: "ms since 1970, moving where it shows" }] },
 

@@ -5,18 +5,8 @@ backend runs the same file.
 
 ## Functions
 
-| Name | Gives |
-| --- | --- |
-| `sqrt abs sign min max` | as `Math` has them |
-| `round floor ceil trunc` | a whole number |
-| `pow exp ln` | powers and the natural log. `log` stays the handler's logging |
-| `sin cos tan asin acos atan atan2 hypot` | in radians |
-| `degrees(r) radians(d) PI` | turning between the two |
-| `clamp(x, low, high)` | `x` kept between the two |
-| `lerp(a, b, t)` | from `a` toward `b`, numbers or vectors |
-| `vec(x, y)`, `vec(x, y, z)` | a 2D or 3D vector |
-| `fromEuler(roll, pitch, yaw)` | a quaternion, in radians |
-| `mix(a, b, t)` | a colour from `a` toward `b` |
+[reference.md](reference.md#code) lists every function and name code reads, and where. Angles
+are in radians, and the natural log is `ln`, since `log` writes to the handler's log.
 
 A project's own name hides one of these, so no import or variable may take one. A
 component's input may, as a knob's `min` and `max`: the plain name is the input, and a call

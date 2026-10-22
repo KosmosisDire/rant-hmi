@@ -12,6 +12,6 @@ export interface Name {
   fields?: { name: string; words: string }[];
 }
 
-export declare const PLACES: Place[];
+export declare const PLACES: Readonly<Record<Place, string>>;
 export declare const API: Name[];
 export declare function apiIn(place: Place): Name[];

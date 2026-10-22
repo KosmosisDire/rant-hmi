@@ -2,6 +2,7 @@
 
 An HMI project is a folder of plain text files. The editor writes them and so may you: a saved
 change reaches every screen, and a file with a mistake leaves the last good one in place.
+[reference.md](reference.md) lists every element, property, event and name in one place.
 
 ```
 hmi.toml                 its name, the page screens open on, and its WebRTC servers
@@ -130,9 +131,9 @@ gamepads and to decode video itself.
   Space, and `code="KeyA"` the key where a sits. With neither it takes any key. `p` holds
   `key`, `code`, `shift`, `ctrl` and `alt`, and a keyrepeat runs `every="ms"`, 100.
 - `buttondown` and `buttonup` hear a gamepad's buttons the same way. `button="south"` takes
-  one by where it sits, whatever its maker prints on it: south, east, west, north, lb, rb, lt,
-  rt, back, start, ls, rs, up, down, left, right, home. `pad="1"` takes only the second pad. `p`
-  holds `button` and `pad`.
+  one by where it sits, whatever its maker prints on it, as
+  [reference.md](reference.md#the-button-filter) lists them. `pad="1"` takes only the second
+  pad. `p` holds `button` and `pad`.
 - `axes` hears the sticks and triggers once a frame while they move, then once at rest with
   zeros. `p` holds `lx`, `ly`, `rx`, `ry` from -1 to 1, each y up, `lt` and `rt` from 0 to 1,
   every axis in `axes`, and `pad`. Each counts from 0 past `deadband="0.1"`.
