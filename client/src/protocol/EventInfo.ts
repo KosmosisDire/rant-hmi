@@ -12,8 +12,8 @@ export type EventInfo = { name: string, from: Sender,
  */
 words: string, 
 /**
- * A second one while the first still runs is dropped. Any other is a stream, as a drag,
- * whose latest must land, so it waits for the run.
+ * A second one while the first still runs is dropped, unless it ends a held input. Any
+ * other is a stream, as a drag, whose latest must land, so it waits for the run.
  */
 once: boolean, settings: Array<SettingInfo>, 
 /**
