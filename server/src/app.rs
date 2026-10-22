@@ -86,28 +86,27 @@ impl Outbox {
         self.put(CONTROL, bytes, false);
     }
 
-    /// Sends values: with `alone`, one import's value too big to share a message, on that
-    /// import's own lane.
+    /// Sends values, but leaves them out while the screen is behind, since newer ones replace
+    /// them. With `alone`, one import's value too big to share a message goes in that
+    /// import's own lane, which keeps only the latest.
     fn values(&self, alone: Option<&str>, bytes: Bytes) {
-        let lane = match alone {
-            None => VALUES,
-            Some(alias) => {
-                let mut own = self.own.borrow_mut();
-                let next = VALUES + 1 + own.len() as u16;
-                *own.entry(alias.to_owned()).or_insert(next)
-            }
+        if self.late() || self.queued.load(Ordering::Relaxed) > BEHIND {
+            self.stale.set(true);
+            return;
+        }
+        let Some(alias) = alone else { return self.put(VALUES, bytes, false) };
+        let lane = {
+            let mut own = self.own.borrow_mut();
+            let next = VALUES + 1 + own.len() as u16;
+            *own.entry(alias.to_owned()).or_insert(next)
         };
         self.put(lane, bytes, true);
     }
 
-    /// Sends, but leaves values out while the screen is behind, since newer ones replace them.
-    fn put(&self, lane: u16, bytes: Bytes, values: bool) {
-        if values && (self.late() || self.queued.load(Ordering::Relaxed) > BEHIND) {
-            self.stale.set(true);
-            return;
-        }
+    fn put(&self, lane: u16, bytes: Bytes, latest: bool) {
         self.queued.fetch_add(bytes.len(), Ordering::Relaxed);
-        self.lanes.put(lane, bytes);
+        let gone = self.lanes.put(lane, bytes, latest);
+        self.queued.fetch_sub(gone, Ordering::Relaxed);
     }
 
     fn late(&self) -> bool {
@@ -1514,6 +1513,7 @@ mod tests {
         let lanes = Arc::new(Lanes::default());
         let queued = Arc::new(AtomicUsize::new(BEHIND + 1));
         let out = Outbox::new(lanes.clone(), queued.clone());
+        out.values(Some("Cam"), Bytes::from_static(b"picture"));
         out.values(None, Bytes::from_static(b"values"));
         out.send(Bytes::from_static(b"page"));
         assert_eq!(sent(&lanes), vec![Bytes::from_static(b"page")]);
@@ -1521,8 +1521,8 @@ mod tests {
         queued.store(0, Ordering::Relaxed);
         assert!(out.caught_up());
         assert!(!out.caught_up());
-        out.values(None, Bytes::from_static(b"values"));
-        assert_eq!(sent(&lanes), vec![Bytes::from_static(b"values")]);
+        out.values(Some("Cam"), Bytes::from_static(b"picture"));
+        assert_eq!(sent(&lanes), vec![Bytes::from_static(b"picture")]);
     }
 
     #[test]
@@ -1546,11 +1546,14 @@ mod tests {
         assert!(shared.is_some());
         assert_eq!(alone.iter().map(|(alias, _)| alias.as_str()).collect::<Vec<_>>(), vec!["Cam"]);
         let lanes = Arc::new(Lanes::default());
-        let out = Outbox::new(lanes.clone(), Arc::new(AtomicUsize::new(0)));
+        let queued = Arc::new(AtomicUsize::new(0));
+        let out = Outbox::new(lanes.clone(), queued.clone());
         out.values(Some("Cam"), Bytes::from_static(b"one"));
         out.values(Some("Other"), Bytes::from_static(b"two"));
+        // the newer replaces the one waiting, and what waits counts only it
         out.values(Some("Cam"), Bytes::from_static(b"three"));
-        let lanes_of: Vec<u16> = std::iter::from_fn(|| lanes.take()).map(|(p, _)| u16::from_le_bytes([p[0], p[1]])).collect();
-        assert_eq!(lanes_of, vec![VALUES + 1, VALUES + 2, VALUES + 1]);
+        assert_eq!(queued.load(Ordering::Relaxed), 8);
+        let lanes_of: Vec<(u16, Bytes)> = std::iter::from_fn(|| lanes.take()).map(|(p, _)| (u16::from_le_bytes([p[0], p[1]]), p.slice(3..))).collect();
+        assert_eq!(lanes_of, vec![(VALUES + 1, Bytes::from_static(b"three")), (VALUES + 2, Bytes::from_static(b"two"))]);
     }
 }

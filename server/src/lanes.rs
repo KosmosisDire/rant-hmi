@@ -2,6 +2,8 @@
 //! each message is cut into pieces and the socket takes one piece from each lane with work in
 //! turn, so a small message never waits behind a whole picture. A piece is a binary frame,
 //! `[u16 lane][u8 more]` then its share of the message, `more` 1 while pieces of it follow.
+//! A lane that keeps only the latest holds one message waiting at most, as Rant's KEEP_LAST
+//! does, so a camera on a slow link sends what is newest at the rate the link carries.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
@@ -34,19 +36,29 @@ pub struct Lanes {
 }
 
 impl Lanes {
-    pub fn put(&self, lane: u16, message: Bytes) {
+    /// Puts a message on a lane. With `latest` it replaces the one waiting there, unless that
+    /// one has begun to go, and gives back how many bytes it replaced.
+    pub fn put(&self, lane: u16, message: Bytes, latest: bool) -> usize {
         let mut l = self.inner.lock().expect("lanes");
-        let queue = l.lanes.entry(lane).or_default();
+        let Inner { lanes, at, turn, .. } = &mut *l;
+        let queue = lanes.entry(lane).or_default();
+        let begun = usize::from(at.contains_key(&lane));
+        if latest && queue.len() > begun {
+            let gone = queue.pop_back().map_or(0, |m| m.len());
+            queue.push_back(message);
+            return gone;
+        }
         queue.push_back(message);
-        if queue.len() == 1 && !l.turn.contains(&lane) {
+        if queue.len() == 1 && !turn.contains(&lane) {
             if lane == CONTROL {
-                l.turn.push_front(lane);
+                turn.push_front(lane);
             } else {
-                l.turn.push_back(lane);
+                turn.push_back(lane);
             }
         }
         drop(l);
         self.ready.notify_one();
+        0
     }
 
     /// No more messages: the writer ends once it has sent what waits.
@@ -109,7 +121,7 @@ mod tests {
     fn a_large_message_goes_in_pieces_that_join_back_into_it() {
         let lanes = Lanes::default();
         let message: Vec<u8> = (0..PIECE * 2 + 5).map(|i| i as u8).collect();
-        lanes.put(5, message.clone().into());
+        lanes.put(5, message.clone().into(), false);
         let mut joined = Vec::new();
         let mut pieces = 0;
         while let Some((piece, _)) = lanes.take() {
@@ -125,9 +137,9 @@ mod tests {
     #[test]
     fn lanes_take_turns_and_control_goes_first() {
         let lanes = Lanes::default();
-        lanes.put(7, vec![0; PIECE * 3].into());
-        lanes.put(VALUES, vec![1; 10].into());
-        lanes.put(CONTROL, vec![2; 10].into());
+        lanes.put(7, vec![0; PIECE * 3].into(), false);
+        lanes.put(VALUES, vec![1; 10].into(), false);
+        lanes.put(CONTROL, vec![2; 10].into(), false);
         let order: Vec<(u16, bool, usize)> = std::iter::from_fn(|| lanes.take()).map(|(p, _)| lane_of(&p)).collect();
         assert_eq!(order, vec![(CONTROL, false, 10), (7, true, PIECE), (VALUES, false, 10), (7, true, PIECE), (7, false, PIECE)]);
     }
@@ -135,18 +147,33 @@ mod tests {
     #[test]
     fn a_small_message_waits_for_one_piece_of_each_busy_lane_at_most() {
         let lanes = Lanes::default();
-        lanes.put(7, vec![0; PIECE * 4].into());
-        lanes.put(8, vec![0; PIECE * 4].into());
+        lanes.put(7, vec![0; PIECE * 4].into(), false);
+        lanes.put(8, vec![0; PIECE * 4].into(), false);
         assert_eq!(lane_of(&lanes.take().unwrap().0).0, 7);
-        lanes.put(VALUES, vec![1; 10].into());
+        lanes.put(VALUES, vec![1; 10].into(), false);
         let next: Vec<u16> = std::iter::from_fn(|| lanes.take()).take(3).map(|(p, _)| lane_of(&p).0).collect();
         assert_eq!(next, vec![8, 7, VALUES]);
+    }
+
+    #[test]
+    fn a_latest_lane_keeps_the_newest_waiting_and_finishes_the_one_begun() {
+        let lanes = Lanes::default();
+        assert_eq!(lanes.put(7, vec![1; PIECE * 2].into(), true), 0);
+        assert_eq!(lanes.put(7, vec![2; 10].into(), true), PIECE * 2);
+        assert_eq!(lanes.take().map(|(p, _)| p[3]), Some(2));
+        lanes.put(7, vec![3; PIECE * 2].into(), true);
+        assert_eq!(lanes.take().map(|(p, _)| (p[2], p[3])), Some((1, 3)));
+        // begun, so it stays, and only the newest of those after it waits
+        lanes.put(7, vec![4; 10].into(), true);
+        assert_eq!(lanes.put(7, vec![5; 10].into(), true), 10);
+        let rest: Vec<u8> = std::iter::from_fn(|| lanes.take()).map(|(p, _)| p[3]).collect();
+        assert_eq!(rest, vec![3, 5]);
     }
 
     #[tokio::test]
     async fn the_writer_ends_once_closed_and_empty() {
         let lanes = Lanes::default();
-        lanes.put(CONTROL, vec![1].into());
+        lanes.put(CONTROL, vec![1].into(), false);
         lanes.close();
         assert!(lanes.next().await.is_some());
         assert!(lanes.next().await.is_none());
