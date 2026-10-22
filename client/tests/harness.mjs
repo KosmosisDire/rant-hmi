@@ -130,12 +130,12 @@ function appRunning(project, domain) {
  *  children inherit it. */
 const appEnv = (home) => ({ HMI_ADDON: ADDON, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: undefined });
 
-/** rant-hmi-app showing `what`, a project with a demo line on `domain` or an HMI's address, in a
- *  window Playwright drives, with `more` arguments. Its debugging ports listen, so `openApp` checks
- *  what the app does alone. */
-export async function driveApp(what, { home, domain = null, more = [] }) {
-  const { line, args } = domain === null ? { line: null, args: [what] } : appRunning(what, domain);
-  const app = await _electron.launch({ executablePath: electron(), args: [APP, ...args, ...more], cwd: ROOT, env: environment(appEnv(home)) });
+/** rant-hmi-app showing `what`, a project with a demo line on `domain`, an HMI's address or null for
+ *  nothing, in a window Playwright drives, started in `cwd` with `more` arguments. Its debugging
+ *  ports listen, so `openApp` checks what the app does alone. */
+export async function driveApp(what, { home, domain = null, more = [], cwd = ROOT }) {
+  const { line, args } = domain === null ? { line: null, args: what === null ? [] : [what] } : appRunning(what, domain);
+  const app = await _electron.launch({ executablePath: electron(), args: [APP, ...args, ...more], cwd, env: environment(appEnv(home)) });
   const child = app.process();
   child.log = "";
   child.stdout.on("data", (d) => (child.log += d));
