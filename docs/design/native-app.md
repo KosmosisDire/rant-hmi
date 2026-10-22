@@ -283,7 +283,9 @@ Chosen: a launcher with archives appended.
   which makes Electron plain Node, so the harness clears it. Playwright starts Electron through
   `cmd.exe` on Windows, so a kill ends only cmd and the harness ends the whole tree. Playwright
   reads the app's output itself until launch returns, so a start error is checked on the
-  window, not in the log.
+  window, not in the log. The harness starts programs with their console hidden, and Windows
+  then sometimes started the app's window hidden too, which a polite close never reaches, so
+  the app is started shown.
 
 Choices worth a second look:
 

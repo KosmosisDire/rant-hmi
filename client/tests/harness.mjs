@@ -41,8 +41,10 @@ function environment(extra) {
   return Object.fromEntries(Object.entries({ ...process.env, RUST_BACKTRACE: "1", NO_COLOR: "1", ...extra }).filter(([, v]) => v !== undefined));
 }
 
-function run(path, args, env = {}) {
-  const child = spawn(path, args, { cwd: ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: environment(env) });
+/** Starts a program, its console hidden. A program with a window of its own passes `shown`, since
+ *  Windows may start that window hidden too, and a hidden window never hears it is closed. */
+function run(path, args, env = {}, { shown = false } = {}) {
+  const child = spawn(path, args, { cwd: ROOT, windowsHide: !shown, stdio: ["ignore", "pipe", "pipe"], env: environment(env) });
   child.log = "";
   child.stdout.on("data", (d) => (child.log += d));
   child.stderr.on("data", (d) => (child.log += d));
@@ -161,7 +163,7 @@ export async function driveApp(what, { home, domain = null, more = [] }) {
  *  once its screen has connected. Its log tells what the window did. */
 export async function openApp(project, { home, domain }) {
   const { line, args } = appRunning(project, domain);
-  const app = run(electron(), [APP, ...args], appEnv(home));
+  const app = run(electron(), [APP, ...args], appEnv(home), { shown: true });
   const start = Date.now();
   while (!app.log.includes("screen 1 connected")) {
     if (Date.now() - start > 20000) {
