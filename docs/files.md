@@ -76,6 +76,15 @@ A screen opens a WebRTC connection beside its socket where it can, for speed and
 - Without WebRTC a screen decodes video itself from frames on its socket, which only a page
   on https or localhost can do. Elsewhere the video says why it does not play.
 
+## https
+
+The HMI serves https on its port beside http. A screen away from the HMI's host needs it for
+gamepads and to decode video itself.
+
+- The HMI makes its own certificate once and keeps it in `~/.rant/hmi` for every project on
+  the host. A browser warns about it until told to trust it.
+- `--cert` and `--key` take a real certificate and its key, as PEM files.
+
 ## Pages
 
 ```html

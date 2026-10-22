@@ -21,17 +21,23 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 getrandom = "0.3"
 if-addrs = "0.15"
 notify = "8"
+# the HMI's own certificate for https, on the aws-lc-rs WebRTC already builds
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 rquickjs = "=0.14.0"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { version = "1", features = ["derive"] }
 # pure Rust crypto, so no OpenSSL to find on Windows or a target
 str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"] }
 # 1.54.0 races resetting an interval's timer against the driver firing it (tokio PR 8458)
 tokio = { version = ">=1.51, <1.54", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
+tokio-util = "0.7"
 toml = "0.8"
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = "10"
+x509-cert = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 # tests write values as JSON literals, which the value! macro makes ours

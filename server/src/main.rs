@@ -2,6 +2,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
 use clap::Parser;
+use rant_hmi::tls::{self, Certificate};
 use tracing_subscriber::EnvFilter;
 
 /// Rant HMI: build and run HMIs for a Rant mesh in a browser.
@@ -29,6 +30,12 @@ struct Args {
     /// The ports WebRTC may take, as 6740-6759. Empty takes any.
     #[arg(long, default_value = "", value_parser = ports)]
     rtc_ports: Ports,
+    /// A certificate for https, as PEM, in place of the HMI's own self signed one.
+    #[arg(long, requires = "key")]
+    cert: Option<PathBuf>,
+    /// The certificate's private key, as PEM.
+    #[arg(long, requires = "cert")]
+    key: Option<PathBuf>,
 }
 
 /// A range of ports, or none.
@@ -59,6 +66,10 @@ async fn main() -> anyhow::Result<()> {
         domain: a.domain,
         loopback: a.loopback,
         rtc_ports: a.rtc_ports.0,
+        certificate: match (a.cert, a.key) {
+            (Some(cert), Some(key)) => Some(Certificate::Given { cert, key }),
+            _ => tls::kept().map(Certificate::Own),
+        },
     })
     .await
 }

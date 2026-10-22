@@ -34,8 +34,8 @@ function transcoder() {
 const domainOf = (slot) => (slot === 0 ? 153 : 154 + slot);
 const portOf = (slot) => 6761 + slot;
 
-function run(path, args) {
-  const child = spawn(path, args, { cwd: ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RUST_BACKTRACE: "1", NO_COLOR: "1" } });
+function run(path, args, env = {}) {
+  const child = spawn(path, args, { cwd: ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RUST_BACKTRACE: "1", NO_COLOR: "1", ...env } });
   child.log = "";
   child.stdout.on("data", (d) => (child.log += d));
   child.stderr.on("data", (d) => (child.log += d));
@@ -61,13 +61,15 @@ export async function startSystem({ empty, slot = 0 } = {}) {
   const transcoding = transcoder();
   const video = transcoding && run(transcoding, ["--domain", domain, "--interface", "127.0.0.1"]);
   await new Promise((r) => setTimeout(r, 300));
+  // a home of its own, where the backend keeps its certificate, never the user's
+  const home = join(temp, "home");
   const backend = run(join(BUILD, `rant-hmi${exe}`), [
     project,
     "--port", String(portOf(slot)),
     "--domain", domain,
     "--loopback",
     "--client", CLIENT,
-  ]);
+  ], { HOME: home, USERPROFILE: home });
   const url = `http://127.0.0.1:${portOf(slot)}`;
   const start = Date.now();
   for (;;) {
@@ -83,6 +85,7 @@ export async function startSystem({ empty, slot = 0 } = {}) {
     url,
     ws: `ws://127.0.0.1:${portOf(slot)}/ws`,
     project,
+    home,
     backend,
     transcoder: video,
     stop() {

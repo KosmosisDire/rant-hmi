@@ -18,6 +18,7 @@ pub mod rules;
 pub mod script;
 pub mod status;
 pub mod stun;
+pub mod tls;
 pub mod value;
 pub mod watch;
 pub mod web;
@@ -44,6 +45,8 @@ pub struct Options {
     pub loopback: bool,
     /// The ports WebRTC may take, else any.
     pub rtc_ports: Option<RangeInclusive<u16>>,
+    /// What https serves with, else it serves http only.
+    pub certificate: Option<tls::Certificate>,
 }
 
 /// The node's name on the mesh: one plain name, as tooling nodes take.
@@ -61,7 +64,23 @@ pub async fn run(o: Options) -> Result<()> {
     let listener = TcpListener::bind((o.bind.as_str(), o.port))
         .await
         .with_context(|| format!("could not listen on {}:{}", o.bind, o.port))?;
-    info!("{} on http://{}", project.info.name, listener.local_addr()?);
+    // a real certificate must work, while the HMI's own failing leaves http
+    let tls = match &o.certificate {
+        None => None,
+        Some(c) => match (tls::acceptor(c), c) {
+            (Ok(tls), _) => Some(tls),
+            (Err(e), tls::Certificate::Given { .. }) => return Err(e),
+            (Err(e), tls::Certificate::Own(_)) => {
+                warn!("serving no https, as the HMI's own certificate failed: {e:#}");
+                None
+            }
+        },
+    };
+    let at = listener.local_addr()?;
+    match tls {
+        Some(_) => info!("{} on http://{at} and https://{at}", project.info.name),
+        None => info!("{} on http://{at}", project.info.name),
+    }
     let index = std::fs::read_to_string(o.client.join("index.html")).unwrap_or_default();
     if index.is_empty() {
         info!("no client at {}: build it with npm run build in client", o.client.display());
@@ -69,7 +88,7 @@ pub async fn run(o: Options) -> Result<()> {
     // the built client's script, whose name changes with each build
     let build = index.split("src=\"").nth(1).and_then(|s| s.split('"').next()).filter(|s| s.starts_with("/assets/")).unwrap_or_default().to_owned();
     let (inbound, received) = unbounded_channel();
-    tokio::spawn(web::serve(listener, o.client, inbound));
+    tokio::spawn(web::serve(listener, tls, o.client, inbound));
     let (said, heard) = unbounded_channel();
     let script = script::Script::start(said);
     let (changes, changed) = unbounded_channel();

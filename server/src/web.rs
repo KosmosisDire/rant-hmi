@@ -1,4 +1,5 @@
-//! HTTP and WebSocket: the built client from one folder, and one socket per screen at `/ws`.
+//! HTTP and WebSocket: the built client from one folder, and one socket per screen at `/ws`,
+//! plain or over TLS on the one port.
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -18,12 +19,15 @@ use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::time::{MissedTickBehavior, interval, timeout};
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::server::TlsStream;
+use tokio_util::either::Either;
 use axum::http::{HeaderValue, header};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeader;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 use crate::app::{Inbound, Outbox};
 use crate::flight::Flight;
@@ -41,7 +45,9 @@ struct Shared {
     next: Arc<AtomicU32>,
 }
 
-pub async fn serve(listener: TcpListener, client: PathBuf, inbound: UnboundedSender<Inbound>) {
+/// Serves on `listener`, https too for a connection that opens with a TLS hello when `tls`
+/// answers one.
+pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: PathBuf, inbound: UnboundedSender<Inbound>) {
     let pages = ServeDir::new(&client).fallback(ServeFile::new(client.join("index.html")));
     // a screen asks again each time, so after an update it loads the new client
     let pages = SetResponseHeader::overriding(pages, header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
@@ -49,29 +55,77 @@ pub async fn serve(listener: TcpListener, client: PathBuf, inbound: UnboundedSen
         .route("/ws", get(upgrade))
         .fallback_service(pages)
         .with_state(Shared { inbound, next: Arc::new(AtomicU32::new(1)) });
-    if let Err(e) = axum::serve(NoDelay(listener), app.into_make_service_with_connect_info::<Reached>()).await {
+    let front = Front::open(listener, tls);
+    if let Err(e) = axum::serve(front, app.into_make_service_with_connect_info::<Reached>()).await {
         error!("the web server stopped: {e}");
     }
 }
 
-/// The listener, each connection sending at once. Nagle's wait for an ack would hold a small
-/// message, a ping or a value, until the screen's delayed ack, up to tens of ms.
-struct NoDelay(TcpListener);
+/// A connection, plain or past its TLS hello.
+type Conn = Either<TcpStream, TlsStream<TcpStream>>;
 
-impl Listener for NoDelay {
-    type Io = TcpStream;
+/// How long a connection may take to say which it is and finish its hello.
+const OPENING: Duration = Duration::from_secs(30);
+
+/// The connections ready to serve. Each opens in a task of its own, so a slow hello holds no
+/// other.
+struct Front {
+    ready: mpsc::Receiver<(Conn, SocketAddr)>,
+    local: SocketAddr,
+}
+
+impl Front {
+    fn open(mut listener: TcpListener, tls: Option<TlsAcceptor>) -> Front {
+        let local = listener.local_addr().unwrap_or_else(|_| SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)));
+        let (ready, rx) = mpsc::channel(64);
+        tokio::spawn(async move {
+            loop {
+                let (io, addr) = Listener::accept(&mut listener).await;
+                // Nagle's wait for an ack would hold a small message, a ping or a value, until
+                // the screen's delayed ack, up to tens of ms
+                if let Err(e) = io.set_nodelay(true) {
+                    warn!("could not send at once to {addr}: {e}");
+                }
+                let (ready, tls) = (ready.clone(), tls.clone());
+                tokio::spawn(async move {
+                    match timeout(OPENING, opened(io, tls)).await {
+                        Ok(Ok(conn)) => {
+                            let _ = ready.send((conn, addr)).await;
+                        }
+                        // a browser that does not trust the certificate hangs up mid hello
+                        Ok(Err(e)) => debug!("{addr} did not finish its TLS hello: {e}"),
+                        Err(_) => debug!("{addr} said nothing"),
+                    }
+                });
+            }
+        });
+        Front { ready: rx, local }
+    }
+}
+
+/// `io` as it opens: over TLS when its first byte begins a TLS hello and `tls` answers it.
+async fn opened(io: TcpStream, tls: Option<TlsAcceptor>) -> io::Result<Conn> {
+    const HANDSHAKE: u8 = 0x16;
+    let mut first = [0u8; 1];
+    match tls {
+        Some(tls) if io.peek(&mut first).await? == 1 && first[0] == HANDSHAKE => Ok(Either::Right(tls.accept(io).await?)),
+        _ => Ok(Either::Left(io)),
+    }
+}
+
+impl Listener for Front {
+    type Io = Conn;
     type Addr = SocketAddr;
 
-    async fn accept(&mut self) -> (TcpStream, SocketAddr) {
-        let (io, addr) = Listener::accept(&mut self.0).await;
-        if let Err(e) = io.set_nodelay(true) {
-            warn!("could not send at once to {addr}: {e}");
+    async fn accept(&mut self) -> (Conn, SocketAddr) {
+        match self.ready.recv().await {
+            Some(ready) => ready,
+            None => std::future::pending().await,
         }
-        (io, addr)
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.0.local_addr()
+        Ok(self.local)
     }
 }
 
@@ -83,9 +137,13 @@ struct Reached {
     remote: IpAddr,
 }
 
-impl Connected<IncomingStream<'_, NoDelay>> for Reached {
-    fn connect_info(stream: IncomingStream<'_, NoDelay>) -> Reached {
-        let local = stream.io().local_addr().map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |a| a.ip().to_canonical());
+impl Connected<IncomingStream<'_, Front>> for Reached {
+    fn connect_info(stream: IncomingStream<'_, Front>) -> Reached {
+        let tcp = match stream.io() {
+            Either::Left(tcp) => tcp,
+            Either::Right(tls) => tls.get_ref().0,
+        };
+        let local = tcp.local_addr().map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |a| a.ip().to_canonical());
         Reached { local, remote: stream.remote_addr().ip().to_canonical() }
     }
 }
