@@ -75,8 +75,8 @@ pub struct EventInfo {
     pub from: Sender,
     /// What happens, in a few words.
     pub words: &'static str,
-    /// A second one while the first still runs is dropped. Any other is a stream, as a drag,
-    /// whose latest must land, so it waits for the run.
+    /// A second one while the first still runs is dropped, unless it ends a held input. Any
+    /// other is a stream, as a drag, whose latest must land, so it waits for the run.
     pub once: bool,
     pub settings: &'static [SettingInfo],
     /// What its `p` holds: each field's name and words.
