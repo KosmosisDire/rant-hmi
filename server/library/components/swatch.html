@@ -1,0 +1,10 @@
+<component name="Swatch" size="20x8" sizing="fill">
+  <prop name="value" default="{ r: 76, g: 141, b: 255, a: 255 }"/>
+  <prop name="label" default='"Colour"'/>
+  <prop name="fill" default="$panel"/>
+  <prop name="radius" default="$radius"/>
+  <div id="e1" name="card" x="0" y="0" w="100%" h="100%" style='align: "center left"; background: fill; border-radius: radius; gap: 0; layout: "right"'>
+    <div id="e2" name="chip" x="1" y="1" w="4" h="4" style='background: typeof value === "string" ? value : `rgba(${value.r}, ${value.g}, ${value.b}, ${value.a / 255})`; border-color: $border2; border-radius: $radiusSmall; border-style: "solid"; border-width: 0.1; margin-left: 1.5'/>
+    <Readout id="e3" name="Readout" x="3" y="3" w="fill" h="fill" fill='"transparent"' label="label" value='typeof value === "string" ? value : "#" + [value.r, value.g, value.b].map((c) => c.toString(16).padStart(2, "0")).join("")'/>
+  </div>
+</component>

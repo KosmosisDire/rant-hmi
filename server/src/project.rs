@@ -578,7 +578,10 @@ mod tests {
         let pages = crate::pages::Pages::open(&dir).unwrap();
         let mut names: Vec<&str> = pages.list.iter().filter(|p| p.interface.is_some()).map(|p| p.name.as_str()).collect();
         names.sort();
-        assert_eq!(names, ["Button", "Dropdown", "Gauge", "Joystick", "Joystick1D", "Knob", "ModeSwitch", "Plot", "Readout", "Slider", "Toggle"]);
+        assert_eq!(
+            names,
+            ["Bar", "Bars", "Button", "Dropdown", "Gauge", "Joints", "Joystick", "Joystick1D", "Knob", "Lamp", "ModeSwitch", "Plot", "Pose", "Position", "Readout", "Slider", "Swatch", "Table", "Toggle"]
+        );
         // and Rant's palette, worked out as tokens
         let theme = Project::open(&dir).unwrap().tokens;
         assert!(theme.iter().any(|t| t.name == "accentBg" && t.dark == "$accent.alpha(0.15)"));

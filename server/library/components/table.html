@@ -1,0 +1,21 @@
+<component name="Table" size="40x16" sizing="fill">
+  <prop name="rows" default='[{ part: "P1", weight: 1.25 }, { part: "P2", weight: 0.8 }]'/>
+  <prop name="columns" default="[]"/>
+  <prop name="digits" default="2"/>
+  <prop name="fill" default="$panel"/>
+  <prop name="stripe" default="$panel2"/>
+  <prop name="headColour" default="$dim"/>
+  <prop name="textColour" default="$text"/>
+  <prop name="textSize" default="1.4"/>
+  <prop name="radius" default="$radius"/>
+  <div id="e1" name="card" x="0" y="0" w="100%" h="100%" style='background: fill; border-radius: radius; gap: 0; layout: "down"; overflow: "hidden"; padding: 1'>
+    <div id="e2" name="head" x="1" y="1" w="fill" h="hug" style='gap: 1; layout: "right"; padding: 0.6'>
+      <span id="e3" name="heading" repeat="columns.length ? columns : Object.keys(rows[0] ?? {})" x="1" y="1" w="fill" h="hug" style="color: headColour; font-size: textSize; font-weight: 600">item</span>
+    </div>
+    <div id="e4" name="body" x="3" y="3" w="fill" h="fill" style='gap: 0; layout: "down"; overflow: "auto"'>
+      <div id="e5" name="row" repeat="rows" x="1" y="1" w="fill" h="hug" style='background: index % 2 ? stripe : "transparent"; border-radius: $radiusSmall; gap: 1; layout: "right"; padding: 0.6'>
+        <span id="e6" name="cell" repeat="(columns.length ? columns : Object.keys(item)).map((c) => item[c])" x="1" y="1" w="fill" h="hug" style="color: textColour; font-size: textSize">typeof item === "number" ? (Number.isInteger(item) ? String(item) : item.toFixed(digits)) : typeof item === "object" ? JSON.stringify(item) : String(item)</span>
+      </div>
+    </div>
+  </div>
+</component>

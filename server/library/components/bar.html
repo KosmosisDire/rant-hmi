@@ -1,0 +1,11 @@
+<component name="Bar" size="24x2" sizing="fill">
+  <prop name="value" default="0.6"/>
+  <prop name="min" default="0"/>
+  <prop name="max" default="1"/>
+  <prop name="colour" default="$accent"/>
+  <prop name="trackColour" default="$panel3"/>
+  <prop name="radius" default="$radiusPill"/>
+  <div id="e1" name="track" x="0" y="0" w="100%" h="100%" style="background: trackColour; border-radius: radius">
+    <div id="e2" name="level" x="Math.min(clamp(-min / (max - min), 0, 1), clamp((value - min) / (max - min), 0, 1)) * 100%" y="0" w="Math.abs(clamp((value - min) / (max - min), 0, 1) - clamp(-min / (max - min), 0, 1)) * 100%" h="100%" style="background: colour; border-radius: radius"/>
+  </div>
+</component>

@@ -47,6 +47,29 @@ A component's interface comes first in its file:
 | `<event>` | `name` | an event its code sends with `emit`, heard on the instance by `<on event>` |
 | `<var>` | `name`, `start` | each instance's own state on each screen |
 
+### Standard components
+
+A new project starts with these, each made in the editor as any component is, so it can be
+opened, restyled or copied. A view takes what it shows as an input. A list of one view, as a
+Lamp per item, is the view placed with `repeat`.
+
+| Component | Shows | Takes |
+| --- | --- | --- |
+| `Readout` | a number with its unit, or text such as an enum's option | `value` |
+| `Gauge` | a number on an arc | `value` |
+| `Plot` | a record over time | `values` |
+| `Lamp` | true or false | `value` |
+| `Bar` | a number between two limits, filled from zero | `value` |
+| `Bars` | a list of numbers, a Bar each with its label and reading | `values`, `labels` |
+| `Joints` | a JointState's angles in degrees, named by its JointNames | `state`, `names` |
+| `Pose` | a Pose's position and its roll, pitch and yaw | `value` |
+| `Position` | a 2D point or pose, or a list of them, on a plane y up | `value` |
+| `Swatch` | a Color, or colour text | `value` |
+| `Table` | a list of structs or of lists, every key of the first row unless `columns` names them | `rows` |
+
+`Toggle`, `Slider`, `Knob`, `Dropdown` and `ModeSwitch` set the name their `value` is bound
+to. `Button`, `Joystick` and `Joystick1D` send events.
+
 ## Elements
 
 | Tag | Is |
