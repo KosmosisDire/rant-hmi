@@ -243,3 +243,48 @@ does, their height kept in proportion.
   not in this item.
 - Draw code only reads. Should it be able to set a screen variable, as a measured size?
   Chosen: no.
+
+## As built
+
+### Slice 1, the canvas
+
+Built as Part 1 says. A drawing's fault reads `draw: ...` on the canvas, and a screen with no
+such context says so under `context`.
+
+### Slice 2, the scene
+
+- **One table of parts.** `client/src/page/parts.ts` holds each part's own properties and the
+  code each takes when left out. The scene draws from it and the inspector builds each part's
+  fields from it, so a field's placeholder is the default it stands for.
+- **Where an element goes.** The backend gives each tag a home: on a page, in a diagram or in a
+  scene. That one rule decides what holds what, what grouping makes (`group`, `g` or `anchor`)
+  and that a shape's or a part's every property is an attribute. The client mirrors it in
+  `homeOf` and `holds`.
+- **A value that cannot be read gives way to the default**, as CSS drops a value it cannot
+  take, and the scene's title lists each part's faults by its name. A part with a value not
+  known yet draws nothing and hatches the scene.
+- **Shared with the canvas and the page.** Drawing once a frame at the pixels covered lives in
+  `page/drawing.ts`, and repeating in `page/repeat.tsx`, so parts repeat as elements do.
+- **three.js 0.186** is its own file, about 158 kB zipped, fetched with the first scene a
+  screen shows. A scenario checks that no page without one fetches it.
+- **A new scene holds a floor grid and its axes**, so it shows which way it looks.
+- **Light** comes from the sky and from the camera, on Lambert materials.
+- **`arrow`** points along `vector` from its pose, as long as it is.
+- **`model`** loads a glTF file once per URL, shared by every part showing it. A glTF file is y
+  up by its standard, so a model stands it up at its root. `joints` turns a named node by an
+  angle about its own z, or moves it by a pose, from where the file puts it. Names match as
+  the loader spells them, spaces as underscores.
+- **Editor.** A picked part rings its scene, with no grips. The inspector shows a Camera
+  section on a scene and each part's fields, and Add part, which shares one component with Add
+  shape. The menu on a scene or a part adds parts. Layers, grouping and pasting follow the
+  home rule.
+
+Left for later, as Part 3 says: picking parts on the artboard, handlers on parts, labels,
+pictures on planes, URDF, and serving a project's own files for models. A model takes a URL.
+
+Choices worth a second look:
+
+- Falling back to the default on a fault, rather than keeping the last value that read.
+- Turning every glTF file z up, which suits files made to the standard.
+- An angle in `joints` turns about the node's own z. Another axis takes the pose form.
+- A model that failed to load stays failed until the screen reloads.
