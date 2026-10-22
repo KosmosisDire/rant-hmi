@@ -8,7 +8,7 @@ import type { Element } from "../protocol/Element";
 import type { Handler } from "../protocol/Handler";
 import type { At, Scope } from "../state/bind";
 import { eventInfo, handlerKey, rest, rests, settingsOf, takes } from "../state/events";
-import { pads as drawn } from "../state/input";
+import { type Axes, type Pad, pads as drawn } from "../state/input";
 import { notify } from "../state/store";
 import { type Act, numberOf } from "./act";
 import { holds, type Listener, Listening } from "./listening";
@@ -21,18 +21,6 @@ const BUTTONS = settingsOf("buttondown")
 /** What a button's event brings. */
 export interface Button {
   button: string;
-  pad: number;
-}
-
-/** What a pad's axes bring. */
-export interface Axes {
-  lx: number;
-  ly: number;
-  rx: number;
-  ry: number;
-  lt: number;
-  rt: number;
-  axes: number[];
   pad: number;
 }
 
@@ -120,12 +108,12 @@ const listening = new Listening<PadListener>(() => {
 // the screen itself listens while code reads its pads: each as it is, with no deadband
 drawn.feedWith(() => {
   let last = "";
-  const show = (now: (object | null)[]) => {
+  const show = (now: (Pad | null)[]) => {
     const text = JSON.stringify(now);
     if (text !== last) drawn.set(now);
     last = text;
   };
-  return listening.add({
+  const screen: PadListener = {
     el: document.documentElement,
     down: () => {},
     up: () => {},
@@ -135,7 +123,11 @@ drawn.feedWith(() => {
       show(now);
     },
     lose: () => show([]),
-  });
+  };
+  const stop = listening.add(screen);
+  // the pads as they are now, so the first read waits for no frame
+  if (readable() && document.hasFocus()) screen.frame(navigator.getGamepads());
+  return stop;
 });
 
 const gamepad = (h: Handler) => eventInfo(h.event)?.from === "gamepad";

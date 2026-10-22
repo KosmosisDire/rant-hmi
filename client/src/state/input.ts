@@ -35,8 +35,27 @@ export function fed<T>(empty: T) {
   };
 }
 
+/** What a pad's sticks and triggers bring, each stick's y up as a Joystick's. */
+export interface Axes {
+  lx: number;
+  ly: number;
+  rx: number;
+  ry: number;
+  lt: number;
+  rt: number;
+  axes: number[];
+  pad: number;
+}
+
+/** A gamepad as code reads it now: its axes, its name, and each button by name, true while
+ *  down. */
+export interface Pad extends Axes {
+  name: string;
+  buttons: Record<string, boolean>;
+}
+
 /** The keys held now, each by what it types and where it sits. */
 export const held = fed<ReadonlySet<string>>(new Set());
 
 /** The screen's gamepads as they are now, each at its index, null where none is. */
-export const pads = fed<readonly (object | null)[]>([]);
+export const pads = fed<readonly (Pad | null)[]>([]);

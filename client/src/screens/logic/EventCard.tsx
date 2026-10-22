@@ -1,14 +1,15 @@
 // A handler as one card: what starts it and what the event brings it, then its code.
 
-import { createSignal, For, type JSX, Match, Show, Switch } from "solid-js";
+import { createEffect, createSignal, For, type JSX, Match, on, Show, Switch } from "solid-js";
 import type { Place } from "../../lang/api.js";
 import { type Key, keyOf } from "../../page/keys";
 import type { SettingInfo } from "../../protocol/SettingInfo";
 import { complete, signature, type Suggestion } from "../../state/complete";
 import { type Brought, eventInfo, keyWords, type Offered, pOf, settingsOf } from "../../state/events";
+import { type Pad, pads } from "../../state/input";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, Gamepad2, Keyboard, X, Zap } from "../../ui/icons";
-import { openMenu } from "../../ui/Menu";
+import { closeMenu, type MenuEntry, menuOpen, openMenu } from "../../ui/Menu";
 
 /** An event's mark: a component's own, the keyboard's, a gamepad's, or the pointer's and an
  *  entry's. */
@@ -30,7 +31,12 @@ export function EventIcon(p: { from?: Offered["from"]; size?: number }) {
 
 const MODIFIERS = new Set(["Shift", "Control", "Alt", "AltGraph", "Meta"]);
 
-/** A filter's field, never typed in. One with options offers them as a menu. A key filter fills
+/** Each button down on `list`'s pads, by name and pad. */
+const pressed = (list: readonly (Pad | null)[]) =>
+  list.flatMap((g, pad) => (g ? Object.entries(g.buttons).flatMap(([button, down]) => (down ? [{ button, pad: String(pad) }] : [])) : []));
+
+/** A filter's field, never typed in. One with options offers them as a menu, and a pad's takes
+ *  the button pressed on a pad while its menu is open: its name, or its pad. A key filter fills
  *  by pressing the key: its field of what the screen's keydown brings, so it matches as the
  *  screen sends it. A modifier alone counts once let go with no other key, so Shift then A
  *  takes "A". */
@@ -38,6 +44,7 @@ function FilterField(p: { setting: SettingInfo; from?: Offered["from"]; value: s
   let field!: HTMLInputElement;
   const keyed = () => p.from === "keyboard";
   const [waiting, setWaiting] = createSignal(false);
+  const [offering, setOffering] = createSignal(false);
   let modifier: KeyboardEvent | null = null;
   const take = (e: KeyboardEvent) => {
     p.onSet(String(keyOf(e)[p.setting.name as keyof Key]));
@@ -46,8 +53,24 @@ function FilterField(p: { setting: SettingInfo; from?: Offered["from"]; value: s
   const offer = () => {
     if (p.setting.options.length === 0) return;
     const at = field.getBoundingClientRect();
-    openMenu({ x: at.left, y: at.bottom }, p.setting.options.map(([value, words]) => ({ label: value, keys: words, run: () => p.onSet(value) })));
+    const rows: MenuEntry[] = p.setting.options.map(([value, words]) => ({ label: value, keys: words, run: () => p.onSet(value) }));
+    if (p.from === "gamepad") rows.push("-", { label: p.setting.name === "button" ? "Or press it on a pad" : "Or press a button on it", disabled: true });
+    openMenu({ x: at.left, y: at.bottom }, rows);
+    setOffering(true);
   };
+  // a button newly down on a pad while the menu is open picks, past what was down as it opened
+  createEffect(
+    on(
+      () => (offering() && menuOpen() && p.from === "gamepad" ? pads.read() : undefined),
+      (now, was) => {
+        if (!now) return setOffering(false);
+        const fresh = was && pressed(now).find((b) => !pressed(was).some((o) => o.button === b.button && o.pad === b.pad));
+        if (!fresh) return;
+        closeMenu();
+        p.onSet(fresh[p.setting.name as keyof typeof fresh]);
+      },
+    ),
+  );
   return (
     <span class="key-field">
       <input

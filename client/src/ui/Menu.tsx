@@ -71,6 +71,9 @@ window.addEventListener("contextmenu", (e) => {
 
 export const closeMenu = () => setShown(null);
 
+/** Whether a menu is open. */
+export const menuOpen = () => !!shown();
+
 /** Copies text from a row's click. Plain http has no clipboard API, but a copy event the
  *  click asks for may carry text, and nothing else hears this one. */
 export function copyText(text: string) {
