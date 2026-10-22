@@ -2,6 +2,12 @@
 members = ["server"]
 resolver = "3"
 
-# the WebRTC crypto and video work far too slowly unoptimized, so a debug build drops screens
+# the WebRTC crypto and video work far too slowly unoptimized, so a debug build drops screens.
+# Their debug info made a debug build 364 MB, and linking it most of every rebuild.
 [profile.dev.package."*"]
 opt-level = 3
+debug = false
+
+# backtraces keep their files and lines, and the link is far quicker without the rest
+[profile.dev]
+debug = "line-tables-only"
