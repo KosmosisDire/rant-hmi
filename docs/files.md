@@ -116,6 +116,9 @@ gamepads and to decode video itself.
   trackpad's pinch comes. One with no scroll handler zooms by any wheel. A scroll's `p.dx` and
   `p.dy` move what it shows as a finger dragging it would, so a wheel turned down gives `dy`
   below 0. A zoom's `p.factor` is how much bigger it grows. Both bring `x` and `y` too.
+- On a touch screen two fingers scroll by their middle and zoom by their spread, and the press
+  they began ends with a release but no tap. One finger scrolls what takes scroll once it moves
+  a little, unless what it pressed takes drag. Safari's pinch on a trackpad zooms too.
 - A drag or scroll handler that takes a while to run misses no move: what comes meanwhile adds
   up, and a zoom's factors multiply.
 - `keydown`, `keyup` and `keyrepeat` hear the keyboard while the element shows on the top page

@@ -14,7 +14,7 @@ import { component, entity, live, notify, state } from "../state/store";
 import { createSize } from "../ui/size";
 import { ImagePlay, VideoOff } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
-import { follow } from "../ui/press";
+import { follow, taken } from "../ui/press";
 import { componentAct, type Act, numberOf, QUICKEST } from "./act";
 import { useGamepads } from "./gamepads";
 import { useKeys } from "./keys";
@@ -261,11 +261,13 @@ function Placed(p: ElementProps) {
   );
 }
 
-/** What pressing an element does, its keys and pads aside: it shows pressed at once and sends press,
- *  drag, hold, release and tap. The release is heard on the window, so letting go anywhere ends a press,
- *  and a tap needs the release over the element. Where a press lands is read as it goes down
- *  the page, before any handler changes the page as it comes back up: Firefox before 125
- *  drops the rest of a touch when its pressed shape restyles and is measured in pointerdown. */
+/** What pressing an element does, its keys, pads and scroll aside: it shows pressed at once and
+ *  sends press, drag, hold, release and tap. The release is heard on the window, so letting go
+ *  anywhere ends a press, and a tap needs the release over the element. A gesture taking its
+ *  finger ends it as a missed release, with no tap: two fingers always, one finger that scrolls
+ *  only when it drags nothing. Where a press lands is read as it goes down the page, before
+ *  any handler changes the page as it comes back up: Firefox before 125 drops the rest of a
+ *  touch when its pressed shape restyles and is measured in pointerdown. */
 function usePress(p: ElementProps & { at?: At }) {
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
@@ -282,7 +284,7 @@ function usePress(p: ElementProps & { at?: At }) {
     landed = { e, at: pointer(self, e, partOf(e.target)) };
   };
   const down = (e: PointerEvent & { currentTarget: Element | globalThis.Element }) => {
-    if (!live() || e.button !== 0 || pressed() || landed?.e !== e) return;
+    if (!live() || e.button !== 0 || pressed() || landed?.e !== e || taken(e.pointerId)) return;
     const el = e.currentTarget as globalThis.Element;
     const at = landed.at;
     const on = at.on;
@@ -321,7 +323,8 @@ function usePress(p: ElementProps & { at?: At }) {
       fire("release", at);
       if (u?.type === "pointerup" && at.inside) fire("tap", at);
     };
-    follow(e, { move, end });
+    const drags = p.element.handlers.some((h) => h.event === "drag" && p.act?.hears(p.element, h, p.at));
+    follow(e, { move, end, yields: true, keeps: drags });
   };
   // a press anywhere else is this element's outside, as closes what it opened, while its page
   // shows: the editor keeps its run hidden behind the other tabs, and a run its covered pages
@@ -348,8 +351,8 @@ function usePress(p: ElementProps & { at?: At }) {
   };
   useKeys(p, () => self);
   useGamepads(p, () => self);
-  useScroll(p, () => self);
-  return { pressed, live, down, ref };
+  const scrolls = useScroll(p, () => self);
+  return { pressed, live, scrolls, down, ref };
 }
 
 /** One element. `inside` marks one drawn as part of an instance: it is the component's, not
@@ -459,7 +462,7 @@ function ElementView(p: ElementProps & { at?: At }) {
       data-id={p.inside ? undefined : p.element.id}
       data-name={p.element.props.name}
       class="el"
-      classList={{ text: p.element.tag === "span", unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), pressed: press.pressed() }}
+      classList={{ text: p.element.tag === "span", unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), scrolls: press.scrolls(), pressed: press.pressed() }}
       style={{ ...look().style, "z-index": raised() === p.element ? String((p.room.first ?? 0) + 1) : look().style["z-index"] }}
       title={p.design && look().faults.length > 0 ? look().faults.join("\n") : undefined}
       ref={(el) => {
@@ -584,7 +587,7 @@ function ShapeView(p: ElementProps & { at?: At }) {
       data-id={p.inside ? undefined : p.element.id}
       data-name={p.element.props.name}
       class="el shape"
-      classList={{ unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), pressed: press.pressed() }}
+      classList={{ unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), scrolls: press.scrolls(), pressed: press.pressed() }}
       ref={press.ref}
       onPointerDown={press.down}
     >
@@ -751,7 +754,7 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
   const hold = (e: PointerEvent) => {
     if (e.button !== 0) return;
     setHeld(new Map());
-    follow(e, { end: () => setHeld(null) });
+    follow(e, { end: () => setHeld(null), yields: true });
   };
   const own = {
     get: (input: string) => held()?.get(input),
@@ -854,7 +857,7 @@ function keep(): Kept & { press(e: PointerEvent): void; over(e: PointerEvent): v
       const names = partsAt(e.target, e.currentTarget as HTMLElement);
       mark(names, { pressed: true, since: performance.now() });
       if (!frame) frame = requestAnimationFrame(tick);
-      follow(e, { end: () => mark(names, { pressed: false }) });
+      follow(e, { end: () => mark(names, { pressed: false }), yields: true });
     },
     over: (e) => {
       const names = new Set(partsAt(e.target, e.currentTarget as HTMLElement));

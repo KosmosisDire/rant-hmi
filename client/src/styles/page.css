@@ -64,6 +64,11 @@
   touch-action: none;
 }
 
+/* What scrolls or zooms takes every finger on it, so the browser pans and zooms nothing there. */
+.el.scrolls {
+  touch-action: none;
+}
+
 /* only under a mouse: a finger leaves what it touched hovered */
 :root:not([data-pointer="touch"]) .el.live:hover {
   filter: brightness(1.08);
