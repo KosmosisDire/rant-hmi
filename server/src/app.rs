@@ -23,6 +23,7 @@ use crate::rules;
 use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
+use crate::web::PING_EVERY;
 use crate::value::Value;
 use crate::rtc::{FromRtc, MESSAGE_MAX, ToRtc};
 
@@ -38,6 +39,11 @@ const LOST: Duration = Duration::from_secs(5);
 /// A screen this many bytes behind gets no values until it catches up, then all at once, so
 /// a slow link carries a camera at the rate it can and nothing piles up.
 const BEHIND: usize = 1 << 20;
+/// A screen whose socket takes this much longer there and back than it can is behind too: what
+/// waits in the network and its buffers, which the bytes queued here never show.
+const LATE: Duration = Duration::from_millis(100);
+/// The least round trip seen this far back is what the socket can do.
+const TRIPS: Duration = Duration::from_secs(10);
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
@@ -62,16 +68,19 @@ pub struct Outbox {
     queued: Arc<AtomicUsize>,
     /// Values were left out while the screen was behind, so it needs them all.
     stale: Cell<bool>,
+    /// Its socket's round trip runs late, or will once nothing answers by `due`.
+    late: Cell<bool>,
+    due: Cell<Option<Instant>>,
 }
 
 impl Outbox {
     pub fn new(tx: UnboundedSender<Bytes>, queued: Arc<AtomicUsize>) -> Outbox {
-        Outbox { tx, queued, stale: Cell::new(false) }
+        Outbox { tx, queued, stale: Cell::new(false), late: Cell::new(false), due: Cell::new(None) }
     }
 
     /// Sends, but leaves values out while the screen is behind, since newer ones replace them.
     fn put(&self, bytes: Bytes, values: bool) {
-        if values && self.queued.load(Ordering::Relaxed) > BEHIND {
+        if values && (self.late() || self.queued.load(Ordering::Relaxed) > BEHIND) {
             self.stale.set(true);
             return;
         }
@@ -79,9 +88,13 @@ impl Outbox {
         let _ = self.tx.send(bytes);
     }
 
+    fn late(&self) -> bool {
+        self.late.get() || self.due.get().is_some_and(|due| Instant::now() > due)
+    }
+
     /// True once a screen that missed values has caught up, and then only once.
     fn caught_up(&self) -> bool {
-        let caught = self.stale.get() && self.queued.load(Ordering::Relaxed) < BEHIND / 2;
+        let caught = self.stale.get() && !self.late() && self.queued.load(Ordering::Relaxed) < BEHIND / 2;
         if caught {
             self.stale.set(false);
         }
@@ -98,6 +111,8 @@ struct Session {
     ping: Option<Duration>,
     /// How much the round trip wavers, in ms, smoothed.
     jitter: f64,
+    /// The socket's round trips of late, oldest first.
+    trips: VecDeque<(Instant, Duration)>,
     /// Whether its WebRTC data channels are open.
     channels: bool,
     /// Whether it sends on its channels, and what they brought before it said so.
@@ -118,6 +133,19 @@ impl Session {
             self.jitter += ((rtt.as_secs_f64() - last.as_secs_f64()).abs() * 1000.0 - self.jitter) / 16.0;
         }
         self.ping = Some(rtt);
+    }
+
+    /// A round trip on the socket, which says whether it runs late, and when the next ping's
+    /// answer is due, which the socket runs late without.
+    fn socket_trip(&mut self, rtt: Duration) {
+        let now = Instant::now();
+        self.trips.push_back((now, rtt));
+        while self.trips.front().is_some_and(|(at, _)| now.duration_since(*at) > TRIPS) {
+            self.trips.pop_front();
+        }
+        let least = self.trips.iter().map(|(_, t)| *t).min().unwrap_or(rtt);
+        self.out.late.set(rtt > least + LATE);
+        self.out.due.set(Some(now - rtt + PING_EVERY + least + LATE));
     }
 }
 
@@ -305,7 +333,7 @@ impl App {
             Inbound::Open { session, out, local, remote } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
+                self.sessions.insert(session, Session { out, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, trips: VecDeque::new(), channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -318,9 +346,12 @@ impl App {
             Inbound::Heard { session, ping } => {
                 if let Some(s) = self.sessions.get_mut(&session) {
                     s.heard = Instant::now();
-                    // the screen times its channels while it has them
-                    if let Some(ping) = ping.filter(|_| !s.channels) {
-                        s.timed(ping);
+                    if let Some(ping) = ping {
+                        s.socket_trip(ping);
+                        // the screen times its channels while it has them
+                        if !s.channels {
+                            s.timed(ping);
+                        }
                     }
                 }
             }
@@ -1428,5 +1459,19 @@ mod tests {
         assert!(!out.caught_up());
         out.put(Bytes::from_static(b"values"), true);
         assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"values"));
+    }
+
+    #[test]
+    fn a_screen_whose_socket_runs_late_misses_values_until_it_is_on_time() {
+        let (tx, mut rx) = unbounded_channel();
+        let out = Outbox::new(tx, Arc::new(AtomicUsize::new(0)));
+        out.late.set(true);
+        out.put(Bytes::from_static(b"values"), true);
+        out.put(Bytes::from_static(b"page"), false);
+        assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"page"));
+        assert!(rx.try_recv().is_err());
+        assert!(!out.caught_up());
+        out.late.set(false);
+        assert!(out.caught_up());
     }
 }
