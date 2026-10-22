@@ -196,7 +196,7 @@ each an expression.
 | `size` | `grid` | how wide it is, `10` |
 | `radius` | `sphere`, `cylinder` | `0.5` |
 | `length` | `cylinder` | along its z, `1` |
-| `points` | `points` | a list of vectors, as a Double3 list from the mesh |
+| `points` | `points` | a list of points, each with numbers `x`, `y` and `z`, as a Double3 list from the mesh |
 | `joined` | `points` | `true` to draw one line through them instead of dots |
 | `step` | `grid` | the gap between its lines, `1` |
 | `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
