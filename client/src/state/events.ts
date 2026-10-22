@@ -4,15 +4,19 @@
 import { children, type Node, tree } from "../lang/arith.js";
 import type { Element } from "../protocol/Element";
 import type { EventInfo } from "../protocol/EventInfo";
-import { EVENTS } from "../protocol/events";
+import { EVENTS, SENT } from "../protocol/events";
 import type { Page } from "../protocol/Page";
 import type { Sender } from "../protocol/Sender";
+import type { SettingInfo } from "../protocol/SettingInfo";
 import type { When } from "../protocol/When";
 import type { Suggestion } from "./complete";
 import { component } from "./store";
 
 /** The event `name` as the backend lists it, unless a component sends it. */
 export const eventInfo = (name: string): EventInfo | undefined => EVENTS.find((e) => e.name === name);
+
+/** The settings a handler for `event` takes, one a component sends taking its own few. */
+export const settingsOf = (event: string): readonly SettingInfo[] => eventInfo(event)?.settings ?? SENT;
 
 /** What `p` holds: its fields, or else the one value a component sends, as its code says it. */
 export interface Brought {

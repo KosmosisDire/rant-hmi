@@ -13,7 +13,7 @@ pub enum Sender {
     Entry,
 }
 
-/// A setting a handler takes as an attribute of its `<on>`: an expression in ms.
+/// A setting a handler takes as an attribute of its `<on>`, an expression the screen reads.
 #[derive(Serialize, TS, Debug)]
 #[ts(export)]
 pub struct SettingInfo {
@@ -49,20 +49,29 @@ const AT: &[(&str, &str)] = &[
     ("inside", "true while over it"),
 ];
 
+const AFTER: SettingInfo = SettingInfo { name: "after", label: "After ms", default: "500" };
+const EVERY: SettingInfo = SettingInfo { name: "every", label: "Every ms", default: "100" };
+/// The screen sends its handler's event only while this is true.
+const WHILE: SettingInfo = SettingInfo { name: "while", label: "While", default: "true" };
+
+/// What a handler for an event a component sends takes.
+pub const SENT: &[SettingInfo] = &[WHILE];
+
 const fn pointer(name: &'static str, words: &'static str, once: bool, settings: &'static [SettingInfo]) -> EventInfo {
     EventInfo { name, from: Sender::Pointer, words, once, settings, brings: AT }
 }
 
 /// Every event, in the order an element lists its handlers. A component's own come after.
 pub const EVENTS: &[EventInfo] = &[
-    pointer("tap", "pressed and let go on it", true, &[]),
-    pointer("press", "pressed down", true, &[]),
+    pointer("tap", "pressed and let go on it", true, &[WHILE]),
+    pointer("press", "pressed down", true, &[WHILE]),
+    // a release ends what its press began, so it is heard whenever that was
     pointer("release", "let go, anywhere", true, &[]),
-    pointer("hold", "held down a while", true, &[SettingInfo { name: "after", label: "After ms", default: "500" }]),
-    pointer("repeat", "again and again while pressed", true, &[SettingInfo { name: "every", label: "Every ms", default: "100" }]),
-    pointer("drag", "moved while pressed", false, &[]),
-    pointer("outside", "a press anywhere else", true, &[]),
-    EventInfo { name: "change", from: Sender::Entry, words: "a value entered", once: false, settings: &[], brings: &[("value", "what was entered")] },
+    pointer("hold", "held down a while", true, &[AFTER, WHILE]),
+    pointer("repeat", "again and again while pressed", true, &[EVERY, WHILE]),
+    pointer("drag", "moved while pressed", false, &[WHILE]),
+    pointer("outside", "a press anywhere else", true, &[WHILE]),
+    EventInfo { name: "change", from: Sender::Entry, words: "a value entered", once: false, settings: &[WHILE], brings: &[("value", "what was entered")] },
 ];
 
 /// The event `name`, unless a component sends it.
@@ -72,7 +81,7 @@ pub fn find(name: &str) -> Option<&'static EventInfo> {
 
 /// The settings a handler for `event` takes.
 pub fn settings(event: &str) -> &'static [SettingInfo] {
-    find(event).map_or(&[], |e| e.settings)
+    find(event).map_or(SENT, |e| e.settings)
 }
 
 /// Where a handler goes in an element's list: these events first, in order, then by name.
@@ -87,8 +96,9 @@ mod tests {
     #[test]
     fn the_client_reads_the_same_events() {
         let mut ts = String::from("// Written by the backend's tests from server/src/events.rs, where they change.\n\n");
-        ts += "import type { EventInfo } from \"./EventInfo\";\n\n";
-        ts += &format!("export const EVENTS: readonly EventInfo[] = {};\n", serde_json::to_string_pretty(EVENTS).unwrap());
+        ts += "import type { EventInfo } from \"./EventInfo\";\nimport type { SettingInfo } from \"./SettingInfo\";\n\n";
+        ts += &format!("export const EVENTS: readonly EventInfo[] = {};\n\n", serde_json::to_string_pretty(EVENTS).unwrap());
+        ts += &format!("export const SENT: readonly SettingInfo[] = {};\n", serde_json::to_string_pretty(SENT).unwrap());
         let path = std::path::Path::new(&std::env::var("TS_RS_EXPORT_DIR").unwrap()).join("events.ts");
         if std::fs::read_to_string(&path).ok() != Some(ts.clone()) {
             std::fs::write(&path, ts).unwrap();
@@ -96,8 +106,8 @@ mod tests {
     }
 
     #[test]
-    fn a_component_s_events_follow_these_in_order_and_take_no_settings() {
+    fn a_component_s_events_follow_these_in_order_and_take_a_while() {
         assert!(rank("tap") < rank("change") && rank("change") < rank("a") && rank("a") < rank("b"));
-        assert!(settings("pressed").is_empty() && settings("hold")[0].name == "after");
+        assert!(settings("pressed")[0].name == "while" && settings("hold")[0].name == "after" && settings("release").is_empty());
     }
 }

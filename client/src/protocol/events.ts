@@ -1,6 +1,7 @@
 // Written by the backend's tests from server/src/events.rs, where they change.
 
 import type { EventInfo } from "./EventInfo";
+import type { SettingInfo } from "./SettingInfo";
 
 export const EVENTS: readonly EventInfo[] = [
   {
@@ -8,7 +9,13 @@ export const EVENTS: readonly EventInfo[] = [
     "from": "pointer",
     "words": "pressed and let go on it",
     "once": true,
-    "settings": [],
+    "settings": [
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true"
+      }
+    ],
     "brings": [
       [
         "x",
@@ -37,7 +44,13 @@ export const EVENTS: readonly EventInfo[] = [
     "from": "pointer",
     "words": "pressed down",
     "once": true,
-    "settings": [],
+    "settings": [
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true"
+      }
+    ],
     "brings": [
       [
         "x",
@@ -100,6 +113,11 @@ export const EVENTS: readonly EventInfo[] = [
         "name": "after",
         "label": "After ms",
         "default": "500"
+      },
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true"
       }
     ],
     "brings": [
@@ -135,6 +153,11 @@ export const EVENTS: readonly EventInfo[] = [
         "name": "every",
         "label": "Every ms",
         "default": "100"
+      },
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true"
       }
     ],
     "brings": [
@@ -165,7 +188,13 @@ export const EVENTS: readonly EventInfo[] = [
     "from": "pointer",
     "words": "moved while pressed",
     "once": false,
-    "settings": [],
+    "settings": [
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true"
+      }
+    ],
     "brings": [
       [
         "x",
@@ -194,7 +223,13 @@ export const EVENTS: readonly EventInfo[] = [
     "from": "pointer",
     "words": "a press anywhere else",
     "once": true,
-    "settings": [],
+    "settings": [
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true"
+      }
+    ],
     "brings": [
       [
         "x",
@@ -223,12 +258,26 @@ export const EVENTS: readonly EventInfo[] = [
     "from": "entry",
     "words": "a value entered",
     "once": false,
-    "settings": [],
+    "settings": [
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true"
+      }
+    ],
     "brings": [
       [
         "value",
         "what was entered"
       ]
     ]
+  }
+];
+
+export const SENT: readonly SettingInfo[] = [
+  {
+    "name": "while",
+    "label": "While",
+    "default": "true"
   }
 ];

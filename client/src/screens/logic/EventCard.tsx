@@ -4,7 +4,7 @@ import { For, type JSX, Show } from "solid-js";
 import type { Place } from "../../lang/api.js";
 import type { Handler } from "../../protocol/Handler";
 import { complete, signature, type Suggestion } from "../../state/complete";
-import { type Brought, eventInfo, type Offered, pOf } from "../../state/events";
+import { type Brought, type Offered, pOf, settingsOf } from "../../state/events";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, X, Zap } from "../../ui/icons";
 
@@ -41,7 +41,7 @@ export function EventCard(p: {
   children?: JSX.Element;
 }) {
   const reads = () => (p.brings ? [...(p.also ?? []), pOf(p.brings)] : p.also);
-  const settings = () => (p.onAttr ? (eventInfo(p.name)?.settings ?? []) : []);
+  const settings = () => (p.onAttr ? settingsOf(p.name) : []);
   return (
     <div class="event">
       <div class="event-head">

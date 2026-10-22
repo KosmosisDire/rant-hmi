@@ -101,6 +101,8 @@ A screen opens a WebRTC connection beside its socket where it can, for speed and
 - `<on event="...">` holds a handler: `tap`, `press`, `release`, `hold`, `repeat`, `drag` or
   `outside`. Its `p` holds `x` and `y` across the element, 0 to 1. A hold runs
   `after="ms"`, 500 when left out, and a repeat `every="ms"`, 100. Each is an expression.
+- Any handler but a release takes `while="condition"`, and hears its event only while the
+  condition is true. A release always runs, since it ends a press.
 - `repeat="6"` or `repeat="Jobs"` draws an element once per item, reading `index` and `item`.
 - `<svg>` holds shapes, `<markup>` SVG made by code, `<media src="Camera"/>` a camera or a
   picture, and `<input>` a field to type in.

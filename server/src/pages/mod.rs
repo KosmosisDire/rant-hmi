@@ -1519,8 +1519,11 @@ mod tests {
         assert_eq!(h(&pages), None);
         pages.apply(undo).unwrap();
         assert_eq!(h(&pages), Some(("log(1);".into(), Some("800".into()))));
-        let tap = Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "tap".into(), code: Some("log(1);".into()), attrs: Some([("after".to_string(), Some("1".to_string()))].into()) };
-        assert_eq!(pages.apply(tap).err().unwrap(), "a tap handler takes no after");
+        let tap = |key: &str| Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "tap".into(), code: Some("log(1);".into()), attrs: Some([(key.to_string(), Some("1".to_string()))].into()) };
+        assert_eq!(pages.apply(tap("after")).err().unwrap(), "a tap handler takes no after");
+        pages.apply(tap("while")).unwrap();
+        let release = Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "release".into(), code: Some("log(1);".into()), attrs: Some([("while".to_string(), Some("1".to_string()))].into()) };
+        assert_eq!(pages.apply(release).err().unwrap(), "a release handler takes no while");
         fs::remove_dir_all(&dir).unwrap();
     }
 

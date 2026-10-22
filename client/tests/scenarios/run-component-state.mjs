@@ -29,7 +29,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Control+a");
   await page.keyboard.type("count = count + 1;");
   await page.keyboard.press("Control+Enter");
-  const after = page.locator(".screen:not([hidden]) .sidebar.right .event .event-when input");
+  const after = page.locator(".screen:not([hidden]) .sidebar.right .event .event-when .field", { has: page.locator("label", { hasText: "After ms" }) }).locator("input");
   await after.fill("600");
   await after.press("Enter");
   const hold = () => hmi.page(button).children.find((e) => e.id === face).handlers.find((h) => h.event === "hold");
