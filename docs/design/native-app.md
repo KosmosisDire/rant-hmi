@@ -170,12 +170,13 @@ Chosen: a launcher with archives appended.
 
 ### Where runtimes come from
 
-- Each release attaches `rant-hmi-app-<target>.zip` for `windows-x64`, `linux-x64`,
-  `linux-arm64` and `macos-arm64`.
-- The server fetches the one a build needs from its own version's release the first time it is
-  asked, and keeps it under `~/.rant/hmi/apps/<version>/`. An offline server takes the file
-  copied there by hand.
-- A server built from source finds the runtime built beside it, for its own target only.
+- A server builds apps from `~/.rant/hmi/runtimes/<version>/<platform>/`: `launcher[.exe]`,
+  `runtime.tar.gz` and `runtime.id`, for `windows-x64`, `linux-x64`, `linux-arm64` and
+  `macos-arm64`.
+- `npm run runtime` in `app` builds this host's and puts it there (built, slice 4).
+- Each release will attach every platform's, and the server fetch the one a build needs from
+  its own version's release the first time it is asked (slice 7). An offline server takes the
+  files copied there by hand.
 
 ## Part 4: built from the editor
 
@@ -184,10 +185,9 @@ Chosen: a launcher with archives appended.
   others. It asks what the app runs: this HMI on the device, or this server's screen.
 - Download streams the app, named after the HMI: `Packing line.exe` on Windows, `Packing line`
   on Linux, `Packing line.zip` with the app bundle on macOS.
-- The first build for a target fetches its runtime, about 100 MB, and the sheet says so.
-- Linux browsers drop the mark that lets a file run, so the sheet says how to set it, and gives
-  the command that downloads and marks it in one go. On a Steam Deck, "Add to Steam" then puts
-  it in Game Mode, where the gamepad drives it.
+- An app is about 170 MB, and its runtime unpacks to about 390 MB on the first start.
+- Linux browsers drop the mark that lets a file run, so the sheet says how to set it. On a
+  Steam Deck, "Add to Steam" then puts it in Game Mode, where the gamepad drives it.
 - Windows warns about an unsigned exe until it is signed.
 
 ## Slices
@@ -197,9 +197,9 @@ Chosen: a launcher with archives appended.
 2. The screen alone. Built with the first.
 3. The Electron shell on Windows: the addon, the main script, the scheme, the preload. The wry
    window goes. Playwright drives the real window. Built.
-4. The launcher and its archives: an app for this host built and run from one file.
+4. The launcher and its archives: an app for this host built and run from one file. Built.
 5. Built from the editor: the `/app` route, the runtime cache, the sheet, the domain and the
-   certificate written in.
+   certificate written in. Built.
 6. Linux: runtimes for x64 and arm64, run under Wayland and X11 (WSLg offers both here), the
    sandbox check. Then on a Steam Deck, in the desktop and in Game Mode.
 7. Release: CI builds every runtime and attaches them, the server fetches by its version, docs
@@ -303,3 +303,60 @@ Choices worth a second look:
   wait on the node name question.
 - The scenario shows real windows on the desktop, full screen for a moment, as the WebView2
   one did.
+
+### Slices 4 and 5, one file built from the editor
+
+- `app/pack`, the crate `rant-hmi-pack`, is the file's one definition, which the server writes
+  and the launcher reads: a trailer of three ranges (runtime, project, settings) and a mark at
+  the end, the settings as JSON (name, runtime id, what it shows, domain, loopback, full screen,
+  the fingerprint it trusts), and folders as gzipped tar, skipping what starts with a dot. Ids
+  are a SHA-256 of the archive, so a folder unpacks once per content. A folder unpacks into a
+  sibling and is renamed into place, so a start cut short leaves nothing half done. `kept()`
+  moved here, as the launcher shares it. Its command line archives a runtime for the script.
+- `app/launcher`, the crate `rant-hmi-launcher` (program `rant-hmi-app`), windows subsystem with
+  the Rant icon. It reads its own file, unpacks the runtime and project under
+  `~/.rant/hmi/unpacked/<id>` once, starts Electron there with the settings and what it was
+  started with, clears `ELECTRON_RUN_AS_NODE`, and ends with Electron's code. Why it cannot
+  start goes to a message box on Windows.
+- `app/runtime.mjs` (`npm run runtime`) builds the client, the release addon, launcher and
+  pack program, puts Electron's own folder together with the window in `resources/app` and the
+  client in `resources/client/dist`, where the window's default finds it, archives it, and
+  installs it for this host's server. Electron's `default_app.asar` is left out. About 2.5
+  minutes, most of it the release build.
+- Server: `apps.rs`, `GET /app/targets` and `GET /app/<platform>?runs=device|screen&
+  fullscreen=..&address=..`, on the web server only, so an app's own editor has none. The app
+  streams from the runtime's files with the project archived from disk at that moment, so it
+  carries the last saved edit. The domain is the server's, 0 read as Rant reads it, and the
+  loopback the server's, so an app built from a test server stays on loopback. The fingerprint
+  is SHA-256 over the certificate chain as Chromium writes it, `sha256/` and base64, made where
+  TLS is set up and given only to an app reaching the server over https. A download is named
+  after the HMI, as UTF-8 with a plain fallback.
+- Window: `--trust` accepts that certificate in `certificate-error`. Every value is given as
+  `--name=value`, since Electron ends at once, silently, when an address is followed by a value
+  as the next word (found as the screen app quit at start). A server that does not answer shows
+  a waiting page and is tried again every 3 s.
+- Client: `shell/GetApp.tsx`, a download button in the top bar, hidden in the app, opening a
+  popover (a sheet on a phone). Platform is picked from the browser (`userAgentData`, else
+  `navigator.platform`), Windows on ARM and Intel Macs taking the platforms there are. A device
+  with no app of its own, as a phone, is told its browser shows `/run`.
+- Tests: cargo tests write and read an app, refuse a range past the end, keep one id for one
+  folder, and build apps through the routes for both kinds, with and without https, refusing a
+  screen app with no address and a platform with no runtime. Scenario app-export, on a fresh
+  system with this host's runtime: the sheet picks Windows and greys out the rest, the app it
+  downloads unpacks and connects on its first start (about 3.5 s) and its second (about 0.4 s),
+  ending as its window closes, the unpacked runtime run on the unpacked project reads the demo
+  line, and screen apps built over http by the sheet and over https by the route connect.
+  Breaking the platform guess fails it, so does never trusting the certificate. The scenario
+  first stood the runner still for seconds, which stalls every worker: the copy of the runtime
+  and the window lookups block no more, and its check read the 166 MB body as text before
+  checking, now only on failure. A failing run once left its window open, holding the runner's
+  pipes until its time ran out, since ending an app left the window it started: a downloaded
+  app's stop now ends the window too, and a run failed on purpose ends clean.
+
+Choices worth a second look:
+
+- tar.gz for every archive: an app is 166 MB on Windows. zstd or xz would be smaller, and slower
+  to build.
+- Unpacked apps stay in `~/.rant/hmi/unpacked` for good. Nothing yet clears old ones.
+- The project in an app is a snapshot. An app does not update itself.
+- The unpacked project is where the app's HMI keeps its state, so a new download starts afresh.
