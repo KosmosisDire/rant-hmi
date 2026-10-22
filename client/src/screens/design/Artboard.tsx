@@ -1,14 +1,14 @@
-// The page on its artboard: the wheel or a pinch zooms, a drag on empty space or with two
-// fingers pans, elements move and resize on the grid (Alt slips it), and a drag writes when it
-// ends.
+// The page on its artboard, or as an upright phone stacks it: the wheel or a pinch zooms, a
+// drag on empty space or with two fingers pans, elements move and resize on the grid (Alt
+// slips it), and a drag writes when it ends.
 
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from "solid-js";
-import { type Box, fitIn, leaves, PageView, pageGround, SHAPES, union } from "../../page/PageView";
+import { type Box, fitIn, leaves, PageView, pageGround, SHAPES, stackedIn, stacks, union } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Pick } from "./DesignScreen";
-import { Keyboard } from "../../ui/icons";
+import { Keyboard, Smartphone } from "../../ui/icons";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
 import { onResize } from "../../ui/size";
@@ -98,6 +98,17 @@ function keysFor(kind: "move" | Handle): (keyof Box)[] {
   return keys;
 }
 
+/** An upright phone's screen in CSS pixels, the one the preview stacks a page for. */
+const PHONE = { w: 390, h: 844 };
+
+/** Why a phone shows a page as it is, never stacked, or nothing when it stacks it. */
+function unstacked(page: Page): string | undefined {
+  if (page.interface !== null) return "A component shows on a phone where its page places it";
+  if (page.shows !== "full") return "A page over another shows on a phone as it is";
+  if (!stacks(page)) return "A page taller than wide shows on a phone as it is";
+  return undefined;
+}
+
 /** Screen pixels per unit, kept to where the page still reads. */
 const zoomed = (k: number) => Math.min(8 * UNIT, Math.max(0.1 * UNIT, k));
 
@@ -180,7 +191,11 @@ export function Artboard(p: {
   const [box, setBox] = createSignal<{ left: number; top: number; width: number; height: number } | null>(null);
   /** The line where a part dragged along a flow would go, on the page. */
   const [slotLine, setSlotLine] = createSignal<Box | null>(null);
-  const overrides = (id: string) => held()[id]?.box;
+  /** Whether the page shows as an upright phone stacks it, and that stacking while it does. */
+  const [phoneOn, setPhoneOn] = createSignal(false);
+  const preview = createMemo(() => (phoneOn() && !unstacked(p.page) ? stackedIn(p.page, PHONE) : null));
+  const size = () => preview() ?? p.page;
+  const overrides = (id: string) => preview()?.at(id) ?? held()[id]?.box;
   const release = (id: string, n?: number) =>
     setHeld((all) => (all[id] && (n === undefined || all[id].n === n) ? Object.fromEntries(Object.entries(all).filter(([k]) => k !== id)) : all));
   let drag: Drag | null = null;
@@ -190,14 +205,16 @@ export function Artboard(p: {
   const fingers = new Map<number, { x: number; y: number }>();
   let pinch: { d: number; cx: number; cy: number; view: { k: number; x: number; y: number } } | null = null;
 
+  // each page fits when it opens, and again as the preview comes or goes
   let fittedFor = "";
+  const fitKey = () => `${p.page.id}${preview() ? " phone" : ""}`;
   const fit = () => {
     const r = host.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return;
     // a 32 px margin all round
-    const f = fitIn(p.page.width, p.page.height, { w: r.width - 64, h: r.height - 64 });
+    const f = fitIn(size().width, size().height, { w: r.width - 64, h: r.height - 64 });
     setView({ k: f.k, x: f.x + 32, y: f.y + 32 });
-    fittedFor = p.page.id;
+    fittedFor = fitKey();
   };
   // the page's ground and its grid, drawn at screen size so every line is one crisp pixel
   const draw = () => {
@@ -213,7 +230,7 @@ export function Artboard(p: {
     const sheet = host.querySelector<HTMLElement>(".page");
     const ground = pageGround(p.page) ?? ((sheet && getComputedStyle(sheet).getPropertyValue("--page-ground").trim()) || "#000000");
     const [x0, y0] = [Math.round(v.x * dpr), Math.round(v.y * dpr)];
-    const [x1, y1] = [Math.round((v.x + p.page.width * v.k) * dpr), Math.round((v.y + p.page.height * v.k) * dpr)];
+    const [x1, y1] = [Math.round((v.x + size().width * v.k) * dpr), Math.round((v.y + size().height * v.k) * dpr)];
     const lines = ink(g, ground);
     g.save();
     g.shadowColor = "rgba(0, 0, 0, 0.45)";
@@ -222,6 +239,8 @@ export function Artboard(p: {
     g.fillStyle = ground;
     g.fillRect(x0, y0, x1 - x0, y1 - y0);
     g.restore();
+    // the stacking places the blocks there, so no grid shows
+    if (preview()) return;
     const width = Math.max(1, Math.round(dpr));
     for (const [step, strength] of LEVELS) {
       const a = strength * Math.min(1, Math.max(0, (step * v.k - 4) / 8));
@@ -236,7 +255,7 @@ export function Artboard(p: {
   onMount(() => {
     // fits once the artboard first has a size, and again for each page opened
     onResize(host, () => {
-      if (fittedFor !== p.page.id) return fit();
+      if (fittedFor !== fitKey()) return fit();
       draw();
       keep();
     });
@@ -254,7 +273,7 @@ export function Artboard(p: {
     onCleanup(() => host.removeEventListener("wheel", wheel));
   });
   createEffect(() => {
-    if (p.page.id !== fittedFor) fit();
+    if (fitKey() !== fittedFor) fit();
   });
 
   // a written drag keeps showing until the page carries its numbers, so nothing jumps back.
@@ -358,7 +377,11 @@ export function Artboard(p: {
         const props = { ...base.props };
         drag = { kind: "shape", how, id, sx: e.clientX, sy: e.clientY, base: { ...base, props }, screen, outline: el.getBBox(), props: null };
       };
-      if (handle && p.selected.length === 1 && shape(p.selected[0])) {
+      if (preview() && hit && !(e.shiftKey || e.ctrlKey || e.metaKey)) {
+        // the stacking places each block, so a press picks and a drag pans
+        p.onPick(hit);
+        drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
+      } else if (handle && p.selected.length === 1 && shape(p.selected[0])) {
         startShape(handle, p.selected[0]);
       } else if (handle && p.selected.length === 1) {
         const one = find(p.page.children, p.selected[0]);
@@ -555,7 +578,7 @@ export function Artboard(p: {
     const [x0, y0] = [(b.left - v.x) / v.k, (b.top - v.y) / v.k];
     const [x1, y1] = [x0 + b.width / v.k, y0 + b.height / v.k];
     for (const e of p.page.children) {
-      const at = boxOf(e, { w: p.page.width, h: p.page.height });
+      const at = boxOf(e, { w: p.page.width, h: p.page.height }, overrides);
       if (at.x >= x0 && at.y >= y0 && at.x + at.w <= x1 && at.y + at.h <= y1 && !p.selected.includes(e.id)) p.onPick(e.id, true);
     }
   };
@@ -570,7 +593,7 @@ export function Artboard(p: {
 
   const sheet = () => {
     const v = view();
-    return { left: `${v.x}px`, top: `${v.y}px`, width: `${p.page.width * v.k}px`, height: `${p.page.height * v.k}px` };
+    return { left: `${v.x}px`, top: `${v.y}px`, width: `${size().width * v.k}px`, height: `${size().height * v.k}px` };
   };
 
   // a shape's attributes place it, and the page lays some elements out itself, so their rings
@@ -712,7 +735,7 @@ export function Artboard(p: {
     if (all.length === 0 || all.some((e) => SHAPES.has(e.tag))) return undefined;
     if (all.some((e) => laidOut(p.page, e.id))) measured();
     const b = onScreen(union(all.flatMap((e) => absolute(p.page, e.id, overrides) ?? [])));
-    const handles = HANDLES.filter((g) => !short(g, b.width, b.height) && scalable(all, g));
+    const handles = preview() ? [] : HANDLES.filter((g) => !short(g, b.width, b.height) && scalable(all, g));
     return { style: { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` }, handles };
   };
 
@@ -760,7 +783,7 @@ export function Artboard(p: {
     >
       <canvas class="artboard-grid" ref={grid} />
       <div class="page-layer" style={{ transform: `translate(${view().x}px, ${view().y}px) scale(${view().k / UNIT})` }}>
-        <PageView page={p.page} overrides={overrides} design />
+        <PageView page={p.page} overrides={overrides} size={preview() ?? undefined} design />
       </div>
       <div class="veil" style={sheet()} />
       <Show when={box()}>{(b) => <div class="marquee" style={{ left: `${b().left}px`, top: `${b().top}px`, width: `${b().width}px`, height: `${b().height}px` }} />}</Show>
@@ -774,7 +797,7 @@ export function Artboard(p: {
           <Show when={ring(id)}>
             {(r) => (
               <div class="ring" style={r()}>
-                <Show when={p.selected.length === 1 && (!shape(id) || scales(id))}>
+                <Show when={!preview() && p.selected.length === 1 && (!shape(id) || scales(id))}>
                   <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} style={{ cursor: cursorOf(h, turn()?.id === id ? turn()!.angle + turn()!.room : 0) }} />}</For>
                 </Show>
               </div>
@@ -796,6 +819,16 @@ export function Artboard(p: {
         </button>
         <button class="icon-btn" title="Fit the page" onClick={fit} onPointerDown={(e) => e.stopPropagation()}>
           Fit
+        </button>
+        <button
+          class="icon-btn"
+          classList={{ on: !!preview() }}
+          disabled={!!unstacked(p.page)}
+          title={unstacked(p.page) ?? (preview() ? "Back to the page as designed" : "Show as an upright phone stacks it")}
+          onClick={() => setPhoneOn(!preview())}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <Smartphone size={14} />
         </button>
         <button class="icon-btn" classList={{ on: p.keys }} title="Keys (?)" onClick={() => p.onKeys(!p.keys)} onPointerDown={(e) => e.stopPropagation()}>
           <Keyboard size={14} />

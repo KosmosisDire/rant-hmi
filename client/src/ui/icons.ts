@@ -68,6 +68,7 @@ export { default as Search } from "lucide-solid/icons/search";
 export { default as SendToBack } from "lucide-solid/icons/send-to-back";
 export { default as Shapes } from "lucide-solid/icons/shapes";
 export { default as Sigma } from "lucide-solid/icons/sigma";
+export { default as Smartphone } from "lucide-solid/icons/smartphone";
 export { default as Spline } from "lucide-solid/icons/spline";
 export { default as Square } from "lucide-solid/icons/square";
 export { default as SquareDashed } from "lucide-solid/icons/square-dashed";

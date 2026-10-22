@@ -127,7 +127,7 @@ const GAP = 2;
 
 /** A page as a narrow screen shows it: its top level elements one under another in reading
  *  order, rows by how far down they start, left to right within a row. */
-export function stacked(page: Page): { width: number; height: number; at: Overrides } {
+function stacked(page: Page): { width: number; height: number; at: Overrides } {
   // a box from its top left, as x and y place its origin
   const box = (e: Element): Box => {
     if (e.tag === "group") return union(e.children.map(box));
@@ -158,6 +158,17 @@ export function stacked(page: Page): { width: number; height: number; at: Overri
     y += b.h + GAP;
   }
   return { width: Math.max(1, ...order.map(({ b }) => b.w)) + 2 * GAP, height: y, at: (id) => places.get(id) };
+}
+
+/** Whether a screen held upright stacks this page when it shows it first: one wider than tall. */
+export const stacks = (page: Page) => page.width > page.height;
+
+/** A page stacked to fill an upright screen's width at one zoom, `k`. Its ground reaches the
+ *  screen's foot even when its blocks end above it. */
+export function stackedIn(page: Page, screen: { w: number; h: number }) {
+  const stack = stacked(page);
+  const k = screen.w / (stack.width * UNIT);
+  return { ...stack, k, height: Math.max(stack.height, Math.floor(screen.h / k / UNIT)) };
 }
 
 /** A page, or a component drawn on its own with its inputs' defaults. `size` stands in for

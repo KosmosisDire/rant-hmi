@@ -11,7 +11,7 @@ import { savePicture, showsPicture } from "../ui/Picture";
 import { pageAct } from "./act";
 import { UNIT } from "../state/bind";
 import { createSize } from "../ui/size";
-import { fitIn, PageView, stacked } from "./PageView";
+import { fitIn, PageView, stackedIn, stacks } from "./PageView";
 
 export function RunView(p: { active: boolean }) {
   let host!: HTMLDivElement;
@@ -33,12 +33,9 @@ export function RunView(p: { active: boolean }) {
   const place = (pg: Page) => fitIn(pg.width * UNIT, pg.height * UNIT, size(), scale()).transform;
   // a portrait screen reads a landscape page as its blocks one under another, at one zoom
   const layout = (pg: Page, n: number) => {
-    if (n !== base() || size().w >= size().h || pg.width <= pg.height) return { transform: place(pg) };
-    const stack = stacked(pg);
-    const k = size().w / (stack.width * UNIT);
-    // the page's ground reaches the screen's foot even when its blocks end above it
-    const tall = { ...stack, height: Math.max(stack.height, Math.floor(size().h / k / UNIT)) };
-    return { transform: `scale(${k})`, stack: tall, height: tall.height * UNIT * k };
+    if (n !== base() || size().w >= size().h || !stacks(pg)) return { transform: place(pg) };
+    const stack = stackedIn(pg, size());
+    return { transform: `scale(${stack.k})`, stack, height: stack.height * UNIT * stack.k };
   };
 
   // measured at once when the tab shows, so its first frame is never drawn at no size
