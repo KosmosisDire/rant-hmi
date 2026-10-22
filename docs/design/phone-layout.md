@@ -105,15 +105,18 @@ so would every card of a grid with one unit gaps.
 
 | Block | Too wide |
 | --- | --- |
-| frame with `layout` down or up | narrowed to `W`, its parts reflow as designed |
-| frame with `layout` right or left | narrowed to `W` and wraps, growing as tall as it needs. Parts that fill take their share of the desktop width as their start, and a part that filled its height keeps that height |
+| frame with `layout` down or up | narrowed to `W` and as tall as its parts need. A part that fills its height narrows in proportion, as its desktop share times the new width over the old |
+| frame with `layout` right or left | narrowed to `W` and wraps, at least as tall as it was. A part that fills keeps filling but never narrows past what its text or parts need, so it goes under instead. A part that filled its height keeps that height |
 | frame placing its parts freely | opened: its parts are laid out again inside it, as a section |
 | text, field, a component that lays out in any box, a plain frame | narrowed to `W` |
 | picture, diagram with a view box, a component that scales | narrowed to `W`, its height kept in proportion |
 | overlay, group, diagram drawn in units, markup | scaled to `W` as a whole |
 
+- The same rules narrow every frame inside a narrowed frame, so a title row deep in a panel
+  wraps too. A part wider than its new room gets `max-width: 100%`.
 - A block that can reflow also grows to fill the line it is on, so a lone card spans the
-  phone as phone screens do.
+  phone as phone screens do. Down a column it fills the width. In a row it starts at its
+  designed width, may narrow to three quarters of it to share the line, and grows from there.
 
 ### How blocks are arranged
 
@@ -131,6 +134,60 @@ A unit is 10 px on the phone, the size a page is designed at, and no zoom is app
 screen held upright gets a wider `W`, so more stays side by side. A screen wider than tall,
 or a page taller than wide, shows the page as it is, as today.
 
+### A repeat
+
+A repeat whose copies are spread over the page becomes a frame of its own holding it, laid
+out right and wrapping when the copies spread across, down when they spread down. Its copies
+then flow one after another. A repeat whose copies all sit in one place is one block.
+
+## As built
+
+- `client/src/page/phone.ts` holds it all. `phonePage(page, screen)` is a pure function and
+  `createPhonePage` keeps its result in a store reconciled by id, so an element that did not
+  change keeps its identity and a video keeps playing.
+- The phone page is made from a copy of the page, so it shares nothing with the store.
+  Following the copy tracks the page's text, so an edit lays it out again at once. Values are
+  read once, untracked: a live value moves an element on the phone as on the page, but never
+  lays the page out again.
+- The frames it adds are named by where they sit, as `phone/0/r/1/c`, so they keep their
+  names across edits. Nothing in a page has such a name, so the editor's pick passes them.
+- The root frame is as wide as the screen, `h="hug"` and `position: relative`, so the page
+  grows with it. PageView takes `grows` for that: the page's height becomes its least.
+- The margin round the page and the gap between blocks are 1.6 units, 16 px.
+- A whole block too wide is a frame of its scaled size holding a frame of its own size with
+  `scale`. What it holds is placed from the block's corner: `x` becomes `(x) - offset`, a
+  percent the units it came to, so what moves still moves.
+- Run tab: the top full page on a screen held upright, when wider than tall, shows its phone
+  page, which scrolls. Pages over it are unchanged.
+- Editor: the phone button shows the phone page at 390 by 844. Fit fits the phone's first
+  screen, however far down the page runs. Rings there are measured from the drawn page.
+- `stacked`, `stackedIn` and `GAP` are gone from PageView. A repeat's copies are worked out
+  by one `copiesOf`, which PageView and the phone page share.
+
+### Seen on the packing line
+
+Before, the Overview was zoomed to 0.3 and a 2 unit label was 6 px. After, at 390 px:
+
+- The header wraps to three lines: the title and last part, the lamps and mode, the clock
+  and the two buttons.
+- Line, Belt, Label camera and Robot each span the phone at their own size.
+- On the Camera page the title row wraps and the picture fills the width with little
+  letterbox.
+- A freely placed test page keeps its panel's readings on the panel, a label on its picture,
+  a parcel on its belt, four tanks in a row and four buttons in a row.
+
+### Known limits
+
+- A hug's size is unknown until drawn, so when finding bands a hugging text counts as a
+  point at its place.
+- A picture as large as the page under everything overlaps all of it, so the page is one
+  block, scaled down as before. Put such a picture in a frame of its own.
+- An element placed by an expression that overlaps nothing when the page is laid out goes in
+  the flow, where its `x` and `y` wait, so it no longer moves.
+- A turned element counts by its unturned box.
+- In a row that wraps, a diagram that filled the height keeps it, so the Robot panel's dial
+  and tool path each take a line 28 units tall.
+
 ## Rules kept from today
 
 - Only the top full page stacks. A page shown over another, and a component, show as they are.
@@ -142,3 +199,7 @@ or a page taller than wide, shows the page as it is, as today.
   Chosen: fill, as phone screens look.
 - Should columns that fit side by side stay side by side? Chosen: yes. A pair of 18 unit cards
   stays a pair on a 39 unit phone.
+- How far may a block narrow to share a line? Chosen: to three quarters of its designed
+  width, so four 10 unit buttons stay a row on a 390 px phone and two 30 unit panels do not.
+- Should the phone page follow live values, as a panel that appears? Chosen: no, values are
+  read once as it is laid out, so the page never jumps under a finger.

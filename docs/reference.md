@@ -29,6 +29,18 @@ own, as a marker over a picture.
 - `h="hug"` makes the frame as tall as what it holds.
 - A list is a frame holding one part with `repeat`.
 
+### On a phone
+
+A screen held upright shows a page wider than tall laid out again for its width, never
+zoomed. It reads the page in bands from the top, and each band from the left.
+
+- A frame keeps its parts. One laid out across wraps, and a part that fills goes to the next
+  line rather than narrow past what it holds.
+- What sits on a plain frame stays on it. What overlaps stays whole, scaled down if too wide.
+- A repeat's copies keep to a row of their own.
+
+The phone button under the editor's page shows it as a phone lays it out.
+
 ## Pages and components
 
 | Attribute | Of | Takes |
