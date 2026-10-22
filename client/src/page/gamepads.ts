@@ -8,6 +8,7 @@ import type { Element } from "../protocol/Element";
 import type { Handler } from "../protocol/Handler";
 import type { At, Scope } from "../state/bind";
 import { eventInfo, handlerKey, rest, rests, settingsOf, takes } from "../state/events";
+import { pads as drawn } from "../state/input";
 import { notify } from "../state/store";
 import { type Act, numberOf } from "./act";
 import { holds, type Listener, Listening } from "./listening";
@@ -114,6 +115,27 @@ const listening = new Listening<PadListener>(() => {
     frame = requestAnimationFrame(loop);
   });
   return () => cancelAnimationFrame(frame);
+});
+
+// the screen itself listens while code reads its pads: each as it is, with no deadband
+drawn.feedWith(() => {
+  let last = "";
+  const show = (now: (object | null)[]) => {
+    const text = JSON.stringify(now);
+    if (text !== last) drawn.set(now);
+    last = text;
+  };
+  return listening.add({
+    el: document.documentElement,
+    down: () => {},
+    up: () => {},
+    frame: (pads) => {
+      const now = pads.map((g) => g && { ...axesOf(g, 0), name: g.id, buttons: Object.fromEntries(BUTTONS.map((b, i) => [b, !!g.buttons[i]?.pressed])) });
+      while (now.length > 0 && !now[now.length - 1]) now.pop();
+      show(now);
+    },
+    lose: () => show([]),
+  });
 });
 
 const gamepad = (h: Handler) => eventInfo(h.event)?.from === "gamepad";

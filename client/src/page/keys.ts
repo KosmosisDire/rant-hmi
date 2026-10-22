@@ -8,6 +8,7 @@ import type { Element } from "../protocol/Element";
 import type { Handler } from "../protocol/Handler";
 import type { At, Scope } from "../state/bind";
 import { eventInfo, takes } from "../state/events";
+import { held } from "../state/input";
 import { type Act, numberOf, QUICKEST } from "./act";
 import { holds, type Listener, Listening } from "./listening";
 
@@ -60,6 +61,25 @@ const listening = new Listening<KeyListener>(
   },
   () => named.clear(),
 );
+
+// the screen itself listens while code reads the keys held, each by the key its code typed
+held.feedWith(() => {
+  const down = new Map<string, string>();
+  const show = () => held.set(new Set([...down].flat()));
+  return listening.add({
+    el: document.documentElement,
+    down: (k) => {
+      down.set(k.code, k.key);
+      show();
+      return false;
+    },
+    up: (k) => down.delete(k.code) && show(),
+    lose: () => {
+      down.clear();
+      show();
+    },
+  });
+});
 
 const keyboard = (h: Handler) => eventInfo(h.event)?.from === "keyboard";
 

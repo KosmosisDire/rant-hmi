@@ -60,6 +60,8 @@ export const API = [
       { name: "pingMs", words: "the round trip in ms, smoothed, null before one" },
     ],
   },
+  { name: "keys", words: "the keys held, each true by what it types or where it sits, as keys.a or keys.KeyA", places: ["expression", "component"] },
+  { name: "gamepads", words: "the gamepads, gamepads[0] the first, null where none is", places: ["expression", "component"] },
 
   { name: "Math", words: "JavaScript's math", standard: true },
   { name: "Number", takes: ["value"], words: "as a number", standard: true },

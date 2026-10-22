@@ -10,6 +10,7 @@ import type { Page } from "../protocol/Page";
 import { MISSING, TOKEN_FIXED, WHOLE } from "../protocol/rules";
 import type { Token } from "../protocol/Token";
 import type { Value } from "../protocol/Value";
+import { held, pads } from "./input";
 import { mode } from "./mode";
 import { named, say } from "./names";
 import { live, notify, state } from "./store";
@@ -169,8 +170,17 @@ const link = Object.freeze({
   },
 });
 
+/** The keys held now, each true by what it types, as keys.a, or where it sits, as keys.KeyA. */
+const keys = new Proxy({}, { get: (_, name) => typeof name === "string" && held.read().has(name) });
+
 /** What code on a screen reads of the screen itself, which only reads. */
-const SCREEN: Record<string, unknown> = { link };
+const SCREEN: Record<string, unknown> = {
+  link,
+  keys,
+  get gamepads() {
+    return pads.read();
+  },
+};
 
 /** A scope as a screen works it out: it also reads the theme's tokens, in the screen's mode,
  *  and the screen's own names, under any of the scope's own. */

@@ -57,6 +57,22 @@ link.pingMs === null || link.pingMs > 200 ? $amber : $green
 - A token, an input's default and a variable's start read the same on every screen, so they
   cannot read it either.
 
+## Keys and gamepads
+
+What a screen draws reads its own input too, as `link` is read. Handlers hear it as events
+([files.md](files.md)).
+
+- `keys` holds each key held, true by what it types and by where it sits: `keys.a`,
+  `keys.KeyA`, `keys.Space`, `keys.Shift`. A key typed into a field is held by none.
+- `gamepads[0]` is the first pad, null where none is: its `name`, `lx`, `ly`, `rx`, `ry` from
+  -1 to 1 with each y up, `lt` and `rt` from 0 to 1, every axis in `axes`, and `buttons`, each
+  true while down, as `buttons.south`. They are as the pad gives them, with no deadband.
+
+```js
+keys.Space ? $amber : $panel                        // a lamp lit while Space is held
+gamepads[0] ? gamepads[0].lx * 10 : 0              // a dot that follows the left stick
+```
+
 ## Vectors, quaternions and poses
 
 A value is one by its fields, so values from the mesh need nothing done to them:
