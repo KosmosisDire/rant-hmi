@@ -22,7 +22,7 @@ const SOUTH = 0;
 export default async function ({ page, hmi, d, sys, check, eventually }) {
   const vars = { padsArmed: true, padsDown: 0, padsUps: "", padsLx: 0, padsLy: 0, padsFrames: 0, padsLost: 0 };
   for (const [name, start] of Object.entries(vars)) hmi.send({ type: "set_variable", name, variable: { name, start, per: "hmi" } });
-  const pageId = await hmi.addPage("Pads");
+  const pageId = await hmi.addPage("Gamepad Run");
   const stick = await hmi.addElement(pageId, "div", { name: "Stick", x: "4", y: "4", w: "10", h: "6", background: "#2a2f35" });
   await hmi.setHandler(pageId, stick, "buttondown", "padsDown = padsDown + 1;", { button: "south" });
   await hmi.setHandler(pageId, stick, "buttonup", 'padsUps = padsUps + p.button + (p.lost ? "!" : "") + " ";', {});
@@ -34,7 +34,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const screen = await context.newPage();
   await screen.goto(sys.url);
   await screen.locator(".tab", { hasText: "Design" }).click();
-  await screen.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Pads/ }).click();
+  await screen.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Gamepad Run/ }).click();
   await screen.locator(".tab", { hasText: "Run" }).click();
   await screen.locator(`.run-layer:not([hidden]) .el[data-id="${stick}"]`).waitFor();
   const pads = (call, ...args) => screen.evaluate(([call, args]) => window.__pads[call](...args), [call, args]);
@@ -81,7 +81,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const other = await plain.newPage();
   await other.goto(sys.url);
   await other.locator(".tab", { hasText: "Design" }).click();
-  await other.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Pads/ }).click();
+  await other.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Gamepad Run/ }).click();
   await other.locator(".tab", { hasText: "Run" }).click();
   const notice = other.locator(".notice .notice-text", { hasText: "Gamepads need a secure page" });
   await notice.waitFor();
