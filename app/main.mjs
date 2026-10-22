@@ -14,22 +14,35 @@ const SCHEME = "hmi";
 /** The Rant logo from RANT/design/logo made square, in every size Windows asks for on Windows. */
 const ICON = join(here, process.platform === "win32" ? "icon.ico" : "icon.png");
 
-/** What to show and how: `rant-hmi-app <folder or address> [--client dir] [--domain n] [--loopback]
- *  [--fullscreen]`. The switches Electron and Chromium take are passed over, as is the app's own folder when run
- *  from source. With nothing to show, `show` is null, since the folder it runs in would become a project. */
+/** What to show and how: `rant-hmi-app <folder or address> [--client=dir] [--domain=n] [--loopback]
+ *  [--fullscreen] [--trust=fingerprint]`, a value after `=` or as the next word. Electron ends at once when an
+ *  address is followed by a value as the next word, so the launcher always gives `=`. The switches Electron and
+ *  Chromium take are passed over, as is the app's own folder when run from source. With nothing to show, `show`
+ *  is null, since the folder it runs in would become a project. */
 function parse(argv) {
-  const a = { show: null, client: join(here, "..", "client", "dist"), domain: 0, loopback: false, fullscreen: false };
-  const shown = [];
+  const a = { show: null, client: join(here, "..", "client", "dist"), domain: 0, loopback: false, fullscreen: false, trust: null };
+  const valued = { "--client": (v) => (a.client = v), "--domain": (v) => (a.domain = Number(v)), "--trust": (v) => (a.trust = v) };
+  const flags = { "--loopback": () => (a.loopback = true), "--fullscreen": () => (a.fullscreen = true) };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--client") a.client = argv[++i];
-    else if (argv[i] === "--domain") a.domain = Number(argv[++i]);
-    else if (argv[i] === "--loopback") a.loopback = true;
-    else if (argv[i] === "--fullscreen") a.fullscreen = true;
-    else if (!argv[i].startsWith("-")) shown.push(argv[i]);
+    const [name, value] = argv[i].split(/=(.*)/s);
+    if (valued[name]) valued[name](value ?? argv[++i]);
+    else if (flags[name]) flags[name]();
+    else if (!name.startsWith("-")) a.show ??= argv[i];
   }
-  a.show = shown[0] ?? a.show;
   return a;
 }
+
+/** A plain page saying the server at `address` is not answering yet, while the window tries it again. */
+function waiting(address, why) {
+  const text = `${address}: ${why}`.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const page = `<!doctype html><meta charset=utf-8><title>Rant HMI</title>
+<body style="font: 15px system-ui; margin: 32px; color: #e4e6ea; background: #17191c">
+<h3>Waiting for the HMI to answer</h3><pre style="white-space: pre-wrap">${text}</pre>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(page)}`;
+}
+
+/** How long the window waits before trying a server that did not answer again. */
+const AGAIN = 3000;
 
 /** The HMI's backend, built beside this file by `npm run build`, or the one HMI_ADDON names. */
 function loadBackend() {
@@ -94,8 +107,23 @@ async function show() {
     event.preventDefault();
   });
   process.on("SIGINT", () => window.close());
-  await window.loadURL(url);
+  if (!address) return window.loadURL(url);
+  // a server that does not answer, as when a panel starts before it, is tried again until it does
+  window.webContents.on("did-fail-load", (_event, code, why, _url, mainFrame) => {
+    // -3 is a load another one cut short
+    if (!mainFrame || code === -3) return;
+    window.loadURL(waiting(address, why)).catch(() => {});
+    setTimeout(() => window.isDestroyed() || window.loadURL(url).catch(() => {}), AGAIN);
+  });
+  await window.loadURL(url).catch(() => {});
 }
+
+// the certificate of the server an app was built from, which a browser would warn about, is trusted by its fingerprint
+app.on("certificate-error", (event, _contents, _url, _error, certificate, callback) => {
+  const trusted = args.trust !== null && certificate.fingerprint === args.trust;
+  if (trusted) event.preventDefault();
+  callback(trusted);
+});
 
 // closed, the HMI ends its screens' sessions and its node, then the app ends
 app.on("window-all-closed", async () => {

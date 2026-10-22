@@ -5,7 +5,8 @@
   "description": "An HMI's operator screen in a window of its own",
   "main": "main.mjs",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "runtime": "node runtime.mjs"
   },
   "devDependencies": {
     "electron": "44.9.3"

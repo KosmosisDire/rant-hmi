@@ -7,10 +7,13 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, anyhow};
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use rcgen::{CertificateParams, DnType, KeyPair};
 use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use sha2::{Digest, Sha256};
 use tokio_rustls::TlsAcceptor;
 use tracing::info;
 use x509_cert::der::Decode;
@@ -28,19 +31,29 @@ pub enum Certificate {
     Given { cert: PathBuf, key: PathBuf },
 }
 
-/// What answers a TLS hello.
-pub fn acceptor(from: &Certificate) -> Result<TlsAcceptor> {
+/// What answers a TLS hello, and the fingerprint of the certificate it shows, by which an app
+/// built here trusts this server.
+pub fn acceptor(from: &Certificate) -> Result<(TlsAcceptor, String)> {
     let (cert, key) = match from {
         Certificate::Own(dir) => own(dir)?,
         Certificate::Given { cert, key } => (cert.clone(), key.clone()),
     };
     let chain = CertificateDer::pem_file_iter(&cert).and_then(|c| c.collect::<Result<Vec<_>, _>>()).with_context(|| format!("could not read the certificate {}", cert.display()))?;
     let key = PrivateKeyDer::from_pem_file(&key).with_context(|| format!("could not read the key {}", key.display()))?;
+    let fingerprint = fingerprint(&chain);
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let mut config = ServerConfig::builder_with_provider(provider).with_safe_default_protocol_versions()?.with_no_client_auth().with_single_cert(chain, key)?;
     // the server speaks only http/1.1, which a WebSocket upgrade needs too
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    Ok(TlsAcceptor::from(Arc::new(config)))
+    Ok((TlsAcceptor::from(Arc::new(config)), fingerprint))
+}
+
+/// A certificate's fingerprint as Chromium writes one: `sha256/` and the base64 of the SHA-256
+/// of its chain.
+fn fingerprint(chain: &[CertificateDer]) -> String {
+    let mut hash = Sha256::new();
+    chain.iter().for_each(|c| hash.update(c.as_ref()));
+    format!("sha256/{}", BASE64_STANDARD.encode(hash.finalize()))
 }
 
 /// The HMI's own certificate and key files in `dir`, made anew when missing, unreadable or near

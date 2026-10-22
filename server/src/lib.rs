@@ -2,6 +2,7 @@
 //! screen. docs/files.md in the repository shows the project it runs.
 
 pub mod app;
+pub mod apps;
 pub mod authorize;
 pub mod events;
 pub mod lanes;
@@ -36,6 +37,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tracing::{info, warn};
 
 use app::{App, Door, Sources};
+use apps::Apps;
 use mesh::{Mesh, MeshOptions};
 use pages::Pages;
 use project::Project;
@@ -59,11 +61,7 @@ pub struct Web {
     pub certificate: Option<tls::Certificate>,
 }
 
-/// The folder the HMI keeps its own files in on this host, `.rant/hmi` in the home folder: its
-/// certificate, and the app's webview data.
-pub fn kept() -> Option<PathBuf> {
-    std::env::home_dir().map(|home| home.join(".rant").join("hmi"))
-}
+pub use rant_hmi_pack::kept;
 
 /// The node's name on the mesh: one plain name, as tooling nodes take.
 const NODE: &str = "hmi";
@@ -97,7 +95,9 @@ impl Hmi {
         let build = index.split("src=\"").nth(1).and_then(|s| s.split('"').next()).filter(|s| s.starts_with("/assets/")).unwrap_or_default().to_owned();
         let (door, screens) = Door::new();
         if let Some(web) = o.web {
-            serve(web, &project.info.name, o.client, door.clone()).await?;
+            let runtimes = kept().map(|kept| kept.join("runtimes").join(env!("CARGO_PKG_VERSION"))).unwrap_or_default();
+            let apps = Apps { project: o.project.clone(), runtimes, domain: o.domain, loopback: o.loopback, trust: None };
+            serve(web, &project.info.name, o.client, door.clone(), apps).await?;
         }
         let (said, script) = unbounded_channel();
         let runner = script::Script::start(said);
@@ -125,8 +125,8 @@ impl Hmi {
     }
 }
 
-/// Listens on the network for screens, the editor's included.
-async fn serve(web: Web, name: &str, client: PathBuf, door: Door) -> Result<()> {
+/// Listens on the network for screens, the editor's included, and the apps it builds.
+async fn serve(web: Web, name: &str, client: PathBuf, door: Door, mut apps: Apps) -> Result<()> {
     let listener = TcpListener::bind((web.bind.as_str(), web.port))
         .await
         .with_context(|| format!("could not listen on {}:{}", web.bind, web.port))?;
@@ -134,7 +134,10 @@ async fn serve(web: Web, name: &str, client: PathBuf, door: Door) -> Result<()> 
     let tls = match &web.certificate {
         None => None,
         Some(c) => match (tls::acceptor(c), c) {
-            (Ok(tls), _) => Some(tls),
+            (Ok((tls, fingerprint)), _) => {
+                apps.trust = Some(fingerprint);
+                Some(tls)
+            }
             (Err(e), tls::Certificate::Given { .. }) => return Err(e),
             (Err(e), tls::Certificate::Own(_)) => {
                 warn!("serving no https, as the HMI's own certificate failed: {e:#}");
@@ -147,6 +150,6 @@ async fn serve(web: Web, name: &str, client: PathBuf, door: Door) -> Result<()> 
         Some(_) => info!("{name} on http://{at} and https://{at}"),
         None => info!("{name} on http://{at}"),
     }
-    tokio::spawn(async move { web::serve(listener, tls, &client, door).await });
+    tokio::spawn(async move { web::serve(listener, tls, &client, door, apps).await });
     Ok(())
 }

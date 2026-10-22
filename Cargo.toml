@@ -1,7 +1,8 @@
 [workspace]
-members = ["server", "app/addon"]
-# the addon builds only when asked, as the app does: on Windows for the MSVC target, which napi needs
-default-members = ["server"]
+members = ["server", "app/addon", "app/launcher", "app/pack"]
+# the addon and the launcher build only when asked, as the app does: on Windows for the MSVC
+# target, which napi needs and the launcher's icon is made for
+default-members = ["server", "app/pack"]
 resolver = "3"
 
 # the WebRTC crypto and video work far too slowly unoptimized, so a debug build drops screens.

@@ -29,6 +29,7 @@ use tower_http::set_header::SetResponseHeader;
 use tracing::{debug, error, warn};
 
 use crate::app::{Door, Inbound};
+use crate::apps::{self, Apps};
 use crate::flight::Flight;
 use crate::lanes::Lanes;
 use crate::protocol::ClientMsg;
@@ -49,8 +50,8 @@ pub fn files(client: &Path) -> Files {
 
 /// Serves on `listener`, https too for a connection that opens with a TLS hello when `tls`
 /// answers one.
-pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: &Path, door: Door) {
-    let app = Router::new().route("/ws", get(upgrade)).fallback_service(files(client)).with_state(door);
+pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: &Path, door: Door, apps: Apps) {
+    let app = Router::new().route("/ws", get(upgrade)).with_state(door).merge(apps::router(apps)).fallback_service(files(client));
     let front = Front::open(listener, tls);
     if let Err(e) = axum::serve(front, app.into_make_service_with_connect_info::<Reached>()).await {
         error!("the web server stopped: {e}");
