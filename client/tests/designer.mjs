@@ -268,7 +268,15 @@ export function designer(page) {
       const box = card.locator(".editor.code");
       await box.fill(code);
       await box.press("Control+Enter");
-      for (const [label, text] of Object.entries(settings)) await commit(card.locator(".event-when .field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) }).locator("input"), text);
+      for (const [label, text] of Object.entries(settings)) {
+        const field = card.locator(".event-when .field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) }).locator("input");
+        if ((await field.getAttribute("readonly")) === null) await commit(field, text);
+        else {
+          // a key filter takes the key pressed, a capital with Shift
+          await field.click();
+          await page.keyboard.press(text === " " ? "Space" : /^[A-Z]$/.test(text) ? `Shift+${text}` : text);
+        }
+      }
     },
   };
   return d;

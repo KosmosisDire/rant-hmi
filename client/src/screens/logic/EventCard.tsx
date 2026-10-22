@@ -1,9 +1,10 @@
 // A handler as one card: what starts it and what the event brings it, then its code.
 
-import { For, type JSX, Match, Show, Switch } from "solid-js";
+import { createSignal, For, type JSX, Match, Show, Switch } from "solid-js";
 import type { Place } from "../../lang/api.js";
+import { type Key, keyOf } from "../../page/keys";
 import { complete, signature, type Suggestion } from "../../state/complete";
-import { type Brought, type Offered, pOf, settingsOf } from "../../state/events";
+import { type Brought, keyWords, type Offered, pOf, settingsOf } from "../../state/events";
 import { DraftInput } from "../../ui/DraftInput";
 import { Component, Keyboard, X, Zap } from "../../ui/icons";
 
@@ -18,6 +19,50 @@ export function EventIcon(p: { from?: Offered["from"]; size?: number }) {
         <Keyboard size={p.size ?? 13} />
       </Match>
     </Switch>
+  );
+}
+
+const MODIFIERS = new Set(["Shift", "Control", "Alt", "AltGraph", "Meta"]);
+
+/** A key filter, filled by pressing the key: its field `name` of what the screen's keydown
+ *  brings, so it matches as the screen sends it. A modifier alone counts once let go with no
+ *  other key, so Shift then A takes "A". */
+function KeyField(p: { name: keyof Key; value: string; placeholder: string; onSet: (value: string) => void }) {
+  let field!: HTMLInputElement;
+  const [waiting, setWaiting] = createSignal(false);
+  let modifier: KeyboardEvent | null = null;
+  const take = (e: KeyboardEvent) => {
+    p.onSet(String(keyOf(e)[p.name]));
+    field.blur();
+  };
+  return (
+    <span class="key-field">
+      <input
+        ref={field}
+        class="editor"
+        readOnly
+        value={waiting() ? "" : keyWords(p.value)}
+        placeholder={waiting() ? "Press a key" : p.placeholder}
+        onFocus={() => setWaiting(true)}
+        onBlur={() => {
+          setWaiting(false);
+          modifier = null;
+        }}
+        onKeyDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.repeat) return;
+          if (MODIFIERS.has(e.key)) modifier = e;
+          else take(e);
+        }}
+        onKeyUp={(e) => modifier?.key === e.key && take(modifier)}
+      />
+      <Show when={p.value && !waiting()}>
+        <button class="icon-btn" title="Take any key" onClick={() => p.onSet("")}>
+          <X size={12} />
+        </button>
+      </Show>
+    </span>
   );
 }
 
@@ -91,11 +136,7 @@ export function EventCard(p: {
             {(s) => (
               <div class="field">
                 <label>{s.label}</label>
-                {/* a filter is taken as it is, Space too, an expression as code */}
-                <Show
-                  when={s.kind === "expression"}
-                  fallback={<DraftInput value={p.setting?.(s.name) ?? ""} placeholder={s.default} onCommit={(text) => p.onAttr?.(s.name, text)} />}
-                >
+                <Show when={s.kind === "expression"} fallback={<KeyField name={s.name as keyof Key} value={p.setting?.(s.name) ?? ""} placeholder={s.default} onSet={(v) => p.onAttr?.(s.name, v)} />}>
                   <DraftInput value={p.setting?.(s.name) ?? ""} placeholder={s.default} onCommit={(text) => p.onAttr?.(s.name, text.trim())} complete={(text, c) => complete(text, c, "expression", p.names, p.also)} />
                 </Show>
               </div>

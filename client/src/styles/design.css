@@ -812,6 +812,20 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* A key filter, set by pressing the key, cleared by its cross. */
+.key-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.key-field .editor {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
 .rule-kind {
   justify-self: start;
   width: 220px;
