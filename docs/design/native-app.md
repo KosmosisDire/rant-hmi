@@ -11,17 +11,36 @@ The user's words, 2026-10-21, low priority:
 > running backend and screen in one process, talking with no network between them, or the
 > screen alone as a native app with the backend elsewhere.
 
-Two parts:
+The user's vision, 2026-10-22, which now leads the design:
 
-1. One exe holds the backend and the screen, and they talk with no network.
-2. The screen alone as a native app, its backend on another machine.
+> You would have the web version hosted normally with the backend etc like we do it normally.
+> You would design your app in there test it maybe use it on some devices. Then you have a
+> device you want to run it native on so you would press a button in the designer to build the
+> app, the backend would build the app for the requested platform and it would then download
+> the app from the frontend (so you could open the hmi web onto whatever device you want the
+> native app on and just get it there immediately). Linux is a large contender here, especially
+> the steam deck or other handhelds or touch hmi devices running linux or windows. macos is a
+> much smaller priority for this, but should still work if possible.
 
-And a third the first implies: a finished HMI handed out as that one file.
+> It should include all dependencies if possible with no need for installing anything new.
+
+> Wayland or X11 should both be supported as well.
+
+So the flow is:
+
+1. Design and test the HMI in the browser, served by the backend as today.
+2. On the device that should run it, open the HMI's editor and press a button.
+3. The backend builds the app for that device's platform and the browser downloads it.
+4. The app runs on the device with nothing else installed.
 
 ## What holds the design
 
 - UI is HTML, CSS and SVG. The pages and components a designer makes are web pages, so the
   screen in a window must be the same client, not a second renderer.
+- What is designed is what runs: the app's engine should be the one the designer tests in.
+- Nothing to install on the device. The app brings its engine and every library it needs.
+- Linux first, Windows beside it, macOS if it can be had. Linux on Wayland and on X11.
+- The backend builds an app for any platform from any platform, with no compiler.
 - One way to do each thing: the window reuses the backend's loop and the client's screen.
 - The backend runs on headless machines too, so the server must never need a desktop library.
 - A screen held by a person must lose nothing it has today: video, gamepads, keys, touch.
@@ -36,118 +55,168 @@ And a third the first implies: a finished HMI handed out as that one file.
   carries everything, video frames too, which the page decodes with WebCodecs on a secure page.
 - `/run` is the operator's screen. Every other path is the editor.
 - The app's loop does not know sockets: a screen is an `Inbound::Open` with an outbox of lanes,
-  then its messages, then a close. `web.rs` is the only door that makes those today.
+  then its messages, then a close. `web.rs` was the only door that made those.
 
-## Part 1: the window
+## Part 1: the engine
+
+### What the devices have
+
+- The Steam Deck does not reliably ship WebKitGTK. One report on SteamOS 3.9.2 found
+  `libwebkit2gtk-4.1.so.0` missing, and SteamOS wipes what pacman installs on its next update.
+  Other handheld systems (Bazzite, ChimeraOS) are immutable in the same way.
+- Windows 10 and 11 carry WebView2, but Windows 10 IoT Enterprise LTSC, common on panel PCs,
+  and Windows Server often do not.
+- macOS always has WKWebView.
+
+So on Linux, and on some Windows panels, the app must bring its own engine.
 
 ### Options
 
-| Shell | For | Against |
+| Engine | For | Against |
 | --- | --- | --- |
-| wry and tao | The system's own webview: WebView2 (Chromium) on Windows, WKWebView on macOS, WebKitGTK on Linux. A few MB. Plain Rust in our process. | Each OS has its own engine. Linux needs WebKitGTK. |
-| Tauri | wry and tao with a bundler, installers and updates | A CLI, a config, its own IPC and commands, and a project shape of its own. We need a window and one channel. |
-| Electron | One Chromium everywhere | Node beside the Rust backend: two processes, about 150 MB each app. |
-| A browser in app mode | No code: `msedge --app=http://127.0.0.1:6739/run` | A second process over loopback TCP, a browser that may be missing, and a window that can be sent anywhere. |
-| CEF | One Chromium everywhere, in process | Over 100 MB each app, a heavy build. |
-| A native renderer (egui, Slint, RmlUi as the explorer) | No web engine | Rewrites every page's HTML, CSS and SVG. Against the first rule. |
+| The system webview through wry and tao | A few MB on Windows and macOS. Plain Rust in our process. | Linux must bundle WebKitGTK and GStreamer, about 100 MB, which is known to be fragile and is unproven on SteamOS. A different engine on Linux than the designer tests in. LTSC needs WebView2 bundled, about 150 MB. |
+| Chromium from Electron | Prebuilt for every target. H264 included, so WebCodecs video plays. Same engine as Chrome and WebView2. Runs on the Steam Deck, where Electron apps such as Heroic are common. Native Wayland or X11 by itself since Electron 38. | About 100 MB a download. Node beside our backend in the main process. |
+| Chromium from CEF (cef-rs) | Chromium in our own Rust process | Stock CEF builds leave H264 out, so video would need our own Chromium build on every target. |
+| The system webview on Windows and macOS, Chromium on Linux | Small where it can be | Two window shells and two engines to keep and test. |
 
-Chosen: wry and tao. They are what Tauri is built on, without the parts we would not use. A
-probe on this machine's toolchain built and ran it: a hidden window, a page from the exe's own
-scheme, binary both ways.
+Chosen by the user, 2026-10-22: Chromium from Electron everywhere.
 
-### The link with no network
+The first window was built on wry, before the vision (see As built). It proved the link and the
+seams, which all stay. Only the window shell changes.
+
+### The shape
+
+- Electron's main process loads the backend as a Node native addon (napi-rs), built from the
+  server's library. Backend and window main share one process, so there is still no network.
+- The window serves `hmi://localhost`, a scheme registered as standard and secure, so the page
+  is a secure context. `protocol.handle` hands each request to the addon, which answers from
+  the same `link::router` as before: the client's files and `/link`.
+- A preload script tells the page it is in the app, as the init script did.
+- Given an address, the window loads that HMI's `/run` and the addon starts no backend.
+- Playwright drives Electron through its own debugging port, so tests check the real window.
+
+### Wayland and X11
+
+Since Electron 38 Chromium picks Wayland in a Wayland session and X11 elsewhere, as Steam's Game
+Mode, KDE and GNOME each offer. `--ozone-platform=x11` stays a way out.
+
+On Linux Chromium's sandbox needs unprivileged user namespaces. Ubuntu 24.04 and later restrict
+them for programs without an AppArmor profile, and Electron apps then fail at start. The app
+checks and runs without the sandbox where it cannot have it. It shows only its own client and
+the HMI it was built from.
+
+## The link with no network
 
 | Option | For | Against |
 | --- | --- | --- |
 | The server on loopback TCP | No client change | A network after all: any program on the host reaches the port, a port can clash. |
-| wry's IPC (`postMessage` in, a script run out) | Built in | Text only: CBOR goes as base64, and each video frame through a script. |
-| The webview's own scheme | Only this webview can reach it. Binary both ways. The page is a secure context. | A link of our own on the client. |
+| The engine's IPC | Built in | Text only through wry. Through Electron a second protocol beside the one the scheme gives. |
+| The window's own scheme | Only this window can reach it. Binary both ways. The page is a secure context. | A link of our own on the client. |
 
-Chosen: the webview's own scheme. The window serves `https://hmi.localhost` (wry's custom
-protocol, which never touches a socket), and on it:
+Chosen: the window's own scheme. On it:
 
-- the client's files, from the same files service the web server uses;
-- `POST /link` opens a session and answers its number;
-- `POST /link/<n>` carries the screen's messages, each after its length;
+- the client's files, from the same files service the web server uses
+- `POST /link` opens a session and answers its number
+- `POST /link/<n>` carries the screen's messages, each after its length
 - `GET /link/<n>` waits for what the loop sends and answers every piece ready, each after its
   length. The next poll goes when the screen has read these, so a screen is never sent more
   than it reads.
-
-The probe showed each part: a POST body arrives whole, a 200 KB answer comes back intact after
-a wait, and the page is a secure context, so WebCodecs and gamepads work.
 
 Ordering: the screen keeps one POST in flight and sends what queued meanwhile in the next, so
 messages arrive in the order sent, as on a socket.
 
 A page reloaded or gone stops pinging, and the loop drops its session after five seconds, as
-it drops a lost socket. Nothing new handles it.
+it drops a lost socket.
 
-### WebRTC in the window
+In one process there is no network for WebRTC to be faster on, so the screen takes everything
+over the link, video frames too, exactly as a screen whose WebRTC failed does today.
 
-None. In one process there is no network for WebRTC to be faster on, so the screen takes
-everything over the link, video frames too, exactly as a screen whose WebRTC failed does today.
+## Part 2: what an app runs
 
-### Seams
+Chosen by the user: either, picked when building.
 
-- Backend: a `Door` numbers every screen from one count and hands its events to the loop.
-  `web.rs` and the window's link are its two users. `run` splits into `start`, which opens the
-  project, the node and the port and fails before any window shows, and `run`.
-- The link is an axum router called in process, so cargo tests drive it with no webview.
-- Client: `net/link.ts` puts the socket and the window's link behind one shape: send, opened,
-  heard, closed, and whether a network lies under it (WebRTC is offered only then). The shell
-  says it is there with a script run before the page.
+- **This HMI on the device.** The app holds the project and runs its backend inside: the node,
+  the logic, the screen. No server needed. It joins the domain the server was on.
+- **This server's screen.** The app holds the server's address and is a window onto its `/run`.
 
-### Binaries
+Both are the same runtime: what the app holds decides which. From the command line the same
+choice is the argument, a folder or an address.
 
-`rant-hmi` stays the server and never links a webview: a headless Linux box has no GTK. The app,
-`rant-hmi-app`, is a package of its own in `app/`, on the server's library, built where a desktop
-is (Windows and macOS first).
+A self signed certificate is refused by Chromium as it was by WebView2. The app trusts the
+certificate of the server it was built from by its fingerprint, which the build writes in.
 
-```
-rant-hmi-app <project>          runs it here and shows its operator screen
-rant-hmi-app https://host:6739  shows that HMI's screen, its backend elsewhere
-```
-
-## Part 2: the screen alone
-
-Given an address the window opens that HMI's `/run` as a browser would, over its socket and
-WebRTC. No backend in process. A self signed certificate is refused by the webview, so for now
-it takes http or a real certificate.
-
-## Part 3: one exe to hand out
+## Part 3: one file to hand out
 
 ### Options
 
 | Option | For | Against |
 | --- | --- | --- |
-| Build time embedding | Plain `include_bytes` | Needs a Rust toolchain wherever an HMI is packed. |
-| A resource section (PE, Mach-O) | Signing keeps working | Different on each OS. |
-| An archive appended to the exe | One way on every OS, made by copying the exe | Sign after packing, since it breaks a signature made before. A macOS app keeps it in its bundle instead. |
+| Build each app with a toolchain | Any format | A compiler, Electron's tools and every target's SDK on the server. |
+| An installer format per OS (MSI, AppImage, DMG) | Familiar | A tool per format to run on the server, and the AppImage needs FUSE. |
+| A launcher with archives appended | One way on every OS, made by joining files, so any server builds for any target | Unpacks once on first start. Sign after building. |
 
-Chosen: an archive appended to the exe. `rant-hmi-app pack <project> <out>` copies its own exe and
-appends the client and the project after it, with a trailer that says where they begin. Started,
-the app finds the trailer, unpacks into a folder under the user's local data named by the pack's
-id, and runs it as any project: no second way to read a project.
+Chosen: a launcher with archives appended.
+
+- The release builds a runtime per target: the launcher, a small Rust exe, and an archive of
+  Electron, the addon, the main script and the built client.
+- The server builds an app by streaming the launcher, the runtime archive, an archive of the
+  project (or the address), and a trailer saying where each begins. Nothing is written to disk
+  and a build takes no longer than the download.
+- Started, the launcher reads its trailer. It unpacks the runtime into the user's local data
+  once per runtime version, so every app of that version shares it, and the project once per
+  build. Then it starts Electron on it and waits.
+- macOS takes an app bundle instead, the runtime and the project in its resources, signed ad
+  hoc by the server after building, since Apple silicon runs nothing unsigned.
+
+### Where runtimes come from
+
+- Each release attaches `rant-hmi-app-<target>.zip` for `windows-x64`, `linux-x64`,
+  `linux-arm64` and `macos-arm64`.
+- The server fetches the one a build needs from its own version's release the first time it is
+  asked, and keeps it under `~/.rant/hmi/apps/<version>/`. An offline server takes the file
+  copied there by hand.
+- A server built from source finds the runtime built beside it, for its own target only.
+
+## Part 4: built from the editor
+
+- A button in the editor's top bar, "Get the app", opens a sheet.
+- The sheet picks the platform of the device it is open on, from the browser, and offers the
+  others. It asks what the app runs: this HMI on the device, or this server's screen.
+- Download streams the app, named after the HMI: `Packing line.exe` on Windows, `Packing line`
+  on Linux, `Packing line.zip` with the app bundle on macOS.
+- The first build for a target fetches its runtime, about 100 MB, and the sheet says so.
+- Linux browsers drop the mark that lets a file run, so the sheet says how to set it, and gives
+  the command that downloads and marks it in one go. On a Steam Deck, "Add to Steam" then puts
+  it in Game Mode, where the gamepad drives it.
+- Windows warns about an unsigned exe until it is signed.
 
 ## Slices
 
-1. The window in process: `rant-hmi-app <project>`, the `Door`, the link, the client's link
-   shape. Built.
-2. The screen alone: `rant-hmi-app <address>`. Built with the first, as they share the window.
-3. Pack: one exe holding the client and the project.
-4. Release: CI builds the app on Windows and macOS, the package carries it, docs and the agent
-   skill. A macOS bundle, Linux on WebKitGTK, an icon.
+1. The link, the `Door`, `Hmi::start` and `run`, the client's link shape, and a window.
+   Built, with the window on wry.
+2. The screen alone. Built with the first.
+3. The Electron shell on Windows: the addon, the main script, the scheme, the preload. The wry
+   window goes. Playwright drives the real window.
+4. The launcher and its archives: an app for this host built and run from one file.
+5. Built from the editor: the `/app` route, the runtime cache, the sheet, the domain and the
+   certificate written in.
+6. Linux: runtimes for x64 and arm64, run under Wayland and X11 (WSLg offers both here), the
+   sandbox check. Then on a Steam Deck, in the desktop and in Game Mode.
+7. Release: CI builds every runtime and attaches them, the server fetches by its version, docs
+   and the agent skill.
+8. macOS: the app bundle and its ad hoc signature.
 
 ## Open questions for the user
 
-- Should a packed app also serve the network, so phones reach it too? Today: the window only.
-- Should the app open the editor too, a desktop designer? Today: the operator screen only.
-- Full screen with no title bar for a panel PC: a flag, or a setting in `hmi.toml`?
-- Trusting the HMI's own certificate in the screen alone, by its fingerprint.
-- Installers: Tauri's bundler makes MSI, DMG and AppImage from a wry app, worth taking later.
-- Windows Server and 10 LTSC lack the WebView2 runtime: ship its bootstrapper, or say so.
-- Every HMI's node is named `hmi`, so an app and a server on one mesh clash. Name the node
-  after the project?
+- Updates: an app is a snapshot of the HMI when built. Should it ask its server for a newer
+  build when it can reach it, and offer to update itself?
+- Two copies of one HMI: an app running the HMI and the server running it both run its logic,
+  so what the logic does by itself (timers, watches) happens once per copy. And every HMI's
+  node is named `hmi`, so they clash on the mesh. Name the node after the HMI and the device?
+- Full screen with no title bar for a panel or a handheld: a choice in the sheet?
+- Should an app that runs the HMI also serve it on the network, so phones reach it too?
+- Signing: Windows warns about an unsigned exe and macOS refuses an app from the internet
+  until opened by hand. A certificate to sign with on the server, later?
 
 ## As built
 
@@ -162,14 +231,13 @@ id, and runs it as any project: no second way to read a project.
   serves, and `/link`. A poll answers every piece ready, up to about 1 MB, waits 10 s at most,
   and counts as heard, as a pong does. A session's lanes are kept until read out, as a
   socket's writer keeps them, so the last message a dropped session was sent still arrives.
-- The app is the package `app/` (wry 0.57, tao 0.37), with a workspace and lock of its own.
+- The window is the package `app/` (wry 0.57, tao 0.37), with a workspace and lock of its own.
   wry's Linux crates pin exact old `toml_edit` and `toml_datetime` (through glib-macros and
   proc-macro-crate 2), and cargo resolves every platform at once, so in the server's lock they
-  took the server's `toml` from 0.8.23 back to 0.8.2 on every build. Apart, the server's lock
-  only gains `tower` for its tests, and only the app's backend reads TOML with 0.8.2. The
-  backend runs on a thread with its own runtime and the window on the main thread. Each
-  request on the window's scheme goes to the router in a task. A start that fails shows why in
-  the window. Closing the window ends the screens' sessions and the node, then the process.
+  took the server's `toml` from 0.8.23 back to 0.8.2 on every build. The backend runs on a
+  thread with its own runtime and the window on the main thread. A start that fails shows why
+  in the window. Closing the window ends the screens' sessions and the node, then the process.
+  Slice 3 replaces this package.
 - Client: `net/link.ts`, which `connection.ts` now opens. In the app no WebRTC is offered. The
   editor's status bar says "Reached in this app, with no network".
 - Tests: cargo tests drive the link (order both ways, a poll that waits, the last message of a
@@ -180,24 +248,5 @@ id, and runs it as any project: no second way to read a project.
   one session past the 5 s a silent screen is lost in, the process listens on no TCP port, and
   closing the window ends the app by itself. Then the window shows a running HMI's screen by
   its address, and a project that cannot open leaves the window saying why until it is closed.
-  A client that never takes the app link fails it, so does an app that never says it is there,
-  and so does an app whose failed start closed the window at once, a bug the last part found.
-- WebView2 here (runtime 155) opens no debugging port, whether asked through its variable or
-  the option, so the window itself is checked through the app's log. The app passes
-  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` on, which wry's own arguments would replace, for a
-  machine where it works.
-
-Choices worth a second look:
-
-- The app's own package and lock, so its backend reads TOML with an older `toml` than the
-  server's. Moving the server to `toml` 1.x would let the app share its workspace again.
-- The app is a windows subsystem exe, so double clicked it opens no console. Its log reaches
-  only a pipe that started it.
-- The window opens at 1280 by 800 and takes its title from the page.
-- A screen in the app gets every video as frames over the link, decoded with WebCodecs, since
-  it has no WebRTC.
-- The screen alone refuses the HMI's own self signed certificate, as WebView2 does. Use http
-  there for now.
-- Not yet: packing one exe (slice 3), so the app still needs the client folder beside it
-  (`--client`), and CI does not build the app. macOS should build as is but is untried, and
-  Linux needs WebKitGTK.
+- WebView2 here (runtime 155) opens no debugging port, so the wry window was checked through
+  the app's log. Electron's window can be driven directly.
