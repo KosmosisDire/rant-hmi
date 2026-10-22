@@ -9,6 +9,7 @@ import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Pick } from "./DesignScreen";
 import { Keyboard, Smartphone } from "../../ui/icons";
+import { fingers } from "../../ui/fingers";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
 import { onResize } from "../../ui/size";
@@ -201,9 +202,7 @@ export function Artboard(p: {
     setHeld((all) => (all[id] && (n === undefined || all[id].n === n) ? Object.fromEntries(Object.entries(all).filter(([k]) => k !== id)) : all));
   let drag: Drag | null = null;
   let drags = 0;
-  /** The fingers on the artboard, where each is now, and the pinch two of them make: how far
-   *  apart they began, their middle then and the view then. */
-  const fingers = new Map<number, { x: number; y: number }>();
+  /** The pinch two fingers make: how far apart they began, their middle then and the view then. */
   let pinch: { d: number; cx: number; cy: number; view: { k: number; x: number; y: number } } | null = null;
 
   // each page fits when it opens, and again as the preview comes or goes
@@ -291,38 +290,25 @@ export function Artboard(p: {
     }
   });
 
-  // a second finger puts back what the first began and pinches, and the pinch ends when either
-  // lifts, so the one left does nothing until it lifts too
-  const finger = (e: PointerEvent) => {
-    const at = (m: PointerEvent) => fingers.set(m.pointerId, { x: m.clientX, y: m.clientY });
-    at(e);
-    follow(e, {
-      move: (m) => {
-        at(m);
-        if (pinch) pinchTo();
-      },
-      end: () => {
-        fingers.delete(e.pointerId);
-        pinch = null;
-      },
-    });
-    if (fingers.size !== 2) return fingers.size > 2;
-    cancel();
-    const [a, b] = [...fingers.values()];
-    const r = host.getBoundingClientRect();
-    pinch = { d: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)), cx: (a.x + b.x) / 2 - r.left, cy: (a.y + b.y) / 2 - r.top, view: view() };
-    return true;
-  };
-  // the point of the page under the fingers' middle stays under it as they spread and move
-  const pinchTo = () => {
-    if (!pinch || fingers.size !== 2) return;
-    const [a, b] = [...fingers.values()];
-    const r = host.getBoundingClientRect();
-    const [cx, cy] = [(a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top];
-    const v = pinch.view;
-    const k = zoomed((v.k * Math.hypot(b.x - a.x, b.y - a.y)) / pinch.d);
-    setView({ k, x: cx - ((pinch.cx - v.x) * k) / v.k, y: cy - ((pinch.cy - v.y) * k) / v.k });
-  };
+  // a second finger puts back what the first began and pinches. The point of the page under the
+  // fingers' middle stays under it as they spread and move
+  const finger = fingers({
+    begin: (at) => {
+      cancel();
+      const r = host.getBoundingClientRect();
+      pinch = { d: at.spread, cx: at.clientX - r.left, cy: at.clientY - r.top, view: view() };
+      return true;
+    },
+    move: (at) => {
+      if (!pinch) return;
+      const r = host.getBoundingClientRect();
+      const [cx, cy] = [at.clientX - r.left, at.clientY - r.top];
+      const v = pinch.view;
+      const k = zoomed((v.k * at.spread) / pinch.d);
+      setView({ k, x: cx - ((pinch.cx - v.x) * k) / v.k, y: cy - ((pinch.cy - v.y) * k) / v.k });
+    },
+    end: () => (pinch = null),
+  });
 
   // what this page draws under a point, front to back, each element once
   const hitsAt = (x: number, y: number) => {
@@ -332,7 +318,7 @@ export function Artboard(p: {
   };
 
   const down = (e: PointerEvent) => {
-    if (e.pointerType === "touch" && finger(e)) return;
+    if (e.pointerType === "touch" && finger.down(e) > 1) return;
     const target = e.target as HTMLElement;
     const v = view();
     // a field being typed in commits before the canvas takes over
