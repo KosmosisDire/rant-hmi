@@ -155,19 +155,39 @@ export function tokenValue(t: Token, m: "dark" | "light" = workingMode ?? (mode(
   }
 }
 
-/** A scope that also reads the theme's tokens, in the screen's mode. */
-function themed(s: Scope): Scope {
+/** The screen's link to the system. Each field reads the store, so what shows one follows it,
+ *  and the ping is whole ms, as the status bar shows it. */
+const link = Object.freeze({
+  get open() {
+    return state.link === "open";
+  },
+  get webrtc() {
+    return state.channels;
+  },
+  get pingMs() {
+    return state.rttMs === null ? null : Math.round(state.rttMs);
+  },
+});
+
+/** What code on a screen reads of the screen itself, which only reads. */
+const SCREEN: Record<string, unknown> = { link };
+
+/** A scope as a screen works it out: it also reads the theme's tokens, in the screen's mode,
+ *  and the screen's own names, under any of the scope's own. */
+function onScreen(s: Scope): Scope {
+  const screen = (name: string) => Object.hasOwn(SCREEN, name) && !s.has(name);
   return {
-    has: (name) => token(name) !== undefined || s.has(name),
+    has: (name) => token(name) !== undefined || s.has(name) || screen(name),
     get: (name) => {
       const t = token(name);
-      return t ? tokenValue(t) : s.get(name);
+      return t ? tokenValue(t) : screen(name) ? SCREEN[name] : s.get(name);
     },
     set: (name, path, value) => {
       if (token(name)) throw new TypeError(say(TOKEN_FIXED, name));
+      if (screen(name)) throw new TypeError(`${name} is the screen's, so it cannot be set`);
       s.set(name, path, value);
     },
-    writes: (name) => !token(name) && s.writes(name),
+    writes: (name) => !token(name) && !screen(name) && s.writes(name),
     missing: (name) => s.missing(name),
   };
 }
@@ -197,8 +217,8 @@ export const systemScope: Scope = {
   missing: (name) => say(MISSING, name),
 };
 
-/** A page reads what the system does, and the theme's tokens. */
-export const pageScope: Scope = themed(systemScope);
+/** A page reads what the system does, and what a screen reads of its own. */
+export const pageScope: Scope = onScreen(systemScope);
 
 /** A bare name and the fields after it, as a two way binding is written: `Settings.target`. */
 const BARE = /^\s*([A-Za-z_$][\w$]*)((?:\.[A-Za-z_$][\w$]*)*)\s*$/;
@@ -267,7 +287,7 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
     if (r.unknown) throw new Unknown(r.unknown);
     throw new Error(`${name}: ${r.error}`);
   };
-  return themed({
+  return onScreen({
     has: (name) => input(name) !== undefined || variable(name) !== undefined || part(name),
     get: (name) => {
       const v = variable(name);

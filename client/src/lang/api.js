@@ -50,6 +50,17 @@ export const API = [
 
   { name: "emit", takes: ["event", "value?"], words: "send an event out", places: ["component"] },
 
+  {
+    name: "link",
+    words: "this screen's link to the system",
+    places: ["expression", "component"],
+    fields: [
+      { name: "open", words: "true while the screen reaches the system" },
+      { name: "webrtc", words: "true while its WebRTC connection is open too" },
+      { name: "pingMs", words: "the round trip in ms, smoothed, null before one" },
+    ],
+  },
+
   { name: "Math", words: "JavaScript's math", standard: true },
   { name: "Number", takes: ["value"], words: "as a number", standard: true },
   { name: "String", takes: ["value"], words: "as text", standard: true },

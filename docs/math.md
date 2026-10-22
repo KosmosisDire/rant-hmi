@@ -37,6 +37,26 @@ new Date(time.now).toLocaleTimeString()            // the screen's clock
 - Code on the system reads the time when it runs. A computed value or a condition there is
   worked out as its other values change, never by the clock alone.
 
+## The link
+
+`link` is the screen's link to the system. Only what runs on a screen reads it: an element's
+properties and a component's handlers.
+
+- `link.open`: true while the screen's socket to the system is up.
+- `link.webrtc`: true while its WebRTC connection is open too.
+- `link.pingMs`: the round trip in whole ms, smoothed, as the status bar shows it. Null before
+  the first one and while the socket is down.
+
+```js
+link.open ? "" : "No link to the system"          // a banner's text
+link.pingMs === null || link.pingMs > 200 ? $amber : $green
+```
+
+- The system's code has no `link`, since it serves every screen. Its `Hmi/Clients` topic lists
+  each screen's link ([status.md](status.md)).
+- A token, an input's default and a variable's start read the same on every screen, so they
+  cannot read it either.
+
 ## Vectors, quaternions and poses
 
 A value is one by its fields, so values from the mesh need nothing done to them:

@@ -294,7 +294,7 @@ fn an_enum_reads_by_its_type_name_as_a_fresh_list_of_its_options() {
     script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None });
     let said = until_done(&mut rx, 1);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == r#"["None","Pick","Place"] 2 true"#)), "the log was not the options");
-    assert!(reserved("Math") && reserved("Pages") && reserved("sqrt") && reserved("emit") && !reserved("Job"));
+    assert!(reserved("Math") && reserved("Pages") && reserved("sqrt") && reserved("emit") && reserved("link") && !reserved("Job"));
     assert!(reserved("class") && reserved("await") && reserved("let") && reserved("undefined") && !reserved("speed"));
 }
 
