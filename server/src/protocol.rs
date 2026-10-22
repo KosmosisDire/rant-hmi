@@ -54,6 +54,9 @@ pub enum ServerMsg {
     /// The answer to a screen's offer of its WebRTC connection, first or again. None when the
     /// backend cannot make it, so the screen stays on its socket.
     Channels { answer: Option<String> },
+    /// An address of this host the screen's connection may reach it on, found after the answer,
+    /// as an `a=candidate` line without its `a=`.
+    Candidate { candidate: String },
     /// The computed values, whole, after a change.
     Computed { computed: Vec<Computed> },
     /// A rename moved a page's or component's id, so a screen holding the old one follows. It
@@ -101,6 +104,9 @@ pub enum ClientMsg {
     },
     /// Opens the screen's data channels: its WebRTC offer, which the backend answers.
     Channels { offer: String },
+    /// An address the screen found its connection may be reached on, as its `a=candidate` line
+    /// without its `a=`.
+    Candidate { candidate: String },
     /// From here on the screen's events, sets and answers come on its reliable channel. The
     /// backend holds what the channel brings until this comes, so nothing the screen sent on
     /// its socket before comes after.

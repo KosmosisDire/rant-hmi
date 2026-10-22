@@ -368,7 +368,10 @@ impl App {
             ClientMsg::Channels { offer } => {
                 let Some(local) = self.sessions.get(&session).map(|s| s.local) else { return };
                 self.play_only(session, HashSet::new());
-                let _ = self.rtc.send(ToRtc::Channels { session, sdp: offer, local });
+                let _ = self.rtc.send(ToRtc::Channels { session, sdp: offer, local, ice: self.project.info.ice.clone() });
+            }
+            ClientMsg::Candidate { candidate } => {
+                let _ = self.rtc.send(ToRtc::Candidate { session, candidate });
             }
             ClientMsg::OffChannels => {
                 let _ = self.rtc.send(ToRtc::Unlink { session });
@@ -1296,6 +1299,7 @@ impl App {
                 }
             }
             FromRtc::CaughtUp { session } => self.put_values(Some(session), self.all_values(session)),
+            FromRtc::Candidate { session, candidate } => self.send(session, &ServerMsg::Candidate { candidate }),
         }
     }
 

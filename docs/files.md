@@ -4,7 +4,7 @@ An HMI project is a folder of plain text files. The editor writes them and so ma
 change reaches every screen, and a file with a mistake leaves the last good one in place.
 
 ```
-hmi.toml                 its name, and the page screens open on
+hmi.toml                 its name, the page screens open on, and its WebRTC servers
 data/imports.toml        the mesh entities it uses, each under an alias
 data/variables.toml      its own state
 data/computed.toml       values worked out from others
@@ -21,6 +21,12 @@ logic/handlers.html      handlers that belong to no screen
 # hmi.toml
 name = "Line"
 start = "overview"
+[[ice]]                      # the STUN and TURN servers screens find the HMI through
+urls = "stun:stun.l.google.com:19302"
+[[ice]]
+urls = "turn:turn.example.com:3478"
+username = "user"
+credential = "secret"
 
 # data/imports.toml
 [[import]]
@@ -57,6 +63,16 @@ light = "#0088ff"            # left out, worked out from dark
 
 Code sets a variable by assignment (`Speed = 0.5`), calls a function with `await Reset()` and
 publishes on a topic with `Jog.send({ x: 1, y: 0 })`.
+
+## WebRTC
+
+A screen opens a WebRTC connection beside its socket where it can, for speed and video.
+
+- A new project starts with two public STUN servers in `ice`. `ice = []` asks none.
+- The HMI offers every address of its host, and the address its NAT shows the outside, as
+  the STUN servers tell. `rtc_ports=6740-6759` on `rant run Hmi` pins its ports, to open them
+  in a firewall or forward them.
+- A TURN server relays for a screen that reaches the HMI no other way.
 
 ## Pages
 

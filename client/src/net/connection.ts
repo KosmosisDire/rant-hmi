@@ -82,8 +82,6 @@ export function connect() {
     tries = 0;
     setState("link", "open");
     beat = window.setInterval(ping, ROUND_TRIP_EVERY_MS);
-    channelsTries = 0;
-    void openChannels();
   };
   const join = joiner();
   ws.onmessage = (e) => join(e.data as ArrayBuffer);
@@ -132,8 +130,16 @@ function heard(bytes: Uint8Array) {
     setState("rttMs", state.rttMs === null ? rtt : state.rttMs * 0.8 + rtt * 0.2);
   } else if (msg.type === "channels") {
     answered(msg.answer);
+  } else if (msg.type === "candidate") {
+    // one for an earlier connection, which this one cannot take, is left
+    channels?.pc.addIceCandidate({ candidate: msg.candidate, sdpMLineIndex: 0 }).catch(() => {});
   } else {
     receive(msg);
+    // the hello names the servers the channels find their way through
+    if (msg.type === "hello") {
+      channelsTries = 0;
+      void openChannels();
+    }
   }
 }
 
@@ -164,7 +170,9 @@ export function send(msg: ClientMsg): boolean {
 async function openChannels() {
   closeChannels();
   if (typeof RTCPeerConnection === "undefined" || state.link !== "open") return;
-  const pc = new RTCPeerConnection();
+  // the null the backend sends for no username would reach the browser as the word null
+  const iceServers = (state.project?.ice ?? []).map(({ urls, username, credential }) => (username == null ? { urls } : { urls, username, credential: credential ?? "" }));
+  const pc = new RTCPeerConnection({ iceServers });
   const c: Channels = {
     pc,
     reliable: pc.createDataChannel("reliable"),
@@ -190,6 +198,9 @@ async function openChannels() {
       if (channels === c) channelsFailed();
     };
   }
+  pc.onicecandidate = (e) => {
+    if (channels === c && e.candidate?.candidate) send({ type: "candidate", candidate: e.candidate.candidate });
+  };
   pc.onconnectionstatechange = () => {
     if (channels === c && pc.connectionState === "failed") channelsFailed();
   };

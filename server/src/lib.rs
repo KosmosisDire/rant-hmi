@@ -16,10 +16,12 @@ pub mod rtc;
 pub mod rules;
 pub mod script;
 pub mod status;
+pub mod stun;
 pub mod value;
 pub mod watch;
 pub mod web;
 
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
@@ -39,6 +41,8 @@ pub struct Options {
     pub port: u16,
     pub domain: u16,
     pub loopback: bool,
+    /// The ports WebRTC may take, else any.
+    pub rtc_ports: Option<RangeInclusive<u16>>,
 }
 
 /// The node's name on the mesh: one plain name, as tooling nodes take.
@@ -49,7 +53,7 @@ pub async fn run(o: Options) -> Result<()> {
     let pages = Pages::open(&o.project)?;
     let (deliveries, delivered) = unbounded_channel();
     let (rtc_said, rtc_heard) = unbounded_channel();
-    let (rtc, frames) = rtc::start(rtc_said);
+    let (rtc, frames) = rtc::start(rtc_said, rtc::Reach { loopback: o.loopback, ports: o.rtc_ports });
     let mesh = Mesh::open(&MeshOptions { name: NODE.to_owned(), domain: o.domain, loopback: o.loopback }, deliveries, frames)
         .map_err(|e| anyhow!("could not open the Rant node: {e}"))?;
     let listener = TcpListener::bind((o.bind.as_str(), o.port))

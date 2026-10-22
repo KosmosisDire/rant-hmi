@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use crate::value::Value;
@@ -23,6 +23,42 @@ pub struct ProjectInfo {
     #[serde(default)]
     #[ts(optional)]
     pub start: Option<String>,
+    /// The STUN and TURN servers screens and the HMI find their way to each other through for
+    /// WebRTC, a screen's as it connects.
+    #[serde(default = "ice")]
+    pub ice: Vec<IceServer>,
+}
+
+/// A STUN or TURN server, as a browser's RTCPeerConnection takes it.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct IceServer {
+    pub urls: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub username: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub credential: Option<String>,
+}
+
+/// The public STUN servers the bridge also starts with.
+fn ice() -> Vec<IceServer> {
+    ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"]
+        .map(|urls| IceServer { urls: urls.into(), username: None, credential: None })
+        .into()
+}
+
+/// Why a server a browser would refuse is, if it is. The error is for the user.
+fn check_ice(s: &IceServer) -> Result<(), String> {
+    let scheme = s.urls.split(':').next().unwrap_or_default();
+    match scheme {
+        "stun" | "stuns" => Ok(()),
+        "turn" | "turns" if s.username.is_some() && s.credential.is_some() => Ok(()),
+        "turn" | "turns" => Err(format!("the ice server {} is a TURN server, so it needs a username and credential", s.urls)),
+        _ => Err(format!("the ice server {} needs a url starting stun:, stuns:, turn: or turns:", s.urls)),
+    }
 }
 
 /// The four kinds of Rant entity.
@@ -190,10 +226,11 @@ impl Project {
                 .ok()
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
                 .unwrap_or_else(|| "HMI".to_owned());
-            fs::write(&hmi, toml::to_string(&ProjectInfo { name, start: None })?).with_context(|| format!("writing {}", hmi.display()))?;
+            fs::write(&hmi, toml::to_string(&ProjectInfo { name, start: None, ice: ice() })?).with_context(|| format!("writing {}", hmi.display()))?;
             library::seed(root)?;
         }
-        let info = toml::from_str(&read(&hmi)?).with_context(|| format!("reading {}", files::shown(root, &hmi)))?;
+        let info: ProjectInfo = toml::from_str(&read(&hmi)?).with_context(|| format!("reading {}", files::shown(root, &hmi)))?;
+        info.ice.iter().try_for_each(check_ice).map_err(|e| anyhow!("{}: {e}", files::shown(root, &hmi)))?;
         let imports = load::<ImportsFile>(root, &imports_file(root))?.imports;
         let variables = load::<VariablesFile>(root, &variables_file(root))?.variables;
         let records = load::<RecordsFile>(root, &records_file(root))?.records;
@@ -637,6 +674,25 @@ mod tests {
         assert_eq!(p.info.start, None);
         p.set_start("robot-cell".into()).unwrap();
         assert_eq!(Project::open(&dir).unwrap().info.start.as_deref(), Some("robot-cell"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_project_finds_its_way_through_the_bridge_s_stun_servers() {
+        let dir = scratch("ice");
+        let p = Project::open(&dir).unwrap();
+        assert_eq!(p.info.ice, ice());
+        assert!(read(&dir.join("hmi.toml")).unwrap().contains("urls = \"stun:stun.cloudflare.com:3478\""));
+        fs::write(dir.join("hmi.toml"), "name = \"Line\"\nice = []\n").unwrap();
+        assert!(Project::open(&dir).unwrap().info.ice.is_empty());
+        fs::write(dir.join("hmi.toml"), "name = \"Line\"\n").unwrap();
+        assert_eq!(Project::open(&dir).unwrap().info.ice, ice());
+        fs::write(dir.join("hmi.toml"), "name = \"Line\"\n[[ice]]\nurls = \"turn:t.example.com:3478\"\n").unwrap();
+        assert!(format!("{:#}", Project::open(&dir).err().unwrap()).contains("needs a username and credential"));
+        fs::write(dir.join("hmi.toml"), "name = \"Line\"\n[[ice]]\nurls = \"t.example.com\"\n").unwrap();
+        assert!(format!("{:#}", Project::open(&dir).err().unwrap()).contains("starting stun:"));
+        fs::write(dir.join("hmi.toml"), "name = \"Line\"\n[[ice]]\nurls = \"turn:t.example.com\"\nusername = \"u\"\ncredential = \"s\"\n").unwrap();
+        assert_eq!(Project::open(&dir).unwrap().info.ice[0].username.as_deref(), Some("u"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

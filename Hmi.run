@@ -17,6 +17,11 @@ param "bind" {
   description = "The address it listens on, 127.0.0.1 for this computer only"
 }
 
+param "rtc_ports" {
+  default     = ""
+  description = "The ports WebRTC may take, as 6740-6759, empty for any"
+}
+
 node "hmi/hmi" {
-  args = [param.project, "--port", "${param.port}", "--bind", param.bind]
+  args = [param.project, "--port", "${param.port}", "--bind", param.bind, "--rtc-ports", param.rtc_ports]
 }

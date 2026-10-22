@@ -1,3 +1,4 @@
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -21,9 +22,28 @@ struct Args {
     /// The Rant domain. 0 takes RANT_DOMAIN, else 0.
     #[arg(long, default_value_t = 0)]
     domain: u16,
-    /// Keep the mesh on this host: discovery on 127.0.0.1 only.
+    /// Keep the mesh on this host, discovery on 127.0.0.1 only, and WebRTC on the address each
+    /// screen reached the HMI on.
     #[arg(long)]
     loopback: bool,
+    /// The ports WebRTC may take, as 6740-6759. Empty takes any.
+    #[arg(long, default_value = "", value_parser = ports)]
+    rtc_ports: Ports,
+}
+
+/// A range of ports, or none.
+#[derive(Clone)]
+struct Ports(Option<RangeInclusive<u16>>);
+
+fn ports(s: &str) -> Result<Ports, String> {
+    if s.is_empty() {
+        return Ok(Ports(None));
+    }
+    let range = s.split_once('-').and_then(|(lo, hi)| Some(lo.trim().parse::<u16>().ok()?..=hi.trim().parse::<u16>().ok()?));
+    match range {
+        Some(r) if *r.start() > 0 && r.start() <= r.end() => Ok(Ports(Some(r))),
+        _ => Err("wants a range like 6740-6759".into()),
+    }
 }
 
 #[tokio::main]
@@ -38,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
         port: a.port,
         domain: a.domain,
         loopback: a.loopback,
+        rtc_ports: a.rtc_ports.0,
     })
     .await
 }

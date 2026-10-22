@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr};
+use std::ops::RangeInclusive;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,7 +25,9 @@ use tracing::{info, warn};
 
 use crate::flight::Flight;
 use crate::lanes::{Lanes, PIECE};
+use crate::project::IceServer;
 use crate::protocol::{ClientMsg, Played};
+use crate::stun;
 
 /// The labels a screen gives its two channels.
 pub const RELIABLE: &str = "reliable";
@@ -46,6 +49,10 @@ const DRAINED: usize = 32 * 1024;
 /// next keyframe, so a busy backend makes video late but never what screens send and get.
 const FRAME_LATE: Duration = Duration::from_millis(200);
 
+/// How long the outside address a STUN server told for a port holds before a new screen asks
+/// again, since a NAT may map the port anew once it went quiet.
+const ASK_AGAIN: Duration = Duration::from_secs(30);
+
 /// One H264 frame of an import's video, in Annex B as the mesh carries it.
 pub struct Frame {
     pub alias: String,
@@ -59,8 +66,11 @@ pub struct Frame {
 
 pub enum ToRtc {
     /// A screen offers its data connection, which replaces any it had. `local` is the address
-    /// the screen reached the HMI on, so the connection comes from there too.
-    Channels { session: u32, sdp: String, local: IpAddr },
+    /// the screen reached the HMI on, which the connection offers first, and `ice` the servers
+    /// that tell what a NAT shows the outside of this host.
+    Channels { session: u32, sdp: String, local: IpAddr, ice: Vec<IceServer> },
+    /// An address the screen found its connection may be reached on.
+    Candidate { session: u32, candidate: String },
     /// A screen offers its data connection again with the videos it plays now.
     Play { session: u32, sdp: String, videos: Vec<Played> },
     /// The screen's channels broke, or the screen is gone, so its connection ends.
@@ -89,13 +99,14 @@ pub enum FromRtc {
     Message { session: u32, msg: ClientMsg },
     /// A screen missed values, so it needs them all.
     CaughtUp { session: u32 },
+    /// An address of this host a screen's connection may be reached on, found after its answer.
+    Candidate { session: u32, candidate: String },
 }
 
 /// A screen's connection.
 struct Peer {
     session: u32,
     rtc: Rtc,
-    socket: Arc<UdpSocket>,
     wake: Instant,
     connected: bool,
     reliable: Option<ChannelId>,
@@ -146,20 +157,39 @@ impl Peer {
 /// A datagram one of the sockets took: the address it came to, where from, and its bytes.
 type Packet = (SocketAddr, SocketAddr, Vec<u8>);
 
+/// One of this host's addresses WebRTC takes datagrams on, and the address a NAT shows the
+/// outside for it, as a STUN server last told.
+struct Port {
+    socket: Arc<UdpSocket>,
+    outside: Option<SocketAddr>,
+    asked: Option<Instant>,
+}
+
+/// Where the task takes WebRTC.
+pub struct Reach {
+    /// Only on the address each screen reached the HMI on, else on every address of this host.
+    pub loopback: bool,
+    /// The ports it may take, else any.
+    pub ports: Option<RangeInclusive<u16>>,
+}
+
 /// Starts the task that owns every connection. The loop's requests go in through the first
 /// sender and video frames through the second. Answers and what screens send come back
 /// through `said`.
-pub fn start(said: UnboundedSender<FromRtc>) -> (UnboundedSender<ToRtc>, UnboundedSender<Frame>) {
+pub fn start(said: UnboundedSender<FromRtc>, reach: Reach) -> (UnboundedSender<ToRtc>, UnboundedSender<Frame>) {
     str0m::crypto::from_feature_flags().install_process_default();
     let (tx, rx) = unbounded_channel();
     let (frames_tx, frames) = unbounded_channel();
-    tokio::spawn(run(rx, frames, said));
+    tokio::spawn(run(rx, frames, said, reach));
     (tx, frames_tx)
 }
 
-async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiver<Frame>, said: UnboundedSender<FromRtc>) {
+async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiver<Frame>, said: UnboundedSender<FromRtc>, reach: Reach) {
     let (arrived, mut packets) = unbounded_channel::<Packet>();
-    let mut sockets: HashMap<IpAddr, Arc<UdpSocket>> = HashMap::new();
+    let mut ports: HashMap<IpAddr, Port> = HashMap::new();
+    // the STUN requests not answered yet, each with the port it went from and when
+    let mut asking: HashMap<stun::Id, (IpAddr, Instant)> = HashMap::new();
+    let mut servers: Vec<String> = Vec::new();
     let mut peers: Vec<Peer> = Vec::new();
     loop {
         let wake = peers.iter().map(|p| p.wake).min().unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
@@ -168,14 +198,16 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
             biased;
             r = requests.recv() => match r {
                 None => return,
-                Some(ToRtc::Channels { session, sdp, local }) => {
+                Some(ToRtc::Channels { session, sdp, local, ice }) => {
                     close(&mut peers, &said, |p| p.session == session);
-                    // ice lite: the screen finds this end, so its own hidden addresses never matter
-                    let config = RtcConfig::new().set_ice_lite(true).set_sctp_max_buffered_amount(2 * RELIABLE_MAX).clear_codecs().enable_h264(true);
-                    let sdp = match answer(&mut sockets, &arrived, config, &sdp, local).await {
-                        Ok((rtc, socket, sdp)) => {
-                            info!("screen {session} opens its data connection on {}", socket.local_addr().map_or_else(|_| local.to_string(), |a| a.to_string()));
-                            peers.push(Peer { session, rtc, socket, wake: Instant::now(), connected: false, reliable: None, best_effort: None, missed: false, lanes: Lanes::default(), flight: Flight::default(), born: Instant::now(), held: None, videos: Vec::new() });
+                    let ips = addresses(local, reach.loopback);
+                    open(&mut ports, &ips, &reach, &arrived).await;
+                    ask(&mut ports, &mut asking, &mut servers, &ice);
+                    let config = RtcConfig::new().set_sctp_max_buffered_amount(2 * RELIABLE_MAX).clear_codecs().enable_h264(true);
+                    let sdp = match answer(&ports, &ips, config, &sdp) {
+                        Ok((rtc, sdp)) => {
+                            info!("screen {session} opens its data connection");
+                            peers.push(Peer { session, rtc, wake: Instant::now(), connected: false, reliable: None, best_effort: None, missed: false, lanes: Lanes::default(), flight: Flight::default(), born: Instant::now(), held: None, videos: Vec::new() });
                             Some(sdp)
                         }
                         Err(text) => {
@@ -184,6 +216,15 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                         }
                     };
                     let _ = said.send(FromRtc::Channels { session, sdp });
+                }
+                // a browser names its own addresses by mDNS, which this end cannot read, and
+                // reaches this end from them anyway
+                Some(ToRtc::Candidate { session, candidate }) => {
+                    if let Some(p) = peers.iter_mut().find(|p| p.session == session)
+                        && let Ok(c) = Candidate::from_sdp_string(&candidate)
+                    {
+                        p.rtc.add_remote_candidate(c);
+                    }
                 }
                 Some(ToRtc::Play { session, sdp, videos }) => {
                     let answer = match peers.iter_mut().find(|p| p.session == session) {
@@ -208,6 +249,12 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                 }
             },
             Some((local, source, data)) = packets.recv() => {
+                if let Some((id, outside)) = stun::answer(&data)
+                    && let Some((ip, _)) = asking.remove(&id)
+                {
+                    found(&mut ports, &mut peers, &said, ip, outside);
+                    continue;
+                }
                 let Ok(contents) = data.as_slice().try_into() else { continue };
                 let input = Input::Receive(Instant::now(), Receive { proto: Protocol::Udp, source, destination: local, contents });
                 if let Some(p) = peers.iter_mut().find(|p| p.rtc.accepts(&input))
@@ -233,7 +280,7 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
         }
         for p in &mut peers {
             pump(p, &said);
-            drive(p, &said).await;
+            drive(p, &ports, &said).await;
         }
         close(&mut peers, &said, |p| !p.rtc.is_alive());
     }
@@ -247,22 +294,104 @@ fn close(peers: &mut Vec<Peer>, said: &UnboundedSender<FromRtc>, gone: impl Fn(&
     peers.retain(|p| !gone(p));
 }
 
-/// Answers a screen's offer, on a socket bound to the address the screen reached the HMI on.
-async fn answer(sockets: &mut HashMap<IpAddr, Arc<UdpSocket>>, arrived: &UnboundedSender<Packet>, config: RtcConfig, sdp: &str, local: IpAddr) -> Result<(Rtc, Arc<UdpSocket>, String), String> {
-    let socket = match sockets.get(&local) {
-        Some(s) => s.clone(),
-        None => {
-            let s = bind(local, arrived.clone()).await.map_err(|e| format!("could not open a port for WebRTC on {local}: {e}"))?;
-            sockets.insert(local, s.clone());
-            s
+/// The addresses a screen that reached the HMI on `local` may find it on: that one first, and
+/// unless WebRTC stays there, every other this host has.
+fn addresses(local: IpAddr, loopback: bool) -> Vec<IpAddr> {
+    let mut ips = vec![local];
+    if loopback {
+        return ips;
+    }
+    match if_addrs::get_if_addrs() {
+        Ok(all) => ips.extend(all.iter().filter(|i| i.is_oper_up() && !i.is_loopback() && !i.is_link_local()).map(|i| i.ip()).filter(|ip| *ip != local)),
+        Err(e) => warn!("could not list this host's addresses for WebRTC: {e}"),
+    }
+    ips
+}
+
+/// Opens a port on each of `ips` that has none yet.
+async fn open(ports: &mut HashMap<IpAddr, Port>, ips: &[IpAddr], reach: &Reach, arrived: &UnboundedSender<Packet>) {
+    for &ip in ips {
+        if ports.contains_key(&ip) {
+            continue;
         }
-    };
+        match bind(ip, reach.ports.clone(), arrived.clone()).await {
+            Ok(socket) => {
+                ports.insert(ip, Port { socket, outside: None, asked: None });
+            }
+            Err(e) => warn!("could not open a port for WebRTC on {ip}: {e}"),
+        }
+    }
+}
+
+/// Asks each STUN server what the outside sees of each port not asked lately. A port on
+/// loopback asks the servers there, and the rest the others, as each can only reach those.
+/// `servers` are those last asked, since others may see another outside.
+fn ask(ports: &mut HashMap<IpAddr, Port>, asking: &mut HashMap<stun::Id, (IpAddr, Instant)>, servers: &mut Vec<String>, ice: &[IceServer]) {
+    let now = Instant::now();
+    asking.retain(|_, (_, at)| now - *at < ASK_AGAIN);
+    let named: Vec<String> = ice.iter().filter_map(|s| stun::server(&s.urls)).collect();
+    if named != *servers {
+        *servers = named;
+        for p in ports.values_mut() {
+            p.asked = None;
+            p.outside = None;
+        }
+    }
+    for (&ip, port) in ports.iter_mut().filter(|(_, p)| p.asked.is_none_or(|at| now - at >= ASK_AGAIN)) {
+        port.asked = Some(now);
+        for server in servers.iter() {
+            let mut id = [0; 12];
+            if getrandom::fill(&mut id).is_err() {
+                return;
+            }
+            asking.insert(id, (ip, now));
+            let (socket, server) = (port.socket.clone(), server.clone());
+            tokio::spawn(async move {
+                let Ok(found) = tokio::net::lookup_host(&server).await else { return };
+                let mut found = found.filter(|a| a.is_ipv4() == ip.is_ipv4() && a.ip().is_loopback() == ip.is_loopback());
+                if let Some(to) = found.next() {
+                    let _ = socket.send_to(&stun::request(&id), to).await;
+                }
+            });
+        }
+    }
+}
+
+/// A STUN server told what the outside sees of the port on `ip`, which every connection now
+/// offers the screen too.
+fn found(ports: &mut HashMap<IpAddr, Port>, peers: &mut [Peer], said: &UnboundedSender<FromRtc>, ip: IpAddr, outside: SocketAddr) {
+    let Some(port) = ports.get_mut(&ip) else { return };
+    let Ok(base) = port.socket.local_addr() else { return };
+    if port.outside.replace(outside) != Some(outside) && outside != base {
+        info!("WebRTC on {base} shows the outside {outside}");
+    }
+    let Ok(candidate) = Candidate::server_reflexive(outside, base, "udp") else { return };
+    for p in peers {
+        // one the connection has already, or that is its port's own address, adds nothing
+        if let Some(c) = p.rtc.add_local_candidate(candidate.clone()) {
+            let _ = said.send(FromRtc::Candidate { session: p.session, candidate: c.to_sdp_string() });
+        }
+    }
+}
+
+/// Answers a screen's offer with each of `ips`' ports and what the outside sees of them.
+fn answer(ports: &HashMap<IpAddr, Port>, ips: &[IpAddr], config: RtcConfig, sdp: &str) -> Result<(Rtc, String), String> {
     let mut rtc = config.build(Instant::now());
-    let address = socket.local_addr().map_err(|e| e.to_string())?;
-    let candidate = Candidate::host(address, "udp").map_err(|e| e.to_string())?;
-    rtc.add_local_candidate(candidate);
+    let mut offered = 0;
+    for port in ips.iter().filter_map(|ip| ports.get(ip)) {
+        let Ok(base) = port.socket.local_addr() else { continue };
+        if let Ok(c) = Candidate::host(base, "udp") {
+            offered += usize::from(rtc.add_local_candidate(c).is_some());
+        }
+        if let Some(c) = port.outside.and_then(|o| Candidate::server_reflexive(o, base, "udp").ok()) {
+            rtc.add_local_candidate(c);
+        }
+    }
+    if offered == 0 {
+        return Err("it has no port for WebRTC".into());
+    }
     let answer = accept(&mut rtc, sdp)?;
-    Ok((rtc, socket, answer))
+    Ok((rtc, answer))
 }
 
 fn accept(rtc: &mut Rtc, sdp: &str) -> Result<String, String> {
@@ -271,9 +400,23 @@ fn accept(rtc: &mut Rtc, sdp: &str) -> Result<String, String> {
     Ok(answer.to_sdp_string())
 }
 
-/// A socket on one address of this host, its datagrams going to the task as they come.
-async fn bind(ip: IpAddr, arrived: UnboundedSender<Packet>) -> std::io::Result<Arc<UdpSocket>> {
-    let socket = Arc::new(UdpSocket::bind((ip, 0)).await?);
+/// A socket on one address of this host, on the first port of `ports` free there, its
+/// datagrams going to the task as they come.
+async fn bind(ip: IpAddr, ports: Option<RangeInclusive<u16>>, arrived: UnboundedSender<Packet>) -> std::io::Result<Arc<UdpSocket>> {
+    let socket = match ports {
+        None => UdpSocket::bind((ip, 0)).await?,
+        Some(range) => {
+            let mut free = None;
+            for port in range.clone() {
+                if let Ok(s) = UdpSocket::bind((ip, port)).await {
+                    free = Some(s);
+                    break;
+                }
+            }
+            free.ok_or_else(|| std::io::Error::new(ErrorKind::AddrInUse, format!("every port of {}-{} is taken", range.start(), range.end())))?
+        }
+    };
+    let socket = Arc::new(socket);
     let local = socket.local_addr()?;
     let reader = socket.clone();
     tokio::spawn(async move {
@@ -299,7 +442,7 @@ async fn bind(ip: IpAddr, arrived: UnboundedSender<Packet>) -> std::io::Result<A
 
 /// Sends what the connection has to send, hands on what it took, and learns when it next
 /// needs a turn.
-async fn drive(p: &mut Peer, said: &UnboundedSender<FromRtc>) {
+async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSender<FromRtc>) {
     loop {
         match p.rtc.poll_output() {
             Ok(Output::Timeout(t)) => {
@@ -307,7 +450,9 @@ async fn drive(p: &mut Peer, said: &UnboundedSender<FromRtc>) {
                 return;
             }
             Ok(Output::Transmit(t)) => {
-                let _ = p.socket.send_to(&t.contents, t.destination).await;
+                if let Some(port) = ports.get(&t.source.ip()) {
+                    let _ = port.socket.send_to(&t.contents, t.destination).await;
+                }
             }
             Ok(Output::Event(e)) => {
                 let was = p.linked();

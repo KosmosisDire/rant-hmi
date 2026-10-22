@@ -1,1 +1,3 @@
 name = "Demo line"
+# no STUN server, so no scenario reaches past this host
+ice = []
