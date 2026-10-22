@@ -128,6 +128,81 @@ C. **B with typed inputs.** A component's input says the types it takes,
 **Chosen: B, then C.** B gives every view now with nothing new in the renderer. C makes the
 editor match a view to an import as the explorer does, and is its own slice after B.
 
+### Typed inputs
+
+Four questions: how an input says what it takes, how a type is named, where the editor offers
+a view, and what of the library is typed.
+
+**How an input says its types.**
+
+A. **`type` on `<prop>`**, names apart by spaces as `class` lists them:
+   `<prop name="value" default="0" type="number"/>`.
+B. **A type expression**, `Pose | Transform`. A small language of its own to learn and parse.
+C. **Worked out from the component's code**, from what it reads of the input. Hidden, and
+   wrong once code guards a field it may lack.
+
+**Chosen: A.** One attribute, read as plainly as a class list.
+
+**How a type is named.** A screen sees an import's Rant type: `f64`, `Pose`, `f64[]`, as the
+Data screen shows it.
+
+A. **Rant's names only.** Gauge would list every number kind, ten of them.
+B. **The math library's shapes**, `vec2`, `quat`, `pose`. Not what the Data screen shows, and
+   Rant's `Double2` and `Float2` would read the same.
+C. **Rant's names and kinds, and `number` for any number.** **Chosen.** A value answers to:
+   - its type's name, as `Pose`, `Color` or an enum's `Mode`;
+   - its kind: `bool`, `string`, `enum`, `struct`, or its number kind, as `f64`;
+   - `number`, for any number kind;
+   - for a list, each of its items' names with `[]`, as `Pose[]` or `number[]`, fixed or not.
+
+An input with no type says nothing of what it takes. It still takes any value, and the editor
+offers it for nothing. Names are spelled as code is: a letter, then letters, digits or `_`,
+then `[]` for each list around it.
+
+**Where the editor offers a view.**
+
+A. **The Data screen's import**, a list of views to place. It places on a page from another
+   screen.
+B. **Dropping an import on the page.** The Design screen lists no imports, so it needs a pane
+   of its own.
+C. **The Design screen's add menus**, beside Place a component: Show an import, then the
+   import, then the views that take it. A struct's fields follow its own views, each with
+   theirs, so `Conveyor.speed` gets a Readout and `Conveyor.running` a Lamp.
+D. **An instance's input field**, its completion ranking the values that fit first. The other
+   way round, from a view to a value.
+
+**Chosen: C.** Placing already lives in these menus, and a submenu per field walks a struct as
+the Data screen's tree does. D is left for when completion learns the fields' types too.
+
+The view placed is the component with the input that takes the value set to its path, as
+`value="Conveyor.speed"`, where the menu was opened, as Place a component places it. The first
+input whose type fits takes it. A two way input is offered only for a variable imported to
+write, since writing anything else fails.
+
+**What of the library is typed.** The inputs that show a value, so a view placed for an import
+shows it with nothing else set:
+
+| Component | Input | Type |
+| --- | --- | --- |
+| Readout | `value` | `number string enum` |
+| Gauge, Bar | `value` | `number` |
+| Knob, Slider | `value` (two way) | `number` |
+| Lamp | `value` | `bool` |
+| Toggle | `value` (two way) | `bool` |
+| Swatch | `value` | `Color string` |
+| Pose | `value` | `Pose` |
+| Position | `value` | `Double2 Float2 Int2 Pose2D`, and each with `[]` |
+| Bars | `values` | `number[]` |
+| Joints | `state` | `JointState` |
+| Table | `rows` | `struct[]` |
+
+Dropdown and ModeSwitch stay untyped, as they need their options set to show an enum. Plot
+takes a record, not an import. Inputs such as `labels` or `min` stay untyped, so a list of
+names is never offered Joints.
+
+Left for later: screen variables and computed values have no type of their own, so only
+imports are offered views, and completion does not yet rank what fits.
+
 ### Sharing code
 
 What the views share: a quaternion read as roll, pitch and yaw, a number with its unit and
@@ -326,3 +401,28 @@ Choices worth a second look:
 - A unit follows its number after a space, so an angle reads `90.0 °`.
 - Table writes whole numbers as they are and others to `digits`, and a struct in a cell as
   JSON.
+
+### Slice 4, typed inputs
+
+Built as Typed inputs in Part 2 says.
+
+- **The input's `type`** is kept by the backend apart by single spaces, and a word that is no
+  type is refused, on an edit and when a file loads. The rule is in `rules.rs` with the other
+  name rules, and the editor's field reads the same pattern from `rules.ts`.
+- **The inspector** gives each input a Type field below its Default. Completion offers the kind
+  words before anything is typed, then every type the mesh names.
+- **Matching** lives in `client/src/state/types.ts`: the names a Rant type answers to, and the
+  components whose input takes it. Completion and the menu both read it.
+- **Show an import** sits in the layers bar's + and in the right click menus, beside Place a
+  component, and places at the same spot. An import lists its own views, then each field with
+  views of its own, as deep as the struct goes. A function or a task is never listed.
+- **The library** is typed by its build scenarios through the same field, as the table in Part
+  2 says, and `--library` kept it.
+
+Choices worth a second look:
+
+- `number` takes every integer and float kind, and the Rant kind names narrow it.
+- An input with no type takes anything but is offered for nothing, so Dropdown and ModeSwitch,
+  which need their options too, are never offered.
+- Only imports are offered views. Screen variables and computed values have no declared type.
+- Convert to component leaves the inputs it makes untyped.
