@@ -17,8 +17,11 @@ const VALUE: &str = "value";
 const VIEWBOX: &str = "viewbox";
 const SRC: &str = "src";
 const FIT: &str = "fit";
-/// What a markup element draws, an expression kept as its body, a block as a handler's code is.
+/// What a markup element draws, an expression, and the code that draws on a canvas.
 const MARKUP: &str = "markup";
+const DRAW: &str = "draw";
+/// A canvas's context, "2d" or "webgl2".
+const CONTEXT: &str = "context";
 
 /// What a tag keeps as attributes of its own, besides `ATTRS`.
 pub(crate) fn own_attrs(tag: Tag) -> &'static [&'static str] {
@@ -26,7 +29,17 @@ pub(crate) fn own_attrs(tag: Tag) -> &'static [&'static str] {
         Tag::Input => &[VALUE],
         Tag::Svg => &[VIEWBOX, FIT],
         Tag::Media => &[SRC, FIT],
+        Tag::Canvas => &[CONTEXT],
         _ => &[],
+    }
+}
+
+/// The property a tag keeps as its body, a block as a handler's code is.
+fn code_of(tag: Tag) -> Option<&'static str> {
+    match tag {
+        Tag::Markup => Some(MARKUP),
+        Tag::Canvas => Some(DRAW),
+        _ => None,
     }
 }
 
@@ -83,7 +96,7 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
         }
         // a text input is an instance's like any other, while a span's text is its body
         let rest = e.props.iter().filter(|(k, _)| {
-            !ATTRS.contains(&k.as_str()) && (e.tag == Tag::Use || k.as_str() != TEXT) && !own.contains(&k.as_str()) && !(e.tag == Tag::Markup && k.as_str() == MARKUP)
+            !ATTRS.contains(&k.as_str()) && (e.tag == Tag::Use || k.as_str() != TEXT) && !own.contains(&k.as_str()) && code_of(e.tag) != Some(k.as_str())
         });
         // an instance's inputs are attributes of their own, the rest CSS on its box as a frame's
         // style is. Without its component each stays an attribute.
@@ -99,10 +112,10 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
         }
     }
     let text = e.props.get(TEXT).filter(|_| body);
-    let markup = e.props.get(MARKUP).filter(|_| e.tag == Tag::Markup);
+    let code = code_of(e.tag).and_then(|k| e.props.get(k));
     match text {
         Some(text) if e.handlers.is_empty() => out.push_str(&format!(">{text}</{tag}>\n")),
-        _ if e.handlers.is_empty() && e.children.is_empty() && markup.is_none() => out.push_str("/>\n"),
+        _ if e.handlers.is_empty() && e.children.is_empty() && code.is_none() => out.push_str("/>\n"),
         _ => {
             out.push_str(">\n");
             let inner = "  ".repeat(depth + 1);
@@ -114,7 +127,7 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
             if let Some(text) = text {
                 out.push_str(&format!("{inner}{text}\n"));
             }
-            if let Some(code) = markup {
+            if let Some(code) = code {
                 lines(out, &inner, code);
             }
             for child in &e.children {
@@ -434,6 +447,25 @@ impl Reader<'_> {
         }
     }
 
+    /// The body up to `</word>` as the property `key`: a text kept on one line, code as the
+    /// block it may be.
+    fn body(&mut self, word: &str, key: &str, block: bool, props: &mut BTreeMap<String, String>) -> Result<(), String> {
+        let code = key != TEXT;
+        if code {
+            // the gap before took the first line's indent, which dedent measures against the rest
+            self.at = self.s[..self.at].trim_end_matches([' ', '\t']).len();
+        }
+        let closing = format!("</{word}>");
+        let n = block_end(self.rest(), &closing, block).ok_or_else(|| self.error(&format!("<{word}> never closes")))?;
+        let body = &self.rest()[..n];
+        let value = if code { dedent(body) } else { body.trim().to_owned() };
+        if !value.trim().is_empty() {
+            props.insert(key.to_owned(), value);
+        }
+        self.at += n;
+        self.expect(&closing)
+    }
+
     fn element(&mut self) -> Result<Element, String> {
         self.expect("<")?;
         let word = self.word()?;
@@ -478,23 +510,11 @@ impl Reader<'_> {
             handlers = self.handlers()?;
             match tag {
                 Tag::Div | Tag::Group | Tag::Svg | Tag::G => children = self.children(&word)?,
-                Tag::Span | Tag::SvgText | Tag::Markup => {
-                    if tag == Tag::Markup {
-                        // the gap before took the first line's indent, which dedent measures against the rest
-                        self.at = self.s[..self.at].trim_end_matches([' ', '\t']).len();
-                    }
-                    let closing = format!("</{word}>");
-                    let n = block_end(self.rest(), &closing, block).ok_or_else(|| self.error(&format!("<{word}> never closes")))?;
-                    let body = &self.rest()[..n];
-                    // a text is kept on one line, markup as the block of code it may be
-                    let (key, value) = if tag == Tag::Markup { (MARKUP, dedent(body)) } else { (TEXT, body.trim().to_owned()) };
-                    if !value.trim().is_empty() {
-                        props.insert(key.to_owned(), value);
-                    }
-                    self.at += n;
-                    self.expect(&closing)?;
-                }
-                _ => self.expect(&format!("</{word}>"))?,
+                Tag::Span | Tag::SvgText => self.body(&word, TEXT, block, &mut props)?,
+                _ => match code_of(tag) {
+                    Some(key) => self.body(&word, key, block, &mut props)?,
+                    None => self.expect(&format!("</{word}>"))?,
+                },
             }
         }
         Ok(Element { id, tag, component, props, handlers, children })
@@ -584,6 +604,30 @@ mod tests {
         assert!(e.props["markup"].ends_with("</svg>` // never \"</markup>\""));
         assert_eq!((e.tag, e.handlers[0].code.as_str(), e.props["opacity"].as_str()), (Tag::Markup, "log(1);", "0.9"));
         assert!(!page.children[1].props.contains_key("markup"));
+        assert_eq!(write(&page, &[]), text);
+    }
+
+    #[test]
+    fn a_canvas_keeps_its_context_and_its_drawing_as_its_body() {
+        let text = r#"<page name="A" size="1408x792">
+  <canvas id="e1" x="4" context='"webgl2"' style="opacity: 0.9">
+    <on event="press">
+      log(p.x);
+    </on>
+    gl.clearColor(0, 0, Speed, 1);
+    if (Speed > 1) {
+      gl.clear(gl.COLOR_BUFFER_BIT); // never "</canvas>"
+    }
+  </canvas>
+  <canvas id="e2" x="0"/>
+</page>
+"#;
+        let page = parse(text, "a").unwrap();
+        let e = &page.children[0];
+        assert_eq!((e.tag, e.props["context"].as_str(), e.props["opacity"].as_str()), (Tag::Canvas, "\"webgl2\"", "0.9"));
+        assert_eq!(e.props["draw"], "gl.clearColor(0, 0, Speed, 1);\nif (Speed > 1) {\n  gl.clear(gl.COLOR_BUFFER_BIT); // never \"</canvas>\"\n}");
+        assert_eq!(e.handlers[0].code, "log(p.x);");
+        assert!(!page.children[1].props.contains_key("draw"));
         assert_eq!(write(&page, &[]), text);
     }
 
@@ -788,7 +832,7 @@ mod tests {
     fn random_element(rng: &mut Rng, ids: &mut usize, depth: usize) -> Element {
         *ids += 1;
         let id = format!("e{ids}");
-        let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Use, Tag::Group][rng.below(8)];
+        let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Canvas, Tag::Use, Tag::Group][rng.below(9)];
         let keys: Vec<&str> = ATTRS.iter().chain(STYLE.iter()).copied().collect();
         let mut props = some_props(rng, &keys);
         let mut children = Vec::new();
@@ -813,8 +857,8 @@ mod tests {
                 props.insert(VIEWBOX.to_owned(), "\"0 0 100 100\"".to_owned());
                 children = random_shapes(rng, ids, depth);
             }
-            Tag::Markup if rng.below(4) > 0 => {
-                props.insert(MARKUP.to_owned(), rng.pick(&CODE));
+            Tag::Markup | Tag::Canvas if rng.below(4) > 0 => {
+                props.insert(code_of(tag).unwrap().to_owned(), rng.pick(&CODE));
             }
             Tag::Use => {
                 component = Some("Meter".to_owned());

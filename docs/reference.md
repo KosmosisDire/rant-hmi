@@ -57,6 +57,7 @@ A component's interface comes first in its file:
 | `media` | a camera, a video or a picture |
 | `svg` | a diagram of shapes, drawn in its own units |
 | `markup` | SVG that code gives as text |
+| `canvas` | what its code draws, in 2D or with WebGL |
 | `group` | parts picked and moved as one, with no box of its own |
 | a component's name, as `<Gauge>` | an instance of that component |
 | `path` `circle` `ellipse` `rect` `line` `polyline` `polygon` `text` `g` | shapes, in a diagram only |
@@ -103,6 +104,26 @@ give.
 | `fit` | `media`, `svg` | how it fits its box: `"meet"` whole, the default, `"slice"` filling it cut to size, or `"stretch"` |
 | `viewbox` | `svg` | the box its shapes draw in, `"x y width height"`. Left out, they draw in units from its corner |
 | `markup` | `markup` | SVG as text, or a list of texts, written as the tag's body |
+| `context` | `canvas` | `"2d"`, the default, or `"webgl2"` |
+| `draw` | `canvas` | the code that draws on it, written as the tag's body |
+
+### Canvas
+
+```html
+<canvas id="e1" name="Level" x="2" y="2" w="4" h="16">
+  ctx.fillStyle = $accent;
+  ctx.fillRect(0, height * (1 - Level), width, height * Level);
+</canvas>
+```
+
+- Draw code reads what an expression reads, and `ctx` with `"2d"` or `gl` with `"webgl2"`,
+  `width` and `height` in units, and `keep`, an object kept between draws for what the code
+  makes once: `keep.points ??= gl.createBuffer()`.
+- In 2D one unit is one and each draw starts clear. With WebGL the viewport is the whole
+  canvas, and the code clears it.
+- It draws again when its box or anything the code read changes, at most once a frame, and
+  every frame while it reads `time.now`.
+- It only reads: setting a name there throws.
 
 ### Shapes
 

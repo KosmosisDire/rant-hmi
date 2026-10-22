@@ -9,7 +9,7 @@ import { childrenOf } from "./tree";
 
 /** What a new element starts as: visible, on the grid, plainly named, in units, and in the
  *  theme's tokens. A diagram starts empty, its shapes added from the inspector. */
-export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup", Record<string, string>> = {
+export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup" | "canvas", Record<string, string>> = {
   div: { name: "Frame", w: "16", h: "8", background: "$panel", "border-radius": "$radius" },
   span: { name: "Text", w: "16", h: "4", text: '"Text"', color: "$text", "font-size": "$textSize" },
   input: {
@@ -28,6 +28,7 @@ export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup
   media: { name: "Media", w: "32", h: "24", fit: '"meet"' },
   svg: { name: "Diagram", w: "16", h: "16" },
   markup: { name: "SVG", w: "16", h: "16", markup: '`<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="${$accent}"/></svg>`' },
+  canvas: { name: "Canvas", w: "16", h: "16", draw: ["ctx.fillStyle = $accent;", "ctx.beginPath();", "ctx.arc(width / 2, height / 2, min(width, height) * 0.4, 0, 2 * PI);", "ctx.fill();"].join("\n") },
 };
 
 /** The kinds a person adds, in the order the layers bar and the menu offer them. */
@@ -38,6 +39,7 @@ export const KINDS: [keyof typeof STARTS, string][] = [
   ["media", "Media"],
   ["svg", "Diagram"],
   ["markup", "SVG"],
+  ["canvas", "Canvas"],
 ];
 
 /** Adds an element to `parent`, the page for null: at `at` in it, on the grid, else at the

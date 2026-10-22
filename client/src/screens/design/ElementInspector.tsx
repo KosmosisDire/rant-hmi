@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show, useContext } from "solid-js";
-import { cssFault, OWN, SHAPES } from "../../page/PageView";
+import { CONTEXTS, cssFault, OWN, SHAPES } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
 import { SENDERS } from "../../protocol/events";
 import type { Handler } from "../../protocol/Handler";
@@ -10,7 +10,7 @@ import { COMPONENT, EVENT, INPUT } from "../../protocol/rules";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
 import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
-import { complete, completeCss, componentNames, REPEAT, signature, signatureCss } from "../../state/complete";
+import { complete, completeCss, componentNames, drawing, REPEAT, signature, signatureCss } from "../../state/complete";
 import { brings, filterWords, handlerKey, type Offered, offered, settingOf } from "../../state/events";
 import { fits, freeName } from "../../state/names";
 import { edit, show } from "../../state/change";
@@ -282,6 +282,11 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const diagram = () => p.element.tag === "svg";
   const shape = () => SHAPES.has(p.element.tag);
   const grouped = () => p.element.tag === "group";
+  // the context a canvas draws with, which its draw code completes for
+  const context = () => {
+    const r = resolve(p.element.props.context, where().scope);
+    return r.ok && r.value === "webgl2" ? "webgl2" : "2d";
+  };
   // a frame that lays it out places it, so its x and y wait, unless it is placed freely
   const room = () => {
     const doc = pageOf(p.page);
@@ -413,6 +418,19 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             placeholder={['`<svg viewBox="0 0 100 100">', '  <circle cx="50" cy="50" r="${Speed * 40}"/>', '</svg>`'].join("\n")}
             onCommit={(t) => setProps(p.page, p.element.id, { markup: t.trim() === "" ? null : t })}
             complete={(t, c) => complete(t, c, where().expressions, where().names, where().also)}
+          />
+        </Show>
+        <Show when={p.element.tag === "canvas"}>
+          <div class="section">Canvas</div>
+          <Field {...prop("context")} label="Context" kind="choice" options={CONTEXTS.map((c) => `"${c}"`)} placeholder='"2d"' />
+          <DraftInput
+            multiline
+            code
+            class="editor code"
+            value={p.element.props.draw ?? ""}
+            placeholder={["ctx.fillStyle = $accent;", "ctx.fillRect(0, 0, width * Speed, height);"].join("\n")}
+            onCommit={(t) => setProps(p.page, p.element.id, { draw: t.trim() === "" ? null : t })}
+            complete={(t, c) => complete(t, c, where().expressions, where().names, [...(where().also ?? []), ...drawing(context())])}
           />
         </Show>
         <Show when={shape()}>

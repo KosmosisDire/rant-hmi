@@ -1,17 +1,17 @@
 // A page drawn as HTML: each element an absolutely placed div, its properties resolved
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
-import { createEffect, createMemo, createRoot, createSignal, For, Index, Match, onCleanup, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createReaction, createRoot, createSignal, For, Index, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Scope, sizeWord, tokenValue, UNIT } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Resolved, runDraw, type Scope, sizeWord, tokenValue, UNIT } from "../state/bind";
 import { fields, short } from "../state/format";
 import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
 import { component, entity, live, notify, state } from "../state/store";
-import { createSize } from "../ui/size";
+import { createSize, onResize } from "../ui/size";
 import { ImagePlay, VideoOff } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { follow, taken } from "../ui/press";
@@ -67,7 +67,11 @@ export interface Holder {
 const CORNER: Holder = { ox: "0px", oy: "0px" };
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup"]);
+export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup", "context", "draw"]);
+
+/** The contexts a canvas draws with, "2d" when it names none. */
+export const CONTEXTS = ["2d", "webgl2"] as const;
+type Context = (typeof CONTEXTS)[number];
 
 /** What a diagram holds: SVG shapes, whose every property but the name is an attribute. */
 export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
@@ -451,10 +455,14 @@ function ElementView(p: ElementProps & { at?: At }) {
     const value = p.element.tag === "input" ? take("value") : undefined;
     const diagram = p.element.tag === "svg" ? { box: diagramBox(), fit: take("fit") } : undefined;
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
+    const canvas = p.element.tag === "canvas" ? contextOf(take("context"), faults) : undefined;
     const media = p.element.tag === "media" ? { alias: playable(p.element.props.src, () => take("src")), src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
     const first = p.element.tag === "div" && take("stack") === "first" ? p.element.children.length * COPIES : undefined;
-    return { style, unknown, faults, text, value, diagram, markup, media, holder: { ox, oy, flow, first } as Holder };
+    return { style, unknown, faults, text, value, diagram, markup, canvas, media, holder: { ox, oy, flow, first } as Holder };
   });
+  // what its drawing last gave, known only once it draws
+  const [drawn, setDrawn] = createSignal<{ unknown?: string; error?: string }>({});
+  const faults = () => (drawn().error ? [...look().faults, `draw: ${drawn().error}`] : look().faults);
   const press = usePress(p);
   const inner = (c: Element, i: () => number) => <Placed element={c} scope={p.scope} room={look().holder} order={i()} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
   return (
@@ -462,9 +470,9 @@ function ElementView(p: ElementProps & { at?: At }) {
       data-id={p.inside ? undefined : p.element.id}
       data-name={p.element.props.name}
       class="el"
-      classList={{ text: p.element.tag === "span", unknown: look().unknown, faulty: p.design && look().faults.length > 0, live: press.live(), scrolls: press.scrolls(), pressed: press.pressed() }}
+      classList={{ text: p.element.tag === "span", unknown: look().unknown || !!drawn().unknown, faulty: p.design && faults().length > 0, live: press.live(), scrolls: press.scrolls(), pressed: press.pressed() }}
       style={{ ...look().style, "z-index": raised() === p.element ? String((p.room.first ?? 0) + 1) : look().style["z-index"] }}
-      title={p.design && look().faults.length > 0 ? look().faults.join("\n") : undefined}
+      title={p.design && faults().length > 0 ? faults().join("\n") : undefined}
       ref={(el) => {
         press.ref(el);
         if (p.element.tag === "use") el.addEventListener("pointerdown", () => p.act && setRaised(p.element));
@@ -495,6 +503,10 @@ function ElementView(p: ElementProps & { at?: At }) {
           )}
         </Match>
         <Match when={look().markup}>{(m) => <>{m()}</>}</Match>
+        {/* a canvas keeps the context it was made with, so another context makes a new one */}
+        <Match when={look().canvas} keyed>
+          {(context) => <CanvasView context={context} draw={p.element.props.draw} scope={p.scope} report={(r) => setDrawn(r.ok ? {} : r)} />}
+        </Match>
         <Match when={look().media}>{(m) => <MediaView alias={m().alias} src={m().src} fit={m().fit} />}</Match>
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} design={p.design} act={p.act} at={p.at} />
@@ -552,6 +564,62 @@ function svgFrom(code: unknown, faults: string[]): SVGSVGElement | undefined {
   const { svg, error } = svgOf(Array.isArray(code) ? code.join("") : code);
   if (error) faults.push(`markup: ${error}`);
   return svg;
+}
+
+/** The context a canvas names, "2d" for none, or null with why when it names another. */
+function contextOf(v: unknown, faults: string[]): Context | null {
+  if (v === undefined || v === null || v === "") return "2d";
+  if (CONTEXTS.includes(v as Context)) return v as Context;
+  faults.push(`context: ${words(v)} is not one of ${CONTEXTS.join(" or ")}`);
+  return null;
+}
+
+/** A canvas its draw code draws on, at the pixels it covers on the screen. It draws again when
+ *  its box changes or anything the code read does: in the frame the change came in, and at most
+ *  once a frame. */
+function CanvasView(p: { context: Context; draw: string | undefined; scope: Scope; report: (r: Resolved) => void }) {
+  let canvas!: HTMLCanvasElement;
+  onMount(() => {
+    const ctx = p.context === "2d" ? canvas.getContext("2d") : canvas.getContext("webgl2");
+    if (!ctx) return p.report({ ok: false, error: `this screen has no ${p.context} context` });
+    // what the code made once, until the context is lost
+    let keep: Record<string, unknown> = {};
+    let [queued, gone] = [false, false];
+    let last: CSSNumberish | null = null;
+    const draw = () => {
+      queued = false;
+      if (gone) return;
+      last = document.timeline.currentTime;
+      // its box as laid out, and how many screen pixels each of its own takes through any zoom
+      const [w, h] = [canvas.clientWidth, canvas.clientHeight];
+      const k = (w > 0 ? canvas.getBoundingClientRect().width / w : 1) * devicePixelRatio;
+      const [pw, ph] = [Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k))];
+      if (canvas.width !== pw || canvas.height !== ph) Object.assign(canvas, { width: pw, height: ph });
+      if (ctx instanceof CanvasRenderingContext2D) {
+        ctx.reset();
+        ctx.scale(k * UNIT, k * UNIT);
+      } else ctx.viewport(0, 0, pw, ph);
+      const own = { [p.context === "2d" ? "ctx" : "gl"]: ctx, width: w / UNIT, height: h / UNIT, keep };
+      track(() => p.report(runDraw(p.draw ?? "", p.scope, own)));
+    };
+    const schedule = () => {
+      if (queued) return;
+      queued = true;
+      // the frame's clock reads the same all through a frame, so it tells a second draw in one
+      if (document.timeline.currentTime === last) requestAnimationFrame(draw);
+      else queueMicrotask(draw);
+    };
+    const track = createReaction(schedule);
+    onResize(canvas, schedule);
+    canvas.addEventListener("webglcontextlost", (e) => e.preventDefault());
+    canvas.addEventListener("webglcontextrestored", () => {
+      keep = {};
+      schedule();
+    });
+    onCleanup(() => (gone = true));
+    schedule();
+  });
+  return <canvas ref={canvas} class="el-picture" />;
 }
 
 /** A shape in a diagram: each property an SVG attribute, its value an expression. */

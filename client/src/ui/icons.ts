@@ -16,6 +16,7 @@ export { default as ArrowRight } from "lucide-solid/icons/arrow-right";
 export { default as ArrowUp } from "lucide-solid/icons/arrow-up";
 export { default as Braces } from "lucide-solid/icons/braces";
 export { default as BringToFront } from "lucide-solid/icons/bring-to-front";
+export { default as Brush } from "lucide-solid/icons/brush";
 export { default as ChartSpline } from "lucide-solid/icons/chart-spline";
 export { default as Check } from "lucide-solid/icons/check";
 export { default as ChevronDown } from "lucide-solid/icons/chevron-down";

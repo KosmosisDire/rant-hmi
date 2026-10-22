@@ -203,6 +203,8 @@ pub enum Tag {
     Svg,
     /// SVG markup an expression gives as text, drawn in the element's box.
     Markup,
+    /// A canvas its code draws on, in 2D or with WebGL.
+    Canvas,
     Path,
     Circle,
     Ellipse,
@@ -221,7 +223,7 @@ pub enum Tag {
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-pub(crate) const WORDS: [(Tag, &str); 16] = [
+pub(crate) const WORDS: [(Tag, &str); 17] = [
     (Tag::Div, "div"),
     (Tag::Group, "group"),
     (Tag::Span, "span"),
@@ -229,6 +231,7 @@ pub(crate) const WORDS: [(Tag, &str); 16] = [
     (Tag::Media, "media"),
     (Tag::Svg, "svg"),
     (Tag::Markup, "markup"),
+    (Tag::Canvas, "canvas"),
     (Tag::Path, "path"),
     (Tag::Circle, "circle"),
     (Tag::Ellipse, "ellipse"),
