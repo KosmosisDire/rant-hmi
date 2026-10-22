@@ -1,13 +1,14 @@
 // A page handler that touches only the screen's own variables runs on the screen. Through a
-// link that holds every byte 600 ms each way, a round trip over a second, a view it drags follows
-// the pointer within a frame and never steps back as the system's older values come in, and the
-// system has the value once they have. A handler that touches a shared variable runs on the system, so its view waits for
-// the round trip.
+// link that turns slow just before a drag, holding every byte a second each way while the
+// screen's measure of the round trip still says fast, a view it drags follows the pointer within
+// a frame and never steps back as the system's older values come in, and the system has the
+// value once they have. A handler that touches a shared variable runs on the system, so its
+// view waits for the round trip.
 
 import net from "node:net";
 
-/** How long the link holds what it carries, each way. */
-const DELAY = 600;
+/** How long the link holds what it carries, each way, once it turns slow. */
+const DELAY = 1000;
 
 export default async function ({ page, hmi, check, eventually, sys }) {
   hmi.send({ type: "set_variable", name: "hereX", variable: { name: "hereX", start: 0, per: "screen" } });
@@ -26,9 +27,10 @@ export default async function ({ page, hmi, check, eventually, sys }) {
 
   const port = Number(new URL(sys.url).port);
   const links = new Set();
+  let delay = 0;
   const proxy = net.createServer((down) => {
     const up = net.connect(port, "127.0.0.1");
-    const hold = (from, to) => from.on("data", (chunk) => setTimeout(() => to.writable && to.write(chunk), DELAY));
+    const hold = (from, to) => from.on("data", (chunk) => setTimeout(() => to.writable && to.write(chunk), delay));
     hold(down, up);
     hold(up, down);
     const end = () => {
@@ -59,7 +61,7 @@ export default async function ({ page, hmi, check, eventually, sys }) {
       await screen.mouse.down();
       await screen.mouse.move(sx + 10, sy);
       let first = null;
-      while (first === null && Date.now() - start < 3000) if ((await x(id)) > b.x + 5) first = Date.now() - start;
+      while (first === null && Date.now() - start < 4 * DELAY) if ((await x(id)) > b.x + 5) first = Date.now() - start;
       const seen = [];
       for (let i = 2; i <= 10; i++) {
         await screen.mouse.move(sx + 10 * i, sy);
@@ -74,6 +76,8 @@ export default async function ({ page, hmi, check, eventually, sys }) {
       return { first, seen, from: b.x };
     };
 
+    // only ever slower, so what it carries keeps its order
+    delay = DELAY;
     const here = await dragged(near);
     check(here.first !== null && here.first < 250, `a view the screen's own handler drags to follow within a frame or so, not after ${here.first} ms`);
     const back = here.seen.findIndex((v, i) => i > 0 && v < here.seen[i - 1] - 0.5);
@@ -81,7 +85,7 @@ export default async function ({ page, hmi, check, eventually, sys }) {
     check(Math.abs(here.seen.at(-1) - here.from - 100) < 1.5, `the view to end where the pointer did, 100 px on, not ${here.seen.at(-1) - here.from}`);
 
     // once the promise is long over the system has the value, which a handler there reads
-    await screen.waitForTimeout(1200);
+    await screen.waitForTimeout(2 * DELAY);
     check(Math.abs((await x(near)) - here.from - 100) < 1.5, "the view to stay where it was dragged once the system's value is the one shown");
     const a = await el(ask).boundingBox();
     await screen.mouse.click(a.x + a.width / 2, a.y + a.height / 2);

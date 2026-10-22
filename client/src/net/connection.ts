@@ -9,7 +9,7 @@ import { Decoder, Encoder } from "cbor-x";
 import { type Accessor, createSignal, type Setter, untrack } from "solid-js";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
-import { notify, receive, setState, state } from "../state/store";
+import { cameBack, notify, receive, setState, state } from "../state/store";
 import { decodes, Decoded } from "./decode";
 
 /** 20 times a second, so the round trip shown is a fresh one. */
@@ -145,6 +145,7 @@ function heard(bytes: Uint8Array) {
     timed = rtt;
     if (unanswered !== null && msg.t >= unanswered) unanswered = null;
     setState("rttMs", state.rttMs === null ? rtt : state.rttMs * 0.8 + rtt * 0.2);
+    cameBack(msg.t);
   } else if (msg.type === "channels") {
     answered(msg.answer);
   } else if (msg.type === "candidate") {

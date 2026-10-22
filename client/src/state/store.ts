@@ -232,27 +232,33 @@ export function receive(msg: ServerMsg) {
   }
 }
 
-/** A mesh import is shown as known only while the backend link is up too. */
-/** How long past twice the link's round trip the screen shows what it wrote to its own variable
- *  should the system's value never come to match, as when a rule changes it again. */
+/** How long the screen still shows what it wrote to its own variable once the system has had
+ *  the write, should the system's value never come to match, as when a rule changes it again. */
 const KEPT_MS = 1000;
 
 /** What the screen wrote to its own variables, shown over the system's value until that comes
  *  to match, so what it draws never waits on the round trip nor steps back through older
  *  values on their way back. */
 const [promised, setPromised] = createStore<Record<string, { value: Value } | undefined>>({});
-const lapses = new Map<string, ReturnType<typeof setTimeout>>();
+/** When each promise was made, and its lapse once the system has had it. */
+const pending = new Map<string, { at: number; lapse?: ReturnType<typeof setTimeout> }>();
 
 /** Shows `value` as `alias`'s at once, as the screen wrote it, until the system's matches. */
 export function promise(alias: string, value: Value) {
   setPromised(alias, { value });
-  clearTimeout(lapses.get(alias));
-  lapses.set(alias, setTimeout(() => settle(alias), KEPT_MS + 2 * (state.rttMs ?? 0)));
+  clearTimeout(pending.get(alias)?.lapse);
+  pending.set(alias, { at: performance.now() });
+}
+
+/** A ping sent at `sent` came back, so the system has had every write made before it, however
+ *  slow the link. */
+export function cameBack(sent: number) {
+  for (const [alias, p] of pending) if (p.at < sent && !p.lapse) p.lapse = setTimeout(() => settle(alias), KEPT_MS);
 }
 
 function settle(alias: string) {
-  clearTimeout(lapses.get(alias));
-  lapses.delete(alias);
+  clearTimeout(pending.get(alias)?.lapse);
+  pending.delete(alias);
   setPromised(alias, undefined);
 }
 
@@ -264,6 +270,7 @@ function same(a: unknown, b: unknown): boolean {
   return Object.keys(x).length === Object.keys(y).length && Object.keys(x).every((k) => same(x[k], y[k]));
 }
 
+/** A mesh import is shown as known only while the backend link is up too. */
 export function live(alias: string): Live {
   const p = promised[alias];
   if (p) return { value: p.value, known: state.link === "open" };
