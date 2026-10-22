@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
 use clap::Parser;
-use rant_hmi::tls::{self, Certificate};
+use rant_hmi::tls::Certificate;
 use tracing_subscriber::EnvFilter;
 
 /// Rant HMI: build and run HMIs for a Rant mesh in a browser.
@@ -58,18 +58,25 @@ async fn main() -> anyhow::Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
     let a = Args::parse();
-    rant_hmi::run(rant_hmi::Options {
+    let hmi = rant_hmi::Hmi::start(rant_hmi::Options {
         project: a.project,
         client: a.client,
-        bind: a.bind,
-        port: a.port,
         domain: a.domain,
         loopback: a.loopback,
         rtc_ports: a.rtc_ports.0,
-        certificate: match (a.cert, a.key) {
-            (Some(cert), Some(key)) => Some(Certificate::Given { cert, key }),
-            _ => tls::kept().map(Certificate::Own),
-        },
+        web: Some(rant_hmi::Web {
+            bind: a.bind,
+            port: a.port,
+            certificate: match (a.cert, a.key) {
+                (Some(cert), Some(key)) => Some(Certificate::Given { cert, key }),
+                _ => rant_hmi::kept().map(Certificate::Own),
+            },
+        }),
     })
-    .await
+    .await?;
+    hmi.run(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await;
+    Ok(())
 }

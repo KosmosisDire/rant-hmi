@@ -3,8 +3,7 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -19,7 +18,7 @@ use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
@@ -29,7 +28,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeader;
 use tracing::{debug, error, warn};
 
-use crate::app::{Inbound, Outbox};
+use crate::app::{Door, Inbound};
 use crate::flight::Flight;
 use crate::lanes::Lanes;
 use crate::protocol::ClientMsg;
@@ -39,22 +38,19 @@ use crate::protocol::ClientMsg;
 /// only when its link is.
 pub const PING_EVERY: Duration = Duration::from_millis(50);
 
-#[derive(Clone)]
-struct Shared {
-    inbound: UnboundedSender<Inbound>,
-    next: Arc<AtomicU32>,
+/// The built client's files, index.html for any path that names none.
+pub type Files = SetResponseHeader<ServeDir<ServeFile>, HeaderValue>;
+
+pub fn files(client: &Path) -> Files {
+    let pages = ServeDir::new(client).fallback(ServeFile::new(client.join("index.html")));
+    // a screen asks again each time, so after an update it loads the new client
+    SetResponseHeader::overriding(pages, header::CACHE_CONTROL, HeaderValue::from_static("no-cache"))
 }
 
 /// Serves on `listener`, https too for a connection that opens with a TLS hello when `tls`
 /// answers one.
-pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: PathBuf, inbound: UnboundedSender<Inbound>) {
-    let pages = ServeDir::new(&client).fallback(ServeFile::new(client.join("index.html")));
-    // a screen asks again each time, so after an update it loads the new client
-    let pages = SetResponseHeader::overriding(pages, header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-    let app = Router::new()
-        .route("/ws", get(upgrade))
-        .fallback_service(pages)
-        .with_state(Shared { inbound, next: Arc::new(AtomicU32::new(1)) });
+pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: &Path, door: Door) {
+    let app = Router::new().route("/ws", get(upgrade)).fallback_service(files(client)).with_state(door);
     let front = Front::open(listener, tls);
     if let Err(e) = axum::serve(front, app.into_make_service_with_connect_info::<Reached>()).await {
         error!("the web server stopped: {e}");
@@ -148,8 +144,8 @@ impl Connected<IncomingStream<'_, Front>> for Reached {
     }
 }
 
-async fn upgrade(ws: WebSocketUpgrade, State(shared): State<Shared>, ConnectInfo(reached): ConnectInfo<Reached>) -> Response {
-    ws.on_upgrade(move |socket| screen(socket, shared, reached))
+async fn upgrade(ws: WebSocketUpgrade, State(door): State<Door>, ConnectInfo(reached): ConnectInfo<Reached>) -> Response {
+    ws.on_upgrade(move |socket| screen(socket, door, reached))
 }
 
 /// What a socket has on its way, shared by its reader, which hears the pongs, and its writer,
@@ -164,13 +160,9 @@ struct Way {
 /// loop sends goes out in pieces of its lanes, as fast as the screen confirms them
 /// (`flight.rs`). When the loop drops the screen, its lanes close and the socket closes once
 /// they are sent.
-async fn screen(socket: WebSocket, shared: Shared, reached: Reached) {
-    let session = shared.next.fetch_add(1, Ordering::Relaxed);
+async fn screen(socket: WebSocket, door: Door, reached: Reached) {
     let lanes = Arc::new(Lanes::default());
-    let (local, remote) = (reached.local, reached.remote);
-    if shared.inbound.send(Inbound::Open { session, out: Outbox::new(lanes.clone()), local, remote }).is_err() {
-        return;
-    }
+    let Some(session) = door.open(lanes.clone(), reached.local, reached.remote) else { return };
     let (mut sink, mut stream) = socket.split();
     let born = Instant::now();
     let now = move || born.elapsed().as_micros() as u64;
@@ -215,7 +207,7 @@ async fn screen(socket: WebSocket, shared: Shared, reached: Reached) {
         match frame {
             Message::Binary(data) => match ciborium::from_reader::<ClientMsg, _>(data.as_ref()) {
                 Ok(msg) => {
-                    let _ = shared.inbound.send(Inbound::Message { session, msg });
+                    door.send(Inbound::Message { session, msg });
                 }
                 Err(e) => warn!("screen {session} sent what this backend cannot read: {e}"),
             },
@@ -224,13 +216,13 @@ async fn screen(socket: WebSocket, shared: Shared, reached: Reached) {
                 way.heard.notify_one();
                 if told.is_none_or(|t| t.elapsed() >= PING_EVERY) {
                     told = Some(Instant::now());
-                    let _ = shared.inbound.send(Inbound::Heard { session, ping });
+                    door.send(Inbound::Heard { session, ping });
                 }
             }
             Message::Close(_) => break,
             _ => {}
         }
     }
-    let _ = shared.inbound.send(Inbound::Close { session });
+    door.send(Inbound::Close { session });
     writer.abort();
 }

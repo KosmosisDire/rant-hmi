@@ -6,11 +6,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::ops::Deref;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use rant::types::Timestamp;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::{info, warn};
 
 use crate::authorize::{Who, authorize};
@@ -51,15 +52,46 @@ pub enum Inbound {
     Close { session: u32 },
 }
 
+/// How screens reach the loop, over the network or in this process, each numbered from one
+/// count.
+#[derive(Clone)]
+pub struct Door {
+    inbound: UnboundedSender<Inbound>,
+    next: Arc<AtomicU32>,
+}
+
+impl Door {
+    pub fn new() -> (Door, UnboundedReceiver<Inbound>) {
+        let (inbound, received) = unbounded_channel();
+        (Door { inbound, next: Arc::new(AtomicU32::new(1)) }, received)
+    }
+
+    /// Opens a screen's session, sent what `lanes` carry. None once the loop is gone.
+    pub fn open(&self, lanes: Arc<Lanes>, local: IpAddr, remote: IpAddr) -> Option<u32> {
+        let session = self.next.fetch_add(1, Ordering::Relaxed);
+        self.inbound.send(Inbound::Open { session, out: Outbox(lanes), local, remote }).ok().map(|_| session)
+    }
+
+    /// Hands the loop what a screen did, false once the loop is gone.
+    pub fn send(&self, i: Inbound) -> bool {
+        self.inbound.send(i).is_ok()
+    }
+}
+
+/// What reaches the loop from each part that runs beside it.
+pub struct Sources {
+    pub mesh: UnboundedReceiver<Delivery>,
+    pub screens: UnboundedReceiver<Inbound>,
+    pub script: UnboundedReceiver<FromScript>,
+    /// A project file changed.
+    pub files: UnboundedReceiver<()>,
+    pub rtc: UnboundedReceiver<FromRtc>,
+    pub frames: UnboundedReceiver<Frame>,
+}
+
 /// A screen's socket, in lanes that take turns (`lanes.rs`), which it sends as fast as the
 /// screen confirms them. They close when the screen goes.
 pub struct Outbox(Arc<Lanes>);
-
-impl Outbox {
-    pub fn new(lanes: Arc<Lanes>) -> Outbox {
-        Outbox(lanes)
-    }
-}
 
 impl Deref for Outbox {
     type Target = Lanes;
@@ -273,31 +305,22 @@ impl App {
         }
     }
 
-    /// Runs until Ctrl C.
-    pub async fn run(
-        mut self,
-        mut deliveries: UnboundedReceiver<Delivery>,
-        mut inbound: UnboundedReceiver<Inbound>,
-        mut heard: UnboundedReceiver<FromScript>,
-        mut changed: UnboundedReceiver<()>,
-        mut from_rtc: UnboundedReceiver<FromRtc>,
-        mut frames: UnboundedReceiver<Frame>,
-    ) {
+    /// Runs until `stop` ends.
+    pub async fn run(mut self, mut from: Sources, stop: impl Future<Output = ()>) {
         let mut tick = tokio::time::interval(TICK);
         self.rules_changed();
         self.run_rules(|r| matches!(r.when, When::Starts), Value::Null);
-        let shutdown = tokio::signal::ctrl_c();
-        tokio::pin!(shutdown);
+        tokio::pin!(stop);
         loop {
             tokio::select! {
-                Some(d) = deliveries.recv() => self.deliver(d),
-                Some(i) = inbound.recv() => self.inbound(i),
-                Some(s) = heard.recv() => self.scripted(s),
-                Some(()) = changed.recv() => self.edited = Some(Instant::now()),
-                Some(r) = from_rtc.recv() => self.connection(r),
-                Some(f) = frames.recv() => self.frame(f),
+                Some(d) = from.mesh.recv() => self.deliver(d),
+                Some(i) = from.screens.recv() => self.inbound(i),
+                Some(s) = from.script.recv() => self.scripted(s),
+                Some(()) = from.files.recv() => self.edited = Some(Instant::now()),
+                Some(r) = from.rtc.recv() => self.connection(r),
+                Some(f) = from.frames.recv() => self.frame(f),
                 _ = tick.tick() => self.tick(),
-                _ = &mut shutdown => break,
+                _ = &mut stop => break,
             }
         }
         for session in self.sessions.keys().copied().collect::<Vec<_>>() {

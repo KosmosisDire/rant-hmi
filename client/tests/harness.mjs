@@ -2,7 +2,7 @@
 // own loopback domain and port, with a fresh copy of the test project, and a headless Chrome to
 // drive.
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -96,6 +96,59 @@ export async function startSystem({ empty, slot = 0 } = {}) {
       rmSync(temp, { recursive: true, force: true });
     },
   };
+}
+
+/** rant-hmi-app's backend running `project`, with a demo line of its own on `domain`. With
+ *  `port` its screens are served through the app's link over http there, by the linked
+ *  example, for a browser to drive. Else it shows them in the app's own window, which WebView2
+ *  here opens no debugging port to drive, so its log tells what the window did. */
+export async function startApp(project, { domain, port = null }) {
+  const home = join(project, "..", "home");
+  const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", String(domain)]);
+  const args = [project, "--domain", String(domain), "--loopback", "--client", CLIENT];
+  const app = port === null ? run(join(BUILD, `rant-hmi-app${exe}`), args, { HOME: home, USERPROFILE: home }) : run(join(BUILD, "examples", `linked${exe}`), [...args, "--port", String(port)]);
+  const url = port === null ? null : `http://127.0.0.1:${port}`;
+  const start = Date.now();
+  for (;;) {
+    const ready = url ? await fetch(url).then((r) => r.ok, () => false) : app.log.includes("screen 1 connected");
+    if (ready) break;
+    if (Date.now() - start > 20000) {
+      app.kill();
+      line.kill();
+      throw new Error(`the app never served its screen:\n${app.log}`);
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return {
+    app,
+    url,
+    async close() {
+      const ended = await closeWindow(app);
+      line.kill();
+      return ended;
+    },
+    stop() {
+      app.kill();
+      line.kill();
+    },
+  };
+}
+
+/** rant-hmi-app given `what` alone: the address of an HMI elsewhere, or a project. */
+export function showApp(what, home) {
+  const app = run(join(BUILD, `rant-hmi-app${exe}`), [what], { HOME: home, USERPROFILE: home });
+  return { app, close: () => closeWindow(app), stop: () => app.kill() };
+}
+
+/** Closes an app's window as a person does, true once the app ended by itself. */
+async function closeWindow(app) {
+  execFileSync("taskkill", ["/PID", String(app.pid)], { stdio: "ignore" });
+  const ended = await new Promise((r) => {
+    if (app.exitCode !== null) return r(true);
+    app.once("exit", () => r(true));
+    setTimeout(() => r(false), 10000);
+  });
+  return ended && app.exitCode === 0;
 }
 
 export function startBrowser() {

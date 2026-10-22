@@ -1,0 +1,29 @@
+[package]
+name = "rant-hmi-app"
+version = "0.0.1"
+edition = "2024"
+description = "An HMI's operator screen in a native window, its backend in the same process or elsewhere"
+publish = false
+
+# a workspace and lock of its own: the webview's Linux crates pin an old toml, which in the
+# server's lock would hold back the server's own
+[workspace]
+
+[dependencies]
+rant-hmi = { path = "../server" }
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+tao = "0.37"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wry = "0.57"
+
+# as the server's workspace builds
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.dev]
+debug = "line-tables-only"

@@ -28,11 +28,6 @@ pub enum Certificate {
     Given { cert: PathBuf, key: PathBuf },
 }
 
-/// The folder the HMI keeps its own certificate in, `.rant/hmi` in the home folder.
-pub fn kept() -> Option<PathBuf> {
-    std::env::home_dir().map(|home| home.join(".rant").join("hmi"))
-}
-
 /// What answers a TLS hello.
 pub fn acceptor(from: &Certificate) -> Result<TlsAcceptor> {
     let (cert, key) = match from {

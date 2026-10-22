@@ -40,6 +40,8 @@ ts-rs = "10"
 x509-cert = { version = "0.2", default-features = false }
 
 [dev-dependencies]
+# the link's tests call its routes as the app's window does
+tower = { version = "0.5", features = ["util"] }
 # tests write values as JSON literals, which the value! macro makes ours
 serde_json = { version = "1", features = ["preserve_order"] }
 # the demo line's MJPEG camera
