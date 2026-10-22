@@ -16,7 +16,8 @@ The screens connected, a list. Each holds:
 - `jitter_ms`: how much the round trip wavers, smoothed as RTP does: each new round trip
   moves it a sixteenth of the way to how far that one was from the last
 - `data_channels`: whether its WebRTC data connection is open, which carries its video too.
-  Without it the screen gets everything else over its socket, and shows no video.
+  Without it the screen gets everything over its socket, its video as frames it decodes
+  itself, which only a page on https or localhost can do.
 
 ## Hmi/Status
 

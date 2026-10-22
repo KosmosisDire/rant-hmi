@@ -6,13 +6,16 @@
 //! leave them room. A piece is a binary frame, `[u16 lane][u8 more]` then its share of the
 //! message, `more` 1 while pieces of it follow. A lane that keeps only the latest holds one message waiting at
 //! most, as Rant's KEEP_LAST does, so a camera on a slow link sends what is newest at the
-//! rate the link carries.
+//! rate the link carries. A video's lane keeps every frame, since each needs those before it.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
+use std::time::Instant;
 
 use axum::body::Bytes;
 use tokio::sync::Notify;
+
+use crate::rtc::FRAME_LATE;
 
 /// The most of a message one piece carries.
 pub const PIECE: usize = 8 << 10;
@@ -27,8 +30,8 @@ const BEHIND: usize = 8;
 
 #[derive(Default)]
 struct Inner {
-    /// Each lane's messages, its first one sent as far as `at`.
-    lanes: HashMap<u16, VecDeque<Bytes>>,
+    /// Each lane's messages with when each came, its first one sent as far as `at`.
+    lanes: HashMap<u16, VecDeque<(Bytes, Instant)>>,
     at: HashMap<u16, usize>,
     /// The lanes with work, in their turn, and what the first has sent in its turn.
     turn: VecDeque<u16>,
@@ -36,8 +39,66 @@ struct Inner {
     closed: bool,
     /// The lane of each import whose value is too big to share a message.
     own: HashMap<String, u16>,
+    /// The lane of each import whose video the screen decodes itself.
+    videos: HashMap<String, Video>,
     /// Small values were left out while too many waited, so the screen needs them all.
     stale: bool,
+}
+
+/// A lane of H264 frames. A frame decodes only after those before it back to a keyframe, so
+/// once any is left out the lane waits for the next keyframe.
+struct Video {
+    lane: u16,
+    /// It left frames out, or has sent none yet.
+    skipping: bool,
+}
+
+impl Inner {
+    /// A lane of its own for an import, as neither kind of own lane is ever given back.
+    fn new_lane(&self) -> u16 {
+        VALUES + 1 + (self.own.len() + self.videos.len()) as u16
+    }
+
+    /// Puts a message on a lane. With `latest` it replaces those waiting there, but not one
+    /// that has begun to go.
+    fn push(&mut self, lane: u16, message: Bytes, came: Instant, latest: bool) {
+        let Inner { lanes, at, turn, spent, .. } = self;
+        let queue = lanes.entry(lane).or_default();
+        if latest {
+            queue.truncate(usize::from(at.contains_key(&lane)));
+        }
+        queue.push_back((message, came));
+        if !turn.contains(&lane) {
+            let at = match lane {
+                CONTROL => 0,
+                VALUES => usize::from(turn.front() == Some(&CONTROL)),
+                _ => turn.len(),
+            };
+            turn.insert(at, lane);
+            if at == 0 {
+                *spent = 0;
+            }
+        }
+    }
+
+    /// The first message waiting on a lane, not one begun.
+    fn first_waiting(&self, lane: u16) -> Option<&(Bytes, Instant)> {
+        self.lanes.get(&lane)?.get(usize::from(self.at.contains_key(&lane)))
+    }
+
+    /// Drops the messages waiting on a lane, but not one begun.
+    fn clear(&mut self, lane: u16) {
+        let Inner { lanes, at, turn, spent, .. } = self;
+        if let Some(queue) = lanes.get_mut(&lane) {
+            queue.truncate(usize::from(at.contains_key(&lane)));
+            if queue.is_empty() && turn.front() == Some(&lane) {
+                *spent = 0;
+            }
+            if queue.is_empty() {
+                turn.retain(|l| *l != lane);
+            }
+        }
+    }
 }
 
 /// One screen's lanes, filled by the app's loop and emptied by its socket's writer or the
@@ -68,18 +129,50 @@ impl Lanes {
     pub fn alone(&self, alias: &str, message: Bytes) {
         let lane = {
             let mut l = self.inner.lock().expect("lanes");
-            let next = VALUES + 1 + l.own.len() as u16;
+            let next = l.new_lane();
             *l.own.entry(alias.to_owned()).or_insert(next)
         };
         self.put(lane, message, true);
     }
 
+    /// Sends a frame of an import's video in that video's own lane, which keeps every frame in
+    /// order from a keyframe on. A keyframe replaces the frames waiting, as nothing after it
+    /// needs them. A frame that would wait behind one that came over FRAME_LATE ago is left out
+    /// with those waiting, and the lane goes on from the next keyframe, so a link too slow for
+    /// the video shows it late by that at most.
+    pub fn video(&self, alias: &str, keyframe: bool, message: Bytes, came: Instant) {
+        let mut l = self.inner.lock().expect("lanes");
+        let next = l.new_lane();
+        let lane = l.videos.entry(alias.to_owned()).or_insert(Video { lane: next, skipping: true }).lane;
+        let behind = l.first_waiting(lane).is_some_and(|(_, came)| came.elapsed() > FRAME_LATE);
+        let video = l.videos.get_mut(alias).expect("its lane was just found");
+        video.skipping = !keyframe && (video.skipping || behind);
+        if video.skipping {
+            l.clear(lane);
+            return;
+        }
+        l.push(lane, message, came, keyframe);
+        drop(l);
+        self.ready.notify_one();
+    }
+
+    /// Stops sending an import's video. Frames waiting are dropped, and the video starts from a
+    /// keyframe if it plays again.
+    pub fn stop_video(&self, alias: &str) {
+        let mut l = self.inner.lock().expect("lanes");
+        let Some(video) = l.videos.get_mut(alias) else { return };
+        video.skipping = true;
+        let lane = video.lane;
+        l.clear(lane);
+    }
+
     /// True once for a screen that missed small values. Those still waiting are dropped, as
     /// all values follow.
     pub fn missed(&self) -> bool {
-        let missed = std::mem::take(&mut self.inner.lock().expect("lanes").stale);
+        let mut l = self.inner.lock().expect("lanes");
+        let missed = std::mem::take(&mut l.stale);
         if missed {
-            self.clear(VALUES);
+            l.clear(VALUES);
         }
         missed
     }
@@ -87,25 +180,7 @@ impl Lanes {
     /// Puts a message on a lane. With `latest` it replaces those waiting there, but not one
     /// that has begun to go.
     fn put(&self, lane: u16, message: Bytes, latest: bool) {
-        let mut l = self.inner.lock().expect("lanes");
-        let Inner { lanes, at, turn, spent, .. } = &mut *l;
-        let queue = lanes.entry(lane).or_default();
-        if latest {
-            queue.truncate(usize::from(at.contains_key(&lane)));
-        }
-        queue.push_back(message);
-        if !turn.contains(&lane) {
-            let at = match lane {
-                CONTROL => 0,
-                VALUES => usize::from(turn.front() == Some(&CONTROL)),
-                _ => turn.len(),
-            };
-            turn.insert(at, lane);
-            if at == 0 {
-                *spent = 0;
-            }
-        }
-        drop(l);
+        self.inner.lock().expect("lanes").push(lane, message, Instant::now(), latest);
         self.ready.notify_one();
     }
 
@@ -113,21 +188,6 @@ impl Lanes {
     fn waiting(&self, lane: u16) -> usize {
         let l = self.inner.lock().expect("lanes");
         l.lanes.get(&lane).map_or(0, |q| q.len() - usize::from(l.at.contains_key(&lane)))
-    }
-
-    /// Drops the messages waiting on a lane, but not one begun.
-    fn clear(&self, lane: u16) {
-        let mut l = self.inner.lock().expect("lanes");
-        let Inner { lanes, at, turn, spent, .. } = &mut *l;
-        if let Some(queue) = lanes.get_mut(&lane) {
-            queue.truncate(usize::from(at.contains_key(&lane)));
-            if queue.is_empty() && turn.front() == Some(&lane) {
-                *spent = 0;
-            }
-            if queue.is_empty() {
-                turn.retain(|l| *l != lane);
-            }
-        }
     }
 
     /// No more messages: the writer ends once it has sent what waits.
@@ -156,7 +216,7 @@ impl Lanes {
         let Inner { lanes, at, turn, spent, .. } = &mut *l;
         let lane = *turn.front()?;
         let queue = lanes.get_mut(&lane)?;
-        let message = queue.front()?.clone();
+        let message = queue.front()?.0.clone();
         let from = at.get(&lane).copied().unwrap_or(0);
         let end = (from + PIECE).min(message.len());
         let more = end < message.len();
@@ -262,12 +322,12 @@ mod tests {
         lanes.put(VALUES, vec![1; PIECE * 2].into(), false);
         lanes.put(VALUES, vec![2; 10].into(), false);
         lanes.take();
-        lanes.clear(VALUES);
+        lanes.inner.lock().unwrap().clear(VALUES);
         assert_eq!(lanes.waiting(VALUES), 0);
         let rest: Vec<(bool, u8)> = std::iter::from_fn(|| lanes.take()).map(|p| (p[2] == 1, p[3])).collect();
         assert_eq!(rest, vec![(false, 1)]);
         lanes.put(VALUES, vec![3; 10].into(), false);
-        lanes.clear(VALUES);
+        lanes.inner.lock().unwrap().clear(VALUES);
         assert!(lanes.take().is_none());
     }
 
@@ -302,6 +362,65 @@ mod tests {
         lanes.alone("Cam", Bytes::from_static(b"three"));
         let lanes_of: Vec<(u16, Bytes)> = std::iter::from_fn(|| lanes.take()).map(|p| (lane_of(&p).0, p.slice(3..))).collect();
         assert_eq!(lanes_of, vec![(VALUES + 1, Bytes::from_static(b"three")), (VALUES + 2, Bytes::from_static(b"two"))]);
+    }
+
+    /// Puts a frame of the video Cam, as `name`, which came `ago` ms back.
+    fn frame(lanes: &Lanes, name: &'static str, ago: u64) {
+        let came = Instant::now() - std::time::Duration::from_millis(ago);
+        lanes.video("Cam", name.starts_with('k'), Bytes::from_static(name.as_bytes()), came);
+    }
+
+    #[test]
+    fn a_video_starts_at_a_keyframe_and_keeps_every_frame_after_it() {
+        let lanes = Lanes::default();
+        lanes.alone("Cam", Bytes::from_static(b"picture"));
+        for name in ["d0", "k1", "d1", "d2"] {
+            frame(&lanes, name, 0);
+        }
+        let lanes_of: Vec<u16> = std::iter::from_fn(|| lanes.take()).map(|p| lane_of(&p).0).collect();
+        assert_eq!(lanes_of, vec![VALUES + 1, VALUES + 2, VALUES + 2, VALUES + 2]);
+        for name in ["k1", "d1", "d2"] {
+            frame(&lanes, name, 0);
+        }
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"k1"), Bytes::from_static(b"d1"), Bytes::from_static(b"d2")]);
+    }
+
+    #[test]
+    fn a_keyframe_replaces_the_frames_waiting_but_not_one_begun() {
+        let lanes = Lanes::default();
+        lanes.video("Cam", true, vec![1; PIECE * 2].into(), Instant::now());
+        lanes.take();
+        for name in ["d1", "d2", "k2", "d3"] {
+            frame(&lanes, name, 0);
+        }
+        let rest: Vec<Bytes> = std::iter::from_fn(|| lanes.take()).map(|p| p.slice(3..)).collect();
+        assert_eq!(rest[0].len(), PIECE);
+        assert_eq!(rest[1..], [Bytes::from_static(b"k2"), Bytes::from_static(b"d3")]);
+    }
+
+    #[test]
+    fn a_frame_behind_one_too_old_leaves_the_video_waiting_for_a_keyframe() {
+        let lanes = Lanes::default();
+        let late = FRAME_LATE.as_millis() as u64 + 50;
+        frame(&lanes, "k1", late);
+        frame(&lanes, "d1", 0);
+        frame(&lanes, "d2", 0);
+        assert!(sent(&lanes).is_empty());
+        frame(&lanes, "k2", 0);
+        frame(&lanes, "d3", 0);
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"k2"), Bytes::from_static(b"d3")]);
+    }
+
+    #[test]
+    fn a_stopped_video_drops_what_waits_and_starts_again_at_a_keyframe() {
+        let lanes = Lanes::default();
+        frame(&lanes, "k1", 0);
+        frame(&lanes, "d1", 0);
+        lanes.stop_video("Cam");
+        frame(&lanes, "d2", 0);
+        assert!(sent(&lanes).is_empty());
+        frame(&lanes, "k2", 0);
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"k2")]);
     }
 
     #[tokio::test]

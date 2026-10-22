@@ -73,6 +73,8 @@ A screen opens a WebRTC connection beside its socket where it can, for speed and
   the STUN servers tell. `rtc_ports=6740-6759` on `rant run Hmi` pins its ports, to open them
   in a firewall or forward them.
 - A TURN server relays for a screen that reaches the HMI no other way.
+- Without WebRTC a screen decodes video itself from frames on its socket, which only a page
+  on https or localhost can do. Elsewhere the video says why it does not play.
 
 ## Pages
 

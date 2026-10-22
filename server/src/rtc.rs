@@ -3,7 +3,8 @@
 //! and the video of each import it plays, which works on a plain http page where WebCodecs
 //! cannot. The reliable channel carries pieces of lanes as a socket does (`lanes.rs`), as fast
 //! as the screen's acks confirm them (`flight.rs`). Each H264 frame of an import's source goes
-//! out to the screens playing it as it comes.
+//! out to the screens playing it here as it comes. A screen without WebRTC decodes its video
+//! itself from frames on its socket (`Lanes::video`).
 
 use std::collections::HashMap;
 use std::io::ErrorKind;
@@ -45,9 +46,10 @@ const RELIABLE_MAX: usize = 512 << 10;
 /// everything again once one drains below this.
 const DRAINED: usize = 32 * 1024;
 
-/// A frame that waited longer than this for the task is dropped, and its video goes on from the
-/// next keyframe, so a busy backend makes video late but never what screens send and get.
-const FRAME_LATE: Duration = Duration::from_millis(200);
+/// A frame that came off the mesh longer ago than this is dropped, and its video goes on from the
+/// next keyframe, so a busy backend or a slow socket makes video late by this at most, and never
+/// what screens send and get.
+pub const FRAME_LATE: Duration = Duration::from_millis(200);
 
 /// How long the outside address a STUN server told for a port holds before a new screen asks
 /// again, since a NAT may map the port anew once it went quiet.
@@ -59,7 +61,7 @@ pub struct Frame {
     pub keyframe: bool,
     /// When to show it, in microseconds.
     pub pts: i64,
-    pub data: Vec<u8>,
+    pub data: Bytes,
     /// When it came off the mesh.
     pub at: Instant,
 }
@@ -173,15 +175,31 @@ pub struct Reach {
     pub ports: Option<RangeInclusive<u16>>,
 }
 
-/// Starts the task that owns every connection. The loop's requests go in through the first
-/// sender and video frames through the second. Answers and what screens send come back
+/// The task that owns every connection, as the loop holds it.
+pub struct Connections {
+    requests: UnboundedSender<ToRtc>,
+    frames: UnboundedSender<Frame>,
+}
+
+impl Connections {
+    pub fn send(&self, request: ToRtc) {
+        let _ = self.requests.send(request);
+    }
+
+    /// A frame for the screens playing its video here.
+    pub fn frame(&self, frame: Frame) {
+        let _ = self.frames.send(frame);
+    }
+}
+
+/// Starts the task that owns every connection. Answers and what screens send come back
 /// through `said`.
-pub fn start(said: UnboundedSender<FromRtc>, reach: Reach) -> (UnboundedSender<ToRtc>, UnboundedSender<Frame>) {
+pub fn start(said: UnboundedSender<FromRtc>, reach: Reach) -> Connections {
     str0m::crypto::from_feature_flags().install_process_default();
-    let (tx, rx) = unbounded_channel();
-    let (frames_tx, frames) = unbounded_channel();
-    tokio::spawn(run(rx, frames, said, reach));
-    (tx, frames_tx)
+    let (requests, rx) = unbounded_channel();
+    let (frames, frames_rx) = unbounded_channel();
+    tokio::spawn(run(rx, frames_rx, said, reach));
+    Connections { requests, frames }
 }
 
 async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiver<Frame>, said: UnboundedSender<FromRtc>, reach: Reach) {
@@ -272,7 +290,7 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
             }
             Some(Frame { alias, keyframe, pts, data, at }) = frames.recv() => {
                 let late = at.elapsed() > FRAME_LATE;
-                let data: Arc<[u8]> = data.into();
+                let data: Arc<[u8]> = Arc::from(&data[..]);
                 for p in &mut peers {
                     write(p, &alias, keyframe, pts, &data, late);
                 }

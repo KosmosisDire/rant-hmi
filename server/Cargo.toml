@@ -13,6 +13,8 @@ path = "src/main.rs"
 rant = { package = "rant-middleware", git = "https://github.com/KosmosisDire/Rant.git", tag = "crate-v0.0.33" }
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
+# a video frame's bytes go to a screen as one CBOR byte string
+bytes = { version = "1", features = ["serde"] }
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }

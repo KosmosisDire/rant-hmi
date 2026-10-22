@@ -53,7 +53,8 @@ pub async fn run(o: Options) -> Result<()> {
     let pages = Pages::open(&o.project)?;
     let (deliveries, delivered) = unbounded_channel();
     let (rtc_said, rtc_heard) = unbounded_channel();
-    let (rtc, frames) = rtc::start(rtc_said, rtc::Reach { loopback: o.loopback, ports: o.rtc_ports });
+    let rtc = rtc::start(rtc_said, rtc::Reach { loopback: o.loopback, ports: o.rtc_ports });
+    let (frames, framed) = unbounded_channel();
     let mesh = Mesh::open(&MeshOptions { name: NODE.to_owned(), domain: o.domain, loopback: o.loopback }, deliveries, frames)
         .map_err(|e| anyhow!("could not open the Rant node: {e}"))?;
     let listener = TcpListener::bind((o.bind.as_str(), o.port))
@@ -73,6 +74,6 @@ pub async fn run(o: Options) -> Result<()> {
     let (changes, changed) = unbounded_channel();
     // without a watcher the HMI still runs, it just misses edits made elsewhere
     let _watcher = watch::watch(&o.project, changes).map_err(|e| warn!("could not watch {}: {e}", o.project.display())).ok();
-    App::new(project, pages, mesh, script, rtc, NODE.to_owned(), build).run(delivered, received, heard, changed, rtc_heard).await;
+    App::new(project, pages, mesh, script, rtc, NODE.to_owned(), build).run(delivered, received, heard, changed, rtc_heard, framed).await;
     Ok(())
 }

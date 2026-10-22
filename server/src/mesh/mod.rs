@@ -287,7 +287,7 @@ impl Mesh {
         let sub = self.node.subscriber::<VideoFrame>(&source.name, Qos::new().reliable(source.reliable), move |m| {
             if m.codec == VideoCodec::H264 {
                 let f = m.into_inner();
-                let _ = tx.send(Frame { alias: alias.clone(), keyframe: f.keyframe, pts: f.pts.us, data: f.data, at: Instant::now() });
+                let _ = tx.send(Frame { alias: alias.clone(), keyframe: f.keyframe, pts: f.pts.us, data: f.data.into(), at: Instant::now() });
             }
         });
         match sub {

@@ -117,9 +117,22 @@
 }
 
 /* Over a video, which keeps playing beneath so its first frame can arrive. */
-.el-picture-none.over {
+.el-picture-none.over,
+.el-picture.over {
   position: absolute;
   inset: 0;
+}
+
+/* A video this screen cannot play, saying why. */
+.el-picture-none.cannot {
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  overflow: hidden;
+  text-align: center;
+  font-size: var(--t-textSmall, 13px);
+  color: var(--t-red, #d2574b);
+  outline-color: var(--t-red, #d2574b);
 }
 
 /* A diagram's shapes and an SVG's markup fill the box inside any padding, and may draw past

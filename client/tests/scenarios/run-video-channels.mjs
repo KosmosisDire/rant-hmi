@@ -71,7 +71,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   check((await made()) === 1, "the video came back on a new connection");
 
   await screen.evaluate(() => (window.__drop = true));
-  await drawn.locator(".el-picture-none").waitFor({ timeout: 3000 });
+  await eventually(() => drawn.locator("video").evaluate((v) => v.srcObject === null), "the video to leave with the channels", 3000);
   await screen.evaluate(() => (window.__drop = false));
   await plays(drawn.locator("video"), "the video back with the channels");
   check((await made()) === 2, `the screen made ${await made()} connections, not one more`);

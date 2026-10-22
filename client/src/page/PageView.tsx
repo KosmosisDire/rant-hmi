@@ -9,10 +9,10 @@ import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Scope, sizeWord, tokenValue, UNIT } from "../state/bind";
 import { fields, short } from "../state/format";
-import { play, stopPlaying } from "../net/connection";
+import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
 import { component, entity, live, notify, state } from "../state/store";
 import { createSize } from "../ui/size";
-import { ImagePlay } from "../ui/icons";
+import { ImagePlay, VideoOff } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { follow } from "../ui/press";
 import { componentAct, type Act } from "./act";
@@ -627,32 +627,56 @@ function playable(src: string | undefined, value: () => unknown): string | null 
   return imported(v) ? v : null;
 }
 
-/** A video: an import's stream over WebRTC, fitted as a picture is, marked until its first
- *  frame shows, and again while the stream is gone. */
+/** A video: an import's stream over WebRTC, or until that shows its frames from the socket
+ *  decoded here, fitted as a picture is. Marked until a frame shows, and again while neither
+ *  comes, with why when the screen cannot play it. */
 function VideoView(p: { alias: string | null; fit: string }) {
   const [shows, setShows] = createSignal(false);
+  const [drawn, setDrawn] = createSignal(false);
+  const [playing, setPlaying] = createSignal<Playing | null>(null);
   let el!: HTMLVideoElement;
+  let canvas!: HTMLCanvasElement;
   createEffect(() => {
     const alias = p.alias;
     setShows(false);
+    setDrawn(false);
     if (!alias) return;
-    const stream = play(alias);
+    const video = play(alias);
+    setPlaying(video);
     createEffect(() => {
-      el.srcObject = stream();
+      el.srcObject = video.stream();
       setShows(false);
       void el.play().catch(() => {});
     });
+    // the last frame decoded stays until the next, or until WebRTC's shows
+    createEffect(() => {
+      const decoded = video.decoded();
+      if (!decoded) return;
+      setDrawn(false);
+      onCleanup(decoded.watch(canvas, () => setDrawn(true)));
+    });
     onCleanup(() => {
       el.srcObject = null;
+      setPlaying(null);
       stopPlaying(alias);
     });
   });
+  const fit = () => FIT[p.fit] ?? "contain";
+  const why = () => playing()?.decoded()?.fault() ?? unplayable();
   return (
     <>
-      <video ref={el} class="el-picture" style={{ "object-fit": FIT[p.fit] ?? "contain" }} autoplay muted playsinline onLoadedData={() => setShows(true)} />
-      <Show when={!shows()}>
-        <div class="el-picture-none over">
-          <ImagePlay size={20} />
+      <canvas ref={canvas} class="el-picture over" hidden={shows() || !drawn()} style={{ "object-fit": fit() }} />
+      <video ref={el} class="el-picture" style={{ "object-fit": fit() }} autoplay muted playsinline onLoadedData={() => setShows(true)} />
+      <Show when={!shows() && !drawn()}>
+        <div class="el-picture-none over" classList={{ cannot: !!why() }} title={why() ?? undefined}>
+          <Show when={why()} fallback={<ImagePlay size={20} />}>
+            {(w) => (
+              <>
+                <VideoOff size={20} />
+                <span>{w()}</span>
+              </>
+            )}
+          </Show>
         </div>
       </Show>
     </>

@@ -1,6 +1,7 @@
 //! Every message between the backend and a screen, sent as CBOR. Running `cargo test`
 //! writes their TypeScript twins into client/src/protocol, so the two sides never drift.
 
+use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use crate::value::Value;
 use ts_rs::TS;
@@ -78,6 +79,16 @@ pub enum ServerMsg {
     },
     /// A handler started from this screen closes the top page with an answer, null for none.
     Close { answer: Value },
+    /// A frame of an import's video for a screen that decodes it itself: one H264 access unit
+    /// in Annex B, each keyframe with its parameter sets, and when to show it in microseconds.
+    Frame {
+        alias: String,
+        keyframe: bool,
+        #[ts(type = "number")]
+        pts: i64,
+        #[ts(type = "Uint8Array")]
+        data: Bytes,
+    },
 }
 
 #[derive(Serialize, TS, Clone, Copy, Debug)]
@@ -116,6 +127,9 @@ pub enum ClientMsg {
     /// Offers the screen's data connection again with the videos it plays, each import's on the
     /// transceiver named by its mid. A video left out stops.
     Play { offer: String, videos: Vec<Played> },
+    /// The imports whose video the screen decodes itself, their frames sent on its socket, in
+    /// place of those it named before. It asks while their video does not come over WebRTC.
+    Frames { aliases: Vec<String> },
     /// Adds, changes or with None removes the computed value called `name`.
     SetComputed { name: String, computed: Option<Computed> },
     Import { import: Import },

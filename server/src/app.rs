@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use rant::types::Timestamp;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{info, warn};
 
 use crate::authorize::{Who, authorize};
@@ -25,7 +25,7 @@ use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
 use crate::value::Value;
-use crate::rtc::{FromRtc, MESSAGE_MAX, ToRtc, Way};
+use crate::rtc::{Connections, Frame, FromRtc, MESSAGE_MAX, ToRtc, Way};
 
 /// How often changed values go out and the mesh is checked.
 const TICK: Duration = Duration::from_millis(33);
@@ -97,6 +97,10 @@ struct Session {
     redo: Vec<Edit>,
     /// The values of the variables each screen has.
     vars: HashMap<String, Value>,
+    /// The imports whose video it plays over WebRTC, and those it decodes itself from frames
+    /// on its socket.
+    plays: HashSet<String>,
+    decodes: HashSet<String>,
 }
 
 impl Session {
@@ -167,8 +171,8 @@ pub struct App {
     pages: Pages,
     mesh: Mesh,
     script: Script,
-    rtc: UnboundedSender<ToRtc>,
-    /// The screens playing each import's video.
+    rtc: Connections,
+    /// The screens playing each import's video, either way.
     playing: HashMap<String, HashSet<u32>>,
     runs: HashMap<u64, Running>,
     next_run: u64,
@@ -209,7 +213,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, rtc: UnboundedSender<ToRtc>, node: String, build: String) -> App {
+    pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, rtc: Connections, node: String, build: String) -> App {
         script.send(ToScript::Imports(project.imports.clone()));
         script.send(ToScript::Pages(pages.keys()));
         script.send(ToScript::Variables(project.variables.clone()));
@@ -258,6 +262,7 @@ impl App {
         mut heard: UnboundedReceiver<FromScript>,
         mut changed: UnboundedReceiver<()>,
         mut from_rtc: UnboundedReceiver<FromRtc>,
+        mut frames: UnboundedReceiver<Frame>,
     ) {
         let mut tick = tokio::time::interval(TICK);
         self.rules_changed();
@@ -271,6 +276,7 @@ impl App {
                 Some(s) = heard.recv() => self.scripted(s),
                 Some(()) = changed.recv() => self.edited = Some(Instant::now()),
                 Some(r) = from_rtc.recv() => self.connection(r),
+                Some(f) = frames.recv() => self.frame(f),
                 _ = tick.tick() => self.tick(),
                 _ = &mut shutdown => break,
             }
@@ -293,7 +299,7 @@ impl App {
             Inbound::Open { session, out, local, remote } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars });
+                self.sessions.insert(session, Session { out, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -366,15 +372,17 @@ impl App {
             ClientMsg::Ping { t, .. } => self.send(session, &ServerMsg::Pong { t }),
             // a new connection plays nothing until the screen offers its videos on it
             ClientMsg::Channels { offer } => {
-                let Some(local) = self.sessions.get(&session).map(|s| s.local) else { return };
-                self.play_only(session, HashSet::new());
-                let _ = self.rtc.send(ToRtc::Channels { session, sdp: offer, local, ice: self.project.info.ice.clone() });
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                s.plays.clear();
+                let local = s.local;
+                self.watch(session);
+                self.rtc.send(ToRtc::Channels { session, sdp: offer, local, ice: self.project.info.ice.clone() });
             }
             ClientMsg::Candidate { candidate } => {
-                let _ = self.rtc.send(ToRtc::Candidate { session, candidate });
+                self.rtc.send(ToRtc::Candidate { session, candidate });
             }
             ClientMsg::OffChannels => {
-                let _ = self.rtc.send(ToRtc::Unlink { session });
+                self.rtc.send(ToRtc::Unlink { session });
                 self.unlinked(session);
             }
             ClientMsg::OnChannels => {
@@ -385,12 +393,22 @@ impl App {
                 }
             }
             ClientMsg::Play { offer, mut videos } => {
-                for v in videos.iter().filter(|v| self.project.find(&v.alias).is_none()) {
-                    self.refuse(session, format!("{} is not a mesh import, so it has no video", v.alias), None);
+                let plays = self.with_video(session, videos.iter().map(|v| v.alias.clone()));
+                videos.retain(|v| plays.contains(&v.alias));
+                if let Some(s) = self.sessions.get_mut(&session) {
+                    s.plays = plays;
                 }
-                videos.retain(|v| self.project.find(&v.alias).is_some());
-                self.play_only(session, videos.iter().map(|v| v.alias.clone()).collect());
-                let _ = self.rtc.send(ToRtc::Play { session, sdp: offer, videos });
+                self.watch(session);
+                self.rtc.send(ToRtc::Play { session, sdp: offer, videos });
+            }
+            ClientMsg::Frames { aliases } => {
+                let decodes = self.with_video(session, aliases);
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                for alias in s.decodes.difference(&decodes) {
+                    s.out.stop_video(alias);
+                }
+                s.decodes = decodes;
+                self.watch(session);
             }
             ClientMsg::Import { import } => match self.project.import(import.clone()) {
                 Ok(()) => {
@@ -1209,8 +1227,8 @@ impl App {
         if self.sessions.remove(&session).is_some() {
             info!("screen {session} {why}");
             self.script.send(ToScript::Gone(session));
-            self.play_only(session, HashSet::new());
-            let _ = self.rtc.send(ToRtc::Unlink { session });
+            self.watch(session);
+            self.rtc.send(ToRtc::Unlink { session });
             // a page the screen showed answers nothing, so no handler waits on it for ever
             let asked: Vec<u64> = self.asks.iter().filter(|(_, s)| **s == session).map(|(ask, _)| *ask).collect();
             for ask in asked {
@@ -1228,13 +1246,14 @@ impl App {
         let Some(s) = self.sessions.get_mut(&session) else { return };
         let open = std::mem::take(&mut s.channels);
         s.early.clear();
+        s.plays.clear();
         if std::mem::take(&mut s.switched) {
             self.let_go(session, "lost its data channels");
         }
         if open {
             self.put_values(Some(session), self.all_values(session));
         }
-        self.play_only(session, HashSet::new());
+        self.watch(session);
     }
 
     /// Runs the release of what a screen holds pressed, so a jog never outlives its link.
@@ -1248,9 +1267,19 @@ impl App {
         }
     }
 
-    /// Makes the imports whose video a screen plays the ones named. The mesh watches only the
-    /// sources some screen plays.
-    fn play_only(&mut self, session: u32, aliases: HashSet<String>) {
+    /// The imports among `aliases`, each other one refused, as only an import has video.
+    fn with_video(&mut self, session: u32, aliases: impl IntoIterator<Item = String>) -> HashSet<String> {
+        let (known, unknown): (HashSet<String>, HashSet<String>) = aliases.into_iter().partition(|a| self.project.find(a).is_some());
+        for alias in unknown {
+            self.refuse(session, format!("{alias} is not a mesh import, so it has no video"), None);
+        }
+        known
+    }
+
+    /// Follows the videos a screen plays, either way, or none once it is gone. The mesh
+    /// watches only the sources some screen plays.
+    fn watch(&mut self, session: u32) {
+        let aliases: HashSet<String> = self.sessions.get(&session).map(|s| s.plays.union(&s.decodes).cloned().collect()).unwrap_or_default();
         let mesh = &mut self.mesh;
         self.playing.retain(|alias, screens| {
             if !aliases.contains(alias) {
@@ -1266,6 +1295,24 @@ impl App {
                 self.mesh.play(&import);
                 self.playing.entry(alias).or_default().insert(session);
             }
+        }
+    }
+
+    /// A frame of an import's video, for the screens playing it: through the WebRTC task to
+    /// those playing it there, and on the socket of each decoding it itself.
+    fn frame(&self, f: Frame) {
+        let Some(screens) = self.playing.get(&f.alias) else { return };
+        let mut message = None;
+        let mut here = false;
+        for s in screens.iter().filter_map(|id| self.sessions.get(id)) {
+            here |= s.plays.contains(&f.alias);
+            if s.decodes.contains(&f.alias) {
+                let m = message.get_or_insert_with(|| encode(&ServerMsg::Frame { alias: f.alias.clone(), keyframe: f.keyframe, pts: f.pts, data: f.data.clone() }));
+                s.out.video(&f.alias, f.keyframe, m.clone(), f.at);
+            }
+        }
+        if here {
+            self.rtc.frame(f);
         }
     }
 
@@ -1286,7 +1333,7 @@ impl App {
                 if let Some(rtt) = rtt.filter(|r| r.is_finite() && *r >= 0.0) {
                     s.timed(Duration::from_secs_f64(rtt / 1000.0));
                 }
-                let _ = self.rtc.send(ToRtc::Send { session, way: Way::Control, bytes: encode(&ServerMsg::Pong { t }) });
+                self.rtc.send(ToRtc::Send { session, way: Way::Control, bytes: encode(&ServerMsg::Pong { t }) });
             }
             FromRtc::Message { session, msg } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
@@ -1348,7 +1395,7 @@ impl App {
             }
             if let (true, Some(ways)) = (s.channels, &channels) {
                 for (way, bytes) in ways {
-                    let _ = self.rtc.send(ToRtc::Send { session: id, way: way.clone(), bytes: bytes.clone() });
+                    self.rtc.send(ToRtc::Send { session: id, way: way.clone(), bytes: bytes.clone() });
                 }
             }
         }

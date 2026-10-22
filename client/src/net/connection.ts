@@ -1,14 +1,16 @@
 // The link to the backend: one socket, CBOR both ways, and a WebRTC data connection offered
 // over it: a reliable ordered channel, a best effort one, and the video of each import the
 // screen plays, which plays on a plain http page where WebCodecs cannot. The socket carries
-// everything the channels do not, and reconnects by itself, at once when the page shows again.
-// The round trip for the status bar is timed the way a person's actions go.
+// everything the channels do not, a video's frames too while WebRTC brings none, and
+// reconnects by itself, at once when the page shows again. The round trip for the status bar
+// is timed the way a person's actions go.
 
 import { Decoder, Encoder } from "cbor-x";
 import { type Accessor, createSignal, type Setter } from "solid-js";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import { notify, receive, setState, state } from "../state/store";
+import { decodes, Decoded } from "./decode";
 
 /** 20 times a second, so the round trip shown is a fresh one. */
 const ROUND_TRIP_EVERY_MS = 50;
@@ -51,12 +53,21 @@ interface Channels {
   again: boolean;
 }
 
-interface Video {
-  users: number;
+/** A video as an element shows it: the stream WebRTC brings, and the frames from the socket
+ *  decoded here while WebRTC brings none. */
+export interface Playing {
   stream: Accessor<MediaStream | null>;
+  decoded: Accessor<Decoded | null>;
+}
+
+interface Video extends Playing {
+  users: number;
   setStream: Setter<MediaStream | null>;
+  setDecoded: Setter<Decoded | null>;
   /** Where it comes in on the data connection, once offered there. */
   transceiver: RTCRtpTransceiver | null;
+  /** Its frames come over WebRTC, so the socket need not bring them. */
+  live: boolean;
 }
 
 /** The imports whose video this screen plays, each shared by every element showing it. */
@@ -69,6 +80,10 @@ let channelsTries = 0;
 let unanswered: number | null = null;
 /** The last round trip timed, which the next ping tells the backend. */
 let timed: number | undefined;
+/** The videos whose frames the socket brings, as last asked. */
+let asked = "";
+/** WebRTC did not open, or broke, and has not opened again since. */
+const [stuck, setStuck] = createSignal(false);
 
 export function connect() {
   if (socket) return;
@@ -123,7 +138,9 @@ function joiner(): (data: ArrayBuffer) => void {
 
 function heard(bytes: Uint8Array) {
   const msg = cbor.decoder.decode(bytes) as ServerMsg;
-  if (msg.type === "pong") {
+  if (msg.type === "frame") {
+    videos.get(msg.alias)?.decoded()?.feed(msg);
+  } else if (msg.type === "pong") {
     const rtt = performance.now() - msg.t;
     timed = rtt;
     if (unanswered !== null && msg.t >= unanswered) unanswered = null;
@@ -135,8 +152,11 @@ function heard(bytes: Uint8Array) {
     channels?.pc.addIceCandidate({ candidate: msg.candidate, sdpMLineIndex: 0 }).catch(() => {});
   } else {
     receive(msg);
-    // the hello names the servers the channels find their way through
+    // the hello names the servers the channels find their way through, and starts a session
+    // that has asked for no frames yet
     if (msg.type === "hello") {
+      asked = "";
+      askFrames();
       channelsTries = 0;
       void openChannels();
     }
@@ -169,7 +189,8 @@ export function send(msg: ClientMsg): boolean {
 /** Offers the data channels over the socket. They count once both are open. */
 async function openChannels() {
   closeChannels();
-  if (typeof RTCPeerConnection === "undefined" || state.link !== "open") return;
+  if (state.link !== "open") return;
+  if (typeof RTCPeerConnection === "undefined") return setStuck(true);
   // the null the backend sends for no username would reach the browser as the word null
   const iceServers = (state.project?.ice ?? []).map(({ urls, username, credential }) => (username == null ? { urls } : { urls, username, credential: credential ?? "" }));
   const pc = new RTCPeerConnection({ iceServers });
@@ -189,6 +210,7 @@ async function openChannels() {
     ch.onopen = () => {
       if (channels === c && c.reliable.readyState === "open" && c.bestEffort.readyState === "open") {
         channelsTries = 0;
+        setStuck(false);
         // the backend holds what the channel brings until this, so the socket's come first
         send({ type: "on_channels" });
         setState("channels", true);
@@ -223,7 +245,14 @@ async function offerVideos() {
   for (const v of videos.values()) {
     if (v.transceiver) continue;
     v.transceiver = c.pc.addTransceiver("video", { direction: "recvonly" });
-    v.setStream(new MediaStream([v.transceiver.receiver.track]));
+    const track = v.transceiver.receiver.track;
+    v.setStream(new MediaStream([track]));
+    // a track unmutes as its first frames come, which the backend starts at a keyframe
+    track.onunmute = track.onmute = () => {
+      if (v.transceiver?.receiver.track !== track) return;
+      v.live = !track.muted;
+      askFrames();
+    };
   }
   // a transceiver has its mid once the offer is set
   await offer(c, (sdp) => ({
@@ -252,7 +281,11 @@ async function offer(c: Channels, msg: (sdp: string) => ClientMsg) {
 function answered(answer: string | null) {
   const c = channels;
   if (!c) return;
-  if (answer === null) return c.pc.remoteDescription ? channelsFailed() : closeChannels();
+  if (answer === null) {
+    if (c.pc.remoteDescription) return channelsFailed();
+    closeChannels();
+    return setStuck(true);
+  }
   if (c.pc.signalingState !== "have-local-offer") return;
   c.pc.setRemoteDescription({ type: "answer", sdp: answer }).then(
     () => {
@@ -263,17 +296,20 @@ function answered(answer: string | null) {
   );
 }
 
-/** Starts or joins playing an import's video, which comes once the data connection is open. */
-export function play(alias: string): Accessor<MediaStream | null> {
+/** Starts or joins playing an import's video, over WebRTC once the data connection is open,
+ *  and from frames on the socket until WebRTC brings it. */
+export function play(alias: string): Playing {
   let v = videos.get(alias);
   if (!v) {
     const [stream, setStream] = createSignal<MediaStream | null>(null);
-    v = { users: 0, stream, setStream, transceiver: null };
+    const [decoded, setDecoded] = createSignal<Decoded | null>(null);
+    v = { users: 0, stream, setStream, decoded, setDecoded, transceiver: null, live: false };
     videos.set(alias, v);
+    askFrames();
     void offerVideos();
   }
   v.users++;
-  return v.stream;
+  return v;
 }
 
 /** Leaves playing an import's video, which ends once nothing on this screen shows it. */
@@ -281,9 +317,36 @@ export function stopPlaying(alias: string) {
   const v = videos.get(alias);
   if (!v || --v.users > 0) return;
   videos.delete(alias);
+  v.decoded()?.close();
+  askFrames();
   if (!v.transceiver) return;
   v.transceiver.stop();
   void offerVideos();
+}
+
+/** Asks the socket for the frames of each video WebRTC does not bring, where this page can
+ *  decode them, and decodes them. */
+function askFrames() {
+  const aliases = decodes ? [...videos].flatMap(([alias, v]) => (v.live ? [] : [alias])).sort() : [];
+  for (const [alias, v] of videos) {
+    const wanted = aliases.includes(alias);
+    if (wanted && !v.decoded()) v.setDecoded(new Decoded());
+    if (!wanted && v.decoded()) {
+      v.decoded()?.close();
+      v.setDecoded(null);
+    }
+  }
+  const key = aliases.join("\n");
+  if (key === asked || socket?.readyState !== WebSocket.OPEN) return;
+  asked = key;
+  send({ type: "frames", aliases });
+}
+
+/** Why this screen shows no video, or null while it does or may yet: WebRTC did not open, and
+ *  the page cannot decode video without it. */
+export function unplayable(): string | null {
+  if (decodes || !stuck()) return null;
+  return window.isSecureContext ? "WebRTC did not connect, and this browser cannot decode video without it" : "WebRTC did not connect, and video without it needs this page on https";
 }
 
 /** Ends the data connection, and with it every video this screen plays until it opens again. */
@@ -296,7 +359,9 @@ function closeChannels() {
   for (const v of videos.values()) {
     v.transceiver = null;
     v.setStream(null);
+    v.live = false;
   }
+  askFrames();
   setState("channels", false);
 }
 
@@ -305,6 +370,7 @@ function closeChannels() {
 function channelsFailed() {
   const used = state.channels;
   closeChannels();
+  setStuck(true);
   if (state.link !== "open") return;
   if (used) send({ type: "off_channels" });
   channelsRetry = window.setTimeout(() => void openChannels(), Math.min(CHANNELS_RETRY_MAX_MS, CHANNELS_RETRY_MS * 2 ** channelsTries++));

@@ -142,8 +142,9 @@ export function PictureView(p: { picture: Picture; fit?: string; class?: string;
   return <canvas ref={canvas} class={p.class ?? "el-picture"} style={{ "object-fit": FIT[p.fit ?? "meet"] ?? "contain" }} />;
 }
 
-/** An element's own picture or video, not one of a frame inside it. */
-const SHOWN = ":scope > canvas.el-picture, :scope > video, :scope > img.el-picture";
+/** An element's own picture or video, not one of a frame inside it. A video's decoded frames
+ *  come before the video, and show only while it does not. */
+const SHOWN = ":scope > canvas.el-picture:not([hidden]), :scope > video, :scope > img.el-picture";
 
 /** Saves what an element's picture or video shows now as a PNG on this device. */
 export function savePicture(el: Element, name: string) {

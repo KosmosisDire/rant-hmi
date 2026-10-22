@@ -86,5 +86,6 @@ export { default as TriangleAlert } from "lucide-solid/icons/triangle-alert";
 export { default as Type } from "lucide-solid/icons/type";
 export { default as Ungroup } from "lucide-solid/icons/ungroup";
 export { default as Variable } from "lucide-solid/icons/variable";
+export { default as VideoOff } from "lucide-solid/icons/video-off";
 export { default as X } from "lucide-solid/icons/x";
 export { default as Zap } from "lucide-solid/icons/zap";
