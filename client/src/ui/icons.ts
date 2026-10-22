@@ -40,6 +40,7 @@ export { default as Database } from "lucide-solid/icons/database";
 export { default as Dot } from "lucide-solid/icons/dot";
 export { default as Download } from "lucide-solid/icons/download";
 export { default as ExternalLink } from "lucide-solid/icons/external-link";
+export { default as Eye } from "lucide-solid/icons/eye";
 export { default as File } from "lucide-solid/icons/file";
 export { default as FileBox } from "lucide-solid/icons/file-box";
 export { default as Folder } from "lucide-solid/icons/folder";

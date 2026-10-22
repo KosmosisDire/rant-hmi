@@ -13,6 +13,7 @@ import { partNames, tokenValue } from "./bind";
 import { fields, typeLabel } from "./format";
 import { names } from "./names";
 import { entity, live, state } from "./store";
+import { KIND_WORDS, typesIn } from "./types";
 
 export interface Suggestion {
   label: string;
@@ -170,6 +171,15 @@ export function completeCss(text: string, caret: number, names?: Suggestion[], a
   let from = caret;
   while (from > spot.start && /[A-Za-z-]/.test(text[from - 1])) from--;
   return matching(cssProperties(), text.slice(from, caret), from);
+}
+
+/** The completion in an input's list of types: the kind words, then each type the mesh names. */
+export function completeType(text: string, caret: number): Completion | null {
+  let from = caret;
+  while (from > 0 && /\w/.test(text[from - 1])) from--;
+  const kinds = KIND_WORDS.map(([w, words]): Suggestion => ({ label: w, insert: w, icon: "member", type: words }));
+  const named = [...new Set(state.entities.flatMap((e) => (e.schema ? typesIn(e.schema) : [])))].sort();
+  return matching([...kinds, ...named.map((n): Suggestion => ({ label: n, insert: n, icon: "member", type: "a type on the mesh" }))], text.slice(from, caret), from);
 }
 
 /** The call the caret is inside, in a CSS line's value. */

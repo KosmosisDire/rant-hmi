@@ -7,7 +7,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addComponent("Readout", 20, 8);
   await d.sizing("Fill");
   await d.addInput("label", '"Value"');
-  await d.addInput("value", "0");
+  await d.addInput("value", "0", { type: "number string enum" });
   await d.addInput("unit", '""');
   await d.addInput("digits", "1");
   await d.addInput("fill", "$panel");
@@ -24,7 +24,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.addComponent("Lamp", 12, 3);
   await d.sizing("Fill");
-  await d.addInput("value", "true");
+  await d.addInput("value", "true", { type: "bool" });
   await d.addInput("label", '"Lamp"');
   await d.addInput("onColour", "$green");
   await d.addInput("offColour", "$panel3");
@@ -39,7 +39,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // a Rant Color's channels, or colour text as code writes it
   await d.addComponent("Swatch", 20, 8);
   await d.sizing("Fill");
-  await d.addInput("value", "{ r: 76, g: 141, b: 255, a: 255 }");
+  await d.addInput("value", "{ r: 76, g: 141, b: 255, a: 255 }", { type: "Color string" });
   await d.addInput("label", '"Colour"');
   await d.addInput("fill", "$panel");
   await d.addInput("radius", "$radius");
@@ -57,7 +57,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // a Pose's position in metres and its orientation as roll, pitch and yaw in degrees
   await d.addComponent("Pose", 48, 18);
   await d.sizing("Fill");
-  await d.addInput("value", "{ position: vec(0.4, 0, 0.3), orientation: fromEuler(0, 0, 0.5) }");
+  await d.addInput("value", "{ position: vec(0.4, 0, 0.3), orientation: fromEuler(0, 0, 0.5) }", { type: "Pose" });
   await d.addInput("digits", "2");
   await d.addInput("angleDigits", "1");
   await d.addInput("fill", "$panel");

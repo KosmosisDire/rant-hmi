@@ -86,6 +86,10 @@ pub struct Input {
     /// The component may write it back through the instance's binding.
     #[serde(default)]
     pub bindable: bool,
+    /// The types it takes, apart by single spaces, by which the editor offers the component for
+    /// an import. Empty says nothing.
+    #[serde(default)]
+    pub r#type: String,
 }
 
 by_name!(Local, Input);
@@ -916,14 +920,15 @@ impl Pages {
                 };
                 Edit::SetHandler { page: page.clone(), id, event, filter: Some(now), code: old.map(|h| h.code), attrs: Some(back) }
             }
-            Edit::SetInput { page, name, input } => {
+            Edit::SetInput { page, name, mut input } => {
                 let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
                 let Some(i) = &p.interface else {
                     return Err(format!("{} is a page, and only a component has inputs", p.name));
                 };
                 let component = p.name.clone();
-                if let Some(new) = &input {
+                if let Some(new) = &mut input {
                     rules::INPUT.check(&new.name, "an input")?;
+                    new.r#type = rules::types(&new.r#type)?;
                     if list::taken(&i.inputs, &new.name, &name) {
                         return Err(format!("{component} already has an input {}", new.name));
                     }
@@ -1363,7 +1368,7 @@ mod tests {
         let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into() }).unwrap().made.unwrap().1;
         assert_eq!(pages.apply(Edit::SetFill { page: gauge.clone(), fill: "#000".into() }).err().unwrap(), "Gauge draws on what holds it, so it has no fill");
         // a default and a start read the theme too, so they follow its renames
-        let input = Some(Input { name: "tone".into(), default: "$base".into(), bindable: false });
+        let input = Some(Input { name: "tone".into(), default: "$base".into(), bindable: false, r#type: String::new() });
         pages.apply(Edit::SetInput { page: gauge.clone(), name: "tone".into(), input }).unwrap();
         let local = Some(Local { name: "soft".into(), start: "$base.alpha(0.5)".into() });
         pages.apply(Edit::SetLocal { page: gauge.clone(), name: "soft".into(), local }).unwrap();
@@ -1497,7 +1502,7 @@ mod tests {
         let dir = scratch("inputs");
         let mut pages = Pages::open(&dir).unwrap();
         let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into() }).unwrap().made.unwrap().1;
-        let input = |name: &str| Some(Input { name: name.into(), default: "0".into(), bindable: false });
+        let input = |name: &str| Some(Input { name: name.into(), default: "0".into(), bindable: false, r#type: String::new() });
         pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: input("value") }).unwrap();
         pages.apply(add(gauge.clone(), None, Tag::Span, props(&[("text", "value.toFixed(1)")]))).unwrap();
         let mut gauge_on_page = instance("Gauge");
@@ -1521,6 +1526,11 @@ mod tests {
 
         assert!(pages.apply(Edit::SetInput { page: gauge.clone(), name: "x".into(), input: input("x") }).unwrap_err().contains("keep clear"));
         assert!(pages.apply(Edit::SetInput { page: "overview".into(), name: "a".into(), input: input("a") }).unwrap_err().contains("only a component"));
+        // the types it takes are kept apart by single spaces, and a word that is no type is refused
+        let typed = |t: &str| Some(Input { r#type: t.into(), ..input("value").unwrap() });
+        pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: typed(" number  f64[] ") }).unwrap();
+        assert_eq!(pages.get(&gauge).unwrap().interface.as_ref().unwrap().inputs[0].r#type, "number f64[]");
+        assert!(pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: typed("number,") }).unwrap_err().contains("is not a type"));
         pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: None }).unwrap();
         assert!(!pages.get("overview").unwrap().children[0].props.contains_key("value"));
         fs::remove_dir_all(&dir).unwrap();
@@ -1544,7 +1554,7 @@ mod tests {
         pages.apply(undo).unwrap();
         assert_eq!(pages.get(&menu).unwrap().children[0].props["opacity"], "open ? 1 : 0");
 
-        let input = Some(Input { name: "size".into(), default: "1".into(), bindable: false });
+        let input = Some(Input { name: "size".into(), default: "1".into(), bindable: false, r#type: String::new() });
         pages.apply(Edit::SetInput { page: menu.clone(), name: "size".into(), input }).unwrap();
         assert!(pages.apply(Edit::SetLocal { page: menu.clone(), name: "size".into(), local: local("size") }).unwrap_err().contains("already has size"));
         assert!(pages.apply(Edit::SetLocal { page: "overview".into(), name: "a".into(), local: local("a") }).unwrap_err().contains("only a component"));

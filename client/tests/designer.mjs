@@ -152,14 +152,16 @@ export function designer(page) {
       await d.set({ w: String(w), h: String(h) });
     },
 
-    /** Adds an input to the open component, from its inspector with nothing selected. */
-    async addInput(name, start, twoWay = false) {
+    /** Adds an input to the open component, from its inspector with nothing selected, written
+     *  back when `twoWay`, taking the types `type` names. */
+    async addInput(name, start, { twoWay = false, type = "" } = {}) {
       const before = await right().locator(".handler[data-input]").count();
       await right().locator('button[title="Add an input"]').click();
       const row = right().locator(".handler[data-input]").nth(before);
       await commit(row.locator(".input-name"), name);
       const named = right().locator(`.handler[data-input="${name}"]`);
       await commit(named.locator(".input-default input"), start);
+      if (type) await commit(named.locator(".input-type input"), type);
       if (twoWay) await named.locator(".check input").check();
     },
 
@@ -217,14 +219,15 @@ export function designer(page) {
       return id;
     },
 
-    /** Picks a row of the layers pane's + menu, and one of its submenu when `then` names it. */
-    async addRow(row, then) {
+    /** Picks a row of the layers pane's + menu, through the submenu each row before it opens. */
+    async addRow(...rows) {
       await left().locator('button[title="Add an element"]').click();
       const item = (menu, words) => menu.locator(".menu-item", { has: page.locator(".menu-label", { hasText: new RegExp(`^${words}$`) }) });
       const menus = page.locator(".popover.menu");
-      if (!then) return item(menus.first(), row).click();
-      await item(menus.first(), row).hover();
-      await item(menus.nth(1), then).click();
+      for (const [n, words] of rows.entries()) {
+        const row = item(menus.nth(n), words);
+        await (n < rows.length - 1 ? row.hover() : row.click());
+      }
     },
 
     /** Adds a shape from the inspector of a diagram, a group or a shape. */
@@ -244,6 +247,14 @@ export function designer(page) {
       const id = await made(before, `an instance of ${component}`);
       await d.set(fields);
       return id;
+    },
+
+    /** Shows an import from the layers bar, as the rows name it: the import, its fields, then
+     *  the component. Gives the new instance's id. */
+    async show(...rows) {
+      const before = await selected();
+      await d.addRow("Show an import", ...rows);
+      return made(before, `a view through ${rows.join(", ")}`);
     },
 
     /** Sets the selected element's more CSS, or a shape's more attributes, one per line. */
@@ -284,8 +295,6 @@ export function designer(page) {
       await left().locator(".list-row[data-id]", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) }).first().click();
     },
 
-    /** Gives the selected element a handler with this code, and a hold its time. */
-    /** Gives the selected element a handler for `event`, and its settings as `{ label: text }`. */
     /** Writes the code of the element's handler for `event` that takes any, added when it has
      *  none, then each setting by its label. A new one comes after those for its event, and a
      *  card keeps its place when its filter changes. */

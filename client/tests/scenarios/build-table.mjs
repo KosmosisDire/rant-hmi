@@ -6,7 +6,7 @@
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.addComponent("Table", 40, 16);
   await d.sizing("Fill");
-  await d.addInput("rows", '[{ part: "P1", weight: 1.25 }, { part: "P2", weight: 0.8 }]');
+  await d.addInput("rows", '[{ part: "P1", weight: 1.25 }, { part: "P2", weight: 0.8 }]', { type: "struct[]" });
   await d.addInput("columns", "[]");
   await d.addInput("digits", "2");
   await d.addInput("fill", "$panel");

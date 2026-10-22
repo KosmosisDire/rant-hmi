@@ -9,7 +9,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.addComponent("Dropdown", 20, 4);
   await d.sizing("Fill");
-  await d.addInput("value", '""', true);
+  await d.addInput("value", '""', { twoWay: true });
   await d.addInput("options", '["Auto", "Manual", "Off"]');
   await d.addInput("fill", "$panel3");
   await d.addInput("listFill", "$panel2");
@@ -44,7 +44,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.addComponent("ModeSwitch", 24, 4);
   await d.sizing("Fill");
-  await d.addInput("value", '"Auto"', true);
+  await d.addInput("value", '"Auto"', { twoWay: true });
   await d.addInput("options", '["Auto", "Manual"]');
   await d.addInput("fill", "$panel");
   await d.addInput("colour", "$accent");

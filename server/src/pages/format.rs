@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashSet};
 use super::js::{outside, split_outside};
 use super::{Element, Handler, Home, Input, Interface, Local, Page, Shows, Sizing, Tag, check_handler};
 use crate::events::{self, rank};
+use crate::rules;
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 pub(crate) const ATTRS: [&str; 7] = ["name", "repeat", "x", "y", "w", "h", "origin"];
@@ -58,7 +59,8 @@ pub fn write(page: &Page, components: &[Page]) -> String {
     let mut out = format!("<{root} name={} size=\"{}x{}\"{shows}{sizing}{fill}>\n", quote(&page.name), page.width, page.height);
     for i in page.interface.iter().flat_map(|i| &i.inputs) {
         let bindable = if i.bindable { " bindable=\"true\"" } else { "" };
-        out.push_str(&format!("  <prop name={} default={}{bindable}/>\n", quote(&i.name), quote(&i.default)));
+        let types = if i.r#type.is_empty() { String::new() } else { format!(" type={}", quote(&i.r#type)) };
+        out.push_str(&format!("  <prop name={} default={}{types}{bindable}/>\n", quote(&i.name), quote(&i.default)));
     }
     for e in page.interface.iter().flat_map(|i| &i.events) {
         out.push_str(&format!("  <event name={}/>\n", quote(e)));
@@ -351,11 +353,12 @@ impl Reader<'_> {
             if !self.eat("<prop") {
                 return Ok(out);
             }
-            let mut input = Input { name: String::new(), default: String::new(), bindable: false };
+            let mut input = Input { name: String::new(), default: String::new(), bindable: false, r#type: String::new() };
             for (k, v) in self.attrs()? {
                 match k.as_str() {
                     "name" => input.name = v,
                     "default" => input.default = v,
+                    "type" => input.r#type = rules::types(&v).map_err(|e| self.error(&e))?,
                     "bindable" => input.bindable = v == "true",
                     other => return Err(self.error(&format!("<prop> takes no attribute {other}"))),
                 }
@@ -573,6 +576,17 @@ mod tests {
         assert_eq!(i.variables, [Local { name: "open".into(), start: "false".into() }]);
         assert_eq!(page.children[0].handlers[0].attrs["after"], "holdMs");
         assert_eq!(write(&page, &[]), text);
+    }
+
+    #[test]
+    fn an_input_keeps_the_types_it_takes() {
+        let text = "<component name=\"Spot\" size=\"10x10\">\n  <prop name=\"value\" default=\"vec(0, 0)\" type=\"Double2 Pose2D[]\" bindable=\"true\"/>\n  <prop name=\"min\" default=\"0\"/>\n</component>\n";
+        let page = parse(text, "spot").unwrap();
+        let types: Vec<&str> = page.interface.as_ref().unwrap().inputs.iter().map(|i| i.r#type.as_str()).collect();
+        assert_eq!(types, ["Double2 Pose2D[]", ""]);
+        assert_eq!(write(&page, &[]), text);
+        let bad = text.replace("Pose2D[]", "Pose2D,");
+        assert!(parse(&bad, "spot").unwrap_err().contains("\"Pose2D,\" is not a type"));
     }
 
     #[test]
@@ -906,7 +920,7 @@ mod tests {
     fn random_page(rng: &mut Rng) -> Page {
         let mut ids = 0;
         let interface = (rng.below(3) == 0).then(|| Interface {
-            inputs: vec![Input { name: "level".into(), default: rng.pick(&VALUES), bindable: rng.below(2) == 0 }],
+            inputs: vec![Input { name: "level".into(), default: rng.pick(&VALUES), bindable: rng.below(2) == 0, r#type: ["", "number", "Pose Pose[]"][rng.below(3)].into() }],
             events: vec!["change".into()],
             variables: vec![Local { name: "state".into(), start: rng.pick(&VALUES) }],
             sizing: if rng.below(2) == 0 { Sizing::Fill } else { Sizing::Scale },

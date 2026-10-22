@@ -9,6 +9,7 @@ export const TOKEN: Shape = { pattern: /^[a-z][A-Za-z0-9]*$/, except: [] };
 export const COMPONENT: Shape = { pattern: /^[A-Z][A-Za-z0-9]*$/, except: [] };
 export const INPUT: Shape = { pattern: /^[a-z][A-Za-z0-9]*$/, except: ["name", "repeat", "x", "y", "w", "h", "origin", "rotate"] };
 export const EVENT: Shape = { pattern: /^[a-z][A-Za-z0-9]*$/, except: [] };
+export const TYPE_WORD = /^[A-Za-z][A-Za-z0-9_]*(\[\])*$/;
 
 export const EVERY_MS = [50, 86400000] as const;
 export const KEEP_S = [1, 86400] as const;

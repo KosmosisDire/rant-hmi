@@ -10,7 +10,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const at = "clamp((value - min) / (max - min), 0, 1)";
   await d.addComponent("Bar", 24, 2);
   await d.sizing("Fill");
-  await d.addInput("value", "0.6");
+  await d.addInput("value", "0.6", { type: "number" });
   await d.addInput("min", "0");
   await d.addInput("max", "1");
   await d.addInput("colour", "$accent");
@@ -21,7 +21,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.addComponent("Bars", 36, 12);
   await d.sizing("Fill");
-  await d.addInput("values", "[0.3, 0.7, 0.5]");
+  await d.addInput("values", "[0.3, 0.7, 0.5]", { type: "number[]" });
   await d.addInput("labels", "[]");
   await d.addInput("min", "0");
   await d.addInput("max", "1");
@@ -48,7 +48,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.addComponent("Joints", 36, 18);
   await d.sizing("Fill");
-  await d.addInput("state", "{ position: [0, 0.6, -0.4, 1.2, 0, -0.8], velocity: [], effort: [] }");
+  await d.addInput("state", "{ position: [0, 0.6, -0.4, 1.2, 0, -0.8], velocity: [], effort: [] }", { type: "JointState" });
   await d.addInput("names", "[]");
   await d.addInput("min", "-180");
   await d.addInput("max", "180");

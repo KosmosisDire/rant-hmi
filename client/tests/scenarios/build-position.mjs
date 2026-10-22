@@ -6,7 +6,7 @@
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.addComponent("Position", 24, 26);
   await d.sizing("Fill");
-  await d.addInput("value", "{ position: vec(0.3, 0.2), angle: 0.6 }");
+  await d.addInput("value", "{ position: vec(0.3, 0.2), angle: 0.6 }", { type: "Double2 Float2 Int2 Pose2D Double2[] Float2[] Int2[] Pose2D[]" });
   await d.addInput("min", "vec(-1, -1)");
   await d.addInput("max", "vec(1, 1)");
   await d.addInput("digits", "2");

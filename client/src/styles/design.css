@@ -914,7 +914,8 @@
   padding: 0 0 6px;
 }
 
-.input-default {
+.input-default,
+.input-type {
   padding: 0 6px 6px;
 }
 

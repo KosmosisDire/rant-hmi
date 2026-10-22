@@ -11,7 +11,8 @@ import { COMPONENT, EVENT, INPUT } from "../../protocol/rules";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
 import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
-import { complete, completeCss, componentNames, drawing, REPEAT, signature, signatureCss } from "../../state/complete";
+import { complete, completeCss, completeType, componentNames, drawing, REPEAT, signature, signatureCss } from "../../state/complete";
+import { typeList } from "../../state/types";
 import { brings, filterWords, handlerKey, type Offered, offered, settingOf } from "../../state/events";
 import { fits, freeName } from "../../state/names";
 import { edit, show } from "../../state/change";
@@ -803,12 +804,13 @@ function ListHead(p: { title: string; add: string; onAdd: () => void }) {
   );
 }
 
-/** A component's inputs, each a box: its name, whether it may be written back, its default. */
+/** A component's inputs, each a box: its name, whether it may be written back, its default and
+ *  the types it takes. */
 function Inputs(p: { page: string; inputs: Input[] }) {
   const write = (name: string, input: Input | null) => edit({ kind: "set_input", page: p.page, name, input });
   const add = () => {
     const name = freeName("input", (n) => p.inputs.some((i) => i.name === n));
-    write(name, { name, default: "0", bindable: false });
+    write(name, { name, default: "0", bindable: false, type: "" });
   };
   return (
     <>
@@ -835,6 +837,17 @@ function Inputs(p: { page: string; inputs: Input[] }) {
             <div class="field input-default">
               <label>Default</label>
               <DraftInput value={i.default} onCommit={(d) => write(i.name, { ...i, default: d })} complete={constants} hint={(t, c) => signature(t, c, "theme")} />
+            </div>
+            <div class="field input-type">
+              <label>Type</label>
+              <DraftInput
+                value={i.type}
+                accept={typeList}
+                placeholder="any"
+                title="The types it takes, apart by spaces, so the editor offers the component for an import of one"
+                onCommit={(type) => write(i.name, { ...i, type })}
+                complete={completeType}
+              />
             </div>
           </div>
         )}

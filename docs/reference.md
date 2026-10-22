@@ -43,9 +43,27 @@ A component's interface comes first in its file:
 
 | Tag | Attributes | Is |
 | --- | --- | --- |
-| `<prop>` | `name`, `default`, `bindable="true"` | an input each instance sets as an attribute. A bindable one writes back to the name the instance gives it |
+| `<prop>` | `name`, `default`, `type`, `bindable="true"` | an input each instance sets as an attribute. A bindable one writes back to the name the instance gives it |
 | `<event>` | `name` | an event its code sends with `emit`, heard on the instance by `<on event>` |
 | `<var>` | `name`, `start` | each instance's own state on each screen |
+
+### Input types
+
+An input's `type` lists the types it takes, apart by spaces, as `type="Pose"` or
+`type="number string"`. The editor's Show an import, beside Place a component, then offers the
+component for each import and field of one of those types, placed with that input set to it.
+
+| Name | Takes |
+| --- | --- |
+| `number` | any number |
+| `bool`, `string`, `enum`, `struct` | any of that kind |
+| `f64`, `u8` and the other number kinds | that kind only |
+| `Pose`, `Color`, an enum's name | that type, by its name on the mesh |
+| any of these with `[]` | a list of it, as `number[]` or `Pose[]` |
+
+- An input with no type takes any value, but is offered for no import.
+- The first input whose type fits takes the import.
+- A bindable input is offered only for a variable imported to write.
 
 ### Standard components
 
@@ -55,20 +73,20 @@ Lamp per item, is the view placed with `repeat`.
 
 | Component | Shows | Takes |
 | --- | --- | --- |
-| `Readout` | a number with its unit, or text such as an enum's option | `value` |
-| `Gauge` | a number on an arc | `value` |
+| `Readout` | a number with its unit, or text such as an enum's option | `value`: `number string enum` |
+| `Gauge` | a number on an arc | `value`: `number` |
 | `Plot` | a record over time | `values` |
-| `Lamp` | true or false | `value` |
-| `Bar` | a number between two limits, filled from zero | `value` |
-| `Bars` | a list of numbers, a Bar each with its label and reading | `values`, `labels` |
-| `Joints` | a JointState's angles in degrees, named by its JointNames | `state`, `names` |
-| `Pose` | a Pose's position and its roll, pitch and yaw | `value` |
-| `Position` | a 2D point or pose, or a list of them, on a plane y up | `value` |
-| `Swatch` | a Color, or colour text | `value` |
-| `Table` | a list of structs or of lists, every key of the first row unless `columns` names them | `rows` |
+| `Lamp` | true or false | `value`: `bool` |
+| `Bar` | a number between two limits, filled from zero | `value`: `number` |
+| `Bars` | a list of numbers, a Bar each with its label and reading | `values`: `number[]`, `labels` |
+| `Joints` | a JointState's angles in degrees, named by its JointNames | `state`: `JointState`, `names` |
+| `Pose` | a Pose's position and its roll, pitch and yaw | `value`: `Pose` |
+| `Position` | a 2D point or pose, or a list of them, on a plane y up | `value`: `Double2 Float2 Int2 Pose2D`, each also as a list |
+| `Swatch` | a Color, or colour text | `value`: `Color string` |
+| `Table` | a list of structs or of lists, every key of the first row unless `columns` names them | `rows`: `struct[]` |
 
-`Toggle`, `Slider`, `Knob`, `Dropdown` and `ModeSwitch` set the name their `value` is bound
-to. `Button`, `Joystick` and `Joystick1D` send events.
+`Toggle` (`bool`), `Slider` and `Knob` (`number`), `Dropdown` and `ModeSwitch` set the name
+their `value` is bound to. `Button`, `Joystick` and `Joystick1D` send events.
 
 ## Elements
 

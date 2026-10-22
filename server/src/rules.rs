@@ -23,6 +23,9 @@ pub const INPUT: Shape = Shape { capital: false, underscore: false, except: &["n
 /// An event a component sends.
 pub const EVENT: Shape = Shape { capital: false, underscore: false, except: &[] };
 
+/// One of the types a component's input takes: a name, then `[]` for each list around it.
+pub const TYPE_WORD: &str = "^[A-Za-z][A-Za-z0-9_]*(\\[\\])*$";
+
 /// How often a record samples, in ms: a little slower than the backend's tick, at most daily.
 pub const EVERY_MS: (u32, u32) = (50, 86_400_000);
 /// How long a record keeps its samples, in seconds.
@@ -42,6 +45,24 @@ pub const ENUM_FIXED: &str = "{name} is an enum of the mesh's, so it cannot be s
 /// A reason with the name in it.
 pub fn say(why: &str, name: &str) -> String {
     why.replace("{name}", name)
+}
+
+/// An input's types as kept, apart by single spaces, each word as `TYPE_WORD` spells it.
+pub fn types(text: &str) -> Result<String, String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if let Some(bad) = words.iter().find(|w| !type_word(w)) {
+        return Err(format!("\"{bad}\" is not a type: name each as number, Pose or f64[], apart by spaces"));
+    }
+    Ok(words.join(" "))
+}
+
+fn type_word(word: &str) -> bool {
+    let mut name = word;
+    while let Some(inner) = name.strip_suffix("[]") {
+        name = inner;
+    }
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 impl Shape {
@@ -80,6 +101,7 @@ mod tests {
         for (name, s) in shapes {
             ts += &format!("export const {name}: Shape = {{ pattern: {}, except: {:?} }};\n", pattern(s), s.except);
         }
+        ts += &format!("export const TYPE_WORD = /{TYPE_WORD}/;\n");
         ts += &format!("\nexport const EVERY_MS = [{}, {}] as const;\nexport const KEEP_S = [{}, {}] as const;\n\n", EVERY_MS.0, EVERY_MS.1, KEEP_S.0, KEEP_S.1);
         let reasons = [
             ("MISSING", MISSING),
@@ -106,5 +128,14 @@ mod tests {
         assert!(LOCAL.fits("jog_mode") && !TOKEN.fits("jog_mode") && ALIAS.fits("Line_1") && !ALIAS.fits("line"));
         assert!(!INPUT.fits("x") && INPUT.fits("xs") && !EVENT.fits("Pressed"));
         assert_eq!(INPUT.check("w", "an input").unwrap_err(), "\"w\" cannot name an input: start with a small letter, then use letters and digits, and keep clear of name, repeat, x, y, w, h, origin and rotate");
+    }
+
+    #[test]
+    fn types_are_names_apart_by_spaces() {
+        assert_eq!(types("  Pose   f64[] number[][]  ").unwrap(), "Pose f64[] number[][]");
+        assert_eq!(types("").unwrap(), "");
+        for bad in ["Pose,", "[]", "f64[3]", "2D", "Pose[", "a-b"] {
+            assert!(types(bad).unwrap_err().starts_with(&format!("\"{bad}\" is not a type")), "{bad}");
+        }
     }
 }

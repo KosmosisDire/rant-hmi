@@ -7,7 +7,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const arc = (r, colour, width) => ({ "Centre x": "8", "Centre y": "8", Radius: String(r), Fill: '"none"', Stroke: colour, Thickness: String(width), Ends: '"round"', Transform: '"rotate(135 8 8)"' });
 
   await d.addComponent("Gauge", 16, 16);
-  await d.addInput("value", "0");
+  await d.addInput("value", "0", { type: "number" });
   await d.addInput("min", "0");
   await d.addInput("max", "100");
   await d.addInput("unit", '""');
@@ -27,7 +27,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addShape("text", { Name: "units", Text: "unit", x: "8", y: "11.5", Size: "1.3", Fill: "$dim" });
 
   await d.addComponent("Knob", 12, 12);
-  await d.addInput("value", "0", true);
+  await d.addInput("value", "0", { twoWay: true, type: "number" });
   await d.addInput("min", "0");
   await d.addInput("max", "100");
   await d.addInput("colour", "$accent");

@@ -8,7 +8,7 @@
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.addComponent("Toggle", 8, 4);
   await d.sizing("Fill");
-  await d.addInput("value", "false", true);
+  await d.addInput("value", "false", { twoWay: true, type: "bool" });
   await d.addInput("colour", "$accent");
   await d.addInput("trackColour", "$panel3");
   await d.addInput("knobColour", "$text");
