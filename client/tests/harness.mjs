@@ -29,9 +29,10 @@ function transcoder() {
   return null;
 }
 
-/** Kept apart from the cargo tests' domain and from a running backend's port. */
-export const DOMAIN = 153;
-export const PORT = 6761;
+/** Each system's domain and port by its slot: 153 and 6761, then 155 and 6762 on, kept apart
+ *  from the cargo tests' 152 and 154 and from a running backend's port. */
+const domainOf = (slot) => (slot === 0 ? 153 : 154 + slot);
+const portOf = (slot) => 6761 + slot;
 
 function run(path, args) {
   const child = spawn(path, args, { cwd: ROOT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RUST_BACKTRACE: "1", NO_COLOR: "1" } });
@@ -49,24 +50,25 @@ function testProject(into) {
 }
 
 /** With `empty` named, the backend starts a new project in a folder of that name, as it would
- *  anywhere, in place of the demo's copy. */
-export async function startSystem({ empty } = {}) {
+ *  anywhere, in place of the demo's copy. Systems in different slots run side by side. */
+export async function startSystem({ empty, slot = 0 } = {}) {
   const temp = mkdtempSync(join(tmpdir(), "rant-hmi-test-"));
   const project = empty ? join(temp, basename(empty)) : temp;
   if (!empty) testProject(project);
-  const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
-  const cage = run(join(BUILD, "examples", `cage${exe}`), ["--loopback", "--domain", String(DOMAIN)]);
+  const domain = String(domainOf(slot));
+  const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", domain]);
+  const cage = run(join(BUILD, "examples", `cage${exe}`), ["--loopback", "--domain", domain]);
   const transcoding = transcoder();
-  const video = transcoding && run(transcoding, ["--domain", String(DOMAIN), "--interface", "127.0.0.1"]);
+  const video = transcoding && run(transcoding, ["--domain", domain, "--interface", "127.0.0.1"]);
   await new Promise((r) => setTimeout(r, 300));
   const backend = run(join(BUILD, `rant-hmi${exe}`), [
     project,
-    "--port", String(PORT),
-    "--domain", String(DOMAIN),
+    "--port", String(portOf(slot)),
+    "--domain", domain,
     "--loopback",
     "--client", CLIENT,
   ]);
-  const url = `http://127.0.0.1:${PORT}`;
+  const url = `http://127.0.0.1:${portOf(slot)}`;
   const start = Date.now();
   for (;;) {
     try {
@@ -79,7 +81,7 @@ export async function startSystem({ empty } = {}) {
   }
   return {
     url,
-    ws: `ws://127.0.0.1:${PORT}/ws`,
+    ws: `ws://127.0.0.1:${portOf(slot)}/ws`,
     project,
     backend,
     transcoder: video,
