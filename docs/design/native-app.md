@@ -196,7 +196,7 @@ Chosen: a launcher with archives appended.
    Built, with the window on wry.
 2. The screen alone. Built with the first.
 3. The Electron shell on Windows: the addon, the main script, the scheme, the preload. The wry
-   window goes. Playwright drives the real window.
+   window goes. Playwright drives the real window. Built.
 4. The launcher and its archives: an app for this host built and run from one file.
 5. Built from the editor: the `/app` route, the runtime cache, the sheet, the domain and the
    certificate written in.
@@ -237,16 +237,59 @@ Chosen: a launcher with archives appended.
   took the server's `toml` from 0.8.23 back to 0.8.2 on every build. The backend runs on a
   thread with its own runtime and the window on the main thread. A start that fails shows why
   in the window. Closing the window ends the screens' sessions and the node, then the process.
-  Slice 3 replaces this package.
+  Slice 3 replaced this package.
 - Client: `net/link.ts`, which `connection.ts` now opens. In the app no WebRTC is offered. The
   editor's status bar says "Reached in this app, with no network".
 - Tests: cargo tests drive the link (order both ways, a poll that waits, the last message of a
-  dropped session, a body cut short). Scenario app-window runs the `linked` example, which
-  serves the app's link over http on loopback, so headless Chrome drives the real client
-  through it: it reads and writes the demo line, reloads into a new session, opens no socket,
-  and the editor's status bar says so. Then the real window: its screen connects and keeps its
-  one session past the 5 s a silent screen is lost in, the process listens on no TCP port, and
-  closing the window ends the app by itself. Then the window shows a running HMI's screen by
-  its address, and a project that cannot open leaves the window saying why until it is closed.
+  dropped session, a body cut short). Slice 3 moved the window's checks to the real window.
 - WebView2 here (runtime 155) opens no debugging port, so the wry window was checked through
-  the app's log. Electron's window can be driven directly.
+  the app's log. Electron's window is driven directly.
+
+### Slice 3, the Electron window
+
+- `app/` is the Electron app: `main.mjs`, `preload.cjs`, `package.json` pinning Electron
+  44.9.3 (45.0.0 was a day old), and the Rant logo made square as `icon.ico` and `icon.png`
+  for the window. The exe keeps Electron's icon until slice 4 stamps the launcher.
+- `app/addon` is the crate `rant-hmi-addon`, a napi-rs 3 cdylib on the server's library, back
+  in the server's workspace and lock: the old toml pin came from wry. It offers `start`,
+  `request`, `stop` and `kept`. `start` runs the backend on a thread with its own runtime as
+  the wry app did, and each request runs on that runtime, as a poll waits on its timers.
+- napi on Windows links only for the MSVC target (the GNU one wants a `libnode.dll`, which
+  Electron has none of), so the addon builds for `x86_64-pc-windows-msvc` there, and only
+  when asked: the workspace's default members are the server alone, so `cargo build` and
+  `cargo test` stay as they were. `npm run build` in `app` builds it and puts it beside the
+  main script as `rant-hmi.node`. `HMI_ADDON` names another, as the tests do.
+- Main: the scheme `hmi` is registered standard and secure, `protocol.handle` hands each
+  request to the addon by method, path and body, and a screen served there gets the preload
+  that sets `window.rantHmiApp`. Given an address no preload, so that screen is a browser's.
+  The window's data goes to `~/.rant/hmi/window`. A start that fails shows a page saying why.
+  The last window closed stops the backend, then the app quits.
+- Arguments are read by name and the first plain one, passing over the switches Electron and
+  Chromium take and the app's folder when run from source.
+- Full screen (the user asked, 2026-10-22): F11 toggles it, as in a browser, since the window
+  has no menu, and `--fullscreen` opens the window so. The build sheet can write it in later.
+  F11 is caught before the page sees it, so a page cannot use F11.
+- Tests: scenario app-window drives the window through Playwright's Electron support: it reads
+  and writes the demo line, reloads into a new session, opens no socket, and the editor's
+  status bar says it is in the app. Then started as a person starts it, without Playwright,
+  whose debugging ports would listen: the screen keeps its one session past 5 s, the process
+  listens on no TCP port, and closing the window ends the HMI, then the app. Then the window
+  shows a running HMI's screen by its address, never told it is in the app, and a project that
+  cannot open leaves the window saying why. F11 fills the screen and gives it back, pressed
+  through Electron's own input, since Playwright's keys reach the page past the window, and
+  the app opened with `--fullscreen` fills it. Removing the preload fails it, so does closing
+  without stopping the backend, a wrong key, or the flag ignored. The `linked` example went, as nothing needs it now.
+- Traps found: this shell inherits `ELECTRON_RUN_AS_NODE=1` from VS Code's extension host,
+  which makes Electron plain Node, so the harness clears it. Playwright starts Electron through
+  `cmd.exe` on Windows, so a kill ends only cmd and the harness ends the whole tree. Playwright
+  reads the app's output itself until launch returns, so a start error is checked on the
+  window, not in the log.
+
+Choices worth a second look:
+
+- Electron 44.9.3, not 45.0.0.
+- The addon only for the MSVC target on Windows, and out of the default members.
+- The window opens at 1280 by 800, keeps its menu hidden, and takes its title from the page.
+- F11 belongs to the window, not to pages.
+- The scenario shows real windows on the desktop, full screen for a moment, as the WebView2
+  one did.
