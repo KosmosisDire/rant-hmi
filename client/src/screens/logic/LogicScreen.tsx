@@ -8,7 +8,8 @@ import type { Page } from "../../protocol/Page";
 import type { Rule } from "../../protocol/Rule";
 import type { When } from "../../protocol/When";
 import { complete, componentNames, REPEAT } from "../../state/complete";
-import { brings, flat, offered, ruleBrings } from "../../state/events";
+import type { Handler } from "../../protocol/Handler";
+import { brings, filterWords, flat, handlerKey, handlerWords, offered, ruleBrings, settingOf } from "../../state/events";
 import { edit } from "../../state/change";
 import { state } from "../../state/store";
 import { uses } from "../../state/uses";
@@ -82,7 +83,11 @@ function repeats(elements: Element[], id: string): boolean {
 
 /** A key per list entry that outlives edits: a rule's id, or an element's handler. */
 const ruleKey = (r: Rule) => `rule:${r.id}`;
-const onKey = (pg: Page, e: Element, event: string) => `on:${pg.id}:${e.id}:${event}`;
+const onKey = (pg: Page, e: Element, h: Handler) => `on:${pg.id}:${e.id}:${handlerKey(h.event, h.filter)}`;
+
+/** Changes the handler an element holds on a page, as its event and filter name it. */
+const write = (x: { pg: Page; e: Element; h: Handler }, code: string | null, attrs?: Record<string, string | null>) =>
+  edit({ kind: "set_handler", page: x.pg.id, id: x.e.id, event: x.h.event, filter: x.h.filter, code, attrs });
 
 /** What a page's or component's handler code names in place of the mesh imports. */
 const namesOf = (pg: Page) => (pg.interface ? componentNames(pg) : undefined);
@@ -102,9 +107,10 @@ export function LogicScreen(p: { shown: boolean }) {
   // the open page's own, never those inside the components it places
   const doc = createMemo(() => {
     const pg = currentPage();
-    return pg && { pg, handlers: flat(pg.children).flatMap((e) => e.handlers.map((h) => ({ e, event: h.event }))).filter(({ e, event }) => fits(pg.name, e.props.name ?? e.id, event)) };
+    const all = flat(pg?.children ?? []).flatMap((e) => e.handlers.map((h) => ({ e, h, key: onKey(pg!, e, h) })));
+    return pg && { pg, handlers: all.filter(({ e, h }) => fits(pg.name, e.props.name ?? e.id, handlerWords(h))) };
   });
-  const keys = createMemo(() => [...rules().map(ruleKey), ...(doc()?.handlers.map(({ e, event }) => onKey(doc()!.pg, e, event)) ?? [])]);
+  const keys = createMemo(() => [...rules().map(ruleKey), ...(doc()?.handlers.map((x) => x.key) ?? [])]);
   // the one picked, else the first, so the middle never stands empty while there is one
   const current = () => (keys().includes(chosen()) ? chosen() : (keys()[0] ?? ""));
   const rule = () => {
@@ -112,12 +118,9 @@ export function LogicScreen(p: { shown: boolean }) {
     return k.startsWith("rule:") ? state.rules.find((r) => ruleKey(r) === k) : undefined;
   };
   const handler = () => {
-    const [kind, pageId, id, event] = current().split(":");
-    if (kind !== "on") return undefined;
-    const pg = state.pages.find((x) => x.id === pageId);
-    const e = pg && flat(pg.children).find((x) => x.id === id);
-    const h = e?.handlers.find((x) => x.event === event);
-    return pg && e && h ? { pg, e, h } : undefined;
+    const d = doc();
+    const x = d?.handlers.find((x) => x.key === current());
+    return d && x ? { pg: d.pg, e: x.e, h: x.h } : undefined;
   };
   // a handler just added is picked once it arrives
   createEffect(() => {
@@ -146,12 +149,12 @@ export function LogicScreen(p: { shown: boolean }) {
       { label: "Delete", icon: <Trash size={13} />, run: () => setRule(r.id, null) },
     ]);
   };
-  const handlerMenu = (e: MouseEvent, pg: Page, el: Element, event: string) => {
-    setChosen(onKey(pg, el, event));
+  const handlerMenu = (e: MouseEvent, pg: Page, el: Element, h: Handler) => {
+    setChosen(onKey(pg, el, h));
     openMenu(e, [
-      { label: "Open in Design", icon: <PenTool size={13} />, run: () => openElement({ page: pg.id, element: el.id, event }) },
+      { label: "Open in Design", icon: <PenTool size={13} />, run: () => openElement({ page: pg.id, element: el.id, handler: handlerKey(h.event, h.filter) }) },
       "-",
-      { label: "Delete", icon: <Trash size={13} />, run: () => edit({ kind: "set_handler", page: pg.id, id: el.id, event, code: null }) },
+      { label: "Delete", icon: <Trash size={13} />, run: () => edit({ kind: "set_handler", page: pg.id, id: el.id, event: h.event, filter: h.filter, code: null }) },
     ]);
   };
   const shownUses = () => {
@@ -205,16 +208,11 @@ export function LogicScreen(p: { shown: boolean }) {
                   each={d().handlers}
                   fallback={<div class="placeholder">{q() ? "No handler matches." : "None here yet. Give an element an event in Design, or add the HMI's own with +."}</div>}
                 >
-                  {({ e, event }) => (
-                    <button
-                      class="list-row"
-                      classList={{ selected: current() === onKey(d().pg, e, event) }}
-                      onClick={() => choose(onKey(d().pg, e, event))}
-                      onContextMenu={(ev) => handlerMenu(ev, d().pg, e, event)}
-                    >
-                      <EventIcon from={offered(e).find((o) => o.event === event)?.from} size={14} />
+                  {({ e, h, key }) => (
+                    <button class="list-row" classList={{ selected: current() === key }} onClick={() => choose(key)} onContextMenu={(ev) => handlerMenu(ev, d().pg, e, h)}>
+                      <EventIcon from={offered(e).find((o) => o.event === h.event)?.from} size={14} />
                       <span class="list-label">{e.props.name ?? e.id}</span>
-                      <span class="list-trail">{event}</span>
+                      <span class="list-trail">{handlerWords(h)}</span>
                     </button>
                   )}
                 </For>
@@ -232,7 +230,7 @@ export function LogicScreen(p: { shown: boolean }) {
               <>
                 <div class="detail-head">
                   <span class="hero mono">{h().e.props.name ?? h().e.id}</span>
-                  <button class="button" onClick={() => openElement({ page: h().pg.id, element: h().e.id, event: h().h.event })}>
+                  <button class="button" onClick={() => openElement({ page: h().pg.id, element: h().e.id, handler: handlerKey(h().h.event, h().h.filter) })}>
                     Open in Design
                   </button>
                 </div>
@@ -240,13 +238,14 @@ export function LogicScreen(p: { shown: boolean }) {
                 <div class="detail-body handler-wrap">
                   <EventCard
                     name={h().h.event}
+                    filter={filterWords(h().h)}
                     icon={<EventIcon from={offered(h().e).find((o) => o.event === h().h.event)?.from} />}
                     brings={brings(h().e, h().h.event)}
                     code={h().h.code}
-                    onCode={(code) => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code })}
-                    onRemove={() => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code: null })}
-                    attrs={h().h.attrs}
-                    onAttr={(name, text) => edit({ kind: "set_handler", page: h().pg.id, id: h().e.id, event: h().h.event, code: h().h.code, attrs: { [name]: text || null } })}
+                    onCode={(code) => write(h(), code)}
+                    onRemove={() => write(h(), null)}
+                    setting={(name) => settingOf(h().h, name)}
+                    onAttr={(name, text) => write(h(), h().h.code, { [name]: text || null })}
                     removeTitle={`Remove the ${h().h.event} handler`}
                     place={h().pg.interface ? "component" : "handler"}
                     names={namesOf(h().pg)}

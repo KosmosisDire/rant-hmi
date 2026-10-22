@@ -1,6 +1,8 @@
 //! Every message between the backend and a screen, sent as CBOR. Running `cargo test`
 //! writes their TypeScript twins into client/src/protocol, so the two sides never drift.
 
+use std::collections::BTreeMap;
+
 use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use crate::value::Value;
@@ -162,7 +164,9 @@ pub enum ClientMsg {
     },
     /// `event` happened to an element of a running page: a pointer's, or one its component
     /// sent with `payload`, which handler code reads as `p`. On a repeated element, `index` and
-    /// `item` name the copy, which the code reads by those names.
+    /// `item` name the copy, which the code reads by those names. `heard` names the element's
+    /// handlers for it the screen heard, by their filters. With none it still tells what the
+    /// screen holds, as a press, for the end to run should the screen be lost.
     Fire {
         page: String,
         id: String,
@@ -174,6 +178,8 @@ pub enum ClientMsg {
         #[serde(default)]
         #[ts(optional)]
         item: Option<Value>,
+        #[serde(default)]
+        heard: Vec<BTreeMap<String, String>>,
     },
 }
 

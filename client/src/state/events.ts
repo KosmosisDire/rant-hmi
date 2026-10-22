@@ -5,6 +5,7 @@ import { children, type Node, tree } from "../lang/arith.js";
 import type { Element } from "../protocol/Element";
 import type { EventInfo } from "../protocol/EventInfo";
 import { EVENTS, SENT } from "../protocol/events";
+import type { Handler } from "../protocol/Handler";
 import type { Page } from "../protocol/Page";
 import type { Sender } from "../protocol/Sender";
 import type { SettingInfo } from "../protocol/SettingInfo";
@@ -17,6 +18,37 @@ export const eventInfo = (name: string): EventInfo | undefined => EVENTS.find((e
 
 /** The settings a handler for `event` takes, one a component sends taking its own few. */
 export const settingsOf = (event: string): readonly SettingInfo[] => eventInfo(event)?.settings ?? SENT;
+
+/** Whether `h` takes `event` bringing `p`: each of its filters equals the field of p it names. */
+export const takes = (h: Handler, event: string, p: unknown) =>
+  h.event === event && Object.entries(h.filter).every(([k, v]) => (p as Record<string, unknown> | null)?.[k] === v);
+
+/** The end of what `event` begins, or `event` itself when it ends something, as a press's release. */
+export const endOf = (event: string) => eventInfo(event)?.ends_with ?? (EVENTS.some((x) => x.ends_with === event) ? event : undefined);
+
+/** A handler's setting as written, a filter's or an expression's. */
+export const settingOf = (h: Handler, name: string) => h.filter[name] ?? h.attrs[name];
+
+/** Sets `h`'s setting `name`, a filter as it is and an expression trimmed, or removes it where
+ *  that leaves it empty, as the backend does. */
+export function setSetting(h: Handler, name: string, value: string | null | undefined) {
+  const filter = settingsOf(h.event).some((s) => s.name === name && s.kind === "filter");
+  const [map, v] = filter ? [h.filter, value] : [h.attrs, value?.trim()];
+  if (v) map[name] = v;
+  else delete map[name];
+}
+
+/** One handler of an element's, among others for its event: its event and filter. */
+export const handlerKey = (event: string, filter: Handler["filter"]) => JSON.stringify([event, ...Object.entries(filter).sort(([a], [b]) => (a < b ? -1 : 1))]);
+
+/** A key as a filter shows it, Space for " ". */
+export const keyWords = (key: string) => (key === " " ? "Space" : key);
+
+/** What a handler's filters take, as "a" or "Space", empty when it takes any. */
+export const filterWords = (h: Handler) => Object.values(h.filter).map((v) => keyWords(v ?? "")).join(" ");
+
+/** A handler in a few words: its event, then what its filters take. */
+export const handlerWords = (h: Handler) => [h.event, filterWords(h)].filter(Boolean).join(" ");
 
 /** What `p` holds: its fields, or else the one value a component sends, as its code says it. */
 export interface Brought {
@@ -33,12 +65,12 @@ export interface Offered {
   from: Sender | "component";
 }
 
-/** What an element hears: an input what is typed in, others the pointer, and an instance
- *  also its component's events, first. */
+/** What an element hears: an input what is typed in, others the pointer, any the keyboard,
+ *  and an instance also its component's events, first. */
 export function offered(e: Element): Offered[] {
   const c = e.tag === "use" ? component(e.component ?? "") : undefined;
   const own = (c?.interface?.events ?? []).map((event): Offered => ({ event, words: sendsWords(c!, event), from: "component" }));
-  const heard = EVENTS.filter((x) => (x.from === "entry") === (e.tag === "input"));
+  const heard = EVENTS.filter((x) => x.from === "keyboard" || (x.from === "entry") === (e.tag === "input"));
   return [...own, ...heard.map((x): Offered => ({ event: x.name, words: x.words, from: x.from }))];
 }
 

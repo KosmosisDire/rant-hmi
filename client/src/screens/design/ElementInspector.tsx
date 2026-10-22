@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, Show, useContext } from "solid-js";
 import { cssFault, OWN, SHAPES } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
+import type { Handler } from "../../protocol/Handler";
 import type { Input } from "../../protocol/Input";
 import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
@@ -9,7 +10,7 @@ import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
 import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
 import { complete, completeCss, componentNames, REPEAT, signature, signatureCss } from "../../state/complete";
-import { brings, offered } from "../../state/events";
+import { brings, filterWords, handlerKey, type Offered, offered, settingOf } from "../../state/events";
 import { fits, freeName } from "../../state/names";
 import { edit, show } from "../../state/change";
 import { component, page as pageOf, state } from "../../state/store";
@@ -473,7 +474,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <LooseProps page={p.page} element={p.element} loose={loose} placeholder="box-shadow: 0 0.2 0.8 $border" css />
         </Show>
         <Show when={!grouped()}>
-          <Events page={p.page} element={p.element} focus={(event) => typed(`on:${event}`)} />
+          <Events page={p.page} element={p.element} focus={(key) => typed(`on:${key}`)} />
         </Show>
       </div>
     </WhereContext.Provider>
@@ -658,45 +659,54 @@ function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" |
   );
 }
 
+/** What heads each sender's events in the event menu. */
+const SENDERS: Record<Exclude<Offered["from"], "component">, string> = { pointer: "Pointer", entry: "Entry", keyboard: "Keyboard" };
+
 /** The element's handlers, each a card: the event on top, the code below. Every change names
- *  one event, so two quick changes never undo each other. */
-function Events(p: { page: string; element: Element; focus: (event: string) => number | undefined }) {
+ *  one handler by its event and filter, so two quick changes never undo each other. */
+function Events(p: { page: string; element: Element; focus: (key: string) => number | undefined }) {
   const where = useContext(WhereContext);
   const [adding, setAdding] = createSignal(false);
   let ghost!: HTMLButtonElement;
-  const write = (event: string, code: string | null, attrs?: Record<string, string | null>) => edit({ kind: "set_handler", page: p.page, id: p.element.id, event, code, attrs });
+  const write = (h: Pick<Handler, "event" | "filter">, code: string | null, attrs?: Record<string, string | null>) =>
+    edit({ kind: "set_handler", page: p.page, id: p.element.id, event: h.event, filter: h.filter, code, attrs });
   const heard = () => offered(p.element);
-  // a handler for an event no longer offered still shows, so none hides
-  const events = () => [...new Set([...heard().map((o) => o.event), ...p.element.handlers.map((h) => h.event)])];
-  const unused = () => heard().filter((o) => !p.element.handlers.some((h) => h.event === o.event));
-  // the component's own events stand apart from the pointer's, under its name
+  // in the order events are offered, a handler for one no longer offered after, so none hides
+  const keys = () => {
+    const events = [...new Set([...heard().map((o) => o.event), ...p.element.handlers.map((h) => h.event)])];
+    return events.flatMap((event) => p.element.handlers.filter((h) => h.event === event).map((h) => handlerKey(h.event, h.filter)));
+  };
+  // an event is offered again while none of its handlers takes any, as keydown for another key
+  const unused = () => heard().filter((o) => !p.element.handlers.some((h) => h.event === o.event && Object.keys(h.filter).length === 0));
+  // each sender's events stand apart, a component's under its name, once there are two
   const groups = () => {
-    const own = unused().filter((o) => o.from === "component");
-    const rest = unused().filter((o) => o.from !== "component");
-    return own.length && rest.length ? [{ head: p.element.component, list: own }, { head: "Pointer", list: rest }] : [{ head: undefined, list: unused() }];
+    const from = [...new Set(unused().map((o) => o.from))];
+    const head = (f: Offered["from"]) => (f === "component" ? (p.element.component ?? undefined) : SENDERS[f]);
+    return from.map((f) => ({ head: from.length > 1 ? head(f) : undefined, list: unused().filter((o) => o.from === f) }));
   };
   return (
     <>
       <div class="section">Events</div>
-      {/* one card per event, so a card never turns into another event's under the pointer */}
-      <For each={events()}>
-        {(event) => (
-          <Show when={p.element.handlers.find((h) => h.event === event)}>
+      {/* one card per handler, so a card never turns into another's under the pointer */}
+      <For each={keys()}>
+        {(key) => (
+          <Show when={p.element.handlers.find((h) => handlerKey(h.event, h.filter) === key)}>
             {(h) => (
               <EventCard
-                name={event}
-                icon={<EventIcon from={heard().find((o) => o.event === event)?.from} />}
+                name={h().event}
+                filter={filterWords(h())}
+                icon={<EventIcon from={heard().find((o) => o.event === h().event)?.from} />}
                 code={h().code}
-                onCode={(code) => write(event, code)}
-                onRemove={() => write(event, null)}
-                attrs={h().attrs}
-                onAttr={(name, text) => write(event, h().code, { [name]: text || null })}
-                removeTitle={`Remove the ${event} handler`}
+                onCode={(code) => write(h(), code)}
+                onRemove={() => write(h(), null)}
+                setting={(name) => settingOf(h(), name)}
+                onAttr={(name, text) => write(h(), h().code, { [name]: text || null })}
+                removeTitle={`Remove the ${h().event} handler`}
                 place={where().handlers}
                 names={where().names}
                 also={where().also}
-                brings={brings(p.element, event)}
-                focus={p.focus(event)}
+                brings={brings(p.element, h().event)}
+                focus={p.focus(key)}
                 placeholder={where().handlers === "component" ? 'emit("change", p);' : "Speed = Speed + 0.1;"}
               />
             )}
@@ -724,7 +734,7 @@ function Events(p: { page: string; element: Element; focus: (event: string) => n
                       class="menu-item"
                       onClick={() => {
                         setAdding(false);
-                        write(o.event, "");
+                        write({ event: o.event, filter: {} }, "");
                       }}
                     >
                       <EventIcon from={o.from} />

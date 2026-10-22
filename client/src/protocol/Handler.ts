@@ -6,6 +6,12 @@
  */
 export type Handler = { event: string, code: string, 
 /**
- * Its settings, each one its event takes, as a hold's `after`. One left out is its default.
+ * Its settings read as expressions, each one its event takes, as a hold's `after`. One
+ * left out is its default.
  */
-attrs: { [key in string]?: string }, };
+attrs: { [key in string]?: string }, 
+/**
+ * What its event must bring for it to run, by field, as a key's `key`. One left out takes
+ * any.
+ */
+filter: { [key in string]?: string }, };

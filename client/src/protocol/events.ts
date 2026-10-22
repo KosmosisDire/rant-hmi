@@ -13,7 +13,8 @@ export const EVENTS: readonly EventInfo[] = [
       {
         "name": "while",
         "label": "While",
-        "default": "true"
+        "default": "true",
+        "kind": "expression"
       }
     ],
     "brings": [
@@ -37,7 +38,8 @@ export const EVENTS: readonly EventInfo[] = [
         "inside",
         "true while over it"
       ]
-    ]
+    ],
+    "ends_with": null
   },
   {
     "name": "press",
@@ -48,7 +50,8 @@ export const EVENTS: readonly EventInfo[] = [
       {
         "name": "while",
         "label": "While",
-        "default": "true"
+        "default": "true",
+        "kind": "expression"
       }
     ],
     "brings": [
@@ -72,7 +75,8 @@ export const EVENTS: readonly EventInfo[] = [
         "inside",
         "true while over it"
       ]
-    ]
+    ],
+    "ends_with": "release"
   },
   {
     "name": "release",
@@ -101,7 +105,8 @@ export const EVENTS: readonly EventInfo[] = [
         "inside",
         "true while over it"
       ]
-    ]
+    ],
+    "ends_with": null
   },
   {
     "name": "hold",
@@ -112,12 +117,14 @@ export const EVENTS: readonly EventInfo[] = [
       {
         "name": "after",
         "label": "After ms",
-        "default": "500"
+        "default": "500",
+        "kind": "expression"
       },
       {
         "name": "while",
         "label": "While",
-        "default": "true"
+        "default": "true",
+        "kind": "expression"
       }
     ],
     "brings": [
@@ -141,7 +148,8 @@ export const EVENTS: readonly EventInfo[] = [
         "inside",
         "true while over it"
       ]
-    ]
+    ],
+    "ends_with": null
   },
   {
     "name": "repeat",
@@ -152,12 +160,14 @@ export const EVENTS: readonly EventInfo[] = [
       {
         "name": "every",
         "label": "Every ms",
-        "default": "100"
+        "default": "100",
+        "kind": "expression"
       },
       {
         "name": "while",
         "label": "While",
-        "default": "true"
+        "default": "true",
+        "kind": "expression"
       }
     ],
     "brings": [
@@ -181,7 +191,8 @@ export const EVENTS: readonly EventInfo[] = [
         "inside",
         "true while over it"
       ]
-    ]
+    ],
+    "ends_with": null
   },
   {
     "name": "drag",
@@ -192,7 +203,8 @@ export const EVENTS: readonly EventInfo[] = [
       {
         "name": "while",
         "label": "While",
-        "default": "true"
+        "default": "true",
+        "kind": "expression"
       }
     ],
     "brings": [
@@ -216,7 +228,8 @@ export const EVENTS: readonly EventInfo[] = [
         "inside",
         "true while over it"
       ]
-    ]
+    ],
+    "ends_with": null
   },
   {
     "name": "outside",
@@ -227,7 +240,8 @@ export const EVENTS: readonly EventInfo[] = [
       {
         "name": "while",
         "label": "While",
-        "default": "true"
+        "default": "true",
+        "kind": "expression"
       }
     ],
     "brings": [
@@ -251,7 +265,8 @@ export const EVENTS: readonly EventInfo[] = [
         "inside",
         "true while over it"
       ]
-    ]
+    ],
+    "ends_with": null
   },
   {
     "name": "change",
@@ -262,7 +277,8 @@ export const EVENTS: readonly EventInfo[] = [
       {
         "name": "while",
         "label": "While",
-        "default": "true"
+        "default": "true",
+        "kind": "expression"
       }
     ],
     "brings": [
@@ -270,7 +286,155 @@ export const EVENTS: readonly EventInfo[] = [
         "value",
         "what was entered"
       ]
-    ]
+    ],
+    "ends_with": null
+  },
+  {
+    "name": "keydown",
+    "from": "keyboard",
+    "words": "a key pressed",
+    "once": true,
+    "settings": [
+      {
+        "name": "key",
+        "label": "Key",
+        "default": "any",
+        "kind": "filter"
+      },
+      {
+        "name": "code",
+        "label": "Key code",
+        "default": "any",
+        "kind": "filter"
+      },
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true",
+        "kind": "expression"
+      }
+    ],
+    "brings": [
+      [
+        "key",
+        "what it types, as \"a\" or \"Enter\""
+      ],
+      [
+        "code",
+        "where it sits, as \"KeyA\""
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ]
+    ],
+    "ends_with": "keyup"
+  },
+  {
+    "name": "keyup",
+    "from": "keyboard",
+    "words": "a key let go",
+    "once": true,
+    "settings": [
+      {
+        "name": "key",
+        "label": "Key",
+        "default": "any",
+        "kind": "filter"
+      },
+      {
+        "name": "code",
+        "label": "Key code",
+        "default": "any",
+        "kind": "filter"
+      }
+    ],
+    "brings": [
+      [
+        "key",
+        "what it types, as \"a\" or \"Enter\""
+      ],
+      [
+        "code",
+        "where it sits, as \"KeyA\""
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ]
+    ],
+    "ends_with": null
+  },
+  {
+    "name": "keyrepeat",
+    "from": "keyboard",
+    "words": "again and again while a key is down",
+    "once": true,
+    "settings": [
+      {
+        "name": "key",
+        "label": "Key",
+        "default": "any",
+        "kind": "filter"
+      },
+      {
+        "name": "code",
+        "label": "Key code",
+        "default": "any",
+        "kind": "filter"
+      },
+      {
+        "name": "every",
+        "label": "Every ms",
+        "default": "100",
+        "kind": "expression"
+      },
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true",
+        "kind": "expression"
+      }
+    ],
+    "brings": [
+      [
+        "key",
+        "what it types, as \"a\" or \"Enter\""
+      ],
+      [
+        "code",
+        "where it sits, as \"KeyA\""
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ]
+    ],
+    "ends_with": null
   }
 ];
 
@@ -278,6 +442,7 @@ export const SENT: readonly SettingInfo[] = [
   {
     "name": "while",
     "label": "While",
-    "default": "true"
+    "default": "true",
+    "kind": "expression"
   }
 ];

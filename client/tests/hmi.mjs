@@ -132,8 +132,8 @@ export class Hmi {
     await this.next((m) => m.type === "page" && m.page.id === page);
   }
 
-  async setHandler(page, id, event, code, attrs) {
-    this.send({ type: "edit", edit: { kind: "set_handler", page, id, event, code, attrs } });
+  async setHandler(page, id, event, code, attrs, filter) {
+    this.send({ type: "edit", edit: { kind: "set_handler", page, id, event, filter, code, attrs } });
     await this.next((m) => m.type === "page" && m.page.id === page);
   }
 

@@ -24,7 +24,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.el(instance).click();
   await right.locator(".ghost", { hasText: "Add event" }).click();
   const heads = await page.locator(".popover .menu-head").allTextContents();
-  check(heads.join() === "Pad,Pointer", `the add list's groups are ${heads.join()}`);
+  check(heads.join() === "Pad,Pointer,Keyboard", `the add list's groups are ${heads.join()}`);
   const first = await page.locator(".popover .menu-item").first().textContent();
   check(first.startsWith("move") && first.includes("sends { x, y }"), `the add list starts with ${first}`);
   await page.locator(".popover .menu-item", { has: page.locator(".mono", { hasText: /^move$/ }) }).click();

@@ -2,7 +2,7 @@
 //! nothing is shared and nothing locks.
 
 use std::cell::Cell;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -119,23 +119,39 @@ enum Step {
     Redo,
 }
 
-/// A run going on: the screen that started it, none for a rule's, what it belongs to, and
+/// A run going on: the screen that started it, none for a rule's, the handler it runs, and
 /// what the log calls it.
 struct Running {
     session: Option<u32>,
-    page: String,
-    id: String,
-    /// The copy of a repeated element it runs for.
-    index: Option<u32>,
-    event: String,
+    of: HandlerKey,
     label: String,
 }
 
-/// An element a screen holds pressed: the screen, page, element and copy of a repeat.
-type Pressed = (u32, String, String, Option<u32>);
+/// A handler as it runs: an element's for an event and filter on the copy of a repeat it
+/// happened on, or a rule's, which is its id alone.
+#[derive(Clone, PartialEq, Eq, Hash, Default)]
+struct HandlerKey {
+    page: String,
+    id: String,
+    index: Option<u32>,
+    event: String,
+    filter: Filter,
+}
 
-/// An element's handler for an event: page, element, copy of a repeat and event.
-type HandlerKey = (String, String, Option<u32>, String);
+/// A handler's filter, or what an event brought in the fields filters read.
+type Filter = BTreeMap<String, String>;
+
+/// An input a screen holds on an element, as a press or a key: the screen, page, element and
+/// copy of a repeat, the event that ends it, and what it brought that its end's filters read.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Held {
+    session: u32,
+    page: String,
+    id: String,
+    index: Option<u32>,
+    end: &'static str,
+    by: Filter,
+}
 
 /// A stream event waiting for its handler's run to end: its screen, what it brought and the copy
 /// of a repeat it happened on.
@@ -176,8 +192,8 @@ pub struct App {
     next_run: u64,
     /// Pages opened to wait for an answer: the waiting call, and the screen that shows them.
     asks: HashMap<u64, u32>,
-    /// Elements a screen holds pressed, as screen, page, element and the copy of a repeat.
-    pressed: HashSet<Pressed>,
+    /// What screens hold on elements with a handler for its end.
+    held: HashSet<Held>,
     /// The latest stream event that came while its handler still ran. It runs when that run ends.
     waiting: HashMap<HandlerKey, Waiting>,
     /// When each timer rule is next due.
@@ -229,7 +245,7 @@ impl App {
             runs: HashMap::new(),
             next_run: 0,
             asks: HashMap::new(),
-            pressed: HashSet::new(),
+            held: HashSet::new(),
             waiting: HashMap::new(),
             timers: HashMap::new(),
             turned: HashMap::new(),
@@ -447,14 +463,13 @@ impl App {
                     self.edit(session, edit, Step::Redo);
                 }
             }
-            ClientMsg::Fire { page, id, event, payload, index, item } => {
-                let key = (session, page.clone(), id.clone(), index);
-                match event.as_str() {
-                    "press" => self.pressed.insert(key),
-                    "release" => self.pressed.remove(&key),
-                    _ => false,
-                };
-                self.fire(session, page, id, event, payload, index.map(|i| (i, item.unwrap_or(Value::Null))));
+            ClientMsg::Fire { page, id, event, payload, index, item, heard } => {
+                self.follow_held(session, &page, &id, index, &event, &payload);
+                let at = index.map(|i| (i, item.unwrap_or(Value::Null)));
+                for filter in heard {
+                    let of = HandlerKey { page: page.clone(), id: id.clone(), index, event: event.clone(), filter };
+                    self.fire(session, of, payload.clone(), at.clone());
+                }
             }
             ClientMsg::Answer { ask, value } => {
                 if self.asks.get(&ask) == Some(&session) {
@@ -713,21 +728,40 @@ impl App {
         }
     }
 
-    /// Runs an element's handler for `event`, unless it still runs from before. `at` is the
-    /// copy of a repeat it happened on, its index and item.
-    fn fire(&mut self, session: u32, page: String, id: String, event: String, payload: Value, at: Option<(u32, Value)>) {
-        let Some(e) = self.pages.element(&page, &id) else { return };
-        let Some(h) = e.handlers.iter().find(|h| h.event == event) else { return };
-        let index = at.as_ref().map(|(i, _)| *i);
-        if self.runs.values().any(|r| r.page == page && r.id == id && r.index == index && r.event == event) {
-            if !events::find(&event).is_some_and(|e| e.once) {
-                self.waiting.insert((page, id, index, event), (session, payload, at));
+    /// Runs the element's handler `of` names, unless it still runs from before. `at` is the copy
+    /// of a repeat it happened on, its index and item.
+    fn fire(&mut self, session: u32, of: HandlerKey, payload: Value, at: Option<(u32, Value)>) {
+        let Some(e) = self.pages.element(&of.page, &of.id) else { return };
+        let Some(h) = e.handlers.iter().find(|h| h.event == of.event && h.filter == of.filter) else { return };
+        if self.runs.values().any(|r| r.of == of) {
+            if !events::find(&of.event).is_some_and(|e| e.once) {
+                self.waiting.insert(of, (session, payload, at));
             }
             return;
         }
-        let label = format!("{} {event}", e.props.get("name").unwrap_or(&id));
+        let label = format!("{} {}", e.props.get("name").unwrap_or(&of.id), of.event);
         let code = h.code.clone();
-        self.start(Running { session: Some(session), page, id, index, event, label }, code, payload, at);
+        self.start(Running { session: Some(session), of, label }, code, payload, at);
+    }
+
+    /// The filters of an element's handlers that take `event` bringing `p`.
+    fn taking(&self, page: &str, id: &str, event: &str, p: &Value) -> Vec<Filter> {
+        self.pages.element(page, id).map(|e| e.handlers.iter().filter(|h| h.takes(event, p)).map(|h| h.filter.clone()).collect()).unwrap_or_default()
+    }
+
+    /// Follows what a screen holds from the events that begin and end it, on an element with a
+    /// handler for the end, so that end still runs should the screen be lost.
+    fn follow_held(&mut self, session: u32, page: &str, id: &str, index: Option<u32>, event: &str, p: &Value) {
+        let Some(info) = events::find(event) else { return };
+        let end = info.ends_with.unwrap_or(info.name);
+        let by = events::settings(end).iter().filter(|s| s.kind == events::SettingKind::Filter);
+        let by = by.filter_map(|s| Some((s.name.to_owned(), p.get(s.name)?.as_str()?.to_owned()))).collect();
+        let held = Held { session, page: page.to_owned(), id: id.to_owned(), index, end, by };
+        if info.ends_with.is_some() && !self.taking(page, id, end, p).is_empty() {
+            self.held.insert(held);
+        } else if events::ended_by(event).is_some() {
+            self.held.remove(&held);
+        }
     }
 
     /// Starts `code` as the run `running` names, with `p` and the copy of a repeat `at`.
@@ -742,10 +776,11 @@ impl App {
     fn run_rules(&mut self, fits: impl Fn(&Rule) -> bool, p: Value) {
         let due: Vec<Rule> = self.pages.rules.iter().filter(|r| fits(r)).cloned().collect();
         for rule in due {
-            if self.runs.values().any(|r| r.session.is_none() && r.id == rule.id) {
+            let of = HandlerKey { id: rule.id, ..HandlerKey::default() };
+            if self.runs.values().any(|r| r.session.is_none() && r.of == of) {
                 continue;
             }
-            self.start(Running { session: None, page: String::new(), id: rule.id, index: None, event: "rule".into(), label: rule.name }, rule.code, p.clone(), None);
+            self.start(Running { session: None, of, label: rule.name }, rule.code, p.clone(), None);
         }
     }
 
@@ -872,10 +907,10 @@ impl App {
                 }
                 // what waited for this run goes now, if its screen is still here
                 let Some(r) = self.runs.remove(&run) else { return };
-                if let Some((session, payload, at)) = self.waiting.remove(&(r.page.clone(), r.id.clone(), r.index, r.event.clone()))
+                if let Some((session, payload, at)) = self.waiting.remove(&r.of)
                     && self.sessions.contains_key(&session)
                 {
-                    self.fire(session, r.page, r.id, r.event, payload, at);
+                    self.fire(session, r.of, payload, at);
                 }
             }
         }
@@ -1254,14 +1289,18 @@ impl App {
         self.watch(session);
     }
 
-    /// Runs the release of what a screen holds pressed, so a jog never outlives its link.
+    /// Runs the end of what a screen holds, as a press's release, so a jog never outlives its
+    /// link. It brings what its filters read and `lost`.
     fn let_go(&mut self, session: u32, why: &str) {
-        let held: Vec<Pressed> = self.pressed.iter().filter(|(s, ..)| *s == session).cloned().collect();
-        for key in held {
-            self.pressed.remove(&key);
-            let (_, page, id, index) = key;
-            warn!("screen {session} {why} holding {id} on {page}, so its release runs");
-            self.fire(session, page, id, "release".into(), Value::map([("lost", true.into())]), index.map(|i| (i, Value::Null)));
+        let held: Vec<Held> = self.held.iter().filter(|h| h.session == session).cloned().collect();
+        for h in held {
+            self.held.remove(&h);
+            warn!("screen {session} {why} holding {} on {}, so its {} runs", h.id, h.page, h.end);
+            let p = Value::map(h.by.into_iter().map(|(k, v)| (k, Value::Text(v))).chain([("lost".to_owned(), true.into())]));
+            for filter in self.taking(&h.page, &h.id, h.end, &p) {
+                let of = HandlerKey { page: h.page.clone(), id: h.id.clone(), index: h.index, event: h.end.into(), filter };
+                self.fire(session, of, p.clone(), h.index.map(|i| (i, Value::Null)));
+            }
         }
     }
 

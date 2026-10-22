@@ -18,4 +18,9 @@ once: boolean, settings: Array<SettingInfo>,
 /**
  * What its `p` holds: each field's name and words.
  */
-brings: Array<[string, string]>, };
+brings: Array<[string, string]>, 
+/**
+ * The event that ends what this one begins, as a release ends a press. It takes the same
+ * filters, and runs however the screen goes.
+ */
+ends_with: string | null, };

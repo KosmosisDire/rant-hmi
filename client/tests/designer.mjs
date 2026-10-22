@@ -253,13 +253,22 @@ export function designer(page) {
 
     /** Gives the selected element a handler with this code, and a hold its time. */
     /** Gives the selected element a handler for `event`, and its settings as `{ label: text }`. */
+    /** Writes the code of the element's handler for `event` that takes any, added when it has
+     *  none, then each setting by its label. A new one comes after those for its event, and a
+     *  card keeps its place when its filter changes. */
     async handler(event, code, settings = {}) {
-      if ((await d.code(event).count()) === 0) await d.addEvent(event);
-      const box = d.code(event);
+      const cards = right().locator(".event").filter({ has: page.locator(".event-name", { hasText: new RegExp(`^${event}$`) }) });
+      let n = await cards.evaluateAll((els) => els.findIndex((el) => !el.querySelector(".event-filter")));
+      if (n < 0) {
+        n = await cards.count();
+        await d.addEvent(event);
+        await cards.nth(n).waitFor();
+      }
+      const card = cards.nth(n);
+      const box = card.locator(".editor.code");
       await box.fill(code);
       await box.press("Control+Enter");
-      const card = right().locator(".event", { has: page.locator(".event-name", { hasText: new RegExp(`^${event}$`) }) });
-      for (const [label, text] of Object.entries(settings)) await commit(card.locator(".event-when .field", { has: page.locator("label", { hasText: label }) }).locator("input"), text);
+      for (const [label, text] of Object.entries(settings)) await commit(card.locator(".event-when .field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) }).locator("input"), text);
     },
   };
   return d;

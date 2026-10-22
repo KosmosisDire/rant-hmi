@@ -70,7 +70,7 @@ export function DesignScreen(p: { shown: boolean }) {
     const w = p.shown ? wanted() : null;
     untrack(() => {
       if (w && w.page === id) {
-        edit(w.element, w.event === undefined ? undefined : `on:${w.event}`);
+        edit(w.element, w.handler === undefined ? undefined : `on:${w.handler}`);
         tookWanted();
       } else if (id !== at) {
         setSelection([]);

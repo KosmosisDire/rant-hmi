@@ -17,6 +17,7 @@ use crate::events::{self, rank};
 use crate::files;
 use crate::list::{self, by_name};
 use crate::rules;
+use crate::value::Value;
 use logic::Rule;
 
 /// A page: an artboard of `width` by `height` pixels holding elements. With an interface it
@@ -112,7 +113,7 @@ pub struct Element {
     pub component: Option<String>,
     /// An instance's are its placement and the inputs it fills in.
     pub props: BTreeMap<String, String>,
-    /// At most one per event, in the order events are listed.
+    /// At most one per event and filter, in the order events are listed.
     pub handlers: Vec<Handler>,
     pub children: Vec<Element>,
 }
@@ -124,20 +125,55 @@ pub struct Element {
 pub struct Handler {
     pub event: String,
     pub code: String,
-    /// Its settings, each one its event takes, as a hold's `after`. One left out is its default.
+    /// Its settings read as expressions, each one its event takes, as a hold's `after`. One
+    /// left out is its default.
     #[serde(default)]
     pub attrs: BTreeMap<String, String>,
+    /// What its event must bring for it to run, by field, as a key's `key`. One left out takes
+    /// any.
+    #[serde(default)]
+    pub filter: BTreeMap<String, String>,
+}
+
+impl Handler {
+    pub fn new(event: &str, filter: BTreeMap<String, String>) -> Self {
+        Handler { event: event.to_owned(), code: String::new(), attrs: BTreeMap::new(), filter }
+    }
+
+    /// Whether it runs for `event` bringing `p`: each of its filters equals the field of p it names.
+    pub fn takes(&self, event: &str, p: &Value) -> bool {
+        self.event == event && self.filter.iter().all(|(k, v)| p.get(k).and_then(Value::as_str) == Some(v))
+    }
+
+    /// The setting `key` as written.
+    pub fn setting(&self, key: &str) -> Option<&String> {
+        self.filter.get(key).or_else(|| self.attrs.get(key))
+    }
+
+    /// Sets the setting `key`, a filter as it is and an expression trimmed, or removes it where
+    /// that leaves it empty.
+    pub fn set(&mut self, key: &str, value: Option<&str>) {
+        let (map, value) = match events::filters(&self.event, key) {
+            true => (&mut self.filter, value),
+            false => (&mut self.attrs, value.map(str::trim)),
+        };
+        match value.filter(|v| !v.is_empty()) {
+            Some(v) => map.insert(key.to_owned(), v.to_owned()),
+            None => map.remove(key),
+        };
+    }
 }
 
 /// Whether `h` may join an element's `others`: its event's name fits, its settings are ones
-/// its event takes, and none of the others handles its event.
+/// its event takes, and none of the others handles its event with its filter.
 pub fn check_handler<'a>(others: impl IntoIterator<Item = &'a Handler>, h: &Handler) -> Result<(), String> {
     rules::EVENT.check(&h.event, "an event")?;
-    if let Some(key) = h.attrs.keys().find(|k| !events::settings(&h.event).iter().any(|s| s.name == *k)) {
+    let takes = |key: &str, filter: bool| events::settings(&h.event).iter().any(|s| s.name == key) && events::filters(&h.event, key) == filter;
+    if let Some(key) = h.attrs.keys().find(|k| !takes(k, false)).or_else(|| h.filter.keys().find(|k| !takes(k, true))) {
         return Err(format!("a {} handler takes no {key}", h.event));
     }
-    match others.into_iter().any(|o| o.event == h.event) {
-        true => Err(format!("a second {} handler", h.event)),
+    match others.into_iter().any(|o| o.event == h.event && o.filter == h.filter) {
+        true => Err(format!("a second {} handler{}", h.event, h.filter.iter().map(|(k, v)| format!(" for {k} {v:?}")).collect::<Vec<_>>().join(" and"))),
         false => Ok(()),
     }
 }
@@ -276,11 +312,16 @@ pub enum Edit {
     /// Sets each property to its value, or removes it where the value is null.
     SetProps { page: String, id: String, props: BTreeMap<String, Option<String>> },
     /// Sets the code the element runs on `event`, or removes its handler where it is null.
-    /// `attrs` sets each setting named, to its default where null, and keeps the rest.
+    /// `filter` names which of its handlers for the event, none for the one that takes any.
+    /// `attrs` sets each setting named, a filter too, to its default where null, and keeps the
+    /// rest.
     SetHandler {
         page: String,
         id: String,
         event: String,
+        #[serde(default)]
+        #[ts(optional)]
+        filter: Option<BTreeMap<String, String>>,
         code: Option<String>,
         #[serde(default)]
         #[ts(optional)]
@@ -759,33 +800,42 @@ impl Pages {
                 }
                 Edit::SetProps { page: page.clone(), id, props: old }
             }
-            Edit::SetHandler { page, id, event, code, attrs } => {
+            Edit::SetHandler { page, id, event, filter, code, attrs } => {
                 rules::EVENT.check(&event, "an event")?;
-                let attrs = attrs.unwrap_or_default();
+                let (filter, attrs) = (filter.unwrap_or_default(), attrs.unwrap_or_default());
                 let p = self.page_mut(&page)?;
                 let e = find_mut(&mut p.children, &id).ok_or_else(|| format!("{id} is not on {page}"))?;
-                let old = e.handlers.iter().find(|h| h.event == event).cloned();
-                let mut handlers: Vec<Handler> = e.handlers.iter().filter(|h| h.event != event).cloned().collect();
-                if let Some(code) = code {
-                    let mut h = old.clone().unwrap_or_else(|| Handler { event: event.clone(), code: String::new(), attrs: BTreeMap::new() });
-                    h.code = format::dedent(&code);
-                    for (key, value) in &attrs {
-                        match value.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                            Some(v) => h.attrs.insert(key.clone(), v.to_owned()),
-                            None => h.attrs.remove(key),
-                        };
+                let at = e.handlers.iter().position(|h| h.event == event && h.filter == filter);
+                let old = at.map(|n| e.handlers[n].clone());
+                // the filter it has after, which its undo names
+                let mut now = filter.clone();
+                match (code, at) {
+                    (Some(code), _) => {
+                        let mut h = old.clone().unwrap_or_else(|| Handler::new(&event, filter));
+                        h.code = format::dedent(&code);
+                        for (key, value) in &attrs {
+                            h.set(key, value.as_deref());
+                        }
+                        check_handler(e.handlers.iter().enumerate().filter(|(n, _)| Some(*n) != at).map(|(_, o)| o), &h)?;
+                        now = h.filter.clone();
+                        // in its place, so a card never moves under the pointer
+                        match at {
+                            Some(n) => e.handlers[n] = h,
+                            None => {
+                                e.handlers.push(h);
+                                e.handlers.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
+                            }
+                        }
                     }
-                    check_handler(&handlers, &h)?;
-                    handlers.push(h);
-                    handlers.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
+                    (None, Some(n)) => drop(e.handlers.remove(n)),
+                    (None, None) => {}
                 }
-                e.handlers = handlers;
                 // undone, the old code comes back with each setting as it was
                 let back = match &old {
-                    Some(o) => o.attrs.keys().chain(attrs.keys()).map(|k| (k.clone(), o.attrs.get(k).cloned())).collect(),
+                    Some(o) => o.attrs.keys().chain(o.filter.keys()).chain(attrs.keys()).map(|k| (k.clone(), o.setting(k).cloned())).collect(),
                     None => BTreeMap::new(),
                 };
-                Edit::SetHandler { page: page.clone(), id, event, code: old.map(|h| h.code), attrs: Some(back) }
+                Edit::SetHandler { page: page.clone(), id, event, filter: Some(now), code: old.map(|h| h.code), attrs: Some(back) }
             }
             Edit::SetInput { page, name, input } => {
                 let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
@@ -1210,9 +1260,9 @@ mod tests {
         let o = || "overview".to_string();
         pages.apply(add(o(), None, Tag::Div, props(&[("name", "Speed"), ("x", "Speed * 2")]))).unwrap();
         pages.apply(add(o(), Some("e1".into()), Tag::Span, props(&[("text", "\"Speed \" + Speed")]))).unwrap();
-        pages.apply(Edit::SetHandler { page: o(), id: "e2".into(), event: "tap".into(), code: Some("Speed = 1;".into()), attrs: None }).unwrap();
+        pages.apply(Edit::SetHandler { page: o(), id: "e2".into(), event: "tap".into(), filter: None, code: Some("Speed = 1;".into()), attrs: None }).unwrap();
         let after = Some([("after".to_string(), Some("Speed * 100".to_string()))].into());
-        pages.apply(Edit::SetHandler { page: o(), id: "e1".into(), event: "hold".into(), code: Some("log(1);".into()), attrs: after }).unwrap();
+        pages.apply(Edit::SetHandler { page: o(), id: "e1".into(), event: "hold".into(), filter: None, code: Some("log(1);".into()), attrs: after }).unwrap();
         pages.apply(Edit::AddPage { name: "Other".into() }).unwrap();
         assert_eq!(pages.rename("Speed", "LineSpeed", false).unwrap(), ["overview"]);
         let again = Pages::open(&dir).unwrap();
@@ -1275,9 +1325,9 @@ mod tests {
             add(o(), None, Tag::Span, props(&[("text", "Speed")])),
             Edit::SetProps { page: o(), id: "e1".into(), props: [("x".to_string(), Some("88".to_string())), ("background".to_string(), None)].into() },
             Edit::MoveElement { page: o(), id: "e3".into(), parent: Some("e1".into()), index: 0 },
-            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), code: Some("  Speed = 1;\n  log(\"</on>\")".into()), attrs: None },
-            Edit::SetHandler { page: o(), id: "e3".into(), event: "tap".into(), code: Some("Speed = 2;".into()), attrs: None },
-            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), code: None, attrs: None },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), filter: None, code: Some("  Speed = 1;\n  log(\"</on>\")".into()), attrs: None },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: "tap".into(), filter: None, code: Some("Speed = 2;".into()), attrs: None },
+            Edit::SetHandler { page: o(), id: "e3".into(), event: "release".into(), filter: None, code: None, attrs: None },
             Edit::RemoveElement { page: o(), id: "e1".into() },
             Edit::Batch {
                 edits: vec![
@@ -1406,7 +1456,7 @@ mod tests {
         pages.apply(Edit::SetLocal { page: menu.clone(), name: "open".into(), local: local("open") }).unwrap();
         pages.apply(add(menu.clone(), None, Tag::Div, props(&[("opacity", "open ? 1 : 0")]))).unwrap();
         let id = pages.get(&menu).unwrap().children[0].id.clone();
-        pages.apply(Edit::SetHandler { page: menu.clone(), id, event: "tap".into(), code: Some("open = !open;".into()), attrs: None }).unwrap();
+        pages.apply(Edit::SetHandler { page: menu.clone(), id, event: "tap".into(), filter: None, code: Some("open = !open;".into()), attrs: None }).unwrap();
 
         let undo = pages.apply(Edit::SetLocal { page: menu.clone(), name: "open".into(), local: local("shown") }).unwrap().undo;
         let e = &pages.get(&menu).unwrap().children[0];
@@ -1503,7 +1553,7 @@ mod tests {
         let id = pages.get("overview").unwrap().children[0].id.clone();
         let set = |code: Option<&str>, after: Option<Option<&str>>| {
             let attrs = after.map(|a| [("after".to_string(), a.map(Into::into))].into());
-            Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "hold".into(), code: code.map(Into::into), attrs }
+            Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "hold".into(), filter: None, code: code.map(Into::into), attrs }
         };
         let h = |pages: &Pages| pages.get("overview").unwrap().children[0].handlers.first().map(|h| (h.code.clone(), h.attrs.get("after").cloned()));
         pages.apply(set(Some("log(1);"), Some(Some("800")))).unwrap();
@@ -1519,11 +1569,48 @@ mod tests {
         assert_eq!(h(&pages), None);
         pages.apply(undo).unwrap();
         assert_eq!(h(&pages), Some(("log(1);".into(), Some("800".into()))));
-        let tap = |key: &str| Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "tap".into(), code: Some("log(1);".into()), attrs: Some([(key.to_string(), Some("1".to_string()))].into()) };
+        let tap = |key: &str| Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "tap".into(), filter: None, code: Some("log(1);".into()), attrs: Some([(key.to_string(), Some("1".to_string()))].into()) };
         assert_eq!(pages.apply(tap("after")).err().unwrap(), "a tap handler takes no after");
         pages.apply(tap("while")).unwrap();
-        let release = Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "release".into(), code: Some("log(1);".into()), attrs: Some([("while".to_string(), Some("1".to_string()))].into()) };
+        let release = Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "release".into(), filter: None, code: Some("log(1);".into()), attrs: Some([("while".to_string(), Some("1".to_string()))].into()) };
         assert_eq!(pages.apply(release).err().unwrap(), "a release handler takes no while");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_element_holds_one_handler_per_event_and_filter() {
+        let dir = scratch("filters");
+        let mut pages = Pages::open(&dir).unwrap();
+        pages.apply(add("overview".into(), None, Tag::Div, props(&[]))).unwrap();
+        let id = pages.get("overview").unwrap().children[0].id.clone();
+        let key = |k: &str| -> BTreeMap<String, String> { [("key".to_string(), k.to_string())].into() };
+        let set = |filter: Option<BTreeMap<String, String>>, code: &str, attrs: &[(&str, &str)]| Edit::SetHandler {
+            page: "overview".into(),
+            id: id.clone(),
+            event: "keydown".into(),
+            filter,
+            code: Some(code.into()),
+            attrs: Some(attrs.iter().map(|(k, v)| (k.to_string(), Some(v.to_string()))).collect()),
+        };
+        let keys = |pages: &Pages| pages.get("overview").unwrap().children[0].handlers.iter().map(|h| (h.filter.get("key").cloned().unwrap_or_default(), h.code.clone())).collect::<Vec<_>>();
+        // a filter is written as it is, Space too, and an expression trimmed
+        pages.apply(set(None, "log(1);", &[("key", " "), ("while", " armed ")])).unwrap();
+        pages.apply(set(None, "log(2);", &[])).unwrap();
+        assert_eq!(keys(&pages), vec![(" ".into(), "log(1);".into()), ("".into(), "log(2);".into())]);
+        assert_eq!(pages.get("overview").unwrap().children[0].handlers[0].attrs["while"], "armed");
+        assert_eq!(pages.apply(set(None, "log(3);", &[("key", " ")])).unwrap_err(), "a second keydown handler for key \" \"");
+        assert_eq!(pages.apply(set(None, "log(3);", &[("shift", "true")])).unwrap_err(), "a keydown handler takes no shift");
+        // a new filter keeps the handler's place, and its undo names it
+        let undo = pages.apply(set(Some(key(" ")), "log(1);", &[("key", "a")])).unwrap().undo;
+        assert_eq!(keys(&pages)[0], ("a".into(), "log(1);".into()));
+        pages.apply(undo).unwrap();
+        assert_eq!(keys(&pages)[0], (" ".into(), "log(1);".into()));
+        let again = Pages::open(&dir).unwrap();
+        assert_eq!(again.get("overview").unwrap().children[0].handlers, pages.get("overview").unwrap().children[0].handlers);
+        // the handlers an event takes, by what it brought
+        let hs = &pages.get("overview").unwrap().children[0].handlers;
+        let p = |k: &str| Value::map([("key", Value::Text(k.into())), ("code", Value::Text("Space".into()))]);
+        assert_eq!(hs.iter().map(|h| (h.takes("keydown", &p(" ")), h.takes("keydown", &p("b")), h.takes("keyup", &p(" ")))).collect::<Vec<_>>(), vec![(true, false, false), (true, true, false)]);
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1535,8 +1622,8 @@ mod tests {
         let event = |name: &str, to: Option<&str>| Edit::SetEvent { page: toggle.clone(), name: name.into(), to: to.map(Into::into) };
         pages.apply(event("change", Some("change"))).unwrap();
         let id = pages.apply(Edit::AddElement { page: "overview".into(), parent: None, index: None, element: instance("Toggle") }).unwrap().made.unwrap().1;
-        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "change".into(), code: Some("Running = p;".into()), attrs: None }).unwrap();
-        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "tap".into(), code: Some("log(1);".into()), attrs: None }).unwrap();
+        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "change".into(), filter: None, code: Some("Running = p;".into()), attrs: None }).unwrap();
+        pages.apply(Edit::SetHandler { page: "overview".into(), id: id.clone(), event: "tap".into(), filter: None, code: Some("log(1);".into()), attrs: None }).unwrap();
         let undo = pages.apply(event("change", Some("flip"))).unwrap().undo;
         let events: Vec<_> = pages.get("overview").unwrap().children[0].handlers.iter().map(|h| h.event.as_str()).collect();
         assert_eq!(events, ["tap", "flip"]);
@@ -1544,7 +1631,7 @@ mod tests {
         pages.apply(undo).unwrap();
         assert_eq!(pages.get(&toggle).unwrap().interface.as_ref().unwrap().events, ["change"]);
         assert_eq!(pages.apply(event("nope", None)).err().unwrap(), "Toggle sends no nope");
-        assert!(pages.apply(Edit::SetHandler { page: "overview".into(), id, event: "On Off".into(), code: None, attrs: None }).is_err());
+        assert!(pages.apply(Edit::SetHandler { page: "overview".into(), id, event: "On Off".into(), filter: None, code: None, attrs: None }).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
 

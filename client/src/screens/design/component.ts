@@ -89,7 +89,7 @@ export function makeComponent(page: Page, ids: string[]) {
     e.handlers = e.handlers.map((h) => {
       const event = freeName(joined(`${e.props.name ?? "part"} ${h.event}`, (w) => w.toLowerCase()), (n) => events.includes(n));
       events.push(event);
-      handlers.push({ event, code: h.code, attrs: {} });
+      handlers.push({ event, code: h.code, attrs: {}, filter: {} });
       return { ...h, code: `emit("${event}", p);` };
     });
   }

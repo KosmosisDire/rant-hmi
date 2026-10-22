@@ -108,7 +108,7 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
             let inner = "  ".repeat(depth + 1);
             for h in &e.handlers {
                 // settings in the order the event lists them
-                let settings: String = events::settings(&h.event).iter().filter_map(|s| Some(format!(" {}={}", s.name, quote(h.attrs.get(s.name)?)))).collect();
+                let settings: String = events::settings(&h.event).iter().filter_map(|s| Some(format!(" {}={}", s.name, quote(h.setting(s.name)?)))).collect();
                 block(out, &inner, &format!("<on event=\"{}\"{settings}>", h.event), &h.code, "</on>");
             }
             if let Some(text) = text {
@@ -404,10 +404,10 @@ impl Reader<'_> {
             self.expect("<on")?;
             let mut attrs: BTreeMap<String, String> = self.attrs()?.into_iter().collect();
             let event = attrs.remove("event").ok_or_else(|| self.error("<on> needs an event"))?;
-            attrs.retain(|_, v| !v.trim().is_empty());
             self.expect(">")?;
             let n = block_end(self.rest(), "</on>", self.opens_block()).ok_or_else(|| self.error("<on> never closes"))?;
-            let h = Handler { event, code: dedent(&self.rest()[..n]), attrs };
+            let mut h = Handler { code: dedent(&self.rest()[..n]), ..Handler::new(&event, BTreeMap::new()) };
+            attrs.iter().for_each(|(k, v)| h.set(k, Some(v)));
             check_handler(&out, &h).map_err(|e| self.error(&e))?;
             out.push(h);
             self.at += n;
@@ -631,8 +631,8 @@ mod tests {
 </page>
 ", "a").unwrap();
         let mut half = page.clone();
-        half.children[0].handlers.push(Handler { event: "tap".into(), code: "open(\"".into(), attrs: BTreeMap::new() });
-        half.children.push(Element { id: "e2".into(), tag: Tag::Span, component: None, props: [("text".to_string(), "\"Hi".to_string())].into(), handlers: vec![Handler { event: "tap".into(), code: "log(`".into(), attrs: BTreeMap::new() }], children: Vec::new() });
+        half.children[0].handlers.push(Handler { code: "open(\"".into(), ..Handler::new("tap", BTreeMap::new()) });
+        half.children.push(Element { id: "e2".into(), tag: Tag::Span, component: None, props: [("text".to_string(), "\"Hi".to_string())].into(), handlers: vec![Handler { code: "log(`".into(), ..Handler::new("tap", BTreeMap::new()) }], children: Vec::new() });
         let again = parse(&write(&half, &[]), "a").unwrap();
         assert_eq!(again.children[0].handlers[0].code, "open(\"");
         assert_eq!(again.children[1].handlers[0].code, "log(`");
@@ -753,13 +753,13 @@ mod tests {
         let mut out = Vec::new();
         for e in events::EVENTS.iter().filter(|e| (e.from == events::Sender::Entry) == (tag == Tag::Input)) {
             if rng.below(4) == 0 {
-                let mut attrs = BTreeMap::new();
+                let mut h = Handler { code: rng.pick(&CODE), ..Handler::new(e.name, BTreeMap::new()) };
                 for s in e.settings {
                     if rng.below(2) == 0 {
-                        attrs.insert(s.name.to_owned(), rng.pick(&VALUES));
+                        h.set(s.name, Some(&rng.pick(&VALUES)));
                     }
                 }
-                out.push(Handler { event: e.name.to_owned(), code: rng.pick(&CODE), attrs });
+                out.push(h);
             }
         }
         out

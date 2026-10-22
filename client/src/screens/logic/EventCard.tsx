@@ -1,24 +1,30 @@
 // A handler as one card: what starts it and what the event brings it, then its code.
 
-import { For, type JSX, Show } from "solid-js";
+import { For, type JSX, Match, Show, Switch } from "solid-js";
 import type { Place } from "../../lang/api.js";
-import type { Handler } from "../../protocol/Handler";
 import { complete, signature, type Suggestion } from "../../state/complete";
 import { type Brought, type Offered, pOf, settingsOf } from "../../state/events";
 import { DraftInput } from "../../ui/DraftInput";
-import { Component, X, Zap } from "../../ui/icons";
+import { Component, Keyboard, X, Zap } from "../../ui/icons";
 
-/** An event's mark: a component's own, or the pointer's and an entry's. */
+/** An event's mark: a component's own, the keyboard's, or the pointer's and an entry's. */
 export function EventIcon(p: { from?: Offered["from"]; size?: number }) {
   return (
-    <Show when={p.from === "component"} fallback={<Zap size={p.size ?? 13} />}>
-      <Component size={p.size ?? 13} />
-    </Show>
+    <Switch fallback={<Zap size={p.size ?? 13} />}>
+      <Match when={p.from === "component"}>
+        <Component size={p.size ?? 13} />
+      </Match>
+      <Match when={p.from === "keyboard"}>
+        <Keyboard size={p.size ?? 13} />
+      </Match>
+    </Switch>
   );
 }
 
 export function EventCard(p: {
   name: string;
+  /** What its filters take, beside its name. */
+  filter?: string;
   icon?: JSX.Element;
   code: string;
   onCode: (code: string) => void;
@@ -34,8 +40,8 @@ export function EventCard(p: {
   brings?: Brought;
   /** Each new number puts the caret in the code. */
   focus?: number;
-  /** The settings its event takes, as written, and the write of one, empty for its default. */
-  attrs?: Handler["attrs"];
+  /** Each setting its event takes, as written, and the write of one, empty for its default. */
+  setting?: (name: string) => string | undefined;
   onAttr?: (name: string, text: string) => void;
   /** The trigger's settings, between the head and the code. */
   children?: JSX.Element;
@@ -47,6 +53,9 @@ export function EventCard(p: {
       <div class="event-head">
         <span class="event-icon">{p.icon ?? <Zap size={13} />}</span>
         <span class="event-name">{p.name}</span>
+        <Show when={p.filter}>
+          <span class="event-filter">{p.filter}</span>
+        </Show>
         <span class="event-meta mono">
           <Show when={p.brings}>
             {(b) => (
@@ -82,7 +91,13 @@ export function EventCard(p: {
             {(s) => (
               <div class="field">
                 <label>{s.label}</label>
-                <DraftInput value={p.attrs?.[s.name] ?? ""} placeholder={s.default} onCommit={(text) => p.onAttr?.(s.name, text.trim())} complete={(text, c) => complete(text, c, "expression", p.names, p.also)} />
+                {/* a filter is taken as it is, Space too, an expression as code */}
+                <Show
+                  when={s.kind === "expression"}
+                  fallback={<DraftInput value={p.setting?.(s.name) ?? ""} placeholder={s.default} onCommit={(text) => p.onAttr?.(s.name, text)} />}
+                >
+                  <DraftInput value={p.setting?.(s.name) ?? ""} placeholder={s.default} onCommit={(text) => p.onAttr?.(s.name, text.trim())} complete={(text, c) => complete(text, c, "expression", p.names, p.also)} />
+                </Show>
               </div>
             )}
           </For>

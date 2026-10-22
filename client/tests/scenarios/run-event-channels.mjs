@@ -62,7 +62,8 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await screen.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await eventually(() => hmi.state.values.pads?.value === 2, "the second press to run");
   const sent = (await screen.evaluate(() => window.__sent)).map((bytes) => decoder.decode(Uint8Array.from(bytes)).type);
-  check(sent.filter((t) => t === "fire").length >= 4, `the channel sent ${sent}`);
+  // each press, and no release, since the pad has no handler for one
+  check(sent.filter((t) => t === "fire").length === 2, `the channel sent ${sent}`);
   const types = socket.map((m) => m.type);
   check(types.includes("on_channels") && !types.includes("fire"), `the socket sent ${[...new Set(types)]}`);
   await context.close();

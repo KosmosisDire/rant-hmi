@@ -68,17 +68,18 @@ export function openPage(id: string, t: Tab = tab()) {
   go({ tab: t, page: id });
 }
 
-/** An element Design is asked to show, and its handler to type in, until Design takes it. */
+/** An element Design is asked to show, and its handler to type in, by `handlerKey`, until
+ *  Design takes it. */
 export interface Wanted {
   page: string;
   element: string;
-  event?: string;
+  handler?: string;
 }
 
 const [wanted, setWanted] = createSignal<Wanted | null>(null);
 export { wanted };
 
-/** Opens an element's page in Design with it selected, and the caret in its `event` handler. */
+/** Opens an element's page in Design with it selected, and the caret in its handler. */
 export function openElement(w: Wanted) {
   setWanted(w);
   openPage(w.page, "design");

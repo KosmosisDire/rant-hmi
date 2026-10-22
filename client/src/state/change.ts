@@ -6,6 +6,7 @@ import { send } from "../net/connection";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { Edit } from "../protocol/Edit";
 import { find } from "./elements";
+import { handlerKey, setSetting } from "./events";
 import { setState, type State } from "./store";
 
 /** Sends `msg`, and makes its change here at once when the store can make it alone. */
@@ -73,19 +74,17 @@ function edited(s: State, e: Edit) {
     }
     case "set_handler": {
       const el = find(pg.children, e.id);
-      const at = el?.handlers.findIndex((h) => h.event === e.event) ?? -1;
+      const named = handlerKey(e.event, e.filter ?? {});
+      const at = el?.handlers.findIndex((h) => handlerKey(h.event, h.filter) === named) ?? -1;
       if (!el) return;
       if (e.code === null) {
         if (at >= 0) el.handlers.splice(at, 1);
         return;
       }
-      const attrs = { ...el.handlers[at]?.attrs };
-      for (const [k, v] of Object.entries(e.attrs ?? {})) {
-        if (v?.trim()) attrs[k] = v.trim();
-        else delete attrs[k];
-      }
-      if (at >= 0) Object.assign(el.handlers[at], { code: e.code, attrs });
-      else el.handlers.push({ event: e.event, code: e.code, attrs });
+      const h = at >= 0 ? el.handlers[at] : { event: e.event, code: "", attrs: {}, filter: { ...e.filter } };
+      h.code = e.code;
+      for (const [k, v] of Object.entries(e.attrs ?? {})) setSetting(h, k, v);
+      if (at < 0) el.handlers.push(h);
     }
   }
 }

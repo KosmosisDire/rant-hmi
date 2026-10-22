@@ -16,6 +16,6 @@ component: string | null,
  */
 props: { [key in string]?: string }, 
 /**
- * At most one per event, in the order events are listed.
+ * At most one per event and filter, in the order events are listed.
  */
 handlers: Array<Handler>, children: Array<Element>, };
