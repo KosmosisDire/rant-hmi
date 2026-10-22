@@ -100,6 +100,12 @@ export function property(src: string, all: Token[], n: number): boolean {
   return dot(all[n - 1]) && !(dot(all[n - 2]) && all[n - 2].end === all[n - 1].start);
 }
 
+/** The names code reads, each once: no property after a dot, nothing quoted or in a comment. */
+export function names(src: string): Set<string> {
+  const all = tokens(src);
+  return new Set(all.flatMap((t, n) => (t.kind === "word" && !property(src, all, n) ? [src.slice(t.start, t.end)] : [])));
+}
+
 /** Whether a literal's text is a #hex colour. */
 export const isHex = (text: string) => /^#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})$/i.test(text);
 

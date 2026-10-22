@@ -16,6 +16,8 @@ export interface Named {
   words: string;
   /** Why a page cannot write it, none when it can. */
   fixed?: string;
+  /** A variable each screen holds its own of. */
+  screen?: boolean;
 }
 
 const index = createRoot(() =>
@@ -26,7 +28,7 @@ const index = createRoot(() =>
       const fixed = i.kind !== "variable" ? say(NOT_VARIABLE, i.alias) : i.intent !== "write" ? say(READ_ONLY, i.alias) : undefined;
       put({ name: i.alias, of: "import", kind: i.kind, words: `${i.kind}, ${i.intent}`, fixed });
     }
-    for (const v of state.variables) put({ name: v.name, of: "variable", words: v.per === "screen" ? "variable, per screen" : "variable, shared" });
+    for (const v of state.variables) put({ name: v.name, of: "variable", words: v.per === "screen" ? "variable, per screen" : "variable, shared", screen: v.per === "screen" });
     for (const c of state.computed) {
       const fixed = c.set ? undefined : say(NO_SETTER, c.name);
       put({ name: c.name, of: "computed", words: c.unit ? `computed, ${c.unit}` : "computed", fixed });

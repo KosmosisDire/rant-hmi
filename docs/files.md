@@ -121,6 +121,10 @@ gamepads and to decode video itself.
   a little, unless what it pressed takes drag. Safari's pinch on a trackpad zooms too.
 - A drag or scroll handler that takes a while to run misses no move: what comes meanwhile adds
   up, and a zoom's factors multiply.
+- A page's handler that touches only the screen's own variables, reading what its event brings,
+  tokens and the math, runs on the screen itself, so a view it pans follows the finger with no
+  round trip. Any other runs on the system. Either way it does the same, and what a screen sets
+  of its own shows at once.
 - `keydown`, `keyup` and `keyrepeat` hear the keyboard while the element shows on the top page
   and no field is typed in. `key="a"` takes the key that types a, "A" with Shift and " " for
   Space, and `code="KeyA"` the key where a sits. With neither it takes any key. `p` holds

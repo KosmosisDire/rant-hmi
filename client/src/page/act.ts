@@ -1,13 +1,17 @@
-// Where an element's events go: on a page to the backend's handler, inside an instance to the
-// component's handler here, whose emits climb out to the instance.
+// Where an element's events go: on a page to the backend's handler, or here when it touches only
+// the screen's own, inside an instance to the component's handler here, whose emits climb out
+// to the instance. Where a handler runs is never the designer's choice, and it does the same.
 
+import { API, apiIn } from "../lang/api.js";
+import { names } from "../lang/lex";
 import { send } from "../net/connection";
 import type { Element } from "../protocol/Element";
 import type { Handler } from "../protocol/Handler";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { type At, pageScope, repeatScope, resolve, runHandler, type Scope } from "../state/bind";
-import { endOf, handlerKey, rests, settingsOf, takes } from "../state/events";
+import { endOf, eventInfo, handlerKey, rests, settingsOf, takes } from "../state/events";
+import { named } from "../state/names";
 
 export interface Act {
   /** `at` is the copy of a repeated element it happened to, and `only` the one handler a
@@ -48,16 +52,37 @@ function hearing(e: Element, event: string, p: unknown, scope: Scope, only?: Han
   return e.handlers.filter((h) => takes(h, event, p) && (!one || handlerKey(h.event, h.filter) === one) && (ends || heard(h, scope)));
 }
 
-/** A page's events, sent to the backend for the handlers there it hears. What begins or ends
- *  something the element has a handler to end goes too, as a press with a release, so the
- *  backend knows what a screen holds should the screen be lost. */
+/** What the API has that a page's handler and a component's alike may name. Any other name of
+ *  it is the system's alone, or no page handler's, so one naming it runs on the system. */
+const BOTH = new Set(apiIn("handler").filter((a) => apiIn("component").includes(a)).map((a) => a.name));
+
+/** Whether a page's handler runs here on the screen: every name in it the system holds is one
+ *  of the screen's own variables, a token or an enum, and it names no part of the API only the
+ *  system has. One reading a shared value runs there too, so it never reads a stale copy. */
+export function runsHere(h: Handler): boolean {
+  for (const name of names(h.code)) {
+    if (API.some((a) => a.name === name) && !BOTH.has(name)) return false;
+    const n = named(name);
+    if (n && !(n.screen || n.of === "token" || n.of === "enum")) return false;
+  }
+  return true;
+}
+
+/** A page's events, the handlers it hears run here when they touch only the screen's own, the
+ *  rest sent to the backend. A beginning whose end runs there goes too, as a press with a
+ *  release, so the backend knows what a screen holds should the screen be lost, and an end
+ *  whenever handled, so it lets go of what its beginning held. A stream that ends itself is
+ *  held per handler there, so it goes only to those. */
 export function pageAct(page: string): Act {
   return {
     fire: (e, event, payload, at, only) => {
-      const heard = hearing(e, event, payload, within(pageScope, at), only);
-      const end = endOf(event);
-      if (heard.length > 0 || (end && e.handlers.some((h) => takes(h, end, payload)))) {
-        send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as Value, index: at?.index, item: at?.item as Value, heard: heard.map((h) => h.filter) });
+      const scope = within(pageScope, at);
+      const heard = hearing(e, event, payload, scope, only);
+      for (const h of heard.filter(runsHere)) runHandler(h.code, scope, undefined, payload ?? null, `${e.props.name ?? e.id} ${event}`);
+      const there = heard.filter((h) => !runsHere(h));
+      const end = eventInfo(event)?.ends_with === event ? undefined : endOf(event);
+      if (there.length > 0 || (end && e.handlers.some((h) => takes(h, end, payload) && (end === event || !runsHere(h))))) {
+        send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as Value, index: at?.index, item: at?.item as Value, heard: there.map((h) => h.filter) });
       }
     },
     hears: (_, h, at) => heard(h, within(pageScope, at)),

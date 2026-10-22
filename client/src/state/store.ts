@@ -185,6 +185,7 @@ export function receive(msg: ServerMsg) {
         if ((batches.get(u.alias) ?? 0) > msg.seq) continue;
         batches.set(u.alias, msg.seq);
         setState("values", u.alias, reconcile({ value: u.value, known: u.known }));
+        if (promised[u.alias] && same(promised[u.alias]!.value, u.value)) settle(u.alias);
       }
       break;
     case "health":
@@ -212,6 +213,7 @@ export function receive(msg: ServerMsg) {
       break;
     case "refused":
       setState("refused", { text: msg.text, alias: msg.alias });
+      if (msg.alias !== null) settle(msg.alias);
       // one about a mesh import shows beside it, any other here
       if (msg.alias === null) notify(msg.text, "fault");
       break;
@@ -231,7 +233,40 @@ export function receive(msg: ServerMsg) {
 }
 
 /** A mesh import is shown as known only while the backend link is up too. */
+/** How long the screen shows what it wrote to its own variable should the system's value never
+ *  come to match, as when a rule changes it again. */
+const KEPT_MS = 1000;
+
+/** What the screen wrote to its own variables, shown over the system's value until that comes
+ *  to match, so what it draws never waits on the round trip nor steps back through older
+ *  values on their way back. */
+const [promised, setPromised] = createStore<Record<string, { value: Value } | undefined>>({});
+const lapses = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Shows `value` as `alias`'s at once, as the screen wrote it, until the system's matches. */
+export function promise(alias: string, value: Value) {
+  setPromised(alias, { value });
+  clearTimeout(lapses.get(alias));
+  lapses.set(alias, setTimeout(() => settle(alias), KEPT_MS));
+}
+
+function settle(alias: string) {
+  clearTimeout(lapses.get(alias));
+  lapses.delete(alias);
+  setPromised(alias, undefined);
+}
+
+/** Whether two values hold the same, the order of their fields aside. */
+function same(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object" || Array.isArray(a) !== Array.isArray(b)) return false;
+  const [x, y] = [a as Record<string, unknown>, b as Record<string, unknown>];
+  return Object.keys(x).length === Object.keys(y).length && Object.keys(x).every((k) => same(x[k], y[k]));
+}
+
 export function live(alias: string): Live {
+  const p = promised[alias];
+  if (p) return { value: p.value, known: state.link === "open" };
   const v = state.values[alias];
   return { value: v?.value ?? null, known: state.link === "open" && !!v?.known };
 }

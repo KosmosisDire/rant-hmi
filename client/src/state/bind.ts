@@ -14,7 +14,7 @@ import type { Value } from "../protocol/Value";
 import { held, pads } from "./input";
 import { mode } from "./mode";
 import { named, say } from "./names";
-import { live, notify, state } from "./store";
+import { live, notify, promise, state } from "./store";
 
 /** One unit of every length, in CSS pixels: placement, sizes, diagrams, spacing, radii, borders
  *  and type all count in units, a tenth being one pixel. */
@@ -219,6 +219,8 @@ export const systemScope: Scope = {
     if (!n || n.of === "token") throw new ReferenceError(systemScope.missing(name));
     if (n.fixed) throw new TypeError(n.fixed);
     if (n.of === "computed" && path !== "") throw new TypeError(say(WHOLE, name));
+    // the screen's own shows what it is set to at once, as the system will have it
+    if (n.screen) promise(name, withField(live(name).value, path, value) as Value);
     send({ type: "set", alias: name, path, value: value as Value });
   },
   writes: (name) => {
@@ -409,16 +411,17 @@ function make<T>(body: string, lines?: number): T | string {
 
 const handlers = new Map<string, ((scope: object, ...math: unknown[]) => Promise<void>) | string>();
 
-/** Runs a component's handler here, in its instance's scope: `p`, `emit` and the inputs, a two
- *  way one written back. Any other name is refused, so nothing leaks onto the page. */
-export function runHandler(code: string, scope: Scope, emit: (name: string, payload?: unknown) => void, p: unknown, label: string) {
+/** Runs a handler here on the screen: a component's in its instance's scope, with `emit` and
+ *  the inputs, a two way one written back, or a page's that touches only the screen's own.
+ *  Any other name is refused, so nothing leaks onto the page. */
+export function runHandler(code: string, scope: Scope, emit: ((name: string, payload?: unknown) => void) | undefined, p: unknown, label: string) {
   let fn = handlers.get(code);
   if (fn === undefined) {
     fn = make<(scope: object, ...math: unknown[]) => Promise<void>>(`return (async () => { with (scope) {\n${code}\n} })();`, 1);
     handlers.set(code, fn);
   }
   if (typeof fn === "string") return notify(`${label}: ${fn}`, "fault");
-  const own: Record<string, unknown> = { p, emit };
+  const own: Record<string, unknown> = emit ? { p, emit } : { p };
   // the run reads back what it wrote, as the backend's runs do, before the binding catches up
   const written = new Map<string, unknown>();
   const write = (key: string, value: unknown) => {
