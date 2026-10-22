@@ -19,6 +19,19 @@ pub enum Sender {
     Gamepad,
 }
 
+impl Sender {
+    /// What the editor and the docs call it, over its events.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Sender::Pointer => "Pointer",
+            Sender::Entry => "Entry",
+            Sender::Wheel => "Wheel and pinch",
+            Sender::Keyboard => "Keyboard",
+            Sender::Gamepad => "Gamepad",
+        }
+    }
+}
+
 /// How a number a stream brings gathers while one waits to be heard: summed, as a move, or
 /// multiplied, as a zoom.
 #[derive(Serialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
@@ -314,9 +327,11 @@ mod tests {
     #[test]
     fn the_client_reads_the_same_events() {
         let mut ts = String::from("// Written by the backend's tests from server/src/events.rs, where they change.\n\n");
-        ts += "import type { EventInfo } from \"./EventInfo\";\nimport type { SettingInfo } from \"./SettingInfo\";\n\n";
+        ts += "import type { EventInfo } from \"./EventInfo\";\nimport type { Sender } from \"./Sender\";\nimport type { SettingInfo } from \"./SettingInfo\";\n\n";
         ts += &format!("export const EVENTS: readonly EventInfo[] = {};\n\n", serde_json::to_string_pretty(EVENTS).unwrap());
-        ts += &format!("export const SENT: readonly SettingInfo[] = {};\n", serde_json::to_string_pretty(SENT).unwrap());
+        ts += &format!("export const SENT: readonly SettingInfo[] = {};\n\n", serde_json::to_string_pretty(SENT).unwrap());
+        let senders: serde_json::Map<String, serde_json::Value> = EVENTS.iter().map(|e| (serde_json::to_value(e.from).unwrap().as_str().unwrap().to_owned(), e.from.label().into())).collect();
+        ts += &format!("export const SENDERS: Readonly<Record<Sender, string>> = {};\n", serde_json::to_string_pretty(&senders).unwrap());
         let path = std::path::Path::new(&std::env::var("TS_RS_EXPORT_DIR").unwrap()).join("events.ts");
         if std::fs::read_to_string(&path).ok() != Some(ts.clone()) {
             std::fs::write(&path, ts).unwrap();

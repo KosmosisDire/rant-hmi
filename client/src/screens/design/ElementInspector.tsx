@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, Show, useContext } from "solid-js";
 import { cssFault, OWN, SHAPES } from "../../page/PageView";
 import type { Element } from "../../protocol/Element";
+import { SENDERS } from "../../protocol/events";
 import type { Handler } from "../../protocol/Handler";
 import type { Input } from "../../protocol/Input";
 import type { Local } from "../../protocol/Local";
@@ -660,8 +661,6 @@ function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" |
 }
 
 /** What heads each sender's events in the event menu. */
-const SENDERS: Record<Exclude<Offered["from"], "component">, string> = { pointer: "Pointer", entry: "Entry", wheel: "Wheel and pinch", keyboard: "Keyboard", gamepad: "Gamepad" };
-
 /** The element's handlers, each a card: the event on top, the code below. Every change names
  *  one handler by its event and filter, so two quick changes never undo each other. */
 function Events(p: { page: string; element: Element; focus: (key: string) => number | undefined }) {

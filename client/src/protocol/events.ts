@@ -1,6 +1,7 @@
 // Written by the backend's tests from server/src/events.rs, where they change.
 
 import type { EventInfo } from "./EventInfo";
+import type { Sender } from "./Sender";
 import type { SettingInfo } from "./SettingInfo";
 
 export const EVENTS: readonly EventInfo[] = [
@@ -910,3 +911,11 @@ export const SENT: readonly SettingInfo[] = [
     "options": []
   }
 ];
+
+export const SENDERS: Readonly<Record<Sender, string>> = {
+  "pointer": "Pointer",
+  "wheel": "Wheel and pinch",
+  "entry": "Entry",
+  "keyboard": "Keyboard",
+  "gamepad": "Gamepad"
+};
