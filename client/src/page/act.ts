@@ -31,9 +31,9 @@ function heard(h: Handler, scope: Scope): boolean {
 /** How often a repeat may run at the most, in ms, as the HMI's own timers. */
 export const QUICKEST = 50;
 
-/** A handler's time setting in ms, an expression read in `scope`, its default where that is
- *  no number. */
-export function timeOf(h: Handler, setting: string, scope: Scope): number {
+/** A handler's number setting, as a time in ms, an expression read in `scope`, its default
+ *  where that is no number. */
+export function numberOf(h: Handler, setting: string, scope: Scope): number {
   const fallback = Number(settingsOf(h.event).find((s) => s.name === setting)?.default);
   const r = resolve(h.attrs[setting] || String(fallback), scope);
   const n = r.ok ? Number(r.value) : NaN;

@@ -15,7 +15,8 @@ import { createSize } from "../ui/size";
 import { ImagePlay, VideoOff } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { follow } from "../ui/press";
-import { componentAct, type Act, QUICKEST, timeOf } from "./act";
+import { componentAct, type Act, numberOf, QUICKEST } from "./act";
+import { useGamepads } from "./gamepads";
 import { useKeys } from "./keys";
 import { svgOf } from "./markup";
 import { EVENTS } from "../protocol/events";
@@ -258,7 +259,7 @@ function Placed(p: ElementProps) {
   );
 }
 
-/** What pressing an element does, its keys aside: it shows pressed at once and sends press,
+/** What pressing an element does, its keys and pads aside: it shows pressed at once and sends press,
  *  drag, hold, release and tap. The release is heard on the window, so letting go anywhere ends a press,
  *  and a tap needs the release over the element. Where a press lands is read as it goes down
  *  the page, before any handler changes the page as it comes back up: Firefox before 125
@@ -270,7 +271,7 @@ function usePress(p: ElementProps & { at?: At }) {
   // a hold's or a repeat's time, an expression read where the element sits
   const msOf = (event: string, setting: string) => {
     const h = p.element.handlers.find((x) => x.event === event);
-    return h && timeOf(h, setting, p.scope);
+    return h && numberOf(h, setting, p.scope);
   };
   let self: globalThis.Element | undefined;
   let landed: { e: PointerEvent; at: Pointer } | undefined;
@@ -343,6 +344,7 @@ function usePress(p: ElementProps & { at?: At }) {
     el.addEventListener("pointerdown", read as EventListener, true);
   };
   useKeys(p, () => self);
+  useGamepads(p, () => self);
   return { pressed, live, down, ref };
 }
 

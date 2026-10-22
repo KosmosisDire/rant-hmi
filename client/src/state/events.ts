@@ -30,14 +30,16 @@ export const takes = (h: Handler, event: string, p: unknown) =>
 /** The end of what `event` begins, or `event` itself when it ends something, as a press's release. */
 export const endOf = (event: string) => eventInfo(event)?.ends_with ?? (EVENTS.some((x) => x.ends_with === event) ? event : undefined);
 
-/** Whether `event` bringing `p` is a stream that ends itself coming to rest, as axes do: each
- *  number outside its filters 0, in lists too. */
-export function rests(event: string, p: unknown): boolean {
-  if (eventInfo(event)?.ends_with !== event) return false;
-  const still = (v: unknown): boolean => (Array.isArray(v) ? v.every(still) : typeof v !== "number" || v === 0);
+/** What `event` brings at rest: `p` with each number outside its filters 0, in lists too. */
+export function rest(event: string, p: object): Record<string, unknown> {
+  const zeroed = (v: unknown): unknown => (Array.isArray(v) ? v.map(zeroed) : typeof v === "number" ? 0 : v);
   const filters = new Set(settingsOf(event).filter((s) => s.kind === "filter").map((s) => s.name));
-  return Object.entries((p ?? {}) as Record<string, unknown>).every(([k, v]) => filters.has(k) || still(v));
+  return Object.fromEntries(Object.entries(p).map(([k, v]) => [k, filters.has(k) ? v : zeroed(v)]));
 }
+
+/** Whether `event` bringing `p` is a stream that ends itself coming to rest, as axes do. */
+export const rests = (event: string, p: unknown) =>
+  eventInfo(event)?.ends_with === event && typeof p === "object" && p !== null && JSON.stringify(rest(event, p)) === JSON.stringify(p);
 
 /** A handler's setting as written, a filter's or an expression's. */
 export const settingOf = (h: Handler, name: string) => h.filter[name] ?? h.attrs[name];

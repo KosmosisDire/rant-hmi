@@ -114,13 +114,21 @@ gamepads and to decode video itself.
   and no field is typed in. `key="a"` takes the key that types a, "A" with Shift and " " for
   Space, and `code="KeyA"` the key where a sits. With neither it takes any key. `p` holds
   `key`, `code`, `shift`, `ctrl` and `alt`, and a keyrepeat runs `every="ms"`, 100.
-- An element holds one handler per event and key. A key a handler names does nothing else on
-  the screen, so Space never presses a button.
-- Any handler but an end, a release or a keyup, takes `while="condition"`, and hears its event
-  only while the condition is true. An end always runs.
-- A key held ends with its keyup however it ends: let go, the window losing focus, the page
-  closed or covered, its keydown's while turning false, or the screen lost. Then `p.lost` is
-  true, as on a release a lost screen leaves.
+- `buttondown` and `buttonup` hear a gamepad's buttons the same way. `button="south"` takes
+  one by where it sits, whatever its maker prints on it: south, east, west, north, lb, rb, lt,
+  rt, back, start, ls, rs, up, down, left, right, home. `pad="1"` takes only the second pad. `p`
+  holds `button` and `pad`.
+- `axes` hears the sticks and triggers once a frame while they move, then once at rest with
+  zeros. `p` holds `lx`, `ly`, `rx`, `ry` from -1 to 1, each y up, `lt` and `rt` from 0 to 1,
+  every axis in `axes`, and `pad`. Each counts from 0 past `deadband="0.1"`.
+- An element holds one handler per event and filter. A key a handler names does nothing else
+  on the screen, so Space never presses a button.
+- Any handler but an end, a release, a keyup or a buttonup, takes `while="condition"`, and
+  hears its event only while the condition is true. An end always runs, axes at rest too.
+- A key or button held ends with its keyup or buttonup, and moving sticks come to rest, however
+  they end: let go, the window losing focus, the pad gone, the page closed or covered, the while
+  that heard them turning false, or the screen lost. Then `p.lost` is true, as on a release a
+  lost screen leaves.
 - `repeat="6"` or `repeat="Jobs"` draws an element once per item, reading `index` and `item`.
 - `<svg>` holds shapes, `<markup>` SVG made by code, `<media src="Camera"/>` a camera or a
   picture, and `<input>` a field to type in.

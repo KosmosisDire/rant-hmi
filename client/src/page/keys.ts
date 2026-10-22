@@ -8,7 +8,7 @@ import type { Element } from "../protocol/Element";
 import type { Handler } from "../protocol/Handler";
 import type { At, Scope } from "../state/bind";
 import { eventInfo, takes } from "../state/events";
-import { type Act, QUICKEST, timeOf } from "./act";
+import { type Act, numberOf, QUICKEST } from "./act";
 import { holds, type Listener, Listening } from "./listening";
 
 /** What a key's event brings. */
@@ -84,7 +84,7 @@ export function useKeys(p: { element: Element; act?: Act; at?: At; scope: Scope 
         // a repeat runs at once, then on each beat until the key ends
         for (const h of hs.filter((x) => x.event === "keyrepeat")) {
           fire("keyrepeat", k, h);
-          const beat = setInterval(() => fire("keyrepeat", k, h), Math.max(timeOf(h, "every", p.scope), QUICKEST));
+          const beat = setInterval(() => fire("keyrepeat", k, h), Math.max(numberOf(h, "every", p.scope), QUICKEST));
           hold.stops.push(() => clearInterval(beat));
         }
         return hs.some((h) => Object.keys(h.filter).length > 0);
