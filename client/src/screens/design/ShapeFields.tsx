@@ -1,7 +1,6 @@
 // What the inspector shows of a diagram's shapes: each kind's geometry, the paint they share,
 // and adding a shape sized to the diagram it goes in.
 
-import { createSignal, For, Show } from "solid-js";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
@@ -9,10 +8,7 @@ import { edit } from "../../state/change";
 import { number, resolve } from "../../state/bind";
 import { find } from "../../state/elements";
 import { viewBox } from "../../page/PageView";
-import { Plus } from "../../ui/icons";
-import { Popover } from "../../ui/Popover";
 import type { FieldProps } from "./Field";
-import { TagIcon } from "./TagIcon";
 import { parentOf } from "./tree";
 
 export type Spec = [string, string, Partial<FieldProps>];
@@ -104,37 +100,4 @@ export function addShape(page: Page, at: Element, tag: Tag) {
   if (!diagram) return;
   const element: Element = { id: "", tag, component: null, props: start(tag, units(diagram)), handlers: [], children: [] };
   edit({ kind: "add_element", page: page.id, parent: holder, index: null, element });
-}
-
-/** The inspector's row that adds a shape into the diagram or group picked, or beside the
- *  shape picked. */
-export function AddShape(p: { page: Page; element: Element }) {
-  const [open, setOpen] = createSignal(false);
-  let ghost!: HTMLButtonElement;
-  const add = (tag: Tag) => {
-    setOpen(false);
-    addShape(p.page, p.element, tag);
-  };
-  return (
-    <>
-      <div class="section">Shapes</div>
-      <button ref={ghost} class="ghost" classList={{ on: open() }} onClick={() => setOpen(!open())}>
-        <Plus size={13} />
-        Add shape
-        <span class="ghost-trail">{SHAPE_KINDS.slice(0, 5).join(", ")}</span>
-      </button>
-      <Show when={open()}>
-        <Popover anchor={ghost} onClose={() => setOpen(false)} class="choice-list">
-          <For each={SHAPE_KINDS}>
-            {(tag) => (
-              <button class="menu-item" onClick={() => add(tag)}>
-                <TagIcon tag={tag} size={13} />
-                <span>{tag === "g" ? "group" : tag}</span>
-              </button>
-            )}
-          </For>
-        </Popover>
-      </Show>
-    </>
-  );
 }

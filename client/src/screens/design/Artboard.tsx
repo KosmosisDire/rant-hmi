@@ -2,8 +2,8 @@
 // drag on empty space or with two fingers pans, elements move and resize on the grid (Alt
 // slips it), and a drag writes when it ends.
 
-import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from "solid-js";
-import { type Box, fitIn, leaves, PageView, pageGround, SHAPES, stackedIn, stacks, union } from "../../page/PageView";
+import { createEffect, createMemo, createSignal, For, type JSX, on, onCleanup, onMount, Show, untrack } from "solid-js";
+import { type Box, fitIn, homeOf, leaves, PageView, pageGround, SHAPES, stackedIn, stacks, union } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
@@ -585,6 +585,7 @@ export function Artboard(p: {
   // a shape's attributes place it, and the page lays some elements out itself, so their rings
   // are measured from the drawn page, each frame while one is picked, as live values may move it
   const shape = (id: string) => SHAPES.has(find(p.page.children, id)?.tag ?? "");
+  const part = (id: string) => homeOf(find(p.page.children, id)?.tag ?? "") === "scene";
   const measuredOne = (id: string) => shape(id) || laidOut(p.page, id);
   // what a drag may move: numbers it can write, and a place no frame's flow sets
   const movable = (e: Element, keys: (keyof Box)[]) => literal(e, keys) && !flowed(e, roomOf(p.page, e.id));
@@ -602,7 +603,7 @@ export function Artboard(p: {
     const keys = [...(/[ew]/.test(h) ? (["x", "w"] as const) : []), ...(/[ns]/.test(h) ? (["y", "h"] as const) : [])];
     return group
       .flatMap(leaves)
-      .every((l) => !SHAPES.has(l.tag) && !flowed(l, roomOf(p.page, l.id)) && keys.every((k) => literal(l, [k]) || ((k === "w" || k === "h") && !!sizeWord(l.props[k]))));
+      .every((l) => homeOf(l.tag) === "page" && !flowed(l, roomOf(p.page, l.id)) && keys.every((k) => literal(l, [k]) || ((k === "w" || k === "h") && !!sizeWord(l.props[k]))));
   };
   // what holds the picked elements, outlined faintly so their bounds show
   const parents = () => [...new Set(p.selected.map((id) => parentOf(p.page, id)))].filter((id): id is string => !!id && !p.selected.includes(id));
@@ -718,15 +719,19 @@ export function Artboard(p: {
   const several = createMemo(() => (p.selected.length > 1 ? tops(p.page, p.selected) : []));
   const around = () => {
     const all = several();
-    if (all.length === 0 || all.some((e) => SHAPES.has(e.tag))) return undefined;
+    if (all.length === 0 || all.some((e) => homeOf(e.tag) !== "page")) return undefined;
     if (all.some((e) => laidOut(p.page, e.id))) measured();
     const b = onScreen(union(all.flatMap((e) => absolute(p.page, e.id, overrides) ?? [])));
     const handles = preview() ? [] : HANDLES.filter((g) => !short(g, b.width, b.height) && scalable(all, g));
     return { style: { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` }, handles };
   };
 
-  /** Where an element's ring goes on screen. */
-  const ring = (id: string) => {
+  /** Where an element's ring goes on screen. A 3D part has no box of its own, so it rings its scene. */
+  const ring = (id: string): JSX.CSSProperties | undefined => {
+    if (part(id)) {
+      const scene = parentOf(p.page, id);
+      return scene ? ring(scene) : undefined;
+    }
     if (shape(id)) {
       const m = measured()[id];
       const r = host.getBoundingClientRect();
@@ -783,7 +788,7 @@ export function Artboard(p: {
           <Show when={ring(id)}>
             {(r) => (
               <div class="ring" style={r()}>
-                <Show when={!preview() && p.selected.length === 1 && (!shape(id) || scales(id))}>
+                <Show when={!preview() && p.selected.length === 1 && !part(id) && (!shape(id) || scales(id))}>
                   <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} style={{ cursor: cursorOf(h, turn()?.id === id ? turn()!.angle + turn()!.room : 0) }} />}</For>
                 </Show>
               </div>

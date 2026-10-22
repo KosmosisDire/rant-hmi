@@ -220,10 +220,22 @@ pub enum Tag {
     /// Elements kept together, picked and moved as one. It has no box, origin or place of its
     /// own, so what it holds sits where it would without it.
     Group,
+    /// A 3D view: placed like a frame, holding parts in metres with z up, seen by a camera that
+    /// orbits a point.
+    Scene,
+    /// A 3D place parts count their poses from, as a frame of a TF tree. It draws nothing.
+    Anchor,
+    Axes,
+    #[serde(rename = "box")]
+    Box,
+    Sphere,
+    Cylinder,
+    Points,
+    Grid,
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-pub(crate) const WORDS: [(Tag, &str); 17] = [
+pub(crate) const WORDS: [(Tag, &str); 25] = [
     (Tag::Div, "div"),
     (Tag::Group, "group"),
     (Tag::Span, "span"),
@@ -241,6 +253,14 @@ pub(crate) const WORDS: [(Tag, &str); 17] = [
     (Tag::Polygon, "polygon"),
     (Tag::SvgText, "text"),
     (Tag::G, "g"),
+    (Tag::Scene, "scene"),
+    (Tag::Anchor, "anchor"),
+    (Tag::Axes, "axes"),
+    (Tag::Box, "box"),
+    (Tag::Sphere, "sphere"),
+    (Tag::Cylinder, "cylinder"),
+    (Tag::Points, "points"),
+    (Tag::Grid, "grid"),
 ];
 
 impl Tag {
@@ -248,20 +268,64 @@ impl Tag {
         WORDS.iter().find(|(_, w)| *w == word).map(|(t, _)| *t)
     }
 
-    /// A shape draws inside a diagram, and its every property is an SVG attribute.
-    pub fn is_shape(self) -> bool {
-        matches!(self, Tag::Path | Tag::Circle | Tag::Ellipse | Tag::Rect | Tag::Line | Tag::Polyline | Tag::Polygon | Tag::SvgText | Tag::G)
+    /// Where this goes: a shape in a diagram, a part in a scene, the rest on a page.
+    pub fn home(self) -> Home {
+        match self {
+            Tag::Path | Tag::Circle | Tag::Ellipse | Tag::Rect | Tag::Line | Tag::Polyline | Tag::Polygon | Tag::SvgText | Tag::G => Home::Diagram,
+            Tag::Anchor | Tag::Axes | Tag::Box | Tag::Sphere | Tag::Cylinder | Tag::Points | Tag::Grid => Home::Scene,
+            _ => Home::Page,
+        }
     }
 
-    /// Whether this may hold a `child`: a frame or a group holds elements, a diagram or its
-    /// group shapes.
-    fn holds(self, child: Tag) -> Result<(), String> {
+    /// What this holds, if anything: a frame or a group elements, a diagram or its group
+    /// shapes, a scene or an anchor parts.
+    pub(crate) fn inside(self) -> Option<Home> {
         match self {
-            Tag::Div | Tag::Group if child.is_shape() => Err("a shape goes in a diagram".into()),
-            Tag::Div | Tag::Group => Ok(()),
-            Tag::Svg | Tag::G if child.is_shape() => Ok(()),
-            Tag::Svg | Tag::G => Err("a diagram holds only shapes".into()),
-            _ => Err("only a frame, a group or a diagram holds other elements".into()),
+            Tag::Div | Tag::Group => Some(Home::Page),
+            Tag::Svg | Tag::G => Some(Home::Diagram),
+            Tag::Scene | Tag::Anchor => Some(Home::Scene),
+            _ => None,
+        }
+    }
+
+    /// Whether this may hold a `child`.
+    fn holds(self, child: Tag) -> Result<(), String> {
+        match self.inside() {
+            Some(home) if home == child.home() => Ok(()),
+            // a page's holder says where the child goes, any other what it takes
+            Some(Home::Page) => Err(child.home().misplaced().into()),
+            Some(Home::Diagram) => Err("a diagram holds only shapes".into()),
+            Some(Home::Scene) => Err("a scene holds only 3D parts".into()),
+            None => Err("only a frame, a group, a diagram or a scene holds other elements".into()),
+        }
+    }
+}
+
+/// Where an element goes: among a page's elements, as a shape in a diagram, or as a 3D part in
+/// a scene. A shape's or a part's every property is an attribute of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Home {
+    Page,
+    Diagram,
+    Scene,
+}
+
+impl Home {
+    /// The tag that keeps elements here together, which grouping makes.
+    fn group(self) -> Tag {
+        match self {
+            Home::Page => Tag::Group,
+            Home::Diagram => Tag::G,
+            Home::Scene => Tag::Anchor,
+        }
+    }
+
+    /// Where an element of this home goes, when it is put somewhere else.
+    fn misplaced(self) -> &'static str {
+        match self {
+            Home::Page => "an element goes on a page or in a frame",
+            Home::Diagram => "a shape goes in a diagram",
+            Home::Scene => "a 3D part goes in a scene",
         }
     }
 }
@@ -764,7 +828,7 @@ impl Pages {
                 let p = self.page_mut(&page)?;
                 let (holder, mut order) = sharing(&p.children, &page, &ids, "group")?;
                 order.sort();
-                let tag = if find(&p.children, &order[0].1).expect("located above").tag.is_shape() { Tag::G } else { Tag::Group };
+                let tag = find(&p.children, &order[0].1).expect("located above").tag.home().group();
                 let element = Element { id: String::new(), tag, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: Vec::new() };
                 let edits = into_new(&page, &p.children, holder, &order, element);
                 return self.change(edits, touched, made);
@@ -772,8 +836,8 @@ impl Pages {
             Edit::Wrap { page, ids, props } => {
                 let p = self.page_mut(&page)?;
                 let (holder, order) = sharing(&p.children, &page, &ids, "wrap")?;
-                if order.iter().any(|(_, id)| find(&p.children, id).expect("located above").tag.is_shape()) {
-                    return Err("a frame holds elements, and shapes stay in their diagram".into());
+                if let Some(other) = order.iter().map(|(_, id)| find(&p.children, id).expect("located above").tag.home()).find(|h| *h != Home::Page) {
+                    return Err(format!("a frame holds elements, and {}", other.misplaced()));
                 }
                 let element = Element { id: String::new(), tag: Tag::Div, component: None, props, handlers: Vec::new(), children: Vec::new() };
                 let edits = into_new(&page, &p.children, holder, &order, element);
@@ -783,7 +847,7 @@ impl Pages {
                 let p = self.page_mut(&page)?;
                 let (holder, at) = locate(&p.children, &id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
                 let group = find(&p.children, &id).expect("located above");
-                if !matches!(group.tag, Tag::Group | Tag::G) {
+                if group.tag != group.tag.home().group() {
                     return Err(format!("{id} is not a group"));
                 }
                 if let Some(key) = group.props.keys().find(|k| *k != "name") {
@@ -1126,7 +1190,7 @@ fn check_tree(e: &Element, ids: &mut HashSet<String>) -> Result<(), String> {
 /// The list an element with `tag` goes into: the page's own, a frame's or a diagram's.
 fn holder<'a>(page: &'a mut Page, parent: &Option<String>, tag: Tag) -> Result<&'a mut Vec<Element>, String> {
     let Some(parent) = parent else {
-        return if tag.is_shape() { Err("a shape goes in a diagram".into()) } else { Ok(&mut page.children) };
+        return if tag.home() == Home::Page { Ok(&mut page.children) } else { Err(tag.home().misplaced().into()) };
     };
     let e = find_mut(&mut page.children, parent).ok_or_else(|| format!("{parent} is not on {}", page.id))?;
     e.tag.holds(tag)?;
@@ -1247,7 +1311,7 @@ mod tests {
         let o = || "overview".to_string();
         let span = pages.apply(add(o(), None, Tag::Span, BTreeMap::new())).unwrap().made.unwrap().1;
         let into_span = add(o(), Some(span.clone()), Tag::Div, BTreeMap::new());
-        assert_eq!(pages.apply(into_span).err().unwrap(), "only a frame, a group or a diagram holds other elements");
+        assert_eq!(pages.apply(into_span).err().unwrap(), "only a frame, a group, a diagram or a scene holds other elements");
         let bad = add(o(), None, Tag::Div, props(&[("Background", "red")]));
         assert_eq!(pages.apply(bad).err().unwrap(), "\"Background\" is not a property name");
         assert!(pages.apply(Edit::RemoveElement { page: o(), id: "e9".into() }).is_err());
@@ -1381,7 +1445,7 @@ mod tests {
         let kids: Vec<_> = pages.list[0].children[1].children.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(kids, ["e4", "e5"]);
         let bad = Element { id: String::new(), tag: Tag::Span, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: vec![leaf("", Tag::Span)] };
-        assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame, a group or a diagram holds other elements");
+        assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame, a group, a diagram or a scene holds other elements");
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1502,6 +1566,30 @@ mod tests {
     }
 
     #[test]
+    fn parts_go_only_in_scenes_and_group_into_anchors() {
+        let dir = scratch("parts");
+        let mut pages = Pages::open(&dir).unwrap();
+        let o = || "overview".to_string();
+        let scene = pages.apply(add(o(), None, Tag::Scene, props(&[]))).unwrap().made.unwrap().1;
+        let frame = pages.apply(add(o(), None, Tag::Div, props(&[]))).unwrap().made.unwrap().1;
+        let diagram = pages.apply(add(o(), None, Tag::Svg, props(&[]))).unwrap().made.unwrap().1;
+        assert_eq!(pages.apply(add(o(), None, Tag::Box, props(&[]))).unwrap_err(), "a 3D part goes in a scene");
+        assert_eq!(pages.apply(add(o(), Some(frame), Tag::Sphere, props(&[]))).unwrap_err(), "a 3D part goes in a scene");
+        assert_eq!(pages.apply(add(o(), Some(diagram), Tag::Axes, props(&[]))).unwrap_err(), "a diagram holds only shapes");
+        assert_eq!(pages.apply(add(o(), Some(scene.clone()), Tag::Circle, props(&[]))).unwrap_err(), "a scene holds only 3D parts");
+        assert_eq!(pages.apply(add(o(), Some(scene.clone()), Tag::Div, props(&[]))).unwrap_err(), "a scene holds only 3D parts");
+        let parts: Vec<String> = [Tag::Box, Tag::Grid].iter().map(|t| pages.apply(add(o(), Some(scene.clone()), *t, props(&[]))).unwrap().made.unwrap().1).collect();
+        let grouped = pages.apply(Edit::Group { page: o(), ids: parts.clone() }).unwrap();
+        let anchor = grouped.made.clone().unwrap().1;
+        let held = find(&pages.get("overview").unwrap().children, &anchor).unwrap();
+        assert_eq!((held.tag, held.children.len()), (Tag::Anchor, 2));
+        pages.apply(Edit::Ungroup { page: o(), id: anchor }).unwrap();
+        assert_eq!(find(&pages.get("overview").unwrap().children, &scene).unwrap().children.iter().map(|e| e.id.clone()).collect::<Vec<_>>(), parts);
+        assert_eq!(pages.apply(Edit::Wrap { page: o(), ids: vec![parts[0].clone()], props: BTreeMap::new() }).unwrap_err(), "a frame holds elements, and a 3D part goes in a scene");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn grouping_keeps_order_and_place_and_undoes_as_one() {
         let dir = scratch("group");
         let mut pages = Pages::open(&dir).unwrap();
@@ -1551,7 +1639,7 @@ mod tests {
         assert_eq!(tops(&pages), before);
         let diagram = pages.apply(add(o(), None, Tag::Svg, props(&[]))).unwrap().made.unwrap().1;
         let line = pages.apply(add(o(), Some(diagram), Tag::Line, props(&[]))).unwrap().made.unwrap().1;
-        assert_eq!(pages.apply(Edit::Wrap { page: o(), ids: vec![line], props: BTreeMap::new() }).unwrap_err(), "a frame holds elements, and shapes stay in their diagram");
+        assert_eq!(pages.apply(Edit::Wrap { page: o(), ids: vec![line], props: BTreeMap::new() }).unwrap_err(), "a frame holds elements, and a shape goes in a diagram");
         fs::remove_dir_all(&dir).unwrap();
     }
 

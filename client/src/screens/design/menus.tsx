@@ -1,20 +1,21 @@
 // The right click menus of the Design screen: on an element, in the canvas or the layers, and
 // on the canvas around them. Each row does what a key or a button does too.
 
-import { SHAPES } from "../../page/PageView";
+import { homeOf } from "../../page/PageView";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { state } from "../../state/store";
 import { find } from "../../state/elements";
 import { type MenuEntry, type MenuItem, openMenu } from "../../ui/Menu";
-import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Download, Group, Plus, Rows3, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash, Ungroup } from "../../ui/icons";
+import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Download, Group, Plus, Rotate3d, Rows3, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash, Ungroup } from "../../ui/icons";
 import { savePicture, showsPicture } from "../../ui/Picture";
 import { addElement, KINDS, STARTS } from "./add";
 import { duplicate, pasteHere } from "./clipboard";
 import { makeComponent } from "./component";
 import type { Pick } from "./DesignScreen";
+import { addPart, PART_KINDS } from "./SceneFields";
 import { addShape, SHAPE_KINDS } from "./ShapeFields";
-import { TagIcon } from "./TagIcon";
+import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { absolute, group, isGroup, parentOf, remove, restack, tops, ungroup, wrap } from "./tree";
 
 /** A spot on the page, as the canvas was clicked. */
@@ -48,7 +49,7 @@ const copySelection = () => document.execCommand("copy");
 
 /** The menu on an element. It acts on the selection, which it becomes first unless the
  *  element is already in it. A frame adds inside itself, at `spot` when the canvas was
- *  clicked, and a diagram or a shape adds shapes. */
+ *  clicked, a diagram or a shape adds shapes, and a scene or a part adds parts. */
 export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick: Pick, id: string, spot?: Spot) {
   const ids = selected.includes(id) ? selected : [id];
   if (!selected.includes(id)) pick(id);
@@ -61,8 +62,10 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
     const box = absolute(page, id);
     const at = spot && box ? { x: spot.x - box.x, y: spot.y - box.y } : undefined;
     entries.push(...adds(page, (tag, props, component) => addElement(page, id, tag, props, component ?? null, at), " inside"), "-");
-  } else if (element && (element.tag === "svg" || SHAPES.has(element.tag)) && one === id) {
-    entries.push({ label: "Add shape", icon: <Shapes size={13} />, items: SHAPE_KINDS.map((tag) => ({ label: tag, icon: <TagIcon tag={tag} size={13} />, run: () => addShape(page, element, tag) })) }, "-");
+  } else if (element && (element.tag === "svg" || homeOf(element.tag) === "diagram") && one === id) {
+    entries.push({ label: "Add shape", icon: <Shapes size={13} />, items: SHAPE_KINDS.map((tag) => ({ label: TAG_WORDS[tag], icon: <TagIcon tag={tag} size={13} />, run: () => addShape(page, element, tag) })) }, "-");
+  } else if (element && (element.tag === "scene" || homeOf(element.tag) === "scene") && one === id) {
+    entries.push({ label: "Add part", icon: <Rotate3d size={13} />, items: PART_KINDS.map((tag) => ({ label: TAG_WORDS[tag], icon: <TagIcon tag={tag} size={13} />, run: () => addPart(page, element, tag) })) }, "-");
   }
   entries.push(
     {
@@ -83,7 +86,7 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
       label: "Lay out in a new frame",
       keys: "Shift A",
       icon: <Rows3 size={13} />,
-      disabled: picked.some((x) => SHAPES.has(x.tag) || parentOf(page, x.id) !== parentOf(page, picked[0].id)),
+      disabled: picked.some((x) => homeOf(x.tag) !== "page" || parentOf(page, x.id) !== parentOf(page, picked[0].id)),
       run: () => wrap(page, ids),
     },
   );

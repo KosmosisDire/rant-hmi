@@ -58,12 +58,14 @@ A component's interface comes first in its file:
 | `svg` | a diagram of shapes, drawn in its own units |
 | `markup` | SVG that code gives as text |
 | `canvas` | what its code draws, in 2D or with WebGL |
+| `scene` | a 3D view of parts |
 | `group` | parts picked and moved as one, with no box of its own |
 | a component's name, as `<Gauge>` | an instance of that component |
 | `path` `circle` `ellipse` `rect` `line` `polyline` `polygon` `text` `g` | shapes, in a diagram only |
+| `anchor` `axes` `box` `sphere` `cylinder` `points` `grid` | 3D parts, in a scene only |
 
-A frame, a group, a diagram and a `g` hold parts. Any element holds handlers, each an
-`<on event="...">` ([Events](#events)).
+A frame, a group, a diagram, a `g`, a scene and an `anchor` hold parts. Any element but a 3D
+part holds handlers, each an `<on event="...">` ([Events](#events)).
 
 ## Properties
 
@@ -124,6 +126,49 @@ give.
 - It draws again when its box or anything the code read changes, at most once a frame, and
   every frame while it reads `time.now`.
 - It only reads: setting a name there throws.
+
+### Scenes
+
+```html
+<scene id="e1" name="Cell" x="2" y="2" w="40" h="30" yaw="-2" style="background: $panel">
+  <grid id="e2" name="Floor"/>
+  <anchor id="e3" name="Arm" pose="Arm">
+    <box id="e4" name="Link" pose="{ position: vec(0.5, 0, 0) }" size="vec(1, 0.1, 0.1)"/>
+  </anchor>
+</scene>
+```
+
+A scene draws its parts with three.js, in metres with z up, lit from above and from the
+camera. Its CSS `background` shows behind them. Each part's every property is an attribute,
+each an expression.
+
+| Property | Of | Takes |
+| --- | --- | --- |
+| `target` | `scene` | the point its camera looks at and orbits, `vec(0, 0, 0)` when left out |
+| `yaw` | `scene` | how far round from x the camera is, in radians, `-2` when left out |
+| `pitch` | `scene` | how far up the camera is, in radians, `0.5` when left out |
+| `distance` | `scene` | how far the camera is from `target`, `5` when left out |
+| `pose` | every part | where it sits and how it turns from what holds it: a Pose, as `Arm` for a Pose import, or `{ position: vec(0, 0, 1) }`, each half optional |
+| `size` | `box` | its edges, a vector, `vec(1, 1, 1)` |
+| `size` | `axes` | how long its arrows are, `1` |
+| `size` | `points` | how wide each dot is, `0.05` |
+| `size` | `grid` | how wide it is, `10` |
+| `radius` | `sphere`, `cylinder` | `0.5` |
+| `length` | `cylinder` | along its z, `1` |
+| `points` | `points` | a list of vectors, as a Double3 list from the mesh |
+| `joined` | `points` | `true` to draw one line through them instead of dots |
+| `step` | `grid` | the gap between its lines, `1` |
+| `color` | every part but `anchor` and `axes` | any colour a page takes, `$accent`, or `$border` for a grid |
+| `opacity` | `box`, `sphere`, `cylinder` | `1` |
+
+- An `anchor` draws nothing. It places what it holds by its pose, as a frame of a TF tree.
+- `axes` shows x, y and z in red, green and blue. A `grid` lies on its xy plane, centred on
+  its pose.
+- A box, a sphere and a cylinder sit centred on their pose.
+- A value that cannot be read gives way to the default, and the editor says why on the
+  scene. A part whose values are not known yet draws nothing.
+- The camera moves only by its properties, so a person turns it through handlers on the
+  scene: `turn = turn - p.dx * 4` on drag, with `yaw="turn"` and `turn` a screen variable.
 
 ### Shapes
 

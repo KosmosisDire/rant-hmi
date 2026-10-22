@@ -147,7 +147,8 @@ gamepads and to decode video itself.
   lost screen leaves.
 - `repeat="6"` or `repeat="Jobs"` draws an element once per item, reading `index` and `item`.
 - `<svg>` holds shapes, `<markup>` SVG made by code, `<canvas>` what its code draws,
-  `<media src="Camera"/>` a camera or a picture, and `<input>` a field to type in.
+  `<scene>` 3D parts such as `<box>` and `<anchor>`, `<media src="Camera"/>` a camera or a
+  picture, and `<input>` a field to type in.
 - `shows="over"` opens a page over another, as a dialog: `await open(Pages.Confirm)`.
 
 ## Components

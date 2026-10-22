@@ -1,13 +1,13 @@
 // A page drawn as HTML: each element an absolutely placed div, its properties resolved
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
-import { createEffect, createMemo, createReaction, createRoot, createSignal, For, Index, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createReaction, createRoot, createSignal, For, lazy, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, repeatScope, resolve, type Resolved, runDraw, type Scope, sizeWord, tokenValue, UNIT } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originAt, originCss, pageScope, percentOf, placement, resolve, runDraw, type Scope, sizeWord, tokenValue, UNIT } from "../state/bind";
 import { fields, short } from "../state/format";
 import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
 import { component, entity, live, notify, state } from "../state/store";
@@ -16,10 +16,13 @@ import { ImagePlay, VideoOff } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { follow, taken } from "../ui/press";
 import { componentAct, type Act, numberOf, QUICKEST } from "./act";
+import { CLEAN, type Drawn, oncePerFrame, pixelsOf } from "./drawing";
 import { useGamepads } from "./gamepads";
 import { useKeys } from "./keys";
 import { svgOf } from "./markup";
+import { isPart } from "./parts";
 import { moved, partOf, type Pointer, pointer, type Spot } from "./pointer";
+import { COPIES, Repeated } from "./repeat";
 import { useScroll } from "./scroll";
 import { EVENTS } from "../protocol/events";
 
@@ -67,7 +70,7 @@ export interface Holder {
 const CORNER: Holder = { ox: "0px", oy: "0px" };
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup", "context", "draw"]);
+export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup", "context", "draw", "target", "yaw", "pitch", "distance"]);
 
 /** The contexts a canvas draws with, "2d" when it names none. */
 export const CONTEXTS = ["2d", "webgl2"] as const;
@@ -75,6 +78,14 @@ type Context = (typeof CONTEXTS)[number];
 
 /** What a diagram holds: SVG shapes, whose every property but the name is an attribute. */
 export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
+
+/** Where an element goes, as the backend has it: a shape in a diagram, a 3D part in a scene,
+ *  the rest on a page. */
+export type Home = "page" | "diagram" | "scene";
+export const homeOf = (tag: string): Home => (SHAPES.has(tag) ? "diagram" : isPart(tag) ? "scene" : "page");
+
+/** three.js loads only once a screen shows a scene. */
+const SceneView = lazy(() => import("./scene"));
 
 /** Attributes SVG spells with a capital, which the file writes in small letters. */
 const CASED: Record<string, string> = { pathlength: "pathLength", textlength: "textLength", gradienttransform: "gradientTransform" };
@@ -88,9 +99,6 @@ export function viewBox(v: unknown): [number, number, number, number] | null {
   const n = String(v ?? "").trim().split(/[\s,]+/).map(Number);
   return n.length === 4 && n.every(Number.isFinite) && n[2] > 0 && n[3] > 0 ? (n as [number, number, number, number]) : null;
 }
-
-/** At most this many copies of a repeat, so a mistaken one never floods the page. */
-const COPIES = 500;
 
 /** The events a press on the element itself starts, which make it look pressable. */
 const PRESSES = EVENTS.filter((e) => e.from === "pointer" && e.name !== "outside").map((e) => e.name);
@@ -232,36 +240,12 @@ interface ElementProps {
   inside?: boolean;
 }
 
-/** An element, or a copy of it per item when it repeats: a list, or a number of times. In
- *  the editor a repeat with nothing to show still draws one copy, so there is one to pick. */
+/** An element, or a copy of it per item when it repeats. */
 function Placed(p: ElementProps) {
-  const copies = createMemo(() => {
-    const r = p.element.props.repeat;
-    if (!r?.trim()) return null;
-    const got = resolve(r, p.scope);
-    const v = got.ok ? got.value : undefined;
-    const items = typeof v === "number" ? Array.from({ length: Math.max(0, Math.min(COPIES, Math.floor(v))) }, (_, i) => i) : Array.isArray(v) ? v.slice(0, COPIES) : [];
-    return items.length === 0 && p.design ? [undefined] : items;
-  });
   return (
-    <Show when={copies()} fallback={<ElementView {...p} />}>
-      {(items) => (
-        <Index each={items()}>
-          {(item, index) => (
-            <ElementView
-              {...p}
-              scope={repeatScope(p.scope, index, item)}
-              at={{
-                index,
-                get item() {
-                  return item();
-                },
-              }}
-            />
-          )}
-        </Index>
-      )}
-    </Show>
+    <Repeated element={p.element} scope={p.scope} design={p.design}>
+      {(scope, at) => <ElementView {...p} scope={scope()} at={at} />}
+    </Repeated>
   );
 }
 
@@ -460,9 +444,9 @@ function ElementView(p: ElementProps & { at?: At }) {
     const first = p.element.tag === "div" && take("stack") === "first" ? p.element.children.length * COPIES : undefined;
     return { style, unknown, faults, text, value, diagram, markup, canvas, media, holder: { ox, oy, flow, first } as Holder };
   });
-  // what its drawing last gave, known only once it draws
-  const [drawn, setDrawn] = createSignal<{ unknown?: string; error?: string }>({});
-  const faults = () => (drawn().error ? [...look().faults, `draw: ${drawn().error}`] : look().faults);
+  // what its own drawing found last, known only once it draws
+  const [drawn, setDrawn] = createSignal<Drawn>(CLEAN);
+  const faults = () => [...look().faults, ...drawn().faults];
   const press = usePress(p);
   const inner = (c: Element, i: () => number) => <Placed element={c} scope={p.scope} room={look().holder} order={i()} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
   return (
@@ -470,7 +454,7 @@ function ElementView(p: ElementProps & { at?: At }) {
       data-id={p.inside ? undefined : p.element.id}
       data-name={p.element.props.name}
       class="el"
-      classList={{ text: p.element.tag === "span", unknown: look().unknown || !!drawn().unknown, faulty: p.design && faults().length > 0, live: press.live(), scrolls: press.scrolls(), pressed: press.pressed() }}
+      classList={{ text: p.element.tag === "span", unknown: look().unknown || drawn().unknown, faulty: p.design && faults().length > 0, live: press.live(), scrolls: press.scrolls(), pressed: press.pressed() }}
       style={{ ...look().style, "z-index": raised() === p.element ? String((p.room.first ?? 0) + 1) : look().style["z-index"] }}
       title={p.design && faults().length > 0 ? faults().join("\n") : undefined}
       ref={(el) => {
@@ -505,7 +489,10 @@ function ElementView(p: ElementProps & { at?: At }) {
         <Match when={look().markup}>{(m) => <>{m()}</>}</Match>
         {/* a canvas keeps the context it was made with, so another context makes a new one */}
         <Match when={look().canvas} keyed>
-          {(context) => <CanvasView context={context} draw={p.element.props.draw} scope={p.scope} report={(r) => setDrawn(r.ok ? {} : r)} />}
+          {(context) => <CanvasView context={context} draw={p.element.props.draw} scope={p.scope} report={setDrawn} />}
+        </Match>
+        <Match when={p.element.tag === "scene"}>
+          <SceneView element={p.element} scope={p.scope} design={p.design} report={setDrawn} />
         </Match>
         <Match when={look().media}>{(m) => <MediaView alias={m().alias} src={m().src} fit={m().fit} />}</Match>
         <Match when={p.element.tag === "use"}>
@@ -577,38 +564,29 @@ function contextOf(v: unknown, faults: string[]): Context | null {
 /** A canvas its draw code draws on, at the pixels it covers on the screen. It draws again when
  *  its box changes or anything the code read does: in the frame the change came in, and at most
  *  once a frame. */
-function CanvasView(p: { context: Context; draw: string | undefined; scope: Scope; report: (r: Resolved) => void }) {
+function CanvasView(p: { context: Context; draw: string | undefined; scope: Scope; report: (d: Drawn) => void }) {
   let canvas!: HTMLCanvasElement;
   onMount(() => {
     const ctx = p.context === "2d" ? canvas.getContext("2d") : canvas.getContext("webgl2");
-    if (!ctx) return p.report({ ok: false, error: `this screen has no ${p.context} context` });
+    if (!ctx) return p.report({ faults: [`context: this screen has no ${p.context} context`], unknown: false });
     // what the code made once, until the context is lost
     let keep: Record<string, unknown> = {};
-    let [queued, gone] = [false, false];
-    let last: CSSNumberish | null = null;
+    let gone = false;
     const draw = () => {
-      queued = false;
       if (gone) return;
-      last = document.timeline.currentTime;
-      // its box as laid out, and how many screen pixels each of its own takes through any zoom
-      const [w, h] = [canvas.clientWidth, canvas.clientHeight];
-      const k = (w > 0 ? canvas.getBoundingClientRect().width / w : 1) * devicePixelRatio;
-      const [pw, ph] = [Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k))];
+      const { w, h, k, pw, ph } = pixelsOf(canvas);
       if (canvas.width !== pw || canvas.height !== ph) Object.assign(canvas, { width: pw, height: ph });
       if (ctx instanceof CanvasRenderingContext2D) {
         ctx.reset();
         ctx.scale(k * UNIT, k * UNIT);
       } else ctx.viewport(0, 0, pw, ph);
       const own = { [p.context === "2d" ? "ctx" : "gl"]: ctx, width: w / UNIT, height: h / UNIT, keep };
-      track(() => p.report(runDraw(p.draw ?? "", p.scope, own)));
+      track(() => {
+        const r = runDraw(p.draw ?? "", p.scope, own);
+        p.report(r.ok ? CLEAN : { faults: r.unknown ? [] : [`draw: ${r.error}`], unknown: !!r.unknown });
+      });
     };
-    const schedule = () => {
-      if (queued) return;
-      queued = true;
-      // the frame's clock reads the same all through a frame, so it tells a second draw in one
-      if (document.timeline.currentTime === last) requestAnimationFrame(draw);
-      else queueMicrotask(draw);
-    };
+    const schedule = oncePerFrame(draw);
     const track = createReaction(schedule);
     onResize(canvas, schedule);
     canvas.addEventListener("webglcontextlost", (e) => e.preventDefault());

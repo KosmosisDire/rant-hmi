@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Handler, Input, Interface, Local, Page, Shows, Sizing, Tag, check_handler};
+use super::{Element, Handler, Home, Input, Interface, Local, Page, Shows, Sizing, Tag, check_handler};
 use crate::events::{self, rank};
 
 /// The properties written as attributes, in this order. The rest go in `style`.
@@ -22,6 +22,8 @@ const MARKUP: &str = "markup";
 const DRAW: &str = "draw";
 /// A canvas's context, "2d" or "webgl2".
 const CONTEXT: &str = "context";
+/// The point a scene's camera orbits, how far round and up it is, and how far away.
+const CAMERA: [&str; 4] = ["target", "yaw", "pitch", "distance"];
 
 /// What a tag keeps as attributes of its own, besides `ATTRS`.
 pub(crate) fn own_attrs(tag: Tag) -> &'static [&'static str] {
@@ -30,6 +32,7 @@ pub(crate) fn own_attrs(tag: Tag) -> &'static [&'static str] {
         Tag::Svg => &[VIEWBOX, FIT],
         Tag::Media => &[SRC, FIT],
         Tag::Canvas => &[CONTEXT],
+        Tag::Scene => &CAMERA,
         _ => &[],
     }
 }
@@ -75,8 +78,8 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
     out.push_str(&"  ".repeat(depth));
     out.push_str(&format!("<{tag} id={}", quote(&e.id)));
     let body = matches!(e.tag, Tag::Span | Tag::SvgText);
-    if e.tag.is_shape() {
-        // a shape's every property is an SVG attribute, its name first
+    if e.tag.home() != Home::Page {
+        // a shape's or a part's every property is an attribute, its name first
         let attrs = e.props.iter().filter(|(k, _)| !(body && k.as_str() == TEXT));
         for (k, v) in attrs.clone().filter(|(k, _)| k.as_str() == "name").chain(attrs.filter(|(k, _)| k.as_str() != "name")) {
             out.push_str(&format!(" {k}={}", quote(v)));
@@ -480,7 +483,7 @@ impl Reader<'_> {
         for (k, v) in self.attrs()? {
             match k.as_str() {
                 "id" => id = Some(v),
-                k if (tag == Tag::Use && k != "style") || tag.is_shape() => {
+                k if (tag == Tag::Use && k != "style") || tag.home() != Home::Page => {
                     props.insert(k.to_owned(), v);
                 }
                 k if own_attrs(tag).contains(&k) => {
@@ -509,7 +512,7 @@ impl Reader<'_> {
             let block = self.opens_block();
             handlers = self.handlers()?;
             match tag {
-                Tag::Div | Tag::Group | Tag::Svg | Tag::G => children = self.children(&word)?,
+                _ if tag.inside().is_some() => children = self.children(&word)?,
                 Tag::Span | Tag::SvgText => self.body(&word, TEXT, block, &mut props)?,
                 _ => match code_of(tag) {
                     Some(key) => self.body(&word, key, block, &mut props)?,
@@ -628,6 +631,27 @@ mod tests {
         assert_eq!(e.props["draw"], "gl.clearColor(0, 0, Speed, 1);\nif (Speed > 1) {\n  gl.clear(gl.COLOR_BUFFER_BIT); // never \"</canvas>\"\n}");
         assert_eq!(e.handlers[0].code, "log(p.x);");
         assert!(!page.children[1].props.contains_key("draw"));
+        assert_eq!(write(&page, &[]), text);
+    }
+
+    #[test]
+    fn a_scene_keeps_its_camera_and_its_parts_every_property_as_attributes() {
+        let text = r#"<page name="A" size="1408x792">
+  <scene id="e1" name="Cell" x="4" w="40" target="vec(0, 0, 1)" yaw="-2" distance="5" style="background: $panel">
+    <grid id="e2" color="$border" size="10"/>
+    <anchor id="e3" name="Arm" pose="Arm.pose" repeat="Arms">
+      <box id="e4" name="Link" color="$accent" size="vec(1, 0.2, 0.2)"/>
+      <axes id="e5"/>
+    </anchor>
+  </scene>
+</page>
+"#;
+        let page = parse(text, "a").unwrap();
+        let scene = &page.children[0];
+        assert_eq!((scene.tag, scene.props["target"].as_str(), scene.props["background"].as_str()), (Tag::Scene, "vec(0, 0, 1)", "$panel"));
+        let arm = &scene.children[1];
+        assert_eq!((arm.tag, arm.props["pose"].as_str(), arm.props["repeat"].as_str()), (Tag::Anchor, "Arm.pose", "Arms"));
+        assert_eq!((arm.children[0].tag, arm.children[0].props["size"].as_str()), (Tag::Box, "vec(1, 0.2, 0.2)"));
         assert_eq!(write(&page, &[]), text);
     }
 
@@ -813,17 +837,22 @@ mod tests {
         out
     }
 
-    fn random_shapes(rng: &mut Rng, ids: &mut usize, depth: usize) -> Vec<Element> {
+    /// Shapes for a diagram or parts for a scene, a group of them holding more.
+    fn random_held(rng: &mut Rng, ids: &mut usize, depth: usize, home: Home) -> Vec<Element> {
+        let (tags, keys): ([Tag; 5], &[&str]) = match home {
+            Home::Diagram => ([Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G], &["name", "cx", "r", "fill", "stroke", "d", "transform"]),
+            _ => ([Tag::Box, Tag::Sphere, Tag::Points, Tag::Grid, Tag::Anchor], &["name", "repeat", "pose", "size", "color", "points"]),
+        };
         let mut out = Vec::new();
         for _ in 0..rng.below(3) {
             *ids += 1;
-            let tag = [Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G][rng.below(5)];
-            let mut props = some_props(rng, &["name", "cx", "r", "fill", "stroke", "d", "transform"]);
+            let tag = tags[rng.below(5)];
+            let mut props = some_props(rng, keys);
             if tag == Tag::SvgText {
                 props.insert(TEXT.to_owned(), rng.pick(&VALUES));
             }
             let id = format!("e{ids}");
-            let children = if tag == Tag::G && depth < 3 { random_shapes(rng, ids, depth + 1) } else { Vec::new() };
+            let children = if tag.inside().is_some() && depth < 3 { random_held(rng, ids, depth + 1, home) } else { Vec::new() };
             out.push(Element { id, tag, component: None, props, handlers: some_handlers(rng, tag), children });
         }
         out
@@ -832,7 +861,7 @@ mod tests {
     fn random_element(rng: &mut Rng, ids: &mut usize, depth: usize) -> Element {
         *ids += 1;
         let id = format!("e{ids}");
-        let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Canvas, Tag::Use, Tag::Group][rng.below(9)];
+        let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Canvas, Tag::Scene, Tag::Use, Tag::Group][rng.below(10)];
         let keys: Vec<&str> = ATTRS.iter().chain(STYLE.iter()).copied().collect();
         let mut props = some_props(rng, &keys);
         let mut children = Vec::new();
@@ -855,7 +884,11 @@ mod tests {
             }
             Tag::Svg => {
                 props.insert(VIEWBOX.to_owned(), "\"0 0 100 100\"".to_owned());
-                children = random_shapes(rng, ids, depth);
+                children = random_held(rng, ids, depth, Home::Diagram);
+            }
+            Tag::Scene => {
+                props.insert(CAMERA[rng.below(4)].to_owned(), rng.pick(&VALUES));
+                children = random_held(rng, ids, depth, Home::Scene);
             }
             Tag::Markup | Tag::Canvas if rng.below(4) > 0 => {
                 props.insert(code_of(tag).unwrap().to_owned(), rng.pick(&CODE));
