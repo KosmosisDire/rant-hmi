@@ -86,9 +86,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.menu(d.el(beacon), "Delete");
   await eventually(() => !top().some((e) => e.id === beacon), "the beacon to go");
 
-  // the keys walk it: from Add inside, three down is Copy
+  // the keys walk it from Add inside down to Copy, past Show an import while it has nothing to show
   await d.el(box).click({ button: "right" });
-  for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
+  const focused = () => page.evaluate(() => document.activeElement?.textContent ?? "");
+  check((await focused()).startsWith("Add inside"), `the menu opened on ${await focused()}`);
+  for (let i = 0; i < 6 && !(await focused()).startsWith("Copy"); i++) await page.keyboard.press("ArrowDown");
+  check((await focused()).startsWith("Copy"), `the keys walked to ${await focused()}, never to Copy`);
   await page.keyboard.press("Enter");
   // a right click on the canvas, away from every element, pastes there
   const spot = { x: canvas.x + canvas.width / 2, y: canvas.y + canvas.height * 0.6 };
