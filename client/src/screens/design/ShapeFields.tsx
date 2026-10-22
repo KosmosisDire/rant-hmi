@@ -8,6 +8,7 @@ import type { Tag } from "../../protocol/Tag";
 import { edit } from "../../state/change";
 import { number, resolve } from "../../state/bind";
 import { find } from "../../state/elements";
+import { viewBox } from "../../page/PageView";
 import { Plus } from "../../ui/icons";
 import { Popover } from "../../ui/Popover";
 import type { FieldProps } from "./Field";
@@ -61,9 +62,7 @@ export const SHAPE_KINDS: Tag[] = ["circle", "rect", "line", "path", "polyline",
 /** The diagram's own units: its view box, else its box in the page's units. */
 function units(diagram: Element): [number, number, number, number] {
   const r = resolve(diagram.props.viewbox);
-  const box = r.ok ? String(r.value ?? "").trim().split(/[\s,]+/).map(Number) : [];
-  if (box.length === 4 && box.every(Number.isFinite)) return box as [number, number, number, number];
-  return [0, 0, number(diagram.props.w) || 100, number(diagram.props.h) || 100];
+  return (r.ok && viewBox(r.value)) || [0, 0, number(diagram.props.w) || 100, number(diagram.props.h) || 100];
 }
 
 /** What a new shape starts as: in the middle of its diagram, sized to it, visible, and in the

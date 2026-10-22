@@ -75,6 +75,12 @@ const CASED: Record<string, string> = { pathlength: "pathLength", textlength: "t
  *  picture's fit does, so an overlay lines up with its picture. */
 const FITS: Record<string, string> = { meet: "xMidYMid meet", slice: "xMidYMid slice", stretch: "none" };
 
+/** A diagram's view box as x, y, width and height, or null when what it gives is not one. */
+export function viewBox(v: unknown): [number, number, number, number] | null {
+  const n = String(v ?? "").trim().split(/[\s,]+/).map(Number);
+  return n.length === 4 && n.every(Number.isFinite) && n[2] > 0 && n[3] > 0 ? (n as [number, number, number, number]) : null;
+}
+
 /** At most this many copies of a repeat, so a mistaken one never floods the page. */
 const COPIES = 500;
 
@@ -359,6 +365,14 @@ function ElementView(p: ElementProps & { at?: At }) {
       else faults.push(`${key}: ${r.error}`);
       return undefined;
     };
+    // none written draws in the page's units, and one not worked out yet draws nothing, null
+    const diagramBox = () => {
+      if (p.element.props.viewbox === undefined) return undefined;
+      const given = take("viewbox");
+      const box = viewBox(given);
+      if (given !== undefined && box === null) faults.push(`viewbox: ${words(given)} is not x, y, width and height`);
+      return box && box.join(" ");
+    };
     // a frame that lays out what it holds, its gap "auto" spreading them over its length
     const flow = p.element.tag === "div" ? flowOf(take("layout")) : undefined;
     const spread = !!flow && take("gap") === "auto";
@@ -429,7 +443,7 @@ function ElementView(p: ElementProps & { at?: At }) {
     if (flow) Object.assign(style, layoutCss(flow, take("wrap") === true, take("align"), spread));
     const text = p.element.tag === "span" ? words(take("text")) : "";
     const value = p.element.tag === "input" ? take("value") : undefined;
-    const diagram = p.element.tag === "svg" ? { box: take("viewbox"), fit: take("fit") } : undefined;
+    const diagram = p.element.tag === "svg" ? { box: diagramBox(), fit: take("fit") } : undefined;
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
     const media = p.element.tag === "media" ? { alias: playable(p.element.props.src, () => take("src")), src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
     const first = p.element.tag === "div" && take("stack") === "first" ? p.element.children.length * COPIES : undefined;
@@ -458,16 +472,18 @@ function ElementView(p: ElementProps & { at?: At }) {
         <Match when={look().diagram}>
           {(d) => (
             // without a view box it draws in the page's units, from its box's corner inside any padding
-            <svg class="diagram" viewBox={d().box ? String(d().box) : undefined} {...({ preserveAspectRatio: FITS[String(d().fit)] ?? FITS.meet } as Record<string, string>)}>
-              <Show
-                when={d().box}
-                fallback={
-                  <g class="units" transform={`scale(${UNIT})`}>
-                    <For each={p.element.children}>{inner}</For>
-                  </g>
-                }
-              >
-                <For each={p.element.children}>{inner}</For>
+            <svg class="diagram" viewBox={d().box ?? undefined} {...({ preserveAspectRatio: FITS[String(d().fit)] ?? FITS.meet } as Record<string, string>)}>
+              <Show when={d().box !== null}>
+                <Show
+                  when={d().box}
+                  fallback={
+                    <g class="units" transform={`scale(${UNIT})`}>
+                      <For each={p.element.children}>{inner}</For>
+                    </g>
+                  }
+                >
+                  <For each={p.element.children}>{inner}</For>
+                </Show>
               </Show>
             </svg>
           )}
