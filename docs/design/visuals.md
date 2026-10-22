@@ -288,3 +288,41 @@ Choices worth a second look:
 - Turning every glTF file z up, which suits files made to the standard.
 - An angle in `joints` turns about the node's own z. Another axis takes the pose form.
 - A model that failed to load stays failed until the screen reloads.
+
+### Slice 3, the views
+
+- **Eight new standard components**, each made in the editor by a build scenario and kept with
+  `--library`: Lamp, Swatch and Pose in `build-readings`, Bar, Bars and Joints in
+  `build-bars`, Position in `build-position` and Table in `build-table`. The reference lists
+  every standard component and what it shows.
+- **Shared by nesting.** Bars holds a Bar per number with its label and reading, Joints holds
+  Bars of a JointState's angles in degrees, Pose a Readout per number in two rows, and Swatch a
+  Readout for its words. A view is built in the same scenario as the views it holds, since
+  each worker of the suite keeps a project of its own. So Readout moved from `build-dials` to
+  `build-readings`.
+- **Shared through the math library.** Pose reads roll, pitch and yaw with `q.euler()`, and
+  Joints and Pose turn radians with `degrees`. Nothing new was needed.
+- **Readout reads text too**, so it shows an enum's option or a time through `Date`, and
+  leaves out the space when it has no unit.
+- **Bar fills from zero toward its value**, so a signed value such as a joint angle grows
+  either way from the middle, and a plain level from the left.
+- **Position is y up**, as a physical frame is, through a view box turned over. It takes one
+  2D point or pose, or a list, and draws a heading only for a pose.
+- **Table** takes its columns from the first row unless `columns` names them. A cell repeats
+  inside a repeated row, reading the row in its `repeat` before its own `item` takes the name.
+  Rows scroll inside the table.
+- **A list of one view**, as Lamps, is that view placed with `repeat`, with no component of
+  its own.
+- Test components that were named Lamp, Bar or Meter took other names, so a suite worker
+  never makes two of one name.
+- The user's demo gets the new components once this branch is merged, as the library rule
+  says, and not before.
+
+Choices worth a second look:
+
+- Joints shows every joint in degrees, so a sliding joint's metres read as degrees too.
+- Position reads out a single value, and only a count for a list.
+- Bar lies flat only. Bars lays its bars out as rows, which also fits long labels.
+- A unit follows its number after a space, so an angle reads `90.0 °`.
+- Table writes whole numbers as they are and others to `digits`, and a struct in a cell as
+  JSON.
