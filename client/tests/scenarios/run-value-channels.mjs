@@ -17,29 +17,31 @@ function tap() {
   };
 }
 
-/** The messages each way brought. The socket's and the reliable channel's come in pieces,
- *  `[u16 lane][u8 more]` then a share of a message, joined per lane. */
-function messages(heard, socket) {
-  const out = heard.filter(([label]) => label === "best-effort");
-  for (const [way, frames] of [["reliable", heard.filter(([label]) => label === "reliable").map(([, f]) => f)], ["socket", socket]]) {
+/** The messages each way finished since `from`, the frame counts at a mark. The socket's and the
+ *  reliable channel's come in pieces, `[u16 lane][u8 more]` then a share of a message, joined per
+ *  lane from the first frame, so one under way at the mark is never read from its middle. */
+function messages(heard, socket, from) {
+  const out = heard.filter(([label], n) => label === "best-effort" && n >= from.heard);
+  const reliable = heard.flatMap(([label, f], n) => (label === "reliable" ? [[n, f]] : []));
+  for (const [way, frames, mark] of [["reliable", reliable, from.heard], ["socket", socket.map((f, n) => [n, f]), from.socket]]) {
     const parts = new Map();
-    for (const f of frames) {
+    for (const [n, f] of frames) {
       const lane = f[0] | (f[1] << 8);
       const so = [...(parts.get(lane) ?? []), ...f.slice(3)];
       if (f[2] === 1) parts.set(lane, so);
       else {
         parts.delete(lane);
-        out.push([way, so]);
+        if (n >= mark) out.push([way, so]);
       }
     }
   }
   return out;
 }
 
-/** The aliases each way brought values for. */
-function aliases(heard, socket) {
+/** The aliases each way brought values for since `from`. */
+function aliases(heard, socket, from) {
   const ways = {};
-  for (const [way, bytes] of messages(heard, socket)) {
+  for (const [way, bytes] of messages(heard, socket, from)) {
     const msg = decoder.decode(Uint8Array.from(bytes));
     if (msg.type !== "values") continue;
     ways[way] ??= new Set();
@@ -67,24 +69,23 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await screen.locator(".tab", { hasText: "Run" }).click();
   const shown = screen.locator(`.run-layer:not([hidden]) .el[data-id="${length}"]`);
 
-  socket.length = 0;
-  await screen.evaluate(() => (window.__heard = []));
+  const mark = async () => ({ heard: await screen.evaluate(() => window.__heard.length), socket: socket.length });
+  let from = await mark();
   hmi.set("note", "abc");
   await eventually(async () => (await shown.innerText()) === "3", "the screen to show the variable");
   await screen.waitForTimeout(500);
-  const ways = aliases(await screen.evaluate(() => window.__heard), socket);
+  const ways = aliases(await screen.evaluate(() => window.__heard), socket, from);
   const by = (alias) => Object.keys(ways).filter((w) => ways[w].has(alias)).join(" and ");
   check(by("Joints") === "best-effort", `the best effort topic came by ${by("Joints")}`);
   check(by("note") === "reliable", `the variable came by ${by("note")}`);
 
-  socket.length = 0;
-  await screen.evaluate(() => (window.__heard = []));
+  from = await mark();
   hmi.set("note", "x".repeat(20000));
   await eventually(async () => (await shown.innerText()) === "20000", "the screen to show the big value");
   const heard = await screen.evaluate(() => window.__heard);
-  const big = aliases(heard, socket);
+  const big = aliases(heard, socket, from);
   const came = Object.keys(big).filter((w) => big[w].has("note")).join(" and ");
   check(came === "reliable", `the big value came by ${came}`);
-  check(heard.some(([label, f]) => label === "reliable" && f[2] === 1), "the big value came whole, not in pieces");
+  check(heard.slice(from.heard).some(([label, f]) => label === "reliable" && f[2] === 1), "the big value came whole, not in pieces");
   await context.close();
 }
