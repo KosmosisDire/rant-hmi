@@ -36,6 +36,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await box.locator(".editor.code").press("Control+Enter");
   await eventually(() => hmi.state.values.ticks?.value >= 3, "the timer to count", 5000);
 
+  // the speed starts below the condition, whatever scenarios before left it at, so it turns true
+  hmi.set("Speed", 1);
+  await eventually(() => hmi.state.values.Speed?.value === 1, "the line at a safe speed");
   await add();
   await commit(box.locator(".hero-name"), "Too fast");
   await box.locator(".rule-kind").selectOption("turns");
