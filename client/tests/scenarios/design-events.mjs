@@ -26,5 +26,5 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await page.locator(".screen:not([hidden]) .sidebar.right .event").count()) === 2, "the inspector to show both handlers");
   await page.locator(".screen:not([hidden]) .sidebar.right .ghost", { hasText: "Add event" }).click();
   const offered = (await page.locator(".popover .menu-item .mono").allTextContents()).join();
-  check(offered === "release,hold,repeat,drag,outside,keydown,keyup,keyrepeat,buttondown,buttonup,axes", `the menu offers ${offered}`);
+  check(offered === "release,hold,repeat,drag,outside,scroll,zoom,keydown,keyup,keyrepeat,buttondown,buttonup,axes", `the menu offers ${offered}`);
 }

@@ -110,6 +110,14 @@ gamepads and to decode video itself.
 - `<on event="...">` holds a handler: `tap`, `press`, `release`, `hold`, `repeat`, `drag` or
   `outside`. Its `p` holds `x` and `y` across the element, 0 to 1. A hold runs
   `after="ms"`, 500 when left out, and a repeat `every="ms"`, 100. Each is an expression.
+- A drag's `p.dx` and `p.dy` say how far it moved since the last, in the units the element's
+  own x and y count, so `x="PuckX"` follows the pointer with `PuckX = PuckX + p.dx`.
+- `scroll` hears a wheel or a trackpad over the element, and `zoom` the same with Ctrl, as a
+  trackpad's pinch comes. One with no scroll handler zooms by any wheel. A scroll's `p.dx` and
+  `p.dy` move what it shows as a finger dragging it would, so a wheel turned down gives `dy`
+  below 0. A zoom's `p.factor` is how much bigger it grows. Both bring `x` and `y` too.
+- A drag or scroll handler that takes a while to run misses no move: what comes meanwhile adds
+  up, and a zoom's factors multiply.
 - `keydown`, `keyup` and `keyrepeat` hear the keyboard while the element shows on the top page
   and no field is typed in. `key="a"` takes the key that types a, "A" with Shift and " " for
   Space, and `code="KeyA"` the key where a sits. With neither it takes any key. `p` holds

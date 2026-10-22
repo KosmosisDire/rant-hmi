@@ -19,7 +19,8 @@ import { componentAct, type Act, numberOf, QUICKEST } from "./act";
 import { useGamepads } from "./gamepads";
 import { useKeys } from "./keys";
 import { svgOf } from "./markup";
-import { partOf, type Pointer, pointer } from "./pointer";
+import { moved, partOf, type Pointer, pointer, type Spot } from "./pointer";
+import { useScroll } from "./scroll";
 import { EVENTS } from "../protocol/events";
 
 export interface Box {
@@ -268,7 +269,7 @@ function Placed(p: ElementProps) {
 function usePress(p: ElementProps & { at?: At }) {
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
-  const fire = (event: string, payload: Pointer) => p.act?.fire(p.element, event, payload, p.at);
+  const fire = (event: string, payload: object) => p.act?.fire(p.element, event, payload, p.at);
   // a hold's or a repeat's time, an expression read where the element sits
   const msOf = (event: string, setting: string) => {
     const h = p.element.handlers.find((x) => x.event === event);
@@ -288,7 +289,7 @@ function usePress(p: ElementProps & { at?: At }) {
     landed = undefined;
     setPressed(true);
     fire("press", { ...at });
-    fire("drag", { ...at });
+    fire("drag", { ...at, dx: 0, dy: 0 });
     let last: PointerEvent = e;
     const ms = msOf("hold", "after");
     const held = ms === undefined ? undefined : setTimeout(() => fire("hold", pointer(el, last, on)), ms);
@@ -296,21 +297,23 @@ function usePress(p: ElementProps & { at?: At }) {
     const every = msOf("repeat", "every");
     if (every !== undefined) fire("repeat", { ...at });
     const beat = every === undefined ? undefined : setInterval(() => fire("repeat", pointer(el, last, on)), Math.max(every, QUICKEST));
-    // a drag goes out at most once a frame, with the latest place
+    // a drag goes out at most once a frame, with the latest place and the move since the last
+    let sent: Spot = e;
     let next: PointerEvent | null = null;
+    const flush = () => {
+      if (!next) return;
+      fire("drag", { ...pointer(el, next, on), ...moved(el, next.clientX - sent.clientX, next.clientY - sent.clientY) });
+      [sent, next] = [next, null];
+    };
     const move = (m: PointerEvent) => {
       last = m;
-      if (!next) {
-        requestAnimationFrame(() => {
-          if (next) fire("drag", pointer(el, next, on));
-          next = null;
-        });
-      }
+      if (!next) requestAnimationFrame(flush);
       next = m;
     };
-    // a release missed ends the press where the pointer was last, and taps nothing
+    // a release missed ends the press where the pointer was last, and taps nothing. The move
+    // since the last drag goes first, so the drags add up to the whole
     const end = (u?: PointerEvent) => {
-      next = null;
+      flush();
       clearTimeout(held);
       clearInterval(beat);
       setPressed(false);
@@ -345,6 +348,7 @@ function usePress(p: ElementProps & { at?: At }) {
   };
   useKeys(p, () => self);
   useGamepads(p, () => self);
+  useScroll(p, () => self);
   return { pressed, live, down, ref };
 }
 

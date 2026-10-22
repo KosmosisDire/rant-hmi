@@ -12,6 +12,7 @@ import { Keyboard, Smartphone } from "../../ui/icons";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
 import { onResize } from "../../ui/size";
+import { wheelPx, zoomBy } from "../../ui/wheel";
 import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
 import { find } from "../../state/elements";
 import { moving, type Reshape, reshape } from "./geometry";
@@ -264,9 +265,8 @@ export function Artboard(p: {
       const v = view();
       const r = host.getBoundingClientRect();
       const [px, py] = [e.clientX - r.left, e.clientY - r.top];
-      // a wheel's notch, a trackpad's glide and a pinch all zoom, never by a leap
-      const dy = Math.max(-120, Math.min(120, e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY));
-      const k = zoomed(v.k * Math.exp(-dy * 0.002));
+      // a wheel's notch, a trackpad's glide and a pinch all zoom
+      const k = zoomed(v.k * zoomBy(wheelPx(e, r).y));
       setView({ k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k });
     };
     host.addEventListener("wheel", wheel, { passive: false });

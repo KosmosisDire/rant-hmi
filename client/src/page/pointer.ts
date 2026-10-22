@@ -1,5 +1,7 @@
 // Where a pointer is on an element as it is drawn, turned and scaled with all around it.
 
+import { UNIT } from "../state/bind";
+
 /** A place on the screen, as a pointer's or a wheel's event gives it. */
 export interface Spot {
   clientX: number;
@@ -38,8 +40,26 @@ export function local(el: globalThis.Element, e: Spot): { x: number; y: number; 
       return { x: at.x - b.x, y: at.y - b.y, w: b.width, h: b.height };
     }
   }
+  const { w, h, cos, sin, k, r } = drawn(el);
+  const [dx, dy] = [e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2)];
+  return { x: (cos * dx + sin * dy) / k + w / 2, y: (cos * dy - sin * dx) / k + h / 2, w, h };
+}
+
+/** A move of `sx` and `sy` px on the screen as the x and y of `el` count it: in the units of
+ *  what holds it, a diagram's for a shape, turned and scaled as that is drawn. */
+export function moved(el: globalThis.Element, sx: number, sy: number): { dx: number; dy: number } {
+  const fine = (v: number) => Math.round(v * 1e5) / 1e5;
+  const holder = el instanceof HTMLElement ? (el.offsetParent ?? el.parentElement) : el.parentElement;
+  const m = holder instanceof SVGGraphicsElement ? holder.getScreenCTM()?.inverse() : undefined;
+  if (m) return { dx: fine(m.a * sx + m.c * sy), dy: fine(m.b * sx + m.d * sy) };
+  const { cos, sin, k } = holder ? drawn(holder) : { cos: 1, sin: 0, k: 1 };
+  return { dx: fine((cos * sx + sin * sy) / k / UNIT), dy: fine((cos * sy - sin * sx) / k / UNIT) };
+}
+
+/** How an element is drawn: its own width and height, the turn of it and all around it, the
+ *  scale its drawn box shows and that box. */
+function drawn(el: globalThis.Element) {
   const [w, h] = el instanceof HTMLElement ? [el.offsetWidth, el.offsetHeight] : [0, 0];
-  // the turn of it and all around it, then the scale its drawn box shows
   let turn = 0;
   for (let a: globalThis.Element | null = el; a; a = a.parentElement) {
     const s = getComputedStyle(a);
@@ -53,7 +73,5 @@ export function local(el: globalThis.Element, e: Spot): { x: number; y: number; 
   const [cos, sin] = [Math.cos(t), Math.sin(t)];
   const r = el.getBoundingClientRect();
   const across = w * Math.abs(cos) + h * Math.abs(sin);
-  const k = across > 0 ? r.width / across : 1;
-  const [dx, dy] = [e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2)];
-  return { x: (cos * dx + sin * dy) / k + w / 2, y: (cos * dy - sin * dx) / k + h / 2, w, h };
+  return { w, h, cos, sin, k: across > 0 ? r.width / across : 1, r };
 }

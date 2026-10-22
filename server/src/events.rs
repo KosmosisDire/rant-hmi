@@ -6,16 +6,27 @@ use ts_rs::TS;
 
 use crate::value::Value;
 
-/// What sends an event: the pointer, on any element but an input, an input's entry, or the
-/// keyboard or a gamepad, on any element.
+/// What sends an event: the pointer, on any element but an input, an input's entry, or a
+/// wheel, a trackpad or two fingers, the keyboard or a gamepad, on any element.
 #[derive(Serialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[ts(export)]
 pub enum Sender {
     Pointer,
     Entry,
+    Wheel,
     Keyboard,
     Gamepad,
+}
+
+/// How a number a stream brings gathers while one waits to be heard: summed, as a move, or
+/// multiplied, as a zoom.
+#[derive(Serialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Gather {
+    Sum,
+    Product,
 }
 
 /// How a setting is written: an expression the screen reads, or a filter, the value its event
@@ -57,6 +68,9 @@ pub struct EventInfo {
     pub settings: &'static [SettingInfo],
     /// What its `p` holds: each field's name and words.
     pub brings: &'static [(&'static str, &'static str)],
+    /// The numbers a stream gathers while one waits, so none of a move is lost. The rest it
+    /// brings are the latest.
+    pub gathers: &'static [(&'static str, Gather)],
     /// The event that ends what this one begins, as a release ends a press. It takes the same
     /// filters, and runs however the screen goes. A stream that ends itself, as axes, ends at
     /// rest: every number it brings outside its filters 0.
@@ -71,6 +85,37 @@ const AT: &[(&str, &str)] = &[
     ("on", "the part pressed, by name"),
     ("inside", "true while over it"),
 ];
+
+/// What a drag brings: where it is, and how far it moved since the last.
+const MOVED: &[(&str, &str)] = &[
+    ("x", "across it, 0 to 1"),
+    ("y", "down it, 0 to 1"),
+    ("angle", "degrees around its centre, 0 up"),
+    ("on", "the part pressed, by name"),
+    ("inside", "true while over it"),
+    ("dx", "how far it moved across since the last, as its own x counts"),
+    ("dy", "how far it moved down since the last, as its own y counts"),
+];
+
+/// What a scroll brings: where it is, and how far it moves what the element shows, as a finger
+/// dragging it would.
+const SCROLLED: &[(&str, &str)] = &[
+    ("x", "across it, 0 to 1"),
+    ("y", "down it, 0 to 1"),
+    ("on", "the part under it, by name"),
+    ("dx", "how far across, as its own x counts"),
+    ("dy", "how far down, as its own y counts, below 0 as a wheel turns down"),
+];
+
+/// What a zoom brings: where it is, and how much it grows what the element shows.
+const ZOOMED: &[(&str, &str)] = &[
+    ("x", "across it, 0 to 1"),
+    ("y", "down it, 0 to 1"),
+    ("on", "the part under it, by name"),
+    ("factor", "how much bigger, below 1 smaller"),
+];
+
+const MOVES: &[(&str, Gather)] = &[("dx", Gather::Sum), ("dy", Gather::Sum)];
 
 /// What a key's event brings.
 const KEYS: &[(&str, &str)] = &[
@@ -145,15 +190,20 @@ const DEADBAND: SettingInfo = expression("deadband", "Deadband", "0.1");
 pub const SENT: &[SettingInfo] = &[WHILE];
 
 const fn pointer(name: &'static str, words: &'static str, once: bool, settings: &'static [SettingInfo]) -> EventInfo {
-    EventInfo { name, from: Sender::Pointer, words, once, settings, brings: AT, ends_with: None }
+    EventInfo { name, from: Sender::Pointer, words, once, settings, brings: AT, gathers: &[], ends_with: None }
+}
+
+/// A stream from a wheel, a trackpad or two fingers.
+const fn wheel(name: &'static str, words: &'static str, brings: &'static [(&'static str, &'static str)], gathers: &'static [(&'static str, Gather)]) -> EventInfo {
+    EventInfo { name, from: Sender::Wheel, words, once: false, settings: &[WHILE], brings, gathers, ends_with: None }
 }
 
 const fn keyboard(name: &'static str, words: &'static str, settings: &'static [SettingInfo]) -> EventInfo {
-    EventInfo { name, from: Sender::Keyboard, words, once: true, settings, brings: KEYS, ends_with: None }
+    EventInfo { name, from: Sender::Keyboard, words, once: true, settings, brings: KEYS, gathers: &[], ends_with: None }
 }
 
 const fn gamepad(name: &'static str, words: &'static str, settings: &'static [SettingInfo]) -> EventInfo {
-    EventInfo { name, from: Sender::Gamepad, words, once: true, settings, brings: BUTTONS, ends_with: None }
+    EventInfo { name, from: Sender::Gamepad, words, once: true, settings, brings: BUTTONS, gathers: &[], ends_with: None }
 }
 
 /// Every event, in the order an element lists its handlers. A component's own come after.
@@ -164,9 +214,11 @@ pub const EVENTS: &[EventInfo] = &[
     pointer("release", "let go, anywhere", true, &[]),
     pointer("hold", "held down a while", true, &[AFTER, WHILE]),
     pointer("repeat", "again and again while pressed", true, &[EVERY, WHILE]),
-    pointer("drag", "moved while pressed", false, &[WHILE]),
+    EventInfo { brings: MOVED, gathers: MOVES, ..pointer("drag", "moved while pressed", false, &[WHILE]) },
     pointer("outside", "a press anywhere else", true, &[WHILE]),
-    EventInfo { name: "change", from: Sender::Entry, words: "a value entered", once: false, settings: &[WHILE], brings: &[("value", "what was entered")], ends_with: None },
+    wheel("scroll", "scrolled over it", SCROLLED, MOVES),
+    wheel("zoom", "pinched or zoomed over it", ZOOMED, &[("factor", Gather::Product)]),
+    EventInfo { name: "change", from: Sender::Entry, words: "a value entered", once: false, settings: &[WHILE], brings: &[("value", "what was entered")], gathers: &[], ends_with: None },
     EventInfo { ends_with: Some("keyup"), ..keyboard("keydown", "a key pressed", &[KEY, CODE, WHILE]) },
     keyboard("keyup", "a key let go", &[KEY, CODE]),
     keyboard("keyrepeat", "again and again while a key is down", &[KEY, CODE, EVERY, WHILE]),
@@ -204,6 +256,24 @@ pub fn filter_text(v: &Value) -> Option<String> {
         Value::Int(_) | Value::Bool(_) => Some(v.to_string()),
         _ => None,
     }
+}
+
+/// `next` with `was` gathered in, as when `next` comes while `was` waits to be heard: each
+/// number the event gathers summed or multiplied, the rest as `next` brings them.
+pub fn gather(event: &str, was: &Value, mut next: Value) -> Value {
+    let (Some(e), Some(old)) = (find(event), was.as_map()) else { return next };
+    let number = |fields: &[(String, Value)], name: &str| fields.iter().find(|(k, _)| k == name).and_then(|(_, v)| v.as_f64());
+    if let Value::Map(fields) = &mut next {
+        for (name, how) in e.gathers {
+            let (Some(a), Some(b)) = (number(old, name), number(fields, name)) else { continue };
+            let gathered = match how {
+                Gather::Sum => a + b,
+                Gather::Product => a * b,
+            };
+            fields.iter_mut().filter(|(k, _)| k == name).for_each(|(_, v)| *v = Value::Float(gathered));
+        }
+    }
+    next
 }
 
 /// The event `event` ends, when it ends one, as a release ends a press.
@@ -277,6 +347,15 @@ mod tests {
         let at_rest = rest("axes", &p);
         assert_eq!(at_rest, Value::from(serde_json::json!({ "lx": 0.0, "ly": 0, "axes": [0.0, 0.0], "pad": 1 })));
         assert_eq!(rest("axes", &at_rest), at_rest);
+    }
+
+    #[test]
+    fn a_stream_waiting_gathers_its_moves_and_takes_the_latest_of_the_rest() {
+        let p = |v: serde_json::Value| Value::from(v);
+        let was = p(serde_json::json!({ "x": 0.25, "dx": 1.5, "dy": -1 }));
+        assert_eq!(gather("drag", &was, p(serde_json::json!({ "x": 0.5, "dx": 2, "dy": 0.5 }))), p(serde_json::json!({ "x": 0.5, "dx": 3.5, "dy": -0.5 })));
+        assert_eq!(gather("zoom", &p(serde_json::json!({ "factor": 2 })), p(serde_json::json!({ "factor": 0.25 }))), p(serde_json::json!({ "factor": 0.5 })));
+        assert_eq!(gather("axes", &p(serde_json::json!({ "lx": 1 })), p(serde_json::json!({ "lx": 0.5 }))), p(serde_json::json!({ "lx": 0.5 })));
     }
 
     #[test]

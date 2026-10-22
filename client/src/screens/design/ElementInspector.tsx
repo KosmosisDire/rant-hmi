@@ -660,7 +660,7 @@ function Turn(p: { prop: (key: string) => Pick<FieldProps, "value" | "onWrite" |
 }
 
 /** What heads each sender's events in the event menu. */
-const SENDERS: Record<Exclude<Offered["from"], "component">, string> = { pointer: "Pointer", entry: "Entry", keyboard: "Keyboard", gamepad: "Gamepad" };
+const SENDERS: Record<Exclude<Offered["from"], "component">, string> = { pointer: "Pointer", entry: "Entry", wheel: "Wheel and pinch", keyboard: "Keyboard", gamepad: "Gamepad" };
 
 /** The element's handlers, each a card: the event on top, the code below. Every change names
  *  one handler by its event and filter, so two quick changes never undo each other. */

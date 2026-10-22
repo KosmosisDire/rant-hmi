@@ -196,7 +196,8 @@ pub struct App {
     /// What screens hold on elements with a handler for its end.
     /// What each brings to its end should the screen be lost.
     held: HashMap<Held, Value>,
-    /// The latest stream event that came while its handler still ran. It runs when that run ends.
+    /// The latest stream event that came while its handler still ran, those before gathered in.
+    /// It runs when that run ends.
     waiting: HashMap<HandlerKey, Waiting>,
     /// When each timer rule is next due.
     timers: HashMap<String, Instant>,
@@ -737,6 +738,11 @@ impl App {
         let Some(h) = e.handlers.iter().find(|h| h.event == of.event && h.filter == of.filter) else { return };
         if self.runs.values().any(|r| r.of == of) {
             if !events::find(&of.event).is_some_and(|e| e.once) {
+                // what waits from the same screen and copy gathers in, so no move is lost
+                let payload = match self.waiting.remove(&of) {
+                    Some((s, was, a)) if s == session && a.as_ref().map(|a| a.0) == at.as_ref().map(|a| a.0) => events::gather(&of.event, &was, payload),
+                    _ => payload,
+                };
                 self.waiting.insert(of, (session, payload, at));
             }
             return;

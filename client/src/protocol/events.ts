@@ -40,6 +40,7 @@ export const EVENTS: readonly EventInfo[] = [
         "true while over it"
       ]
     ],
+    "gathers": [],
     "ends_with": null
   },
   {
@@ -78,6 +79,7 @@ export const EVENTS: readonly EventInfo[] = [
         "true while over it"
       ]
     ],
+    "gathers": [],
     "ends_with": "release"
   },
   {
@@ -108,6 +110,7 @@ export const EVENTS: readonly EventInfo[] = [
         "true while over it"
       ]
     ],
+    "gathers": [],
     "ends_with": null
   },
   {
@@ -153,6 +156,7 @@ export const EVENTS: readonly EventInfo[] = [
         "true while over it"
       ]
     ],
+    "gathers": [],
     "ends_with": null
   },
   {
@@ -198,6 +202,7 @@ export const EVENTS: readonly EventInfo[] = [
         "true while over it"
       ]
     ],
+    "gathers": [],
     "ends_with": null
   },
   {
@@ -234,6 +239,24 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "inside",
         "true while over it"
+      ],
+      [
+        "dx",
+        "how far it moved across since the last, as its own x counts"
+      ],
+      [
+        "dy",
+        "how far it moved down since the last, as its own y counts"
+      ]
+    ],
+    "gathers": [
+      [
+        "dx",
+        "sum"
+      ],
+      [
+        "dy",
+        "sum"
       ]
     ],
     "ends_with": null
@@ -274,6 +297,95 @@ export const EVENTS: readonly EventInfo[] = [
         "true while over it"
       ]
     ],
+    "gathers": [],
+    "ends_with": null
+  },
+  {
+    "name": "scroll",
+    "from": "wheel",
+    "words": "scrolled over it",
+    "once": false,
+    "settings": [
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true",
+        "kind": "expression",
+        "options": []
+      }
+    ],
+    "brings": [
+      [
+        "x",
+        "across it, 0 to 1"
+      ],
+      [
+        "y",
+        "down it, 0 to 1"
+      ],
+      [
+        "on",
+        "the part under it, by name"
+      ],
+      [
+        "dx",
+        "how far across, as its own x counts"
+      ],
+      [
+        "dy",
+        "how far down, as its own y counts, below 0 as a wheel turns down"
+      ]
+    ],
+    "gathers": [
+      [
+        "dx",
+        "sum"
+      ],
+      [
+        "dy",
+        "sum"
+      ]
+    ],
+    "ends_with": null
+  },
+  {
+    "name": "zoom",
+    "from": "wheel",
+    "words": "pinched or zoomed over it",
+    "once": false,
+    "settings": [
+      {
+        "name": "while",
+        "label": "While",
+        "default": "true",
+        "kind": "expression",
+        "options": []
+      }
+    ],
+    "brings": [
+      [
+        "x",
+        "across it, 0 to 1"
+      ],
+      [
+        "y",
+        "down it, 0 to 1"
+      ],
+      [
+        "on",
+        "the part under it, by name"
+      ],
+      [
+        "factor",
+        "how much bigger, below 1 smaller"
+      ]
+    ],
+    "gathers": [
+      [
+        "factor",
+        "product"
+      ]
+    ],
     "ends_with": null
   },
   {
@@ -296,6 +408,7 @@ export const EVENTS: readonly EventInfo[] = [
         "what was entered"
       ]
     ],
+    "gathers": [],
     "ends_with": null
   },
   {
@@ -348,6 +461,7 @@ export const EVENTS: readonly EventInfo[] = [
         "true while Alt is down"
       ]
     ],
+    "gathers": [],
     "ends_with": "keyup"
   },
   {
@@ -393,6 +507,7 @@ export const EVENTS: readonly EventInfo[] = [
         "true while Alt is down"
       ]
     ],
+    "gathers": [],
     "ends_with": null
   },
   {
@@ -452,6 +567,7 @@ export const EVENTS: readonly EventInfo[] = [
         "true while Alt is down"
       ]
     ],
+    "gathers": [],
     "ends_with": null
   },
   {
@@ -578,6 +694,7 @@ export const EVENTS: readonly EventInfo[] = [
         "which pad, 0 for the first"
       ]
     ],
+    "gathers": [],
     "ends_with": "buttonup"
   },
   {
@@ -697,6 +814,7 @@ export const EVENTS: readonly EventInfo[] = [
         "which pad, 0 for the first"
       ]
     ],
+    "gathers": [],
     "ends_with": null
   },
   {
@@ -778,6 +896,7 @@ export const EVENTS: readonly EventInfo[] = [
         "which pad, 0 for the first"
       ]
     ],
+    "gathers": [],
     "ends_with": "axes"
   }
 ];

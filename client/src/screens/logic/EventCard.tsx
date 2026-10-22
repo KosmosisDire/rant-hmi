@@ -8,16 +8,19 @@ import { complete, signature, type Suggestion } from "../../state/complete";
 import { type Brought, eventInfo, keyWords, type Offered, pOf, settingsOf } from "../../state/events";
 import { type Pad, pads } from "../../state/input";
 import { DraftInput } from "../../ui/DraftInput";
-import { Component, Gamepad2, Keyboard, X, Zap } from "../../ui/icons";
+import { Component, Gamepad2, Keyboard, Mouse, X, Zap } from "../../ui/icons";
 import { closeMenu, type MenuEntry, menuOpen, openMenu } from "../../ui/Menu";
 
-/** An event's mark: a component's own, the keyboard's, a gamepad's, or the pointer's and an
- *  entry's. */
+/** An event's mark: a component's own, a wheel's, the keyboard's, a gamepad's, or the
+ *  pointer's and an entry's. */
 export function EventIcon(p: { from?: Offered["from"]; size?: number }) {
   return (
     <Switch fallback={<Zap size={p.size ?? 13} />}>
       <Match when={p.from === "component"}>
         <Component size={p.size ?? 13} />
+      </Match>
+      <Match when={p.from === "wheel"}>
+        <Mouse size={p.size ?? 13} />
       </Match>
       <Match when={p.from === "keyboard"}>
         <Keyboard size={p.size ?? 13} />

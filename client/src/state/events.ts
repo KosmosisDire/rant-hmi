@@ -85,8 +85,8 @@ export interface Offered {
   from: Sender | "component";
 }
 
-/** What an element hears: an input what is typed in, others the pointer, any the keyboard and
- *  gamepads, and an instance also its component's events, first. */
+/** What an element hears: an input what is typed in, others the pointer, any a wheel, the
+ *  keyboard and gamepads, and an instance also its component's events, first. */
 export function offered(e: Element): Offered[] {
   const c = e.tag === "use" ? component(e.component ?? "") : undefined;
   const own = (c?.interface?.events ?? []).map((event): Offered => ({ event, words: sendsWords(c!, event), from: "component" }));
