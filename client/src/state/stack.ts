@@ -35,11 +35,9 @@ export function push(id: string, replace = false, ask: number | null = null) {
   const s = stack();
   const at = s.findIndex((o) => o.id === id);
   if (at >= 0) {
-    // the page waited on now is the one gone back to
-    if (ask !== null) {
-      drop(s.slice(at, at + 1));
-      setStack([...s.slice(0, at), { id, ask }, ...s.slice(at + 1)]);
-    }
+    // going back closes the page the opener waits from, so its wait ends here, else its
+    // handler would run on and drop every later press
+    if (ask !== null) answer(ask, null);
     return back(s.length - 1 - at);
   }
   if (replace && s.length > 0) {
