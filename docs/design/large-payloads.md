@@ -279,6 +279,60 @@ What it shows of the backend stays true on a real link: a lost piece holds every
 the ordered channel, pongs and small values too, until SCTP resends it, and a lost tail waits
 for the retransmission timeout.
 
+### 6. Stage 4: compression
+
+Built, on the branch:
+
+- To screens, numbers of 4 KB or more go shuffled then LZ4 compressed, under tag 41001, also
+  unregistered, as their typed array's tag and the block with its size first. A column of records is
+  compressed on its own. When the block is no smaller, as for noise, the typed array goes as
+  it is.
+- The page unpacks with the 40 line block decoder, into one kept buffer, then puts each number
+  back together into the list's own array.
+- Bytes go as they are: LZ4 saves a raw picture a tenth, for 2.9 ms to pack and 2.1 ms to
+  unpack, and pictures go as video anyway.
+
+The sim's points were smooth curves, which pack far better than a real lidar's, so it now adds
+1 cm of range noise and intensities that vary as a surface's, as experiment 1's ray cast did.
+A cloud then packs to 145 KB from 240 KB, as experiment 1 found (149 KB). Encoding it, shuffle
+and LZ4 too, takes 0.28 ms, so `put_values` goes over 2 ms for up to a third of the clouds,
+from under a tenth.
+
+Two changes made the decoder twice as fast as the one experiment 1 timed, 0.3 ms for the
+cloud's four columns run back to back:
+
+- A match that overlaps what it writes was copied byte by byte. Shuffled exponent bytes repeat,
+  so such matches carry 135 KB of the 240 KB. Copied in chunks that double, LZ4 takes 0.13 ms
+  rather than 0.23 ms.
+- Putting a number back together a 32 bit word at a time rather than a byte takes 0.15 ms
+  rather than 0.25 ms.
+
+Results, channels then socket, each the median of three runs, stage 3 and 4 run in turn with
+the same sim:
+
+| Link | Ping p50, p95 | Echo p50 | Clouds a second | MB/s | Page a cloud |
+| --- | --- | --- | --- | --- | --- |
+| loopback | 1.9, 7.9 ms / 1.2, 4.7 ms | 1.5 / 1.6 ms | 10 / 10 | 1.45 | 1.9 / 2.0 ms |
+| LAN | 3.7, 8.4 ms / 2.9, 5.6 ms | 5.2 / 2.8 ms | 10 / 10 | 1.45 | 2.3 / 1.9 ms |
+| WiFi | 9.4, 16 ms / 9.9, 17 ms | 12 / 8.9 ms | 10 / 10 | 1.45 | 2.2 / 1.8 ms |
+| jittery WiFi | 25, 32 ms / 23, 38 ms | 26 / 25 ms | 9.9 / 9.8 | 1.45 | 2.1 / 1.9 ms |
+
+A cloud's age, p50 and p95, channels then socket:
+
+| Link | Stage 3 | Stage 4 |
+| --- | --- | --- |
+| loopback | 52, 79 ms / 36, 59 ms | 39, 63 ms / 30, 53 ms |
+| LAN | 74, 100 ms / 74, 106 ms | 54, 78 ms / 60, 84 ms |
+| WiFi | 110, 131 ms / 121, 194 ms | 78, 101 ms / 89, 119 ms |
+| jittery WiFi | 127, 172 ms / 143, 234 ms | 110, 163 ms / 112, 166 ms |
+
+- A cloud is 40% smaller and arrives 7 to 32 ms younger on every link, by the most on WiFi.
+  Its p95 falls by 6 to 75 ms, and on the jittery link the ping's p95 too, 32 ms from 47 ms.
+- The page takes about 1 ms more a cloud: unpacking it, 0.3 ms run back to back, is 1.2 to 1.7
+  ms at 10 a second, timed in the page and alone in Chrome, as the CPU idles between clouds.
+  Both run optimized at either pace. The main thread is busy as much as before, 9 to 15%, as
+  fewer pieces arrive.
+
 ## Plan
 
 Each stage is measured on loopback, LAN and WiFi before the next.
@@ -286,11 +340,13 @@ Each stage is measured on loopback, LAN and WiFi before the next.
 1. Done: transport, above.
 2. Done: backend, above.
 3. Done: page, above.
-4. Compression: columns shuffled then LZ4 above a few KB, with the 40 line decoder.
+4. Done: compression, above.
 5. The tick: whether a big value should go at once rather than wait for it.
 6. Loss: the shaper dropping a share of packets at random, as WiFi does, then whether small
    messages should have a channel of their own, so a lost piece of bulk never holds them, and
    whether a window should be paced over the round trip rather than sent at once.
+7. A worker: whether decoding a big message off the main thread pays, now that unpacking it
+   costs 1 to 2 ms there.
 
 Experiment code, never committed: `HMI_MARGIN_US` and the margin log in `flight.rs`, the `EXP`
 timings in `rtc.rs` and `app.rs`.
@@ -308,3 +364,5 @@ timings in `rtc.rs` and `app.rs`.
 - Packed lists go to screens as typed arrays, records as tag 41000 over their columns, and
   to files as plain lists. A page reads them as frozen lists whose records are made only
   when read.
+- Numbers of 4 KB or more go to screens shuffled then LZ4 compressed, as tag 41001, when that
+  makes them smaller. Bytes go as they are.
