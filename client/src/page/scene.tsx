@@ -33,6 +33,7 @@ import {
   WebGLRenderer,
 } from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { column } from "../net/packed";
 import type { Element } from "../protocol/Element";
 import type { Value } from "../protocol/Value";
 import { resolve, type Scope } from "../state/bind";
@@ -70,6 +71,15 @@ interface Read {
 function positions(v: unknown): Float32Array | undefined {
   if (!Array.isArray(v)) return undefined;
   const out = new Float32Array(v.length * 3);
+  const [x, y, z] = ["x", "y", "z"].map((f) => column(v, f));
+  if (x && y && z) {
+    for (let i = 0; i < x.length; i++) {
+      out[3 * i] = x[i];
+      out[3 * i + 1] = y[i];
+      out[3 * i + 2] = z[i];
+    }
+    return out;
+  }
   for (let i = 0; i < v.length; i++) {
     const p = v[i] as { x?: unknown; y?: unknown; z?: unknown } | null;
     if (typeof p?.x !== "number" || typeof p.y !== "number" || typeof p.z !== "number") return undefined;
