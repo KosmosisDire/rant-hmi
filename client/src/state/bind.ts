@@ -7,6 +7,7 @@ import { arith } from "../lang/arith.js";
 import { isHex, tokens } from "../lang/lex";
 import { LIBRARY, setClock } from "../lang/math.js";
 import { send } from "../net/connection";
+import { packed } from "../net/packed";
 import type { Page } from "../protocol/Page";
 import { MISSING, TOKEN_FIXED, WHOLE } from "../protocol/rules";
 import type { Token } from "../protocol/Token";
@@ -430,9 +431,9 @@ export function runHandler(code: string, scope: Scope, emit: ((name: string, pay
   };
   // as on the system, each read is a fresh copy whose fields take assignment by writing the
   // whole back with the field changed, so `jogVel[index] = 1` writes jogVel. What cannot be
-  // copied, as the screen's `keys`, is read as it is.
+  // copied, as the screen's `keys` or a packed list, is read as it is.
   const wrap = (key: string, value: unknown, path: string[] = []): unknown => {
-    if (value === null || typeof value !== "object" || ArrayBuffer.isView(value)) return value;
+    if (value === null || typeof value !== "object" || ArrayBuffer.isView(value) || packed(value)) return value;
     let copy = value;
     try {
       if (path.length === 0) copy = structuredClone(unwrap(value));

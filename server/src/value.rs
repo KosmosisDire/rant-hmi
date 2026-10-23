@@ -6,9 +6,13 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+use ciborium::tag::Captured;
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use ts_rs::TS;
+
+/// The CBOR tag of [`Records`], a map of their columns. Unassigned, in the range anyone may take.
+const RECORDS_TAG: u64 = 41000;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum Value {
@@ -149,6 +153,20 @@ impl Num {
         }
     }
 
+    /// RFC 8746's tag for a typed array of them, little endian.
+    fn tag(self) -> u64 {
+        match self {
+            Num::U8 => 64,
+            Num::I8 => 72,
+            Num::U16 => 69,
+            Num::I16 => 77,
+            Num::U32 => 70,
+            Num::I32 => 78,
+            Num::F32 => 85,
+            Num::F64 => 86,
+        }
+    }
+
     /// The number that `b`, exactly its width, holds little endian.
     fn read(self, b: &[u8]) -> Value {
         let mut a = [0; 8];
@@ -251,6 +269,24 @@ impl Serialize for Row<'_> {
     }
 }
 
+/// Bytes written as one byte string.
+struct Raw<'a>(&'a [u8]);
+
+impl Serialize for Raw<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_bytes(self.0)
+    }
+}
+
+/// Fields written as a map, in their order.
+struct Fields<'a>(&'a [(String, Value)]);
+
+impl Serialize for Fields<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_map(self.0.iter().map(|(k, v)| (k, v)))
+    }
+}
+
 macro_rules! from_int {
     ($($t:ty),*) => {$(
         impl From<$t> for Value {
@@ -276,9 +312,12 @@ impl Serialize for Value {
             Value::Text(t) => s.serialize_str(t),
             Value::Bytes(b) => s.serialize_bytes(b),
             Value::List(items) => s.collect_seq(items),
+            // screens read a typed array whole, files take a plain list
+            Value::Numbers(n) if !s.is_human_readable() => Captured(Some(n.kind.tag()), Raw(&n.bytes)).serialize(s),
+            Value::Records(r) if !s.is_human_readable() => Captured(Some(RECORDS_TAG), Fields(&r.fields)).serialize(s),
             Value::Numbers(n) => s.collect_seq(n.iter()),
             Value::Records(r) => s.collect_seq((0..r.len).map(|i| Row(&r.fields, i))),
-            Value::Map(fields) => s.collect_map(fields.iter().map(|(k, v)| (k, v))),
+            Value::Map(fields) => Fields(fields).serialize(s),
         }
     }
 }
@@ -505,6 +544,21 @@ mod tests {
         assert_eq!(ciborium::from_reader::<Value, _>(&cbor(&v)[..]).unwrap(), v);
         // bytes are one CBOR byte string, not a list of numbers
         assert!(cbor(&Value::Bytes(vec![1; 300])).len() < 310);
+    }
+
+    #[test]
+    fn packed_lists_go_to_screens_as_typed_arrays_and_to_files_as_lists() {
+        let floats: Vec<u8> = [1.5f32, -2.0].iter().flat_map(|f| f.to_le_bytes()).collect();
+        let x = Value::Numbers(Numbers::new(Num::F32, floats.clone()).unwrap());
+        let i = Value::Numbers(Numbers::new(Num::U16, vec![7, 0, 9, 0]).unwrap());
+        let points = Value::Records(Records::new(2, vec![("x".into(), x.clone()), ("i".into(), i)]).unwrap());
+        use ciborium::Value as C;
+        let read = |v: &Value| ciborium::from_reader::<C, _>(&cbor(v)[..]).unwrap();
+        let tagged = |tag, bytes| C::Tag(tag, Box::new(C::Bytes(bytes)));
+        assert_eq!(read(&x), tagged(85, floats.clone()));
+        let columns = vec![(C::Text("x".into()), tagged(85, floats)), (C::Text("i".into()), tagged(69, vec![7, 0, 9, 0]))];
+        assert_eq!(read(&points), C::Tag(41000, Box::new(C::Map(columns))));
+        assert_eq!(serde_json::to_value(&points).unwrap(), serde_json::json!([{ "x": 1.5, "i": 7 }, { "x": -2.0, "i": 9 }]));
     }
 
     #[test]

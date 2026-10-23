@@ -12,6 +12,7 @@ import type { ServerMsg } from "../protocol/ServerMsg";
 import { cameBack, notify, receive, setState, state } from "../state/store";
 import { decodes, Decoded } from "./decode";
 import { type Link, openLink } from "./link";
+import { readPacked } from "./packed";
 
 /** 20 times a second, so the round trip shown is a fresh one. */
 const ROUND_TRIP_EVERY_MS = 50;
@@ -37,6 +38,7 @@ declare module "cbor-x" {
 
 // plain CBOR maps as objects, none of cbor-x's own record extension, so Rust reads it, and a
 // 64 bit integer, as a Timestamp is, a number the page's math can add, never a BigInt
+readPacked();
 const cbor = { encoder: new Encoder({ useRecords: false }), decoder: new Decoder({ mapsAsObjects: true, useRecords: false, int64AsNumber: true }) };
 
 let link: Link | null = null;

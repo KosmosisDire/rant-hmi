@@ -3,6 +3,7 @@
 
 import { batch, createSignal, type Signal, untrack } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
+import { packed, samePacked } from "../net/packed";
 import type { Computed } from "../protocol/Computed";
 import type { EntityInfo } from "../protocol/EntityInfo";
 import type { EnumInfo } from "../protocol/EnumInfo";
@@ -264,6 +265,8 @@ const holds = (v: unknown): v is Record<string, unknown> => typeof v === "object
  *  `was`, and `was` itself when it all does. What is frozen already was shared before. */
 function shared(was: unknown, next: unknown): unknown {
   if (was === next || !holds(next) || Object.isFrozen(next)) return next;
+  // frozen already, and its numbers compare far faster than its records
+  if (packed(next)) return samePacked(was, next) ? was : next;
   const old = holds(was) && Array.isArray(was) === Array.isArray(next) ? was : undefined;
   let same = old !== undefined;
   if (Array.isArray(next)) {
