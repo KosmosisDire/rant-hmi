@@ -193,14 +193,44 @@ Results, channels then socket:
   the fallback when WebRTC does not open, so it is left for now.
 - WiFi carries 5.3 clouds a second of 10: the cloud is too big for 3 MB/s until it is smaller.
 
+### 4. Stage 2: backend
+
+Built, on the branch:
+
+- A list of numbers is one `Numbers`: its kind and Rant's packed bytes behind an `Arc`. A list
+  of records whose fields are all numbers, nested structs too, is one `Records`: a column a
+  field, cut from the packed elements in one pass. A copy of either shares the bytes.
+- Records with any other field (bool, enum, text, a list), and 64 bit whole numbers, stay a
+  list of values, as before.
+- A member's place in an element comes from the schema's flat table. Every writer has the same
+  element, since nested structs match exactly, and a list whose bytes are not count times the
+  element's size is read record by record.
+- Screens still get the same plain CBOR, written from the columns without making records.
+- `put_values` writes each changed value once and cuts the batches from those bytes. Before, the
+  cloud was written up to four times, for the whole batch, alone, and per way.
+
+Results, channels then socket:
+
+| Link | Ping p50, p95 | Echo p50 | Clouds a second | Age p50 | MB/s |
+| --- | --- | --- | --- | --- | --- |
+| loopback | 1.0, 3.2 ms / 0.9, 4.2 ms | 0.9 / 2.2 ms | 9.9 / 10 | 54 / 43 ms | 5.3 |
+| LAN | 3.5, 9.0 ms / 2.6, 6.2 ms | 2.4 / 2.1 ms | 9.9 / 9.9 | 76 / 79 ms | 5.3 |
+| WiFi | 9.3, 15 ms / 11.6, 19 ms | 10.5 / 12 ms | 5.3 / 5.2 | 262 / 274 ms | 2.8 |
+| jittery WiFi | 29, 43 ms / 30, 46 ms | 30 / 30 ms | 4.9 / 4.8 | 289 / 314 ms | 2.7 / 2.5 |
+
+- The echo now equals the ping on every link: a small value no longer waits on the loop. It was
+  30 ms on loopback and 37 ms on WiFi after stage 1.
+- A cloud is about 60 ms younger when it arrives, 118 then 54 ms on loopback.
+- `put_values` takes 3.4 ms a cloud, from 32 ms before stage 1 and 12.6 ms with columns but
+  four writes. The loop is busy about 5% of the time, nearly all of it that one write, which
+  stage 3 makes a copy.
+
 ## Plan
 
 Each stage is measured on loopback, LAN and WiFi before the next.
 
 1. Done: transport, above.
-2. Backend: a list of numbers, and a list of records whose fields are all numbers, read from
-   Rant's packed bytes straight into typed columns, so a copy is a memcpy and an encode writes
-   the bytes as they are. Rule parameters built only for a rule that waits. One encode a change.
+2. Done: backend, above.
 3. Page: typed arrays and record columns decoded as they are, records made only where an
    expression walks them, the scene reading the columns, `shared()` comparing bytes.
 4. Compression: columns shuffled then LZ4 above a few KB, with the 40 line decoder.
@@ -217,3 +247,5 @@ timings in `rtc.rs` and `app.rs`.
 - The pacing margin is found per link by trying a wider window, from 2 ms up to 100 ms.
 - No lossless narrowing of numbers: shuffle and LZ4 already take what it would.
 - Lossy narrowing only as a choice per import, a fixed step rather than f16.
+- A list of numbers, and a list of records of numbers, stay packed as columns in the backend.
+  64 bit whole numbers stay one by one, as a page reads them as BigInts.
