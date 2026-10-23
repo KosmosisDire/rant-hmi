@@ -333,6 +333,68 @@ A cloud's age, p50 and p95, channels then socket:
   Both run optimized at either pace. The main thread is busy as much as before, 9 to 15%, as
   fewer pieces arrive.
 
+### 7. Stage 5: the tick
+
+A value from the mesh, a computed value and the HMI's own write to the mesh waited in the loop
+for its 33 ms tick, 16.5 ms on average. A screen's own variable already went at once, which is
+why the echo was quick.
+
+Built, on the branch:
+
+- A changed value goes to screens and to the engine as soon as the loop has handled what woke it.
+- One sent since the last tick began waits for the next, so a value that changes fast still goes
+  about 30 times a second, and one that changes slower goes at once.
+- The loop takes up to 64 mesh deliveries waiting at once, so values that came together still
+  go in one message.
+- The engine still judges and computes on the tick, and a change's rules still run there, so
+  their cost is as before. A computed value goes as it comes back, no longer a tick later.
+
+To time a small value the sim also publishes a clock, a stamp at 25 Hz on a phase of its own.
+It is best effort, so on channels it goes on the best effort channel.
+
+A small value's age, the clock's, p50 and p95, channels then socket, each the median of three
+runs, stage 4 and 5 run in turn:
+
+| Link | Stage 4 | Stage 5 |
+| --- | --- | --- |
+| loopback | 19.5, 37 ms / 18, 33 ms | 0.5, 5.2 ms / 0.4, 5.0 ms |
+| LAN | 19, 37 ms / 19, 36 ms | 1.6, 5.0 ms / 1.2, 4.7 ms |
+| WiFi | 21, 38 ms / 22, 39 ms | 5.4, 12 ms / 4.5, 9.4 ms |
+| jittery WiFi | 29, 46 ms / 30, 49 ms | 14, 24 ms / 14, 32 ms |
+
+A cloud's age, p50 and p95:
+
+| Link | Stage 4 | Stage 5 |
+| --- | --- | --- |
+| loopback | 41, 63 ms / 30, 52 ms | 17, 32 ms / 11, 19 ms |
+| LAN | 56, 81 ms / 58, 81 ms | 38, 54 ms / 43, 54 ms |
+| WiFi | 77, 97 ms / 91, 114 ms | 59, 63 ms / 83, 139 ms |
+| jittery WiFi | 109, 145 ms / 114, 152 ms | 94, 113 ms / 87, 144 ms |
+
+Stage 5, the rest:
+
+| Link | Ping p50, p95 | Echo p50 | Clouds a second | MB/s | Page a cloud |
+| --- | --- | --- | --- | --- | --- |
+| loopback | 1.5, 6.6 ms / 1.1, 3.1 ms | 1.3 / 1.8 ms | 10 / 10 | 1.45 | 1.9 / 2.0 ms |
+| LAN | 3.7, 9.1 ms / 2.8, 6.3 ms | 4.9 / 3.1 ms | 10 / 10 | 1.45 | 2.2 / 2.0 ms |
+| WiFi | 9.3, 15 ms / 8.3, 13 ms | 10 / 9.6 ms | 9.9 / 9.9 | 1.45 | 2.1 / 1.9 ms |
+| jittery WiFi | 27, 39 ms / 22, 32 ms | 26 / 21 ms | 9.9 / 9.9 | 1.44 | 2.0 / 1.9 ms |
+
+- A small value from the mesh is 15 to 19 ms younger at p50 on every link, the tick's average
+  wait, and 17 to 32 ms at p95. On loopback and LAN it now arrives in 0.4 to 1.6 ms.
+- A cloud is 15 to 24 ms younger at p50 on channels and 27 to 34 ms at p95. On WiFi its age
+  now barely varies: 59 ms p50, 63 ms p95. Over the socket it is 15 to 27 ms younger at p50,
+  except on WiFi, below.
+- The page gets about as many messages as before, 246 a second, 8 more over the socket, where
+  the clock and the counter no longer share one. With the clock at 500 Hz, 30 a second reach
+  the page in either stage.
+- On WiFi over the socket the cloud gains only 7 ms, and its p95 is either about 90 ms or about
+  140 ms, a median of 102 ms over seven runs against stage 4's 114 ms. In a slow run the clouds
+  fall behind for half a second, each about 20 ms older than the one before, until the margin
+  search tries a wider window. Stage 4 does the same, hidden in its spread. It is the socket's
+  pacing: its measured rate falls and the window with it, as stage 1 found where acks come in
+  bursts.
+
 ## Plan
 
 Each stage is measured on loopback, LAN and WiFi before the next.
@@ -341,10 +403,11 @@ Each stage is measured on loopback, LAN and WiFi before the next.
 2. Done: backend, above.
 3. Done: page, above.
 4. Done: compression, above.
-5. The tick: whether a big value should go at once rather than wait for it.
+5. Done: the tick, above.
 6. Loss: the shaper dropping a share of packets at random, as WiFi does, then whether small
    messages should have a channel of their own, so a lost piece of bulk never holds them, and
-   whether a window should be paced over the round trip rather than sent at once.
+   whether a window should be paced over the round trip rather than sent at once. Also why the
+   socket on WiFi falls behind for half a second now and then.
 7. A worker: whether decoding a big message off the main thread pays, now that unpacking it
    costs 1 to 2 ms there.
 
@@ -366,3 +429,5 @@ timings in `rtc.rs` and `app.rs`.
   when read.
 - Numbers of 4 KB or more go to screens shuffled then LZ4 compressed, as tag 41001, when that
   makes them smaller. Bytes go as they are.
+- A changed value goes to screens at once, unless it went since the last tick began: then it
+  waits for the next. The engine judges and a change's rules run on the tick.
