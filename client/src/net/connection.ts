@@ -1,7 +1,8 @@
 // The link to the backend: one socket, or in rant-hmi-app the window's own link (link.ts), CBOR
 // both ways, and over a network a WebRTC data connection offered over it: a reliable ordered
-// channel, a best effort one, and the video of each import the screen plays, which plays on a
-// plain http page where WebCodecs cannot. The link carries everything the channels do not, a
+// channel, a reliable unordered one for small messages, which never wait behind a big one, a
+// best effort one, and the video of each import the screen plays, which plays on a plain http
+// page where WebCodecs cannot. The link carries everything the channels do not, a
 // video's frames too while WebRTC brings none, and reconnects by itself, at once when the page
 // shows again. The round trip for the status bar is timed the way a person's actions go.
 
@@ -49,6 +50,7 @@ let tries = 0;
 interface Channels {
   pc: RTCPeerConnection;
   reliable: RTCDataChannel;
+  small: RTCDataChannel;
   bestEffort: RTCDataChannel;
   /** An offer is out, so a change to the videos waits for its answer. */
   offering: boolean;
@@ -184,7 +186,7 @@ export function send(msg: ClientMsg): boolean {
   return false;
 }
 
-/** Offers the data channels over the link, where a network lies under it. They count once both
+/** Offers the data channels over the link, where a network lies under it. They count once all
  *  are open. */
 async function openChannels() {
   closeChannels();
@@ -196,6 +198,7 @@ async function openChannels() {
   const c: Channels = {
     pc,
     reliable: pc.createDataChannel("reliable"),
+    small: pc.createDataChannel("small", { ordered: false }),
     bestEffort: pc.createDataChannel("best-effort", { ordered: false, maxRetransmits: 0 }),
     offering: false,
     again: videos.size > 0,
@@ -203,11 +206,12 @@ async function openChannels() {
   channels = c;
   const join = joiner();
   c.reliable.onmessage = (e) => join(e.data as ArrayBuffer);
-  c.bestEffort.onmessage = (e) => heard(new Uint8Array(e.data as ArrayBuffer));
-  for (const ch of [c.reliable, c.bestEffort]) {
+  c.small.onmessage = c.bestEffort.onmessage = (e) => heard(new Uint8Array(e.data as ArrayBuffer));
+  const all = [c.reliable, c.small, c.bestEffort];
+  for (const ch of all) {
     ch.binaryType = "arraybuffer";
     ch.onopen = () => {
-      if (channels === c && c.reliable.readyState === "open" && c.bestEffort.readyState === "open") {
+      if (channels === c && all.every((a) => a.readyState === "open")) {
         channelsTries = 0;
         setStuck(false);
         // the backend holds what the channel brings until this, so the link's come first

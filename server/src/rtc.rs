@@ -1,10 +1,12 @@
 //! WebRTC for screens, set up over each screen's socket. A screen has one connection: a
-//! reliable ordered channel and a best effort one, which carry its values where they open,
-//! and the video of each import it plays, which works on a plain http page where WebCodecs
-//! cannot. The reliable channel carries pieces of lanes as a socket does (`lanes.rs`), as fast
-//! as the screen's acks confirm them (`flight.rs`). Each H264 frame of an import's source goes
-//! out to the screens playing it here as it comes. A screen without WebRTC decodes its video
-//! itself from frames on its socket (`Lanes::video`).
+//! reliable ordered channel, a reliable unordered one for small messages and a best effort one,
+//! which carry its values where they open, and the video of each import it plays, which works
+//! on a plain http page where WebCodecs cannot. The ordered channel carries pieces of lanes as
+//! a socket does (`lanes.rs`), as fast as the screen's acks confirm them (`flight.rs`). Pongs
+//! and values that fit a piece go whole on the unordered one: SCTP sends it before anything
+//! ordered waiting, and a packet of the ordered one lost on the way never holds it. Each H264
+//! frame of an import's source goes out to the screens playing it here as it comes. A screen
+//! without WebRTC decodes its video itself from frames on its socket (`Lanes::video`).
 
 use std::collections::HashMap;
 use std::io::ErrorKind;
@@ -30,17 +32,22 @@ use crate::project::IceServer;
 use crate::protocol::{ClientMsg, Played};
 use crate::stun;
 
-/// The labels a screen gives its two channels.
+/// The labels a screen gives its channels.
 pub const RELIABLE: &str = "reliable";
+pub const SMALL: &str = "small";
 pub const BEST_EFFORT: &str = "best-effort";
 
 /// A message bigger than this goes on the reliable channel in pieces. Losing any of its packets
 /// loses all of it on the best effort channel.
 pub const MESSAGE_MAX: usize = 16 * 1024;
 
-/// The most the reliable channel has on its way, half of what str0m holds for the two
-/// channels, so the best effort one always has room.
+/// The most the reliable channel has on its way, half of what str0m holds for the channels, so
+/// the others always have room.
 const RELIABLE_MAX: usize = 512 << 10;
+
+/// Values are left out while this much waits on the small messages' channel, and the screen gets
+/// them all once it drains, so a link that stalls a while never carries what is no longer so.
+const SMALL_MAX: usize = 64 << 10;
 
 /// A screen that missed messages on its best effort channel, the channels full, gets
 /// everything again once one drains below this.
@@ -82,7 +89,8 @@ pub enum ToRtc {
 }
 
 /// Where a message for a screen with channels goes: whole on its best effort channel, left out
-/// while that is full, or on its reliable one in the lanes a socket has.
+/// while that is full, or on its reliable ones, values that fit a piece whole on the unordered
+/// one and the rest in the lanes a socket has.
 #[derive(Clone)]
 pub enum Way {
     BestEffort,
@@ -114,6 +122,7 @@ struct Peer {
     wake: Instant,
     connected: bool,
     reliable: Option<ChannelId>,
+    small: Option<ChannelId>,
     best_effort: Option<ChannelId>,
     /// Messages were left out while the channels were full.
     missed: bool,
@@ -136,7 +145,7 @@ struct Video {
 
 impl Peer {
     fn linked(&self) -> bool {
-        self.reliable.is_some() && self.best_effort.is_some()
+        self.reliable.is_some() && self.small.is_some() && self.best_effort.is_some()
     }
 
     /// Takes the screen's offer again with the videos it plays now. A video playing on where it
@@ -227,7 +236,7 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                     let sdp = match answer(&ports, &ips, config, &sdp) {
                         Ok((rtc, sdp)) => {
                             info!("screen {session} opens its data connection");
-                            peers.push(Peer { session, rtc, wake: Instant::now(), connected: false, reliable: None, best_effort: None, missed: false, lanes: Lanes::default(), flight: Flight::default(), born: Instant::now(), held: None, videos: Vec::new() });
+                            peers.push(Peer { session, rtc, wake: Instant::now(), connected: false, reliable: None, small: None, best_effort: None, missed: false, lanes: Lanes::default(), flight: Flight::default(), born: Instant::now(), held: None, videos: Vec::new() });
                             Some(sdp)
                         }
                         Err(text) => {
@@ -262,6 +271,7 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                         match way {
                             Way::BestEffort => best_effort(p, &bytes),
                             Way::Control => p.lanes.send(bytes),
+                            Way::Values if bytes.len() <= PIECE => small(p, &bytes, true),
                             Way::Values => p.lanes.values(bytes),
                             Way::Alone(alias) => p.lanes.alone(&alias, bytes),
                         }
@@ -487,6 +497,7 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
                     Event::ChannelOpen(id, label) => {
                         match label.as_str() {
                             RELIABLE => p.reliable = Some(id),
+                            SMALL => p.small = Some(id),
                             BEST_EFFORT => p.best_effort = Some(id),
                             _ => warn!("screen {} opened a channel {label} this backend does not know", p.session),
                         }
@@ -500,7 +511,7 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
                         }
                     }
                     Event::ChannelClose(id) => {
-                        for slot in [&mut p.reliable, &mut p.best_effort] {
+                        for slot in [&mut p.reliable, &mut p.small, &mut p.best_effort] {
                             if *slot == Some(id) {
                                 *slot = None;
                             }
@@ -509,7 +520,7 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
                     Event::ChannelData(d) => match ciborium::from_reader::<ClientMsg, _>(d.data.as_slice()) {
                         Ok(msg @ ClientMsg::Ping { rtt, .. }) => {
                             if let Some(pong) = msg.pong() {
-                                p.lanes.send(pong);
+                                small(p, &pong, false);
                             }
                             // the screen times its channels, which says how long the reliable one's way is
                             let rtt = rtt.filter(|r| r.is_finite() && *r >= 0.0).map(|r| Duration::from_secs_f64(r / 1000.0));
@@ -568,6 +579,22 @@ fn pump(p: &mut Peer, said: &UnboundedSender<FromRtc>) {
     }
     if p.lanes.missed() {
         let _ = said.send(FromRtc::CaughtUp { session: p.session });
+    }
+}
+
+/// Writes a small message whole on a screen's unordered channel. A value is left out while
+/// too much waits there, and the screen gets all values once it drains.
+fn small(p: &mut Peer, bytes: &[u8], value: bool) {
+    let Some(id) = p.small else { return };
+    let Some(mut channel) = p.rtc.channel(id) else { return };
+    if value && channel.buffered_amount() > SMALL_MAX {
+        p.missed = true;
+        return;
+    }
+    match channel.write(true, bytes) {
+        Ok(true) => {}
+        Ok(false) => p.missed = true,
+        Err(e) => warn!("a message for screen {} did not go: {e}", p.session),
     }
 }
 

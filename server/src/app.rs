@@ -1514,7 +1514,7 @@ impl App {
     }
 
     /// Sends values to one screen, or with None to every screen. On a socket, and on the
-    /// reliable channel of a screen with channels, the values small enough share a message and
+    /// reliable channels of a screen with channels, the values small enough share a message and
     /// each larger one goes alone in its import's lane. A screen with channels gets a best
     /// effort topic's on its best effort channel, those that fit a message there.
     fn put_values(&self, to: Option<u32>, values: Vec<ValueUpdate>) {
@@ -1572,7 +1572,7 @@ fn apart(each: Vec<(ValueUpdate, Bytes)>, seq: u64) -> (Option<Bytes>, Vec<(Stri
 
 /// Values as messages for a screen with channels. A best effort topic's go on the best effort
 /// channel, one batch when it fits a message there, else each alone. The rest, and any too big
-/// for a message there, go on the reliable channel as `apart` cuts them.
+/// for a message there, go on the reliable channels as `apart` cuts them.
 fn ways(each: Vec<(ValueUpdate, Bytes)>, best_effort: impl Fn(&str) -> bool, seq: u64) -> Vec<(Way, Bytes)> {
     let (fast, rest): (Vec<_>, Vec<_>) = each.into_iter().partition(|(v, bytes)| best_effort(&v.alias) && bytes.len() <= MESSAGE_MAX);
     let mut out = Vec::new();

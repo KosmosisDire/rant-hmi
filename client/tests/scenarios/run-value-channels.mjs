@@ -1,6 +1,6 @@
 // Once a screen has its data channels, values take the way their QoS asks: a best effort
-// topic's on the best effort channel and a variable's on the reliable one. One too big for a
-// message on a channel goes on the reliable one in pieces, never on the socket.
+// topic's on the best effort channel and a variable's whole on the small messages' one. One too
+// big for a piece goes on the reliable one in pieces, never on the socket.
 
 import { Decoder } from "cbor-x";
 
@@ -30,7 +30,7 @@ const heardOn = async (screen) => (await screen.evaluate(() => window.__heard)).
  *  reliable channel's come in pieces, `[u16 lane][u8 more]` then a share of a message, joined per
  *  lane from the first frame, so one under way at the mark is never read from its middle. */
 function messages(heard, socket, from) {
-  const out = heard.filter(([label], n) => label === "best-effort" && n >= from.heard);
+  const out = heard.filter(([label], n) => (label === "best-effort" || label === "small") && n >= from.heard);
   const reliable = heard.flatMap(([label, f], n) => (label === "reliable" ? [[n, f]] : []));
   for (const [way, frames, mark] of [["reliable", reliable, from.heard], ["socket", socket.map((f, n) => [n, f]), from.socket]]) {
     const parts = new Map();
@@ -86,7 +86,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   const ways = aliases(await heardOn(screen), socket, from);
   const by = (alias) => Object.keys(ways).filter((w) => ways[w].has(alias)).join(" and ");
   check(by("Joints") === "best-effort", `the best effort topic came by ${by("Joints")}`);
-  check(by("note") === "reliable", `the variable came by ${by("note")}`);
+  check(by("note") === "small", `the variable came by ${by("note")}`);
 
   from = await mark();
   hmi.set("note", "x".repeat(20000));
