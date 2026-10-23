@@ -152,7 +152,8 @@ Built, on the branch:
 
 - A ping is answered where it comes in: the channel task, the socket's reader, the app's link.
   The pong goes in the control lane, and the loop only hears that the screen was heard, with
-  the round trip it timed. A ping holds no order, so nothing waits on the loop for it.
+  the round trip it timed. A ping holds no order, so nothing waits on the loop for it. Undone
+  in stage 8, as the ping then timed the link alone, not the way messages go.
 - A message of control or of small values that fits a piece goes even while the window is
   full. Only bulk waits for room, and small messages wait behind what is in SCTP at most.
 - The margin is found per link. It starts at 2 ms. Every half second while the way is full,
@@ -540,6 +541,52 @@ on cloud tasks during it, the most the cloud work can have cost it:
 - Drawing a new cloud is mostly three.js bounding it for its depth sort, about 2 ms at 100k.
   Points drawn without culling took as long, as the sort still bounds them.
 
+### 10. Stage 8: pings through the loop
+
+From stage 1 a ping was answered where it came in and its pong went first, so the pings of
+stages 1 to 7 timed the link and the page, while main's timed the loop too. A ping is meant to
+time the way messages go, so it now goes to the loop in turn with what the screen sends, and its
+pong comes back the way small values go: in the values' lane on the socket, on the small channel
+on channels. It is never left out, as values are when too many wait, so a way that falls behind
+shows in it. The backend lists the screen's own timing as its ping on both ways, where on the
+socket it had listed the protocol ping, which the browser answers without the page.
+
+A ping on the channels now waits, as all they bring does, until the screen's switch to them
+arrives on its socket. So a screen gives its channels as long as they take to open to answer
+their first ping, and counts 1 s of silence as broken only after that.
+
+Main, stage 6 and stage 8 in turn, ping p50 and p95, each the median of three runs, channels
+then socket:
+
+| Link | Main | Stage 6 | Stage 8 |
+| --- | --- | --- | --- |
+| loopback | 81, 161 / 39, 135 ms | 1.5, 8.6 / 1.1, 5.2 ms | 1.4, 4.4 / 1.2, 4.1 ms |
+| LAN | 56, 117 / 54, 127 ms | 3.4, 9.6 / 2.8, 6.9 ms | 3.6, 8.7 / 3.3, 8.5 ms |
+| WiFi | 77, 148 / 81, 148 ms | 8.8, 15 / 7.9, 12 ms | 9.9, 15 / 8.1, 12 ms |
+| jittery WiFi | 111, 212 / 108, 191 ms | 24, 30 / 23, 37 ms | 25, 31 / 24, 36 ms |
+
+The echo p50 the same way, main then stage 8: loopback 81 / 37 ms to 1.5 / 1.4 ms, LAN 56 / 40 ms
+to 3.6 / 3.1 ms, WiFi 33 / 82 ms to 10.5 / 9.2 ms, jittery WiFi 85 / 105 ms to 29 / 23 ms. On main
+most echoes on the channels never came back, so theirs are the few that did.
+
+At 1% loss on channels, seven runs of stages 6 and 8 on WiFi, three otherwise:
+
+| | Main | Stage 6 | Stage 8 |
+| --- | --- | --- | --- |
+| WiFi ping p50, p95 | 180, 394 ms | 11, 42 ms | 11, 67 ms |
+| WiFi echo p95 | 422 ms | 33 ms | 48 ms |
+| jittery WiFi ping p50, p95 | 205, 479 ms | 30, 71 ms | 30, 56 ms |
+| socket, WiFi ping p50, p95 | 86, 151 ms | 8.5, 18 ms | 9.1, 19 ms |
+
+- Through the loop a ping takes at most about 1 ms more at p50 than answered where it came in,
+  as the loop has been that quick since stage 2. So the earlier stages hid little, but their
+  ping against main's was not like for like. Their echoes were, and tell the same.
+- Under loss a run's p95 ranged from 18 to 190 ms in both stages, by where SCTP's 1 s stalls
+  fell, and the echo, which went the same way in both, moved with it. Seven runs each do not
+  tell the two apart.
+- Ping and echo p50 now agree within about 1 ms on every link, 3 ms on jittery WiFi's channels,
+  as they go the same way.
+
 ## Plan
 
 Each stage is measured on loopback, LAN and WiFi before the next.
@@ -552,6 +599,7 @@ Each stage is measured on loopback, LAN and WiFi before the next.
 6. Done: loss, above. Left: str0m letting SCTP's least retransmission timer be set, which takes
    the 1 s stalls away, and pacing, for an access point with a shallow queue.
 7. Done: a worker, above. It does not pay.
+8. Done: pings through the loop, above.
 
 Experiment code, never committed: `HMI_MARGIN_US`, the margin log and the `HMI_RATES` rate log
 in `flight.rs`, `HMI_ONE_CHANNEL` and the `EXP` timings in `rtc.rs`, the `EXP` timings in
@@ -559,8 +607,11 @@ in `flight.rs`, `HMI_ONE_CHANNEL` and the `EXP` timings in `rtc.rs`, the `EXP` t
 
 ## Decisions
 
-- A pong is answered where its ping came in, so the round trip shown is the link's. The loop's
-  own delay shows in how fast values come back, not in the ping.
+- A ping goes through the loop in turn with what the screen sends, and its pong comes back the
+  way small values go, never left out, so the round trip shown is what a value waits. The
+  screen's own timing is the ping everywhere, the status's too.
+- Pacing times the link apart from the ping: the socket by its protocol ping, which the browser
+  answers, the channels by the shortest round trip the screen timed.
 - Small messages skip the window, bulk alone is paced.
 - The pacing margin is found per link by trying a wider window, from 2 ms up to 100 ms.
 - No lossless narrowing of numbers: shuffle and LZ4 already take what it would.
