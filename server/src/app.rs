@@ -1495,8 +1495,9 @@ impl App {
             Some(id) => self.sessions.get(&id).map(|s| (id, s)).into_iter().collect(),
             None => self.sessions.iter().map(|(id, s)| (*id, s)).collect(),
         };
-        let socket = sessions.iter().any(|(_, s)| !s.channels).then(|| apart(&values, seq));
-        let channels = sessions.iter().any(|(_, s)| s.channels).then(|| ways(values, |alias| self.mesh.best_effort(alias), seq));
+        let each = written(values, seq);
+        let socket = sessions.iter().any(|(_, s)| !s.channels).then(|| apart(each.clone(), seq));
+        let channels = sessions.iter().any(|(_, s)| s.channels).then(|| ways(each, |alias| self.mesh.best_effort(alias), seq));
         for (id, s) in sessions {
             if let (false, Some((shared, alone))) = (s.channels, &socket) {
                 if let Some(bytes) = shared {
@@ -1520,49 +1521,42 @@ fn known(name: &str, value: &Value) -> ValueUpdate {
     ValueUpdate { alias: name.to_owned(), value: Some(value.clone()), known: true }
 }
 
+/// Each value as a message of its own, which says how big it is. A big one is written only here.
+fn written(values: Vec<ValueUpdate>, seq: u64) -> Vec<(ValueUpdate, Bytes)> {
+    values.into_iter().map(|v| (v.clone(), encode(&ServerMsg::Values { values: vec![v], seq }))).collect()
+}
+
+/// Values together in one message, or the one alone as it was written.
+fn together(mut each: Vec<(ValueUpdate, Bytes)>, seq: u64) -> Bytes {
+    match each.len() {
+        1 => each.remove(0).1,
+        _ => encode(&ServerMsg::Values { values: each.into_iter().map(|(v, _)| v).collect(), seq }),
+    }
+}
+
 /// Values as messages for lanes: those that fit a piece together in one, and each larger one
 /// alone with its import's name.
-fn apart(values: &[ValueUpdate], seq: u64) -> (Option<Bytes>, Vec<(String, Bytes)>) {
-    let whole = encode(&ServerMsg::Values { values: values.to_vec(), seq });
-    if whole.len() <= PIECE {
-        return (Some(whole), Vec::new());
-    }
-    let (mut small, mut alone) = (Vec::new(), Vec::new());
-    for v in values {
-        let bytes = encode(&ServerMsg::Values { values: vec![v.clone()], seq });
-        if bytes.len() <= PIECE {
-            small.push(v.clone());
-        } else {
-            alone.push((v.alias.clone(), bytes));
-        }
-    }
-    ((!small.is_empty()).then(|| encode(&ServerMsg::Values { values: small, seq })), alone)
+fn apart(each: Vec<(ValueUpdate, Bytes)>, seq: u64) -> (Option<Bytes>, Vec<(String, Bytes)>) {
+    let (small, alone): (Vec<_>, Vec<_>) = each.into_iter().partition(|(_, bytes)| bytes.len() <= PIECE);
+    ((!small.is_empty()).then(|| together(small, seq)), alone.into_iter().map(|(v, bytes)| (v.alias, bytes)).collect())
 }
 
 /// Values as messages for a screen with channels. A best effort topic's go on the best effort
 /// channel, one batch when it fits a message there, else each alone. The rest, and any too big
 /// for a message there, go on the reliable channel as `apart` cuts them.
-fn ways(values: Vec<ValueUpdate>, best_effort: impl Fn(&str) -> bool, seq: u64) -> Vec<(Way, Bytes)> {
-    let (fast, mut rest): (Vec<_>, Vec<_>) = values.into_iter().partition(|v| best_effort(&v.alias));
+fn ways(each: Vec<(ValueUpdate, Bytes)>, best_effort: impl Fn(&str) -> bool, seq: u64) -> Vec<(Way, Bytes)> {
+    let (fast, rest): (Vec<_>, Vec<_>) = each.into_iter().partition(|(v, bytes)| best_effort(&v.alias) && bytes.len() <= MESSAGE_MAX);
     let mut out = Vec::new();
-    let batch = (!fast.is_empty()).then(|| encode(&ServerMsg::Values { values: fast.clone(), seq }));
-    match batch {
-        Some(batch) if batch.len() <= MESSAGE_MAX => out.push((Way::BestEffort, batch)),
-        _ => {
-            for v in fast {
-                let bytes = encode(&ServerMsg::Values { values: vec![v.clone()], seq });
-                match bytes.len() <= MESSAGE_MAX {
-                    true => out.push((Way::BestEffort, bytes)),
-                    false => rest.push(v),
-                }
-            }
+    if !fast.is_empty() {
+        let alone: Vec<Bytes> = fast.iter().map(|(_, bytes)| bytes.clone()).collect();
+        match together(fast, seq) {
+            batch if batch.len() <= MESSAGE_MAX => out.push((Way::BestEffort, batch)),
+            _ => out.extend(alone.into_iter().map(|bytes| (Way::BestEffort, bytes))),
         }
     }
-    if !rest.is_empty() {
-        let (shared, alone) = apart(&rest, seq);
-        out.extend(shared.map(|bytes| (Way::Values, bytes)));
-        out.extend(alone.into_iter().map(|(alias, bytes)| (Way::Alone(alias), bytes)));
-    }
+    let (shared, alone) = apart(rest, seq);
+    out.extend(shared.map(|bytes| (Way::Values, bytes)));
+    out.extend(alone.into_iter().map(|(alias, bytes)| (Way::Alone(alias), bytes)));
     out
 }
 
@@ -1586,7 +1580,7 @@ mod tests {
 
     #[test]
     fn a_value_too_big_to_share_goes_alone() {
-        let (shared, alone) = apart(&[update("Speed", Value::Float(1.5)), update("Cam", Value::Bytes(vec![0; PIECE]))], 1);
+        let (shared, alone) = apart(written(vec![update("Speed", Value::Float(1.5)), update("Cam", Value::Bytes(vec![0; PIECE]))], 1), 1);
         assert!(shared.is_some());
         assert_eq!(alone.iter().map(|(alias, _)| alias.as_str()).collect::<Vec<_>>(), vec!["Cam"]);
     }
@@ -1594,7 +1588,7 @@ mod tests {
     #[test]
     fn a_screen_with_channels_gets_a_best_effort_topic_s_there_and_the_rest_reliably() {
         let kinds = |values: Vec<ValueUpdate>| -> Vec<String> {
-            ways(values, |alias| alias.starts_with("Fast"), 1)
+            ways(written(values, 1), |alias| alias.starts_with("Fast"), 1)
                 .into_iter()
                 .map(|(way, _)| match way {
                     Way::BestEffort => "best effort".into(),
