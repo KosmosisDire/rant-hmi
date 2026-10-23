@@ -29,7 +29,7 @@ use crate::status::{Client, HmiStatus};
 use crate::value::Value;
 use crate::rtc::{Connections, Frame, FromRtc, MESSAGE_MAX, ToRtc, Way};
 
-/// How often changed values go out and the mesh is checked.
+/// How often a value may go to screens, the engine judges and the mesh is checked.
 const TICK: Duration = Duration::from_millis(33);
 /// How long the project's files stay still after a change before the HMI reads them.
 const QUIET: Duration = Duration::from_millis(150);
@@ -245,7 +245,12 @@ pub struct App {
     /// The last batch of values sent.
     seq: Cell<u64>,
     values: HashMap<String, Slot>,
+    /// Values that changed and have not gone to screens yet.
     changed: BTreeSet<String>,
+    /// Values sent since the last tick began, which wait for the next to go again.
+    sent: HashSet<String>,
+    /// Whether a value went at once since the last tick, so the engine judges by it then.
+    hurried: bool,
     /// The values of the variables every screen shares.
     shared: HashMap<String, Value>,
     /// Each record's samples, oldest first, and when it next samples.
@@ -293,6 +298,8 @@ impl App {
             seq: Cell::new(0),
             values: HashMap::new(),
             changed: BTreeSet::new(),
+            sent: HashSet::new(),
+            hurried: false,
             shared,
             history: HashMap::new(),
             sample_at: HashMap::new(),
@@ -311,9 +318,11 @@ impl App {
         self.rules_changed();
         self.run_rules(|r| matches!(r.when, When::Starts), Value::Null);
         tokio::pin!(stop);
+        let mut delivered = Vec::new();
         loop {
             tokio::select! {
-                Some(d) = from.mesh.recv() => self.deliver(d),
+                // those waiting go out together, 64 at most so screens still get a turn
+                1.. = from.mesh.recv_many(&mut delivered, 64) => delivered.drain(..).for_each(|d| self.deliver(d)),
                 Some(i) = from.screens.recv() => self.inbound(i),
                 Some(s) = from.script.recv() => self.scripted(s),
                 Some(()) = from.files.recv() => self.edited = Some(Instant::now()),
@@ -322,6 +331,7 @@ impl App {
                 _ = tick.tick() => self.tick(),
                 _ = &mut stop => break,
             }
+            self.hurry();
         }
         for session in self.sessions.keys().copied().collect::<Vec<_>>() {
             self.end(session, "the HMI is closing");
@@ -1218,13 +1228,13 @@ impl App {
             }
             self.run_rules(|r| r.id == id, Value::Null);
         }
-        if !self.changed.is_empty() {
-            let values: Vec<ValueUpdate> = std::mem::take(&mut self.changed).iter().map(|a| self.update(a)).collect();
-            self.script.send(ToScript::Values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known))).collect()));
-            self.put_values(None, values);
-            // the engine has the new values before it judges by them
+        let held: Vec<String> = std::mem::take(&mut self.changed).into_iter().collect();
+        self.flush(&held);
+        // the engine has the new values before it judges by them
+        if std::mem::take(&mut self.hurried) || !held.is_empty() {
             self.rethink();
         }
+        self.sent = held.into_iter().collect();
         // a change runs the rules that wait on it, and a variable's asks the conditions anew,
         // its value already with the engine
         let moved = std::mem::take(&mut self.moved);
@@ -1258,6 +1268,25 @@ impl App {
                 false => self.let_go(session, "went silent"),
             }
         }
+    }
+
+    /// Sends each changed value at once, but one sent since the last tick began waits for the
+    /// next, so a value that changes fast still goes once a tick.
+    fn hurry(&mut self) {
+        let due: Vec<String> = self.changed.extract_if(.., |alias| !self.sent.contains(alias)).collect();
+        self.hurried |= !due.is_empty();
+        self.flush(&due);
+    }
+
+    /// Sends these values to every screen and to the engine.
+    fn flush(&mut self, aliases: &[String]) {
+        if aliases.is_empty() {
+            return;
+        }
+        let values: Vec<ValueUpdate> = aliases.iter().map(|a| self.update(a)).collect();
+        self.script.send(ToScript::Values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known))).collect()));
+        self.put_values(None, values);
+        self.sent.extend(aliases.iter().cloned());
     }
 
     /// A mesh import is known while its entity is live and, for one with a value, once that
