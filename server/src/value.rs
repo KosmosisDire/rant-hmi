@@ -13,6 +13,11 @@ use ts_rs::TS;
 
 /// The CBOR tag of [`Records`], a map of their columns. Unassigned, in the range anyone may take.
 const RECORDS_TAG: u64 = 41000;
+/// The CBOR tag of [`Numbers`] shuffled then LZ4 compressed: their typed array's tag, then the
+/// block with its size first. Unassigned, beside [`RECORDS_TAG`].
+const COMPRESSED_TAG: u64 = 41001;
+/// Numbers of fewer bytes go as they are, as compressing them never pays.
+const COMPRESS_FROM: usize = 4096;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum Value {
@@ -214,6 +219,33 @@ impl Numbers {
     fn iter(&self) -> impl Iterator<Item = Value> + '_ {
         self.bytes.chunks_exact(self.kind.width()).map(|b| self.kind.read(b))
     }
+
+    /// Written for a screen: a typed array, compressed when that makes it smaller.
+    fn typed<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        if self.bytes.len() >= COMPRESS_FROM {
+            let block = lz4_flex::compress_prepend_size(&shuffled(&self.bytes, self.kind.width()));
+            if block.len() < self.bytes.len() {
+                return Captured(Some(COMPRESSED_TAG), (self.kind.tag(), Raw(&block))).serialize(s);
+            }
+        }
+        Captured(Some(self.kind.tag()), Raw(&self.bytes)).serialize(s)
+    }
+}
+
+/// Every number's first byte, then every second byte and so on, so the bytes that barely change
+/// from one number to the next stand together, where LZ4 finds them.
+fn shuffled(bytes: &[u8], width: usize) -> Cow<'_, [u8]> {
+    if width == 1 {
+        return Cow::Borrowed(bytes);
+    }
+    let n = bytes.len() / width;
+    let mut out = vec![0; bytes.len()];
+    for (i, number) in bytes.chunks_exact(width).enumerate() {
+        for (b, &byte) in number.iter().enumerate() {
+            out[b * n + i] = byte;
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// A list of records whose fields are all numbers, as a column a field: numbers, or records
@@ -313,7 +345,7 @@ impl Serialize for Value {
             Value::Bytes(b) => s.serialize_bytes(b),
             Value::List(items) => s.collect_seq(items),
             // screens read a typed array whole, files take a plain list
-            Value::Numbers(n) if !s.is_human_readable() => Captured(Some(n.kind.tag()), Raw(&n.bytes)).serialize(s),
+            Value::Numbers(n) if !s.is_human_readable() => n.typed(s),
             Value::Records(r) if !s.is_human_readable() => Captured(Some(RECORDS_TAG), Fields(&r.fields)).serialize(s),
             Value::Numbers(n) => s.collect_seq(n.iter()),
             Value::Records(r) => s.collect_seq((0..r.len).map(|i| Row(&r.fields, i))),
@@ -559,6 +591,31 @@ mod tests {
         let columns = vec![(C::Text("x".into()), tagged(85, floats)), (C::Text("i".into()), tagged(69, vec![7, 0, 9, 0]))];
         assert_eq!(read(&points), C::Tag(41000, Box::new(C::Map(columns))));
         assert_eq!(serde_json::to_value(&points).unwrap(), serde_json::json!([{ "x": 1.5, "i": 7 }, { "x": -2.0, "i": 9 }]));
+    }
+
+    #[test]
+    fn big_numbers_go_to_screens_compressed_when_that_makes_them_smaller() {
+        use ciborium::Value as C;
+        let read = |v: &Value| ciborium::from_reader::<C, _>(&cbor(v)[..]).unwrap();
+        assert_eq!(shuffled(&[1, 2, 3, 4, 5, 6, 7, 8], 4).as_ref(), [1, 5, 2, 6, 3, 7, 4, 8]);
+        let floats: Vec<u8> = (0..2000).flat_map(|i| (i as f32 * 0.01).to_le_bytes()).collect();
+        let C::Tag(41001, content) = read(&Value::Numbers(Numbers::new(Num::F32, floats.clone()).unwrap())) else { panic!("not compressed") };
+        let C::Array(parts) = *content else { panic!("not a kind and a block") };
+        let [C::Integer(tag), C::Bytes(block)] = &parts[..] else { panic!("not a kind and a block") };
+        assert_eq!(u64::try_from(*tag).unwrap(), 85);
+        assert!(block.len() < floats.len() / 2);
+        assert_eq!(lz4_flex::decompress_size_prepended(block).unwrap(), shuffled(&floats, 4).as_ref());
+        // noise LZ4 cannot shrink goes as it is
+        let mut seed = 0x2545f491u32;
+        let noise: Vec<u8> = (0..5000)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                seed as u8
+            })
+            .collect();
+        assert_eq!(read(&Value::Numbers(Numbers::new(Num::U8, noise.clone()).unwrap())), C::Tag(64, Box::new(C::Bytes(noise))));
     }
 
     #[test]

@@ -22,6 +22,8 @@ clap = { version = "4", features = ["derive"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 getrandom = "0.3"
 if-addrs = "0.15"
+# a big column of numbers goes to a screen shuffled and LZ4 compressed, a block only
+lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode"] }
 notify = "8"
 rant-hmi-pack = { path = "../app/pack" }
 # the HMI's own certificate for https, on the aws-lc-rs WebRTC already builds

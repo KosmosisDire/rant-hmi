@@ -13,8 +13,10 @@ interface Fields {
   readonly [field: string]: Column;
 }
 
+type Kind = { new (buffer: ArrayBuffer): Numbers; readonly BYTES_PER_ELEMENT: number };
+
 /** RFC 8746's little endian typed arrays, by tag. */
-const KINDS: Record<number, new (buffer: ArrayBuffer) => Numbers> = {
+const KINDS: Record<number, Kind> = {
   64: Uint8Array,
   72: Int8Array,
   69: Uint16Array,
@@ -25,6 +27,8 @@ const KINDS: Record<number, new (buffer: ArrayBuffer) => Numbers> = {
   86: Float64Array,
 };
 const RECORDS_TAG = 41000;
+/** Numbers shuffled then LZ4 compressed: their typed array's tag, then the block, its size first. */
+const COMPRESSED_TAG = 41001;
 
 const behind = new WeakMap<object, Column>();
 
@@ -36,8 +40,73 @@ export function readPacked() {
   const decodes = <R>(tag: number, decode: (item: R) => unknown) => addExtension({ tag, decode } as unknown as Extension<unknown, R>);
   // a copy, so the message it came in is let go
   for (const [tag, Kind] of Object.entries(KINDS)) decodes(Number(tag), (bytes: Uint8Array) => list(new Kind(bytes.slice().buffer)));
+  decodes(COMPRESSED_TAG, ([tag, block]: [number, Uint8Array]) => list(unpack(KINDS[tag], block)));
   // each column was read as a packed list first
   decodes(RECORDS_TAG, (columns: Record<string, unknown>) => list(Object.fromEntries(Object.entries(columns).map(([k, c]) => [k, behind.get(c as object)!]))));
+}
+
+/** LZ4's output for numbers wider than a byte, kept, as it is copied out at once. */
+let unpacked = new Uint8Array(0);
+
+/** Numbers of kind `Kind` from LZ4 block `block`, whose bytes were shuffled: every number's
+ *  first byte, then every second byte and so on. */
+function unpack(Kind: Kind, block: Uint8Array): Numbers {
+  const size = (block[0] | (block[1] << 8) | (block[2] << 16) | (block[3] << 24)) >>> 0;
+  const w = Kind.BYTES_PER_ELEMENT;
+  if (w === 1) return new Kind(lz4(block, new Uint8Array(size)).buffer);
+  if (unpacked.length < size) unpacked = new Uint8Array(size);
+  const bytes = lz4(block, unpacked);
+  // a word at a time is far faster than a byte, low byte first as the page is little endian
+  const n = size / w;
+  if (w === 2) {
+    const out = new Uint16Array(n);
+    for (let i = 0; i < n; i++) out[i] = bytes[i] | (bytes[n + i] << 8);
+    return new Kind(out.buffer);
+  }
+  const words = w / 4;
+  const out = new Uint32Array(n * words);
+  for (let k = 0; k < words; k++) {
+    const [a, b, c, d] = [4 * k, 4 * k + 1, 4 * k + 2, 4 * k + 3].map((j) => j * n);
+    for (let i = 0; i < n; i++) out[i * words + k] = bytes[a + i] | (bytes[b + i] << 8) | (bytes[c + i] << 16) | (bytes[d + i] << 24);
+  }
+  return new Kind(out.buffer);
+}
+
+/** LZ4 block `src`, after the size lz4_flex writes first, unpacked into `out`. */
+function lz4<T extends Uint8Array>(src: Uint8Array, out: T): T {
+  let i = 4;
+  let o = 0;
+  // a sequence is a token, literals, then a match unless the block ends with the literals
+  while (i < src.length) {
+    const token = src[i++];
+    let literals = token >> 4;
+    if (literals === 15) do literals += src[i]; while (src[i++] === 255);
+    if (literals < 16) for (let k = 0; k < literals; k++) out[o++] = src[i++];
+    else {
+      out.set(src.subarray(i, i + literals), o);
+      i += literals;
+      o += literals;
+    }
+    if (i >= src.length) break;
+    const offset = src[i] | (src[i + 1] << 8);
+    // else the copy below would never end
+    if (offset === 0) throw new Error("not an LZ4 block");
+    i += 2;
+    let length = token & 15;
+    if (length === 15) do length += src[i]; while (src[i++] === 255);
+    length += 4;
+    const end = o + length;
+    const from = o - offset;
+    if (length < 16) for (let f = from; o < end; ) out[o++] = out[f++];
+    // a match that overlaps what it writes repeats its pattern, so copy in chunks that double
+    else
+      while (o < end) {
+        const n = Math.min(o - from, end - o);
+        out.copyWithin(o, from, from + n);
+        o += n;
+      }
+  }
+  return out;
 }
 
 /** Whether `v` is a packed list. */
