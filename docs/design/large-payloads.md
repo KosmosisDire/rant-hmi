@@ -225,16 +225,72 @@ Results, channels then socket:
   four writes. The loop is busy about 5% of the time, nearly all of it that one write, which
   stage 3 makes a copy.
 
+### 5. Stage 3: page
+
+Built, on the branch:
+
+- To screens, a list of numbers goes as one RFC 8746 typed array, little endian. A list of
+  number records goes under tag 41000, which no one has registered, as a map of its columns.
+  Files and JSON still get plain lists.
+- The page reads each as a frozen list over its columns, a proxy over an empty array, so
+  `Array.isArray` holds and every array method works. An item is read when asked for, and a
+  record is made the first time and kept, so it is the same one each read.
+- `shared()` compares two packed lists byte for byte instead of walking them, and handlers
+  read them as they are, as they cannot be copied.
+- The scene draws points from the x, y and z columns.
+
+The e2e harness now also times the page: how long the socket or channel's message handler
+takes for the piece that completes a cloud (decode, `shared()`, the effects it runs), and how
+busy the main thread is in all, from Chrome's own task time. The harness scans every message
+itself, about 2% of the main thread.
+
+Results, channels then socket, each the median of three runs, as this machine's own load moved
+single runs by up to a factor of two (loopback ping p50 1.0 to 2.4 ms):
+
+| Link | Ping p50, p95 | Echo p50 | Clouds a second | Age p50 | MB/s | Page a cloud |
+| --- | --- | --- | --- | --- | --- | --- |
+| loopback | 1.2, 8.4 ms / 0.8, 2.0 ms | 0.9 / 1.2 ms | 10 / 10 | 38 / 30 ms | 2.4 | 0.9 / 1.0 ms |
+| LAN | 2.8, 5.9 ms / 2.3, 4.9 ms | 2.9 / 2.0 ms | 10 / 10 | 56 / 62 ms | 2.4 | 1.0 / 0.9 ms |
+| WiFi | 11.8, 18 ms / 9.8, 15 ms | 11.8 / 10.5 ms | 9.9 / 9.8 | 111 / 130 ms | 2.4 | 0.8 / 0.8 ms |
+| jittery WiFi | 28, 45 ms / 29, 52 ms | 29 / 31 ms | 9.9 / 9.8 | 126 / 127 ms | 2.4 | 0.9 / 0.9 ms |
+
+Against stage 2, with the same harness:
+
+- A cloud is 240 KB, from 525 KB. WiFi now carries all 10 clouds a second, from 5.3, and
+  each arrives 111 ms old rather than 263 ms. The jittery link likewise, 126 ms from 284 ms.
+- The page takes under 1 ms a cloud, from 8.8 ms on loopback and 9.9 ms on WiFi. Its main
+  thread is busy 6 to 11%, from 20% on loopback, though it now draws twice the clouds on WiFi.
+- Of what is left a cloud, decoding is 0.1 ms and the columns into the scene's buffer 0.1 ms.
+  The rest is joining the pieces, three.js taking the new buffer and the garbage collector.
+- An expression that walks a packed list pays for it through the proxy, measured in Node: 4 ms
+  for the 15k points the first time, records made, and 2 ms each time after. Before, every
+  cloud cost 9 ms whether walked or not.
+
+A stall the harness made: on the jittery link the channels' ping now and then stood still for
+0.2 to 0.9 s, which stage 2 never showed in 2 minutes. Timing each ping both ways put all of
+it on the way down, after the backend wrote the pong: messages written 50 ms apart arrived
+together, waiting on one resent piece. The shaper's sockets had Windows' default 64 KB receive
+buffer, which loses about half of a 144 KB burst before Node reads it, and its own count of
+drops never sees that. Stage 3 leaves the link idle between clouds, so each cloud starts with
+a whole window sent at once, up to 175 KB, where stage 2 kept the link full and sent as acks
+came. With 8 MB buffers, 4 minutes showed no stall, the slowest ping 79 ms.
+
+What it shows of the backend stays true on a real link: a lost piece holds every message on
+the ordered channel, pongs and small values too, until SCTP resends it, and a lost tail waits
+for the retransmission timeout.
+
 ## Plan
 
 Each stage is measured on loopback, LAN and WiFi before the next.
 
 1. Done: transport, above.
 2. Done: backend, above.
-3. Page: typed arrays and record columns decoded as they are, records made only where an
-   expression walks them, the scene reading the columns, `shared()` comparing bytes.
+3. Done: page, above.
 4. Compression: columns shuffled then LZ4 above a few KB, with the 40 line decoder.
 5. The tick: whether a big value should go at once rather than wait for it.
+6. Loss: the shaper dropping a share of packets at random, as WiFi does, then whether small
+   messages should have a channel of their own, so a lost piece of bulk never holds them, and
+   whether a window should be paced over the round trip rather than sent at once.
 
 Experiment code, never committed: `HMI_MARGIN_US` and the margin log in `flight.rs`, the `EXP`
 timings in `rtc.rs` and `app.rs`.
@@ -249,3 +305,6 @@ timings in `rtc.rs` and `app.rs`.
 - Lossy narrowing only as a choice per import, a fixed step rather than f16.
 - A list of numbers, and a list of records of numbers, stay packed as columns in the backend.
   64 bit whole numbers stay one by one, as a page reads them as BigInts.
+- Packed lists go to screens as typed arrays, records as tag 41000 over their columns, and
+  to files as plain lists. A page reads them as frozen lists whose records are made only
+  when read.
