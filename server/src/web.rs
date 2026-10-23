@@ -182,7 +182,7 @@ async fn screen(socket: WebSocket, door: Door, reached: Reached) {
                 (f.room(), f.ask())
             };
             let frame = if ask {
-                // half the way is out, so a ping at once, whose pong frees it before it fills
+                // a piece went since the last ping, so a ping at once, whose pong says it arrived
                 ping()
             } else {
                 tokio::select! {

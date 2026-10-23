@@ -1,12 +1,13 @@
 //! How much a screen's socket or reliable channel may have on its way, as the screen confirms
 //! it: on the socket each ping carries the bytes written before it and its pong says they all
-//! arrived, and on the channel its acks say so. Each keeps on the way what the link carries in
-//! its shortest round trip and a margin more, so what it sends next waits that long at most
-//! and nothing piles up in buffers it cannot take back. The margin is the least the link keeps
-//! its pace with. A link that holds acks and lets them go together, as a busy access point
-//! does, needs more on the way, else the window starves it and the rate it measures falls with
-//! it. So while the way fills, a wider window is tried from time to time, and the margin grows
-//! to it when more arrived with it, else narrows.
+//! arrived, and on the channel its acks say so. The socket pings after each piece, not waiting
+//! for the last pong, so it hears as pieces arrive, as the channel does. Each keeps on the way
+//! what the link carries in its shortest round trip and a margin more, so what it sends next
+//! waits that long at most and nothing piles up in buffers it cannot take back. The margin is
+//! the least the link keeps its pace with. A link that holds acks and lets them go together, as
+//! a busy access point does, needs more on the way, else the window starves it and the rate it
+//! measures falls with it. So while the way fills, a wider window is tried from time to time,
+//! and the margin grows to it when more arrived with it, else narrows.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -34,9 +35,9 @@ const RATES: u64 = 1_000_000;
 pub struct Flight {
     written: u64,
     confirmed: u64,
-    /// When the last ping left, and when the newest one answered had.
+    /// When the last ping left, and the bytes written by then.
     asked: u64,
-    answered: u64,
+    asked_for: u64,
     /// The confirmations of the last second: when the bytes confirmed had all left, how many,
     /// and when they were confirmed.
     heard: VecDeque<(u64, u64, u64)>,
@@ -75,6 +76,7 @@ impl Flight {
     /// The payload of a ping leaving `now`.
     pub fn ping(&mut self, now: u64) -> [u8; 16] {
         self.asked = now;
+        self.asked_for = self.written;
         let mut payload = [0; 16];
         payload[..8].copy_from_slice(&now.to_le_bytes());
         payload[8..].copy_from_slice(&self.written.to_le_bytes());
@@ -91,7 +93,6 @@ impl Flight {
         }
         let trip = now.checked_sub(sent)?;
         self.trip(trip);
-        self.answered = self.answered.max(sent);
         self.heard(written, sent, now);
         Some(Duration::from_micros(trip))
     }
@@ -169,14 +170,10 @@ impl Flight {
         self.written - self.confirmed < self.window()
     }
 
-    /// Whether the way should be asked what arrived: half its window is out and no ping is.
+    /// Whether the way should be asked what arrived: a piece's worth went since it was last
+    /// asked. It never waits for the answer, as one piece a round trip starves a small window.
     pub fn ask(&self) -> bool {
-        !self.asking() && self.written - self.confirmed >= self.window() / 2
-    }
-
-    /// Whether a ping is on its way, whose pong confirms more.
-    pub fn asking(&self) -> bool {
-        self.asked > self.answered
+        self.written - self.asked_for >= PIECE as u64
     }
 
     /// Bytes a us the link carried at most lately.
@@ -215,9 +212,19 @@ mod tests {
         assert!(f.room());
         f.wrote(1);
         assert!(!f.room());
-        assert!(!f.asking());
+    }
+
+    #[test]
+    fn the_way_is_asked_after_each_piece_without_waiting_for_an_answer() {
+        let mut f = Flight::default();
+        f.wrote(PIECE - 1);
+        assert!(!f.ask());
+        f.wrote(1);
+        assert!(f.ask());
         f.ping(10);
-        assert!(f.asking());
+        assert!(!f.ask());
+        f.wrote(PIECE);
+        assert!(f.ask());
     }
 
     #[test]
@@ -229,7 +236,6 @@ mod tests {
         assert!(!f.room());
         assert_eq!(f.pong(&payload, 2_000), Some(Duration::from_millis(2)));
         assert!(f.room());
-        assert!(!f.asking());
     }
 
     /// Runs a channel for `ms` that carries `per_ms` bytes a ms while the sender keeps it full,
@@ -317,6 +323,6 @@ mod tests {
         more[..8].copy_from_slice(&5u64.to_le_bytes());
         more[8..].copy_from_slice(&11u64.to_le_bytes());
         assert_eq!(f.pong(&more, 10), None);
-        assert!(f.asking());
+        assert_eq!(f.confirmed, 0);
     }
 }
