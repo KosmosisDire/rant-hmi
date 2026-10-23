@@ -395,6 +395,110 @@ Stage 5, the rest:
   pacing: its measured rate falls and the window with it, as stage 1 found where acks come in
   bursts.
 
+### 8. Stage 6: loss
+
+The shaper now also loses a share of packets at random, both ways, as WiFi does past its own
+retries. A UDP packet is gone. A TCP one is sent again when Linux would notice: once a later
+packet is acked and a quarter round trip more has passed, or with none later after two round
+trips, 200 ms more when it went alone. It goes through the queue again, and what came after it
+waits. TCP's slower sending after a loss is not modeled, so the socket's numbers under loss are
+its best case.
+
+At 1% loss stage 5 kept its pace over the socket, but not over its channels: on WiFi ping p95
+548 ms and echo p95 700 ms, with an eighth of the echoes never back, and clouds now and then 1 s
+late. Loss on the way up cost nothing: at 1% that way alone ping p95 was 16 ms. Why, from
+sctp-proto, the SCTP under str0m:
+
+- A chunk lost twice, or lost last with nothing after it to report it, waits for the
+  retransmission timer, at least 1 s as RFC 4960 has it, and then SCTP sends one packet at a
+  time again. At 1% that stopped everything on the reliable channel for 1 to 2 s about every
+  10 s. sctp-proto can be set lower, but str0m gives no way to, even on its main branch.
+- A lost chunk holds every message after it on its ordered channel at the screen, so pongs and
+  small values waited behind a piece of a cloud.
+- SCTP sends what waits in the order written, so a pong waits for the 20 to 110 KB of a cloud
+  written before it, and after a loss SCTP halves its own window, so that takes several round
+  trips.
+- On the jittery link SCTP's congestion control, which takes each loss for congestion, holds
+  the channel to 0.5 to 0.7 MB/s at 1%, less than the clouds' 1.45 MB/s, so about 4 come a
+  second, 300 ms old.
+
+Tried on WiFi at 1% loss, each the median of three runs of 20 s:
+
+| | Ping p50, p95 | Echo p95 | Clouds a second | Cloud p50, p95 | Clouds over 500 ms |
+| --- | --- | --- | --- | --- | --- |
+| as stage 5 | 18, 654 ms | 577 ms | 8.0 | 100, 680 ms | 11 |
+| small messages on an unordered channel | 11, 60 ms | 55 ms | 8.0 | 120, 990 ms | 17 |
+| as stage 5, SCTP's least timer 200 ms | 28, 175 ms | 145 ms | 9.3 | 127, 266 ms | 0 |
+| unordered channel, least timer 200 ms | 11, 26 ms | 22 ms | 9.7 | 117, 223 ms | 0 |
+
+- Big values on a second ordered channel, tried first, stop the screen holding a pong behind a
+  lost piece but not SCTP's own queue: ping p95 233 ms against 765 ms in three runs as stage 5.
+- sctp-proto sends a message of an unordered channel before any ordered one waiting, and the
+  screen takes it however many were lost before it. So pongs and values on a reliable unordered
+  channel pass both.
+- The least timer at 200 ms, in a copy of sctp-proto, took every 1 s stall away. It only helps
+  clouds, so the two together are best.
+
+Built, on the branch:
+
+- A screen opens a third channel, `small`, reliable and unordered. Pongs, and values that fit a
+  piece, go whole on it, and the rest in the lanes on the ordered channel as before. A value
+  carries its batch's number, so the screen already drops one older than the last it took.
+  Values are left out while 64 KB waits there, and the screen gets them all once it drains, as
+  on the best effort channel.
+- The socket pings after each piece written, not waiting for the last pong, below.
+
+Why the socket on WiFi fell behind for half a second: it pinged once half its window was out,
+and not again until the pong. With the window at two pieces, 16 KB, that confirmed one piece a
+round trip, 8 KB in 7 ms, 1.15 MB/s on a 3 MB/s link, and the rate it measured fell to that:
+every rate measured in a slow stretch was 1.1 to 1.2 MB/s. The margin search could not see it,
+as the link idles between clouds. Even outside those stretches a cloud took 84 ms against 56 on
+the channels. A ping after each piece, about 180 a second here, confirms pieces as they arrive,
+as the channel's acks do.
+
+Pacing a window over the round trip: with the access point's queue at 256 KB nothing dropped in
+any run, as the window keeps the queue short. With a shallow queue the window sent at once when a
+cloud starts overflows it on channels: at 32 KB 11 drops a second and cloud p95 250 ms, at 16 KB
+31 a second and p50 87 ms. Pacing would mend that, but a timer on Windows fires each 15 ms, too
+coarse for pieces 3 ms apart, so it is left.
+
+Stage 5 and 6 at 1% loss, run in turn, each the median of three runs of 20 s, channels:
+
+| Link | Ping p50, p95 | Echo p50, p95 | Clouds a second | Cloud p50, p95 | Clouds over 500 ms |
+| --- | --- | --- | --- | --- | --- |
+| WiFi, stage 5 | 23, 548 ms | 34, 700 ms, 25 never back | 7.8 | 114, 293 ms | 7 |
+| WiFi, stage 6 | 11, 64 ms | 11, 53 ms | 8.7 | 122, 718 ms | 11 |
+| jittery, stage 5 | 57, 195 ms | 75, 219 ms, 13 never back | 4.6 | 271, 572 ms | 9 |
+| jittery, stage 6 | 30, 52 ms | 30, 49 ms | 3.7 | 354, 798 ms | 13 |
+
+And over the socket, where pings and echoes stayed as they were:
+
+| Link | Cloud p50, p95, stage 5 | Stage 6 |
+| --- | --- | --- |
+| WiFi | 81, 129 ms | 68, 85 ms |
+| jittery WiFi | 92, 189 ms | 100, 189 ms |
+
+Without loss, each the median of three runs, channels then socket:
+
+| Link | Ping p50, p95 | Echo p50 | Cloud p50, p95, stage 5 | Stage 6 |
+| --- | --- | --- | --- | --- |
+| loopback | 1.1, 5.1 ms / 1.0, 6.5 ms | 1.3 / 1.1 ms | 17, 29 ms / 11, 23 ms | 16, 28 ms / 9.9, 17 ms |
+| LAN | 2.9, 9.3 ms / 2.8, 6.0 ms | 2.7 / 3.6 ms | 35, 50 ms / 42, 53 ms | 33, 49 ms / 31, 47 ms |
+| WiFi | 8.8, 15 ms / 9.1, 14 ms | 9.1 / 9.8 ms | 58, 63 ms / 84, 134 ms | 59, 61 ms / 63, 69 ms |
+| jittery WiFi | 25, 31 ms / 22, 28 ms | 25 / 26 ms | 87, 123 ms / 90, 155 ms | 92, 119 ms / 86, 135 ms |
+
+- Under loss small messages on channels now come as on a link without it, a few ms more: on
+  WiFi ping p95 64 ms from 548, and every echo comes back.
+- Clouds on channels are no better under loss, and cannot be from here: the 1 s stalls are
+  SCTP's timer and the slow pace its congestion control. On the jittery link the channel carried
+  about 15% less with the small channel, 0.50 to 0.61 MB/s in all six runs against 0.59 to 0.72
+  in five of six as stage 5, for a reason not found. On WiFi it carried more.
+- The socket's clouds are younger on every link without loss, on WiFi 63 ms p50 and 69 ms p95
+  from 84 and 134 ms. Its ping and echo p95 on loopback and LAN rose up to 4 ms, as a cloud now
+  comes at full speed and a pong just behind it waits for the page to take it in.
+- Without loss the channels are about as they were, and the page gets as many messages, 246 a
+  second.
+
 ## Plan
 
 Each stage is measured on loopback, LAN and WiFi before the next.
@@ -404,15 +508,14 @@ Each stage is measured on loopback, LAN and WiFi before the next.
 3. Done: page, above.
 4. Done: compression, above.
 5. Done: the tick, above.
-6. Loss: the shaper dropping a share of packets at random, as WiFi does, then whether small
-   messages should have a channel of their own, so a lost piece of bulk never holds them, and
-   whether a window should be paced over the round trip rather than sent at once. Also why the
-   socket on WiFi falls behind for half a second now and then.
+6. Done: loss, above. Left: str0m letting SCTP's least retransmission timer be set, which takes
+   the 1 s stalls away, and pacing, for an access point with a shallow queue.
 7. A worker: whether decoding a big message off the main thread pays, now that unpacking it
    costs 1 to 2 ms there.
 
-Experiment code, never committed: `HMI_MARGIN_US` and the margin log in `flight.rs`, the `EXP`
-timings in `rtc.rs` and `app.rs`.
+Experiment code, never committed: `HMI_MARGIN_US`, the margin log and the `HMI_RATES` rate log
+in `flight.rs`, `HMI_ONE_CHANNEL` and the `EXP` timings in `rtc.rs`, the `EXP` timings in
+`app.rs`.
 
 ## Decisions
 
@@ -431,3 +534,6 @@ timings in `rtc.rs` and `app.rs`.
   makes them smaller. Bytes go as they are.
 - A changed value goes to screens at once, unless it went since the last tick began: then it
   waits for the next. The engine judges and a change's rules run on the tick.
+- Pongs, and values that fit a piece, go whole on a reliable unordered channel, which SCTP sends
+  before anything ordered waiting and which a packet lost on the ordered one never holds.
+- The socket pings after each piece written, without waiting for the last pong.
