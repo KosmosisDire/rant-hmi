@@ -329,11 +329,20 @@ impl App {
     }
 
     fn deliver(&mut self, d: Delivery) {
+        let waits = self.waits(&d.alias);
         let slot = self.values.entry(d.alias.clone()).or_default();
-        let previous = slot.value.replace(d.value.clone());
-        self.moved.push((d.alias.clone(), previous, d.value));
+        let previous = slot.value.replace(d.value);
+        // only a rule that waits on it needs the value it had, which for a cloud is costly to copy
+        if waits && let Some(value) = slot.value.clone() {
+            self.moved.push((d.alias.clone(), previous, value));
+        }
         slot.known = true;
         self.changed.insert(d.alias);
+    }
+
+    /// Whether a rule runs when `name` changes.
+    fn waits(&self, name: &str) -> bool {
+        self.pages.rules.iter().any(|r| matches!(&r.when, When::Changes { name: n } if n == name))
     }
 
     fn inbound(&mut self, i: Inbound) {
@@ -1220,6 +1229,9 @@ impl App {
         // its value already with the engine
         let moved = std::mem::take(&mut self.moved);
         for (name, previous, value) in &moved {
+            if !self.waits(name) {
+                continue;
+            }
             let p = Value::map([("value", value.clone()), ("previous", previous.clone().unwrap_or_default())]);
             self.run_rules(|r| matches!(&r.when, When::Changes { name: n } if n == name), p);
         }
