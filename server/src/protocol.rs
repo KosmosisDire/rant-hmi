@@ -107,8 +107,8 @@ pub enum Level {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum ClientMsg {
-    /// Asks for a pong, which goes back the way the ping came, to time the round trip. On the
-    /// channels `rtt` is the last round trip the screen timed there, in ms, once.
+    /// Asks for a pong, which the loop answers in turn and sends the way small values go, so
+    /// the round trip is what a value waits. `rtt` is the last one the screen timed, in ms, once.
     Ping {
         t: f64,
         #[serde(default)]
@@ -181,15 +181,6 @@ pub enum ClientMsg {
         #[serde(default)]
         heard: Vec<BTreeMap<String, String>>,
     },
-}
-
-impl ClientMsg {
-    /// The pong for a ping, which the way it came answers at once, as a ping holds no order, so
-    /// the round trip times the link and never the loop.
-    pub fn pong(&self) -> Option<Bytes> {
-        let ClientMsg::Ping { t, .. } = self else { return None };
-        Some(encode(&ServerMsg::Pong { t: *t }))
-    }
 }
 
 pub fn encode(msg: &ServerMsg) -> Bytes {

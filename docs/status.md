@@ -11,8 +11,8 @@ The screens connected, a list. Each holds:
 - `id`: its number, as the log and `p.screen` give it
 - `address`: where it connects from
 - `connected_at`: when it connected, a Rant Timestamp: microseconds since the Unix epoch
-- `ping_ms`: the last round trip to it and back, 0 until one is measured. While its WebRTC
-  connection is open it is timed there, the way its values and actions go, else on its socket.
+- `ping_ms`: the last round trip the screen timed, 0 until one is measured: a ping through the
+  HMI in turn with what the screen sends, and back the way its values come.
 - `jitter_ms`: how much the round trip wavers, smoothed as RTP does: each new round trip
   moves it a sixteenth of the way to how far that one was from the last
 - `webrtc`: whether its WebRTC connection is open, which carries its values and video too.

@@ -98,6 +98,8 @@ pub enum Way {
     Values,
     /// An import's value too big to share a message.
     Alone(String),
+    /// The answer to a ping, on the small values' way but never left out.
+    Pong,
 }
 
 pub enum FromRtc {
@@ -107,8 +109,6 @@ pub enum FromRtc {
     Linked { session: u32, open: bool },
     /// What a screen sent on a channel.
     Message { session: u32, msg: ClientMsg },
-    /// The screen pinged on its channels, answered already, with the round trip it timed last.
-    Heard { session: u32, rtt: Option<Duration> },
     /// A screen missed values, so it needs them all.
     CaughtUp { session: u32 },
     /// An address of this host a screen's connection may be reached on, found after its answer.
@@ -274,6 +274,7 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                             Way::Values if bytes.len() <= PIECE => small(p, &bytes, true),
                             Way::Values => p.lanes.values(bytes),
                             Way::Alone(alias) => p.lanes.alone(&alias, bytes),
+                            Way::Pong => small(p, &bytes, false),
                         }
                     }
                 }
@@ -308,9 +309,7 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                 }
             }
         }
-        // what the connection brought first, as a ping's pong goes in this turn
         for p in &mut peers {
-            drive(p, &ports, &said).await;
             pump(p, &said);
             drive(p, &ports, &said).await;
         }
@@ -518,18 +517,14 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
                         }
                     }
                     Event::ChannelData(d) => match ciborium::from_reader::<ClientMsg, _>(d.data.as_slice()) {
-                        Ok(msg @ ClientMsg::Ping { rtt, .. }) => {
-                            if let Some(pong) = msg.pong() {
-                                small(p, &pong, false);
-                            }
-                            // the screen times its channels, which says how long the reliable one's way is
-                            let rtt = rtt.filter(|r| r.is_finite() && *r >= 0.0).map(|r| Duration::from_secs_f64(r / 1000.0));
-                            if let Some(rtt) = rtt {
-                                p.flight.trip(rtt.as_micros() as u64);
-                            }
-                            let _ = said.send(FromRtc::Heard { session: p.session, rtt });
-                        }
                         Ok(msg) => {
+                            // the shortest round trip the screen times says how long the reliable channel's way is
+                            if let ClientMsg::Ping { rtt: Some(rtt), .. } = msg
+                                && rtt.is_finite()
+                                && rtt >= 0.0
+                            {
+                                p.flight.trip((rtt * 1000.0) as u64);
+                            }
                             let _ = said.send(FromRtc::Message { session: p.session, msg });
                         }
                         Err(e) => warn!("screen {} sent what this backend cannot read: {e}", p.session),

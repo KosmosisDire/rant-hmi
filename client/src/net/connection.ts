@@ -18,12 +18,14 @@ import { readPacked } from "./packed";
 /** 20 times a second, so the round trip shown is a fresh one. */
 const ROUND_TRIP_EVERY_MS = 50;
 const RETRY_MAX_MS = 2000;
-/** How long the channels may take to open before they count as failed. */
+/** How long the channels may take to open, and to answer their first ping, before they count
+ *  as failed. */
 const CHANNELS_WAIT_MS = 10_000;
 /** Failed channels are offered again after this, doubling each time up to a minute. */
 const CHANNELS_RETRY_MS = 2000;
 const CHANNELS_RETRY_MAX_MS = 60_000;
-/** A ping on the channels unanswered this long means they broke, so the link takes over. */
+/** A ping on the channels unanswered this long, once one was answered, means they broke, so
+ *  the link takes over. */
 const CHANNELS_SILENT_MS = 1000;
 
 /** What a person does on a running page, which goes on the reliable channel while it is open,
@@ -81,8 +83,10 @@ const videos = new Map<string, Video>();
 let channels: Channels | null = null;
 let channelsRetry: number | undefined;
 let channelsTries = 0;
-/** When the oldest ping on the channels still unanswered went. */
+/** When the oldest ping on the channels still unanswered went, and whether one was answered
+ *  since they opened. Until one is, its answer waits for the switch, which goes on the link. */
 let unanswered: number | null = null;
+let answeredThere = false;
 /** The last round trip timed, which the next ping tells the backend. */
 let timed: number | undefined;
 /** The videos whose frames the link brings, as last asked. */
@@ -145,7 +149,10 @@ function heard(bytes: Uint8Array) {
   } else if (msg.type === "pong") {
     const rtt = performance.now() - msg.t;
     timed = rtt;
-    if (unanswered !== null && msg.t >= unanswered) unanswered = null;
+    if (unanswered !== null && msg.t >= unanswered) {
+      unanswered = null;
+      answeredThere = true;
+    }
     setState("rttMs", state.rttMs === null ? rtt : state.rttMs * 0.8 + rtt * 0.2);
     cameBack(msg.t);
   } else if (msg.type === "channels") {
@@ -168,7 +175,8 @@ function heard(bytes: Uint8Array) {
 
 function ping() {
   const t = performance.now();
-  if (state.channels && unanswered !== null && t - unanswered > CHANNELS_SILENT_MS) channelsFailed();
+  const silent = answeredThere ? CHANNELS_SILENT_MS : CHANNELS_WAIT_MS;
+  if (state.channels && unanswered !== null && t - unanswered > silent) channelsFailed();
   if (state.channels) unanswered ??= t;
   send({ type: "ping", t, rtt: timed });
   timed = undefined;
@@ -363,6 +371,7 @@ function closeChannels() {
   const c = channels;
   channels = null;
   unanswered = null;
+  answeredThere = false;
   c?.pc.close();
   for (const v of videos.values()) {
     v.transceiver = null;

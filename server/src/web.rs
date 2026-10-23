@@ -34,7 +34,7 @@ use crate::flight::Flight;
 use crate::lanes::Lanes;
 use crate::protocol::ClientMsg;
 
-/// How often the socket pings its screen, so its round trip is new 20 times a second. The
+/// How often the socket pings its screen, to hear what arrived and that it is there. The
 /// browser answers by itself, even in a hidden tab whose timers run slow, so a screen is lost
 /// only when its link is.
 pub const PING_EVERY: Duration = Duration::from_millis(50);
@@ -169,7 +169,6 @@ async fn screen(socket: WebSocket, door: Door, reached: Reached) {
     let now = move || born.elapsed().as_micros() as u64;
     let way = Arc::new(Way::default());
     let writing = way.clone();
-    let pongs = lanes.clone();
     let writer = tokio::spawn(async move {
         let way = writing;
         let ping = || Message::Ping(Bytes::copy_from_slice(&way.flight.lock().expect("flight").ping(now())));
@@ -203,25 +202,22 @@ async fn screen(socket: WebSocket, door: Door, reached: Reached) {
         }
         let _ = sink.close().await;
     });
-    // the loop hears a round trip once a ping's time at most, though the writer pings more
+    // the loop hears the screen is there once a ping's time at most, though the writer pings more
     let mut told: Option<Instant> = None;
     while let Some(Ok(frame)) = stream.next().await {
         match frame {
             Message::Binary(data) => match ciborium::from_reader::<ClientMsg, _>(data.as_ref()) {
-                Ok(msg) => match msg.pong() {
-                    Some(pong) => pongs.send(pong),
-                    None => {
-                        door.send(Inbound::Message { session, msg });
-                    }
-                },
+                Ok(msg) => {
+                    door.send(Inbound::Message { session, msg });
+                }
                 Err(e) => warn!("screen {session} sent what this backend cannot read: {e}"),
             },
             Message::Pong(data) => {
-                let ping = way.flight.lock().expect("flight").pong(&data, now());
+                way.flight.lock().expect("flight").pong(&data, now());
                 way.heard.notify_one();
                 if told.is_none_or(|t| t.elapsed() >= PING_EVERY) {
                     told = Some(Instant::now());
-                    door.send(Inbound::Heard { session, ping });
+                    door.send(Inbound::Heard { session });
                 }
             }
             Message::Close(_) => break,

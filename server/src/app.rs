@@ -47,8 +47,8 @@ pub enum Inbound {
     /// `local` is the address the screen reached the HMI on, `remote` the one it came from.
     Open { session: u32, out: Outbox, local: IpAddr, remote: IpAddr },
     Message { session: u32, msg: ClientMsg },
-    /// The screen answered the socket's ping, which took `ping` there and back.
-    Heard { session: u32, ping: Option<Duration> },
+    /// The screen answered the socket's ping, so it is there.
+    Heard { session: u32 },
     Close { session: u32 },
 }
 
@@ -370,13 +370,9 @@ impl App {
                 s.heard = Instant::now();
                 self.handle(session, msg);
             }
-            Inbound::Heard { session, ping } => {
+            Inbound::Heard { session } => {
                 if let Some(s) = self.sessions.get_mut(&session) {
                     s.heard = Instant::now();
-                    // the screen times its channels while it has them
-                    if let Some(ping) = ping.filter(|_| !s.channels) {
-                        s.timed(ping);
-                    }
                 }
             }
             Inbound::Close { session } => {
@@ -432,8 +428,17 @@ impl App {
             return self.refuse(session, text, None);
         }
         match msg {
-            // answered where it came in
-            ClientMsg::Ping { .. } => {}
+            ClientMsg::Ping { t, rtt } => {
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                if let Some(rtt) = rtt.filter(|r| r.is_finite() && *r >= 0.0) {
+                    s.timed(Duration::from_secs_f64(rtt / 1000.0));
+                }
+                let pong = encode(&ServerMsg::Pong { t });
+                match s.channels {
+                    true => self.rtc.send(ToRtc::Send { session, way: Way::Pong, bytes: pong }),
+                    false => s.out.pong(pong),
+                }
+            }
             // a new connection plays nothing until the screen offers its videos on it
             ClientMsg::Channels { offer } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
@@ -1470,13 +1475,6 @@ impl App {
                 }
             }
             FromRtc::Linked { session, open: false } => self.unlinked(session),
-            FromRtc::Heard { session, rtt } => {
-                let Some(s) = self.sessions.get_mut(&session) else { return };
-                s.heard = Instant::now();
-                if let Some(rtt) = rtt {
-                    s.timed(rtt);
-                }
-            }
             FromRtc::Message { session, msg } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
                 match s.switched {
@@ -1624,6 +1622,7 @@ mod tests {
                     Way::Values => "values".into(),
                     Way::Alone(alias) => alias,
                     Way::Control => "control".into(),
+                    Way::Pong => "pong".into(),
                 })
                 .collect()
         };

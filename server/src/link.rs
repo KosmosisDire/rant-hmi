@@ -57,17 +57,14 @@ async fn open(State(link): State<Link>) -> Result<String, StatusCode> {
 
 /// Hands the loop what the screen sent, in order.
 async fn said(State(link): State<Link>, extract::Path(session): extract::Path<u32>, body: Bytes) -> StatusCode {
-    let Some(lanes) = lanes(&link, session) else {
+    if lanes(&link, session).is_none() {
         return StatusCode::GONE;
-    };
+    }
     for message in unframed(&body) {
         match ciborium::from_reader::<ClientMsg, _>(message) {
-            Ok(msg) => match msg.pong() {
-                Some(pong) => lanes.send(pong),
-                None => {
-                    link.door.send(Inbound::Message { session, msg });
-                }
-            },
+            Ok(msg) => {
+                link.door.send(Inbound::Message { session, msg });
+            }
             Err(e) => warn!("screen {session} sent what this backend cannot read: {e}"),
         }
     }
@@ -79,7 +76,7 @@ async fn said(State(link): State<Link>, extract::Path(session): extract::Path<u3
 /// the session and all it sent was read.
 async fn poll(State(link): State<Link>, extract::Path(session): extract::Path<u32>) -> Result<Vec<u8>, StatusCode> {
     let lanes = lanes(&link, session).ok_or(StatusCode::GONE)?;
-    link.door.send(Inbound::Heard { session, ping: None });
+    link.door.send(Inbound::Heard { session });
     let mut batch = Vec::new();
     match tokio::time::timeout(WAIT, lanes.next(true)).await {
         Err(_) => return Ok(batch),
@@ -152,7 +149,7 @@ mod tests {
         let router = router(Path::new("."), door);
         let (session, out) = opened(&router, &mut screens).await;
 
-        // the loop gets what the screen sent in order, but a ping is answered at once
+        // the loop gets what the screen sent in order, a ping among the rest
         let mut body = Vec::new();
         frame(&mut body, &cbor(serde_json::json!({ "type": "undo" })));
         frame(&mut body, &cbor(serde_json::json!({ "type": "ping", "t": 1.5 })));
@@ -160,19 +157,18 @@ mod tests {
         let (status, _) = ask(&router, "POST", &format!("/link/{session}"), body).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         assert!(matches!(screens.recv().await, Some(Inbound::Message { msg: ClientMsg::Undo, .. })));
+        assert!(matches!(screens.recv().await, Some(Inbound::Message { msg: ClientMsg::Ping { t: 1.5, .. }, .. })));
         assert!(matches!(screens.recv().await, Some(Inbound::Message { msg: ClientMsg::Redo, .. })));
 
-        // what waits, so one poll answers it all, each a piece as a socket's frame is
+        // two messages wait, so one poll answers both, each a piece as a socket's frame is
         out.send(Bytes::from_static(b"first"));
         out.send(Bytes::from_static(b"second"));
         let (status, batch) = ask(&router, "GET", &format!("/link/{session}"), Vec::new()).await;
         assert_eq!(status, StatusCode::OK);
         let pieces: Vec<&[u8]> = unframed(&batch).collect();
-        assert_eq!(pieces.len(), 3);
-        let pong: serde_json::Value = ciborium::from_reader(&pieces[0][3..]).unwrap();
-        assert_eq!(pong, serde_json::json!({ "type": "pong", "t": 1.5 }));
-        assert_eq!(&pieces[1][3..], b"first");
-        assert_eq!(&pieces[2][3..], b"second");
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(&pieces[0][3..], b"first");
+        assert_eq!(&pieces[1][3..], b"second");
         assert!(matches!(screens.recv().await, Some(Inbound::Heard { .. })));
 
         // the loop drops the session, which is gone once what it sent last is read

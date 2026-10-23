@@ -124,6 +124,12 @@ impl Lanes {
         self.put(VALUES, message, false);
     }
 
+    /// Sends the answer to a ping in the values' lane, so it times what values wait, but never
+    /// leaves it out, so a way that falls behind shows in it.
+    pub fn pong(&self, message: Bytes) {
+        self.put(VALUES, message, false);
+    }
+
     /// Sends one import's value too big to share a message, in that import's own lane, which
     /// keeps only the latest.
     pub fn alone(&self, alias: &str, message: Bytes) {
