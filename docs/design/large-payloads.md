@@ -499,6 +499,47 @@ Without loss, each the median of three runs, channels then socket:
 - Without loss the channels are about as they were, and the page gets as many messages, 246 a
   second.
 
+### 9. Stage 7: a worker
+
+Whether decoding a big message in a worker, off the page's main thread, pays. A client built to
+time each part of a cloud's handling ran with clouds of 15000 points as before and of 100000,
+1 MB a cloud and 9 MB/s, which only loopback and LAN carry. The scene redraws in a microtask
+right after the message, so a cloud's whole task holds the drawing too.
+
+A cloud's task on the main thread, loopback, socket, each the median of three runs:
+
+| | 15k points | 100k points |
+| --- | --- | --- |
+| joining its pieces | 0.1 ms | 0.3 ms |
+| decoding, nearly all of it unpacking | 1.2 ms | 4.0 ms |
+| the store, and the scene reading the columns | 0.7 ms | 1.2 ms |
+| drawing | 0.7 ms | 2.1 ms |
+| the whole task, p50 and p95 | 2.9, 4.0 ms | 8.4, 15.7 ms |
+| main thread busy, socket and channels | 10% and 9% | 28% and 18% |
+
+A worker would take joining and decoding, under half of the task. How much the task costs a
+pong, each the median of three runs: its round trip, and the same less the time the page spent
+on cloud tasks during it, the most the cloud work can have cost it:
+
+| Link | 15k: ping p95, less cloud tasks | Pongs with one | 100k: ping p95, less cloud tasks | Pongs with one |
+| --- | --- | --- | --- | --- |
+| loopback | 3.1, 3.1 ms | 0% | 15.9, 15.3 ms | 3% |
+| loopback, socket | 5.1, 3.1 ms | 14% | 11.2, 9.9 ms | 3% |
+| LAN | 8.9, 8.0 ms | 0.5% | 6.5, 6.5 ms | 0% |
+| LAN, socket | 7.3, 6.8 ms | 4% | 7.4, 7.4 ms | 1.4% |
+
+- With every cloud skipped in the page, its pieces still taken, ping p95 moved as much: 2 ms at
+  most at 15k, within the spread of single runs, which was 2 to 12 ms on loopback channels.
+- So a worker would take about 1 ms off a pong's p95 on loopback and nothing on LAN. It does not
+  pay, and is not built. What holds a pong at 100k is the backend and the link, not the page.
+- The pieces cost the main thread more than the decoding: with the clouds skipped, each 8 KB
+  piece took 0.12 to 0.15 ms of it on the socket and 0.04 ms on a channel, so at 100k the socket
+  kept the main thread 17 to 24% busy, the channels 7 to 8%. This Chrome lets a page hand a data
+  channel to a worker, so a worker could take the socket, the channels and their pieces, should
+  a screen ever need that time back.
+- Drawing a new cloud is mostly three.js bounding it for its depth sort, about 2 ms at 100k.
+  Points drawn without culling took as long, as the sort still bounds them.
+
 ## Plan
 
 Each stage is measured on loopback, LAN and WiFi before the next.
@@ -510,8 +551,7 @@ Each stage is measured on loopback, LAN and WiFi before the next.
 5. Done: the tick, above.
 6. Done: loss, above. Left: str0m letting SCTP's least retransmission timer be set, which takes
    the 1 s stalls away, and pacing, for an access point with a shallow queue.
-7. A worker: whether decoding a big message off the main thread pays, now that unpacking it
-   costs 1 to 2 ms there.
+7. Done: a worker, above. It does not pay.
 
 Experiment code, never committed: `HMI_MARGIN_US`, the margin log and the `HMI_RATES` rate log
 in `flight.rs`, `HMI_ONE_CHANNEL` and the `EXP` timings in `rtc.rs`, the `EXP` timings in
@@ -537,3 +577,5 @@ in `flight.rs`, `HMI_ONE_CHANNEL` and the `EXP` timings in `rtc.rs`, the `EXP` t
 - Pongs, and values that fit a piece, go whole on a reliable unordered channel, which SCTP sends
   before anything ordered waiting and which a packet lost on the ordered one never holds.
 - The socket pings after each piece written, without waiting for the last pong.
+- Big messages are decoded on the page's main thread: a worker would take about 1 ms off a
+  pong's p95 on loopback and nothing on a network.
