@@ -169,6 +169,7 @@ async fn screen(socket: WebSocket, door: Door, reached: Reached) {
     let now = move || born.elapsed().as_micros() as u64;
     let way = Arc::new(Way::default());
     let writing = way.clone();
+    let pongs = lanes.clone();
     let writer = tokio::spawn(async move {
         let way = writing;
         let ping = || Message::Ping(Bytes::copy_from_slice(&way.flight.lock().expect("flight").ping(now())));
@@ -176,16 +177,16 @@ async fn screen(socket: WebSocket, door: Door, reached: Reached) {
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             let heard = way.heard.notified();
-            let (room, asking) = {
+            let (room, ask) = {
                 let f = way.flight.lock().expect("flight");
-                (f.room(), f.asking())
+                (f.room(), f.ask())
             };
-            let frame = if !room && !asking {
-                // the way is full, so a ping at once, whose pong opens it as soon as it can
+            let frame = if ask {
+                // half the way is out, so a ping at once, whose pong frees it before it fills
                 ping()
             } else {
                 tokio::select! {
-                    piece = lanes.next(), if room => match piece {
+                    piece = lanes.next(room) => match piece {
                         Some(piece) => {
                             way.flight.lock().expect("flight").wrote(piece.len());
                             Message::Binary(piece)
@@ -207,9 +208,12 @@ async fn screen(socket: WebSocket, door: Door, reached: Reached) {
     while let Some(Ok(frame)) = stream.next().await {
         match frame {
             Message::Binary(data) => match ciborium::from_reader::<ClientMsg, _>(data.as_ref()) {
-                Ok(msg) => {
-                    door.send(Inbound::Message { session, msg });
-                }
+                Ok(msg) => match msg.pong() {
+                    Some(pong) => pongs.send(pong),
+                    None => {
+                        door.send(Inbound::Message { session, msg });
+                    }
+                },
                 Err(e) => warn!("screen {session} sent what this backend cannot read: {e}"),
             },
             Message::Pong(data) => {

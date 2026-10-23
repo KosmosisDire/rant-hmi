@@ -23,7 +23,7 @@ use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
 use crate::project::{Computed, Import, Kind, Per, Project, Record, Target, Token, Variable};
 use crate::rules;
-use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate};
+use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate, encode};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
 use crate::value::Value;
@@ -413,7 +413,8 @@ impl App {
             return self.refuse(session, text, None);
         }
         match msg {
-            ClientMsg::Ping { t, .. } => self.send(session, &ServerMsg::Pong { t }),
+            // answered where it came in
+            ClientMsg::Ping { .. } => {}
             // a new connection plays nothing until the screen offers its videos on it
             ClientMsg::Channels { offer } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
@@ -1428,14 +1429,12 @@ impl App {
                 }
             }
             FromRtc::Linked { session, open: false } => self.unlinked(session),
-            // a ping holds no order, so it is answered at once, the way it came
-            FromRtc::Message { session, msg: ClientMsg::Ping { t, rtt } } => {
+            FromRtc::Heard { session, rtt } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
                 s.heard = Instant::now();
-                if let Some(rtt) = rtt.filter(|r| r.is_finite() && *r >= 0.0) {
-                    s.timed(Duration::from_secs_f64(rtt / 1000.0));
+                if let Some(rtt) = rtt {
+                    s.timed(rtt);
                 }
-                self.rtc.send(ToRtc::Send { session, way: Way::Control, bytes: encode(&ServerMsg::Pong { t }) });
             }
             FromRtc::Message { session, msg } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
@@ -1553,12 +1552,6 @@ fn ways(values: Vec<ValueUpdate>, best_effort: impl Fn(&str) -> bool, seq: u64) 
         out.extend(alone.into_iter().map(|(alias, bytes)| (Way::Alone(alias), bytes)));
     }
     out
-}
-
-fn encode(msg: &ServerMsg) -> Bytes {
-    let mut out = Vec::new();
-    ciborium::into_writer(msg, &mut out).expect("every server message encodes");
-    out.into()
 }
 
 /// Each record's source by name, as the engine reads them.

@@ -99,6 +99,8 @@ pub enum FromRtc {
     Linked { session: u32, open: bool },
     /// What a screen sent on a channel.
     Message { session: u32, msg: ClientMsg },
+    /// The screen pinged on its channels, answered already, with the round trip it timed last.
+    Heard { session: u32, rtt: Option<Duration> },
     /// A screen missed values, so it needs them all.
     CaughtUp { session: u32 },
     /// An address of this host a screen's connection may be reached on, found after its answer.
@@ -296,7 +298,9 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                 }
             }
         }
+        // what the connection brought first, as a ping's pong goes in this turn
         for p in &mut peers {
+            drive(p, &ports, &said).await;
             pump(p, &said);
             drive(p, &ports, &said).await;
         }
@@ -503,14 +507,18 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
                         }
                     }
                     Event::ChannelData(d) => match ciborium::from_reader::<ClientMsg, _>(d.data.as_slice()) {
-                        Ok(msg) => {
-                            // the screen times its channels, which says how long the reliable one's way is
-                            if let ClientMsg::Ping { rtt: Some(rtt), .. } = &msg
-                                && rtt.is_finite()
-                                && *rtt >= 0.0
-                            {
-                                p.flight.trip((rtt * 1000.0) as u64);
+                        Ok(msg @ ClientMsg::Ping { rtt, .. }) => {
+                            if let Some(pong) = msg.pong() {
+                                p.lanes.send(pong);
                             }
+                            // the screen times its channels, which says how long the reliable one's way is
+                            let rtt = rtt.filter(|r| r.is_finite() && *r >= 0.0).map(|r| Duration::from_secs_f64(r / 1000.0));
+                            if let Some(rtt) = rtt {
+                                p.flight.trip(rtt.as_micros() as u64);
+                            }
+                            let _ = said.send(FromRtc::Heard { session: p.session, rtt });
+                        }
+                        Ok(msg) => {
                             let _ = said.send(FromRtc::Message { session: p.session, msg });
                         }
                         Err(e) => warn!("screen {} sent what this backend cannot read: {e}", p.session),
@@ -532,16 +540,16 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
     }
 }
 
-/// Writes pieces of the lanes on the reliable channel while it has room, and tells the loop
-/// when the screen missed values.
+/// Writes pieces of the lanes on the reliable channel while it has room, small messages even
+/// while it has none, and tells the loop when the screen missed values.
 fn pump(p: &mut Peer, said: &UnboundedSender<FromRtc>) {
     if let Some(id) = p.reliable
         && let Some(mut channel) = p.rtc.channel(id)
     {
         let mut on_way = channel.buffered_amount();
         p.flight.on_way(on_way as u64, p.born.elapsed().as_micros() as u64);
-        while p.flight.room() && on_way + PIECE + 3 <= RELIABLE_MAX {
-            let Some(piece) = p.held.take().or_else(|| p.lanes.take()) else { break };
+        while on_way + PIECE + 3 <= RELIABLE_MAX {
+            let Some(piece) = p.held.take().or_else(|| p.lanes.take(p.flight.room())) else { break };
             match channel.write(true, &piece) {
                 Ok(true) => {
                     p.flight.wrote(piece.len());

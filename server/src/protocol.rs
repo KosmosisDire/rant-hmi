@@ -183,6 +183,21 @@ pub enum ClientMsg {
     },
 }
 
+impl ClientMsg {
+    /// The pong for a ping, which the way it came answers at once, as a ping holds no order, so
+    /// the round trip times the link and never the loop.
+    pub fn pong(&self) -> Option<Bytes> {
+        let ClientMsg::Ping { t, .. } = self else { return None };
+        Some(encode(&ServerMsg::Pong { t: *t }))
+    }
+}
+
+pub fn encode(msg: &ServerMsg) -> Bytes {
+    let mut out = Vec::new();
+    ciborium::into_writer(msg, &mut out).expect("every server message encodes");
+    out.into()
+}
+
 /// One entity on the mesh.
 #[derive(Serialize, TS, Clone, Debug)]
 #[ts(export)]

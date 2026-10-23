@@ -1,8 +1,12 @@
 //! How much a screen's socket or reliable channel may have on its way, as the screen confirms
 //! it: on the socket each ping carries the bytes written before it and its pong says they all
 //! arrived, and on the channel its acks say so. Each keeps on the way what the link carries in
-//! its shortest round trip and `MARGIN` more, so what it sends next waits that long at most
-//! and nothing piles up in buffers it cannot take back.
+//! its shortest round trip and a margin more, so what it sends next waits that long at most
+//! and nothing piles up in buffers it cannot take back. The margin is the least the link keeps
+//! its pace with. A link that holds acks and lets them go together, as a busy access point
+//! does, needs more on the way, else the window starves it and the rate it measures falls with
+//! it. So while the way fills, a wider window is tried from time to time, and the margin grows
+//! to it when more arrived with it, else narrows.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -11,8 +15,14 @@ use crate::lanes::PIECE;
 
 /// The least that may be on the way, so a link not measured yet still moves.
 const LEAST: u64 = 2 * PIECE as u64;
-/// How long past the shortest round trip what is sent may wait on the way.
-const MARGIN: u64 = 100_000;
+/// How long past the shortest round trip what is sent may wait on the way, at first and least,
+/// and at most.
+const MARGIN: u64 = 2_000;
+const MARGIN_MOST: u64 = 100_000;
+/// A wider window is tried this often while the way fills, for as long as this at least, and
+/// against as long just before it.
+const TRY_EVERY: u64 = 500_000;
+const TRY: u64 = 200_000;
 /// A rate is measured over at least this long, in us, so confirmations that come together do
 /// not inflate it.
 const SPAN: u64 = 50_000;
@@ -35,6 +45,26 @@ pub struct Flight {
     least: Option<u64>,
     /// Bytes a us the link carried, and when each was measured.
     rates: VecDeque<(u64, f64)>,
+    /// The margin, none for `MARGIN`, the wider window's try, and when the next may start.
+    margin: Option<u64>,
+    trying: Trying,
+    next_try: u64,
+    /// How long the way was full in all, by the confirmations that found it so, and when the
+    /// last came.
+    full_for: u64,
+    last_heard: u64,
+}
+
+/// Where a try of a wider window is, each step from when and the bytes confirmed then.
+#[derive(Default)]
+enum Trying {
+    #[default]
+    Rest,
+    /// Counts what arrives as it is.
+    Before { from: u64, confirmed: u64, full_for: u64 },
+    /// Counts what arrives with the window wider, against `before`. A step counts only when the
+    /// way was full most of it, else what came says what was sent, not what the link carries.
+    Wider { from: u64, confirmed: u64, full_for: u64, before: Option<u64> },
 }
 
 impl Flight {
@@ -81,6 +111,11 @@ impl Flight {
 
     /// `confirmed` bytes in all arrived, every one of them sent by `left`.
     fn heard(&mut self, confirmed: u64, left: u64, now: u64) {
+        let full = !self.room();
+        if full {
+            self.full_for += now.saturating_sub(self.last_heard);
+        }
+        self.last_heard = now;
         self.confirmed = self.confirmed.max(confirmed);
         // the bytes since the last confirmation heard before these left, a span or more
         // earlier, over the longer of the two gaps, as a link may hold confirmations and let
@@ -98,6 +133,35 @@ impl Flight {
         while self.rates.front().is_some_and(|(at, _)| at + RATES < now) {
             self.rates.pop_front();
         }
+        self.steer(now, full);
+    }
+
+    /// Tries a wider window while the way fills, and sets the margin by what arrived with it.
+    /// `full` says the way was full until these confirmations came.
+    fn steer(&mut self, now: u64, full: bool) {
+        let margin = self.margin.unwrap_or(MARGIN);
+        let least = self.least.unwrap_or(0);
+        // a step lasts long enough for what the wider window adds to have come back
+        let span = TRY.max(4 * (least + margin));
+        let filled = |from: u64, full_for: u64| (self.full_for - full_for) * 4 >= (now - from) * 3;
+        self.trying = match std::mem::take(&mut self.trying) {
+            Trying::Rest if now >= self.next_try && full => Trying::Before { from: now, confirmed: self.confirmed, full_for: self.full_for },
+            Trying::Before { from, confirmed, full_for } if now >= from + span => {
+                let before = filled(from, full_for).then_some(self.confirmed - confirmed);
+                Trying::Wider { from: now, confirmed: self.confirmed, full_for: self.full_for, before }
+            }
+            Trying::Wider { from, confirmed, full_for, before } if now >= from + span => {
+                let rate = self.rate();
+                let more = before.is_some_and(|before| filled(from, full_for) && (self.confirmed - confirmed) * 5 > before * 6);
+                // a margin that holds the wider window at the rate it reached
+                let wide = (self.carried(margin) * 3 / 2) as f64 / rate.max(f64::MIN_POSITIVE);
+                let next = if more { (wide as u64).saturating_sub(least).max(margin) } else { margin * 4 / 5 };
+                self.margin = Some(next.clamp(MARGIN, MARGIN_MOST));
+                self.next_try = now + TRY_EVERY;
+                Trying::Rest
+            }
+            trying => trying,
+        };
     }
 
     /// Whether more may be written.
@@ -105,15 +169,32 @@ impl Flight {
         self.written - self.confirmed < self.window()
     }
 
+    /// Whether the way should be asked what arrived: half its window is out and no ping is.
+    pub fn ask(&self) -> bool {
+        !self.asking() && self.written - self.confirmed >= self.window() / 2
+    }
+
     /// Whether a ping is on its way, whose pong confirms more.
     pub fn asking(&self) -> bool {
         self.asked > self.answered
     }
 
+    /// Bytes a us the link carried at most lately.
+    fn rate(&self) -> f64 {
+        self.rates.iter().map(|(_, r)| *r).fold(0.0, f64::max)
+    }
+
+    /// What the link carries in its shortest round trip and `margin` more.
+    fn carried(&self, margin: u64) -> u64 {
+        LEAST.max((self.rate() * (self.least.unwrap_or(0) + margin) as f64) as u64)
+    }
+
     fn window(&self) -> u64 {
-        let rate = self.rates.iter().map(|(_, r)| *r).fold(0.0, f64::max);
-        let carried = rate * (self.least.unwrap_or(0) + MARGIN) as f64;
-        LEAST.max(carried as u64)
+        let window = self.carried(self.margin.unwrap_or(MARGIN));
+        match self.trying {
+            Trying::Wider { .. } => window * 3 / 2,
+            _ => window,
+        }
     }
 }
 
@@ -151,18 +232,50 @@ mod tests {
         assert!(!f.asking());
     }
 
+    /// Runs a channel for `ms` that carries `per_ms` bytes a ms while the sender keeps it full,
+    /// and confirms each `trip` ms after it went, holding the acks to let them go together each
+    /// `held` ms. Gives the bytes confirmed in the last second.
+    fn channel(f: &mut Flight, per_ms: u64, trip: u64, held: u64, ms: u64) -> u64 {
+        f.trip(trip * 1000);
+        let (mut written, mut carried, mut confirmed, mut second_ago) = (0, 0, 0, 0);
+        let mut due = VecDeque::new();
+        for t in 0..ms {
+            while f.room() {
+                f.wrote(PIECE);
+                written += PIECE as u64;
+            }
+            carried += (written - carried).min(per_ms);
+            due.push_back((t + trip, carried));
+            if t % held == 0 {
+                while due.front().is_some_and(|(at, _)| *at <= t) {
+                    confirmed = due.pop_front().unwrap().1;
+                }
+            }
+            f.on_way(written - confirmed, t * 1000);
+            if t + 1000 == ms {
+                second_ago = confirmed;
+            }
+        }
+        confirmed - second_ago
+    }
+
     #[test]
     fn the_window_holds_what_the_link_carries_in_its_shortest_trip_and_the_margin() {
         let mut f = Flight::default();
-        // 150 KB/s with a 10 ms round trip: a ping each 50 ms, behind what was written since
-        let rate = 150.0 * 1024.0 / 1e6;
-        pong(&mut f, 0, 10_000);
-        for n in 1..=20u64 {
-            f.wrote((rate * 50_000.0) as usize);
-            pong(&mut f, n * 50_000, n * 50_000 + 10_000);
-        }
-        let want = rate * 110_000.0;
-        assert!((f.window() as f64 - want).abs() < want * 0.05, "{} against {want}", f.window());
+        // 10 MB a second with a 10 ms round trip, acked as it goes, needs no more margin than
+        // the least once it is found
+        let got = channel(&mut f, 10_000, 10, 1, 10_000);
+        assert!(got > 9_500_000, "{got}");
+        assert_eq!(f.margin, Some(MARGIN));
+    }
+
+    #[test]
+    fn acks_let_go_together_widen_the_window_as_far_as_more_arrives() {
+        let mut f = Flight::default();
+        // an access point holds the acks and lets them go each 20 ms, which a window of the
+        // round trip and the margin alone would starve
+        let got = channel(&mut f, 10_000, 10, 20, 3000);
+        assert!(got > 8_500_000, "{got}");
     }
 
     #[test]
@@ -188,23 +301,7 @@ mod tests {
         pong(&mut f, 100_000, 101_000);
         assert!(f.window() > LEAST);
         pong(&mut f, 1_200_000, 1_201_000);
-        assert_eq!(f.window(), LEAST);
-    }
-
-    #[test]
-    fn acks_confirm_what_the_way_no_longer_holds() {
-        let mut f = Flight::default();
-        f.wrote(1 << 20);
-        f.trip(10_000);
-        f.on_way(1 << 20, 0);
-        // 150 KB a second through a channel whose acks come each 20 ms
-        let rate = 150.0 * 1024.0 / 1e6;
-        for n in 1..=50u64 {
-            f.on_way((1 << 20) - (rate * (n * 20_000) as f64) as u64, n * 20_000);
-        }
-        let want = rate * 110_000.0;
-        assert!((f.window() as f64 - want).abs() < want * 0.05, "{} against {want}", f.window());
-        assert!(!f.room());
+        assert_eq!(f.rate(), 0.0);
     }
 
     #[test]

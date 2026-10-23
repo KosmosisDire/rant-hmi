@@ -3,7 +3,7 @@
 //! each message is cut into pieces and each lane with work sends a piece's worth in its turn,
 //! so a small message never waits behind a whole picture, nor small ones behind each other.
 //! What is not values, then small values, go first when they have work, so a picture slows to
-//! leave them room. A piece is a binary frame, `[u16 lane][u8 more]` then its share of the
+//! leave them room, and a message of theirs that fits a piece goes even while the way is full. A piece is a binary frame, `[u16 lane][u8 more]` then its share of the
 //! message, `more` 1 while pieces of it follow. A lane that keeps only the latest holds one message waiting at
 //! most, as Rant's KEEP_LAST does, so a camera on a slow link sends what is newest at the
 //! rate the link carries. A video's lane keeps every frame, since each needs those before it.
@@ -196,32 +196,41 @@ impl Lanes {
         self.ready.notify_one();
     }
 
+    /// Closed with nothing left to send.
+    fn done(&self) -> bool {
+        let l = self.inner.lock().expect("lanes");
+        l.closed && l.turn.is_empty()
+    }
+
     /// Whether the loop is done with them.
     pub fn closed(&self) -> bool {
         self.inner.lock().expect("lanes").closed
     }
 
-    /// The next piece, taken from the lane whose turn it is. Waits for one, or None once
-    /// closed and empty.
-    pub async fn next(&self) -> Option<Bytes> {
+    /// The next piece, taken from the lane whose turn it is, and without `room` only a small
+    /// message of control or values. Waits for one, or None once closed and empty.
+    pub async fn next(&self, room: bool) -> Option<Bytes> {
         loop {
             let ready = self.ready.notified();
-            if let Some(piece) = self.take() {
+            if let Some(piece) = self.take(room) {
                 return Some(piece);
             }
-            if self.inner.lock().expect("lanes").closed {
+            if self.done() {
                 return None;
             }
             ready.await;
         }
     }
 
-    pub(crate) fn take(&self) -> Option<Bytes> {
+    pub(crate) fn take(&self, room: bool) -> Option<Bytes> {
         let mut l = self.inner.lock().expect("lanes");
         let Inner { lanes, at, turn, spent, .. } = &mut *l;
         let lane = *turn.front()?;
         let queue = lanes.get_mut(&lane)?;
         let message = queue.front()?.0.clone();
+        if !room && (lane > VALUES || message.len() > PIECE) {
+            return None;
+        }
         let from = at.get(&lane).copied().unwrap_or(0);
         let end = (from + PIECE).min(message.len());
         let more = end < message.len();
@@ -263,7 +272,7 @@ mod tests {
         lanes.put(5, message.clone().into(), false);
         let mut joined = Vec::new();
         let mut pieces = 0;
-        while let Some(piece) = lanes.take() {
+        while let Some(piece) = lanes.take(true) {
             let (lane, more, _) = lane_of(&piece);
             assert_eq!(lane, 5);
             joined.extend_from_slice(&piece[3..]);
@@ -279,8 +288,22 @@ mod tests {
         lanes.put(7, vec![0; PIECE * 3].into(), false);
         lanes.put(VALUES, vec![1; 10].into(), false);
         lanes.put(CONTROL, vec![2; 10].into(), false);
-        let order: Vec<(u16, bool, usize)> = std::iter::from_fn(|| lanes.take()).map(|p| lane_of(&p)).collect();
+        let order: Vec<(u16, bool, usize)> = std::iter::from_fn(|| lanes.take(true)).map(|p| lane_of(&p)).collect();
         assert_eq!(order, vec![(CONTROL, false, 10), (VALUES, false, 10), (7, true, PIECE), (7, true, PIECE), (7, false, PIECE)]);
+    }
+
+    #[test]
+    fn only_small_control_and_values_go_without_room() {
+        let lanes = Lanes::default();
+        lanes.put(7, vec![0; PIECE * 2].into(), false);
+        assert!(lanes.take(false).is_none());
+        lanes.put(VALUES, vec![1; 10].into(), false);
+        lanes.put(CONTROL, vec![2; PIECE + 1].into(), false);
+        // control too big for a piece waits for room, then the small value goes without
+        assert!(lanes.take(false).is_none());
+        assert_eq!(lanes.take(true).map(|p| lane_of(&p)), Some((CONTROL, true, PIECE)));
+        assert_eq!(lanes.take(false).map(|p| lane_of(&p)), Some((VALUES, false, 10)));
+        assert!(lanes.take(false).is_none());
     }
 
     #[test]
@@ -288,9 +311,9 @@ mod tests {
         let lanes = Lanes::default();
         lanes.put(7, vec![0; PIECE * 4].into(), false);
         lanes.put(8, vec![0; PIECE * 4].into(), false);
-        assert_eq!(lane_of(&lanes.take().unwrap()).0, 7);
+        assert_eq!(lane_of(&lanes.take(true).unwrap()).0, 7);
         lanes.put(VALUES, vec![1; 10].into(), false);
-        let next: Vec<u16> = std::iter::from_fn(|| lanes.take()).take(3).map(|p| lane_of(&p).0).collect();
+        let next: Vec<u16> = std::iter::from_fn(|| lanes.take(true)).take(3).map(|p| lane_of(&p).0).collect();
         assert_eq!(next, vec![VALUES, 8, 7]);
     }
 
@@ -301,7 +324,7 @@ mod tests {
         for _ in 0..3 {
             lanes.put(VALUES, vec![1; PIECE / 2].into(), false);
         }
-        let order: Vec<u16> = std::iter::from_fn(|| lanes.take()).map(|p| lane_of(&p).0).collect();
+        let order: Vec<u16> = std::iter::from_fn(|| lanes.take(true)).map(|p| lane_of(&p).0).collect();
         assert_eq!(order, vec![VALUES, VALUES, 7, VALUES, 7]);
     }
 
@@ -310,14 +333,14 @@ mod tests {
         let lanes = Lanes::default();
         lanes.put(7, vec![1; PIECE * 2].into(), true);
         lanes.put(7, vec![2; 10].into(), true);
-        assert_eq!(lanes.take().map(|p| p[3]), Some(2));
+        assert_eq!(lanes.take(true).map(|p| p[3]), Some(2));
         lanes.put(7, vec![3; PIECE * 2].into(), true);
-        assert_eq!(lanes.take().map(|p| (p[2], p[3])), Some((1, 3)));
+        assert_eq!(lanes.take(true).map(|p| (p[2], p[3])), Some((1, 3)));
         // begun, so it stays, and only the newest of those after it waits
         lanes.put(7, vec![4; 10].into(), true);
         lanes.put(7, vec![5; 10].into(), true);
         assert_eq!(lanes.waiting(7), 1);
-        let rest: Vec<u8> = std::iter::from_fn(|| lanes.take()).map(|p| p[3]).collect();
+        let rest: Vec<u8> = std::iter::from_fn(|| lanes.take(true)).map(|p| p[3]).collect();
         assert_eq!(rest, vec![3, 5]);
     }
 
@@ -326,19 +349,19 @@ mod tests {
         let lanes = Lanes::default();
         lanes.put(VALUES, vec![1; PIECE * 2].into(), false);
         lanes.put(VALUES, vec![2; 10].into(), false);
-        lanes.take();
+        lanes.take(true);
         lanes.inner.lock().unwrap().clear(VALUES);
         assert_eq!(lanes.waiting(VALUES), 0);
-        let rest: Vec<(bool, u8)> = std::iter::from_fn(|| lanes.take()).map(|p| (p[2] == 1, p[3])).collect();
+        let rest: Vec<(bool, u8)> = std::iter::from_fn(|| lanes.take(true)).map(|p| (p[2] == 1, p[3])).collect();
         assert_eq!(rest, vec![(false, 1)]);
         lanes.put(VALUES, vec![3; 10].into(), false);
         lanes.inner.lock().unwrap().clear(VALUES);
-        assert!(lanes.take().is_none());
+        assert!(lanes.take(true).is_none());
     }
 
     /// What waits, each message small enough for one piece.
     fn sent(lanes: &Lanes) -> Vec<Bytes> {
-        std::iter::from_fn(|| lanes.take()).map(|piece| piece.slice(3..)).collect()
+        std::iter::from_fn(|| lanes.take(true)).map(|piece| piece.slice(3..)).collect()
     }
 
     #[test]
@@ -365,7 +388,7 @@ mod tests {
         lanes.alone("Other", Bytes::from_static(b"two"));
         // the newer replaces the one waiting
         lanes.alone("Cam", Bytes::from_static(b"three"));
-        let lanes_of: Vec<(u16, Bytes)> = std::iter::from_fn(|| lanes.take()).map(|p| (lane_of(&p).0, p.slice(3..))).collect();
+        let lanes_of: Vec<(u16, Bytes)> = std::iter::from_fn(|| lanes.take(true)).map(|p| (lane_of(&p).0, p.slice(3..))).collect();
         assert_eq!(lanes_of, vec![(VALUES + 1, Bytes::from_static(b"three")), (VALUES + 2, Bytes::from_static(b"two"))]);
     }
 
@@ -382,7 +405,7 @@ mod tests {
         for name in ["d0", "k1", "d1", "d2"] {
             frame(&lanes, name, 0);
         }
-        let lanes_of: Vec<u16> = std::iter::from_fn(|| lanes.take()).map(|p| lane_of(&p).0).collect();
+        let lanes_of: Vec<u16> = std::iter::from_fn(|| lanes.take(true)).map(|p| lane_of(&p).0).collect();
         assert_eq!(lanes_of, vec![VALUES + 1, VALUES + 2, VALUES + 2, VALUES + 2]);
         for name in ["k1", "d1", "d2"] {
             frame(&lanes, name, 0);
@@ -394,11 +417,11 @@ mod tests {
     fn a_keyframe_replaces_the_frames_waiting_but_not_one_begun() {
         let lanes = Lanes::default();
         lanes.video("Cam", true, vec![1; PIECE * 2].into(), Instant::now());
-        lanes.take();
+        lanes.take(true);
         for name in ["d1", "d2", "k2", "d3"] {
             frame(&lanes, name, 0);
         }
-        let rest: Vec<Bytes> = std::iter::from_fn(|| lanes.take()).map(|p| p.slice(3..)).collect();
+        let rest: Vec<Bytes> = std::iter::from_fn(|| lanes.take(true)).map(|p| p.slice(3..)).collect();
         assert_eq!(rest[0].len(), PIECE);
         assert_eq!(rest[1..], [Bytes::from_static(b"k2"), Bytes::from_static(b"d3")]);
     }
@@ -433,7 +456,7 @@ mod tests {
         let lanes = Lanes::default();
         lanes.put(CONTROL, vec![1].into(), false);
         lanes.close();
-        assert!(lanes.next().await.is_some());
-        assert!(lanes.next().await.is_none());
+        assert!(lanes.next(true).await.is_some());
+        assert!(lanes.next(true).await.is_none());
     }
 }
