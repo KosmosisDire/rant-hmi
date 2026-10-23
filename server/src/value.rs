@@ -1,11 +1,13 @@
 //! A value as the HMI holds it, in CBOR's data model: bytes stay bytes and whole numbers stay
 //! whole. It goes to screens as CBOR and into the project's files as TOML, never as JSON.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
-use serde::ser::{Serialize, Serializer};
+use serde::ser::{Serialize, SerializeMap, Serializer};
 use ts_rs::TS;
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -19,6 +21,10 @@ pub enum Value {
     Text(String),
     Bytes(Vec<u8>),
     List(Vec<Value>),
+    /// A list of numbers of one kind, packed as Rant packs them.
+    Numbers(Numbers),
+    /// A list of records whose fields are all numbers, a column a field.
+    Records(Records),
     /// Fields in the order they were written, as a schema orders them.
     Map(Vec<(String, Value)>),
 }
@@ -65,9 +71,12 @@ impl Value {
         }
     }
 
-    pub fn as_list(&self) -> Option<&[Value]> {
+    /// A list's items, whichever way it is kept. A packed one's are made here, so a big one costs.
+    pub fn items(&self) -> Option<Cow<'_, [Value]>> {
         match self {
-            Value::List(items) => Some(items),
+            Value::List(items) => Some(Cow::Borrowed(items)),
+            Value::Numbers(n) => Some(Cow::Owned(n.iter().collect())),
+            Value::Records(r) => Some(Cow::Owned((0..r.len).map(|i| r.get(i)).collect())),
             _ => None,
         }
     }
@@ -116,6 +125,132 @@ impl From<String> for Value {
     }
 }
 
+/// What each number of [`Numbers`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Num {
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    F32,
+    F64,
+}
+
+impl Num {
+    /// Its bytes.
+    pub fn width(self) -> usize {
+        match self {
+            Num::U8 | Num::I8 => 1,
+            Num::U16 | Num::I16 => 2,
+            Num::U32 | Num::I32 | Num::F32 => 4,
+            Num::F64 => 8,
+        }
+    }
+
+    /// The number that `b`, exactly its width, holds little endian.
+    fn read(self, b: &[u8]) -> Value {
+        let mut a = [0; 8];
+        a[..b.len()].copy_from_slice(b);
+        let (two, four) = ([a[0], a[1]], [a[0], a[1], a[2], a[3]]);
+        match self {
+            Num::U8 => a[0].into(),
+            Num::I8 => (a[0] as i8).into(),
+            Num::U16 => u16::from_le_bytes(two).into(),
+            Num::I16 => i16::from_le_bytes(two).into(),
+            Num::U32 => u32::from_le_bytes(four).into(),
+            Num::I32 => i32::from_le_bytes(four).into(),
+            Num::F32 => Value::Float(f32::from_le_bytes(four).into()),
+            Num::F64 => Value::Float(f64::from_le_bytes(a)),
+        }
+    }
+}
+
+/// A list of numbers of one kind as their little endian bytes, so a copy shares them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Numbers {
+    kind: Num,
+    bytes: Arc<[u8]>,
+}
+
+impl Numbers {
+    /// None when `bytes` is not a whole number of them.
+    pub fn new(kind: Num, bytes: impl Into<Arc<[u8]>>) -> Option<Numbers> {
+        let bytes = bytes.into();
+        (bytes.len() % kind.width() == 0).then_some(Numbers { kind, bytes })
+    }
+
+    pub fn kind(&self) -> Num {
+        self.kind
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    fn len(&self) -> usize {
+        self.bytes.len() / self.kind.width()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = Value> + '_ {
+        self.bytes.chunks_exact(self.kind.width()).map(|b| self.kind.read(b))
+    }
+}
+
+/// A list of records whose fields are all numbers, as a column a field: numbers, or records
+/// again for a struct, each as long as the list.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Records {
+    len: usize,
+    fields: Arc<[(String, Value)]>,
+}
+
+impl Records {
+    /// None unless there are columns, each numbers or records `len` long, as the length is theirs.
+    pub fn new(len: usize, fields: Vec<(String, Value)>) -> Option<Records> {
+        let fits = |v: &Value| match v {
+            Value::Numbers(n) => n.len() == len,
+            Value::Records(r) => r.len == len,
+            _ => false,
+        };
+        (!fields.is_empty() && fields.iter().all(|(_, v)| fits(v))).then(|| Records { len, fields: fields.into() })
+    }
+
+    /// Record `i`, which must be there.
+    fn get(&self, i: usize) -> Value {
+        Value::Map(self.fields.iter().map(|(k, column)| (k.clone(), cell(column, i))).collect())
+    }
+}
+
+/// Item `i` of a column, which [`Records::new`] made sure is there.
+fn cell(column: &Value, i: usize) -> Value {
+    match column {
+        Value::Numbers(n) => {
+            let w = n.kind.width();
+            n.bytes.get(i * w..(i + 1) * w).map_or(Value::Null, |b| n.kind.read(b))
+        }
+        Value::Records(r) => r.get(i),
+        _ => Value::Null,
+    }
+}
+
+/// Record `.1` of columns, written as a map without making one.
+struct Row<'a>(&'a [(String, Value)], usize);
+
+impl Serialize for Row<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut map = s.serialize_map(Some(self.0.len()))?;
+        for (k, column) in self.0 {
+            match column {
+                Value::Records(r) => map.serialize_entry(k, &Row(&r.fields, self.1))?,
+                other => map.serialize_entry(k, &cell(other, self.1))?,
+            }
+        }
+        map.end()
+    }
+}
+
 macro_rules! from_int {
     ($($t:ty),*) => {$(
         impl From<$t> for Value {
@@ -141,6 +276,8 @@ impl Serialize for Value {
             Value::Text(t) => s.serialize_str(t),
             Value::Bytes(b) => s.serialize_bytes(b),
             Value::List(items) => s.collect_seq(items),
+            Value::Numbers(n) => s.collect_seq(n.iter()),
+            Value::Records(r) => s.collect_seq((0..r.len).map(|i| Row(&r.fields, i))),
             Value::Map(fields) => s.collect_map(fields.iter().map(|(k, v)| (k, v))),
         }
     }
@@ -240,6 +377,8 @@ impl fmt::Display for Value {
             Value::Float(x) => write!(f, "{x}"),
             Value::Text(t) => write!(f, "{t:?}"),
             Value::Bytes(b) => write!(f, "{} bytes", b.len()),
+            Value::Numbers(n) => write!(f, "{} numbers", n.len()),
+            Value::Records(r) => write!(f, "{} records", r.len),
             Value::List(items) => {
                 f.write_str("[")?;
                 for (i, v) in items.iter().enumerate() {

@@ -894,9 +894,9 @@ fn to_js<'js>(ctx: &Ctx<'js>, v: &Value) -> rquickjs::Result<rquickjs::Value<'js
         Value::Float(f) => rquickjs::Value::new_float(c, *f),
         Value::Text(t) => rquickjs::String::from_str(c, t)?.into_value(),
         Value::Bytes(b) => TypedArray::<u8>::new_copy(c, b)?.into_value(),
-        Value::List(items) => {
+        Value::List(_) | Value::Numbers(_) | Value::Records(_) => {
             let list = Array::new(c)?;
-            for (i, item) in items.iter().enumerate() {
+            for (i, item) in v.items().unwrap_or_default().iter().enumerate() {
                 list.set(i, to_js(ctx, item)?)?;
             }
             list.into_value()

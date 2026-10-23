@@ -3,9 +3,8 @@
 
 use rant::{Field, FieldType, FieldView, MessageBuilder, Schema};
 
-
 use crate::protocol::{EnumInfo, FieldInfo, FieldKind, TypeInfo};
-use crate::value::Value;
+use crate::value::{Num, Numbers, Records, Value};
 
 /// A schema field with its members, built from Rant's flat depth first table.
 #[derive(Clone, Debug)]
@@ -167,15 +166,67 @@ fn read(view: &FieldView, s: &Shape, path: &str) -> Value {
 fn list(view: &FieldView, s: &Shape, path: &str) -> Value {
     let count = view.get_array_count(path) as usize;
     match s.field.elem {
-        FieldType::Struct => Value::List((0..count).map(|i| object(view, &s.members, &format!("{path}[{i}]"))).collect()),
+        FieldType::Struct => columns(view, s, path, count)
+            .unwrap_or_else(|| Value::List((0..count).map(|i| object(view, &s.members, &format!("{path}[{i}]"))).collect())),
         FieldType::String | FieldType::VString => Value::List((0..count).map(|i| view.get_string_at(path, i as u16).into_owned().into()).collect()),
         // a list of bytes stays bytes, as an image's data is
         FieldType::U8 => Value::Bytes(view.get_array(path).to_vec()),
-        elem => match width(elem) {
-            0 => Value::Null,
-            w => Value::List(view.get_array(path).chunks_exact(w).map(|b| element(elem, b)).collect()),
+        elem => match (num(elem), width(elem)) {
+            (Some(kind), _) => Numbers::new(kind, view.get_array(path)).map_or(Value::Null, Value::Numbers),
+            (None, 0) => Value::Null,
+            (None, w) => Value::List(view.get_array(path).chunks_exact(w).map(|b| element(elem, b)).collect()),
         },
     }
+}
+
+/// A list of records whose fields are all numbers, as columns cut from its packed bytes. None
+/// for any other, which goes record by record.
+fn columns(view: &FieldView, s: &Shape, path: &str, count: usize) -> Option<Value> {
+    let (bytes, size) = (view.get_array(path), s.field.elem_size as usize);
+    // the element is the same for every writer, as nested structs match exactly
+    if size == 0 || bytes.len() != count * size {
+        return None;
+    }
+    // members sit from a fixed array's own offset, and from 0 in a variable array's element
+    let base = if s.field.kind == FieldType::Array { s.field.offset } else { 0 };
+    Some(Value::Records(Records::new(count, record(&s.members, bytes, size, base)?)?))
+}
+
+fn record(members: &[Shape], bytes: &[u8], size: usize, base: u32) -> Option<Vec<(String, Value)>> {
+    let count = bytes.len() / size;
+    let column = |m: &Shape| -> Option<Value> {
+        if m.field.kind == FieldType::Struct {
+            return Some(Value::Records(Records::new(count, record(&m.members, bytes, size, base)?)?));
+        }
+        let kind = num(m.field.kind)?;
+        let from = m.field.offset.checked_sub(base)? as usize;
+        let at = from..from + kind.width();
+        if at.end > size {
+            return None;
+        }
+        let mut out = Vec::with_capacity(count * kind.width());
+        for element in bytes.chunks_exact(size) {
+            out.extend_from_slice(&element[at.clone()]);
+        }
+        Numbers::new(kind, out).map(Value::Numbers)
+    };
+    members.iter().map(|m| Some((m.field.name.clone(), column(m)?))).collect()
+}
+
+/// The kinds a list keeps packed. A 64 bit whole number stays one by one, as JS reads it as a BigInt.
+fn num(t: FieldType) -> Option<Num> {
+    use FieldType::*;
+    Some(match t {
+        U8 => Num::U8,
+        I8 => Num::I8,
+        U16 => Num::U16,
+        I16 => Num::I16,
+        U32 => Num::U32,
+        I32 => Num::I32,
+        F32 => Num::F32,
+        F64 => Num::F64,
+        _ => return None,
+    })
 }
 
 fn width(t: FieldType) -> usize {
@@ -189,24 +240,13 @@ fn width(t: FieldType) -> usize {
     }
 }
 
+/// An element of a list that is not kept packed.
 fn element(t: FieldType, b: &[u8]) -> Value {
-    use FieldType::*;
-    let bytes = |n: usize| -> [u8; 8] {
-        let mut a = [0u8; 8];
-        a[..n].copy_from_slice(&b[..n]);
-        a
-    };
+    let eight = || -> [u8; 8] { b.try_into().unwrap_or_default() };
     match t {
-        I8 => (b[0] as i8).into(),
-        Bool => (b[0] != 0).into(),
-        U16 => u16::from_le_bytes([b[0], b[1]]).into(),
-        I16 => i16::from_le_bytes([b[0], b[1]]).into(),
-        U32 => u32::from_le_bytes([b[0], b[1], b[2], b[3]]).into(),
-        I32 => i32::from_le_bytes([b[0], b[1], b[2], b[3]]).into(),
-        F32 => Value::Float(f32::from_le_bytes([b[0], b[1], b[2], b[3]]).into()),
-        U64 => u64::from_le_bytes(bytes(8)).into(),
-        I64 => i64::from_le_bytes(bytes(8)).into(),
-        F64 => Value::Float(f64::from_le_bytes(bytes(8))),
+        FieldType::Bool => (b[0] != 0).into(),
+        FieldType::U64 => u64::from_le_bytes(eight()).into(),
+        FieldType::I64 => i64::from_le_bytes(eight()).into(),
         _ => Value::Null,
     }
 }
@@ -284,12 +324,19 @@ fn write(m: &mut MessageBuilder, s: &Shape, path: &str, v: &Value) -> Result<(),
 fn write_list(m: &mut MessageBuilder, s: &Shape, path: &str, v: &Value) -> Result<(), String> {
     let refused = |e: rant::Error| e.to_string();
     let variable = s.field.kind == FieldType::VArray;
-    // bytes go as they are, a list of numbers one by one
-    if let (FieldType::U8, Value::Bytes(bytes)) = (s.field.elem, v) {
-        m.set_array(path, bytes).map_err(refused)?;
-        return Ok(());
+    // bytes go as they are, and numbers of the list's own kind, the rest one by one
+    match (s.field.elem, v) {
+        (FieldType::U8, Value::Bytes(bytes)) => {
+            m.set_array(path, bytes).map_err(refused)?;
+            return Ok(());
+        }
+        (elem, Value::Numbers(n)) if num(elem) == Some(n.kind()) => {
+            m.set_array(path, n.bytes()).map_err(refused)?;
+            return Ok(());
+        }
+        _ => {}
     }
-    let items = v.as_list().ok_or_else(|| wants(path, "a list"))?;
+    let items = v.items().ok_or_else(|| wants(path, "a list"))?;
     match s.field.elem {
         FieldType::Struct => {
             if variable {
@@ -310,7 +357,7 @@ fn write_list(m: &mut MessageBuilder, s: &Shape, path: &str, v: &Value) -> Resul
         }
         elem => {
             let mut bytes = Vec::with_capacity(items.len() * width(elem));
-            for item in items {
+            for item in items.iter() {
                 push(&mut bytes, elem, item).ok_or_else(|| wants(path, "a list of numbers"))?;
             }
             m.set_array(path, &bytes).map_err(refused)?;
@@ -364,12 +411,17 @@ mod tests {
         Node::new("hmi_codec_test", NodeOptions::new().domain(152).multicast_interface("127.0.0.1")).unwrap()
     }
 
+    /// A value as a screen reads it, whichever way it is kept.
+    fn plain(v: &Value) -> serde_json::Value {
+        serde_json::to_value(v).unwrap()
+    }
+
     fn round_trip(dsl: &str, value: Value) {
         let node = node();
         let schema = node.schema(dsl).unwrap();
         let shapes = shapes(&schema);
         let bytes = encode(&schema, &shapes, &value).unwrap();
-        assert_eq!(decode(&schema.view(&bytes), &shapes), value, "{dsl}");
+        assert_eq!(plain(&decode(&schema.view(&bytes), &shapes)), plain(&value), "{dsl}");
     }
 
     #[test]
@@ -402,6 +454,40 @@ mod tests {
                     "boxes": [ { "min": { "x": 0.0, "y": 1.0 }, "max": { "x": 2.0, "y": 3.0 } },
                                { "min": { "x": 4.0, "y": 5.0 }, "max": { "x": 6.0, "y": 7.0 } } ] }),
         );
+    }
+
+    #[test]
+    fn lists_of_numbers_and_of_number_records_read_packed() {
+        let node = node();
+        let schema = node
+            .schema(
+                "LidarPoint { x: f32, y: f32, z: f32, intensity: u16 }
+Cloud { stamp: f64, points: LidarPoint[], corners: Double2[2], poses: Pose[], ranges: f32[], big: u64[], marks: { at: f32, on: bool }[] }
+",
+            )
+            .unwrap();
+        let shapes = shapes(&schema);
+        let pose = |x: f64| value!({ "position": { "x": x, "y": 0.5, "z": 0.0 }, "orientation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 } });
+        let written = value!({
+            "stamp": 7.0,
+            "points": [ { "x": 1.0, "y": 2.0, "z": 3.0, "intensity": 9 }, { "x": -1.0, "y": 0.5, "z": 0.25, "intensity": 300 } ],
+            "corners": [ { "x": 1.0, "y": 2.0 }, { "x": 3.0, "y": 4.0 } ],
+            "poses": [ pose(1.0), pose(2.0) ],
+            "ranges": [ 0.5, 2.0, 4.0 ],
+            "big": [ 1, 2 ],
+            "marks": [ { "at": 1.0, "on": true } ]
+        });
+        let read = decode(&schema.view(&encode(&schema, &shapes, &written).unwrap()), &shapes);
+        assert_eq!(plain(&read), plain(&written));
+        let kind = |name: &str| match read.get(name) {
+            Some(Value::Numbers(n)) => format!("{:?}", n.kind()),
+            Some(Value::Records(_)) => "records".into(),
+            Some(Value::List(_)) => "list".into(),
+            other => format!("{other:?}"),
+        };
+        assert_eq!(["points", "corners", "poses", "ranges", "big", "marks"].map(kind), ["records", "records", "records", "F32", "list", "list"]);
+        // packed values write back as they read
+        assert_eq!(decode(&schema.view(&encode(&schema, &shapes, &read).unwrap()), &shapes), read);
     }
 
     #[test]
