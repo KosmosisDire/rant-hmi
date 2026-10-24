@@ -3,7 +3,12 @@ members = ["server", "app/addon", "app/launcher", "app/pack"]
 # the addon and the launcher build only when asked, as the app does: on Windows for the MSVC
 # target, which napi needs and the launcher's icon is made for
 default-members = ["server", "app/pack"]
+exclude = ["vendor"]
 resolver = "3"
+
+# str0m's SCTP with a resend minimum of 200 ms, not 1 s, which stalls a value lost at its end
+[patch.crates-io]
+sctp-proto = { path = "vendor/sctp-proto" }
 
 # the WebRTC crypto and video work far too slowly unoptimized, so a debug build drops screens.
 # Their debug info made a debug build 364 MB, and linking it most of every rebuild.
