@@ -177,9 +177,9 @@ Chosen: a launcher with archives appended.
   `osx-arm64`.
 - `npm run runtime` in `app` builds this host's and puts it there (built, slice 4).
 - Each release attaches every platform's as `rant-hmi-runtime-<version>-<platform>.tar.gz`,
-  those three files archived, and the server will fetch the one a build needs from its own
+  those three files archived, and the server fetches the one a build needs from its own
   version's release the first time it is asked (slice 7). An offline server takes the file by
-  hand.
+  hand, put in the runtimes folder as it is.
 - Platforms take the names the release's archives have, as `rant install` reads them.
 
 ## Part 4: built from the editor
@@ -208,7 +208,7 @@ Chosen: a launcher with archives appended.
    sandbox check. Then on a Steam Deck, in the desktop and in Game Mode. Built for x64, arm64
    comes with CI.
 7. Release: CI builds every runtime and attaches them, the server fetches by its version, docs
-   and the agent skill.
+   and the agent skill. Built but for the docs and the skill.
 8. macOS: the app bundle and its ad hoc signature. Later, as its own item.
 
 ## Runtimes for released servers
@@ -446,3 +446,40 @@ Choices worth a second look:
   no such check, so app-window runs with the rule off.
 - `release.py` checks that each release carries what it must: the HMI's four package archives
   and three runtimes, Rant's TypeScript package.
+- CI shares one build per platform. Windows builds everything for the MSVC target the addon
+  needs, so the runtime reuses the build. check-apps runs the build job's release programs and
+  the addon the runtime carries, building nothing. Swatinem's rust-cache keeps each platform's
+  dependencies between runs. The first run after took 13 minutes against 29: the Windows build
+  10.6 against 16.5, its app check 2 against 12.5.
+
+The server gets a platform's runtime the first time an app for it is asked for:
+
+- `/app/targets` says of each platform whether its runtime is `here`, on the `release`, or
+  `none` (macOS, until slice 8). The release's file put in the runtimes folder by hand counts as
+  here.
+- `POST /app/<platform>/runtime` gets it, answering a line of JSON as it goes: fetching, with
+  the bytes got and of, unpacking, then done or failed. Asks at the same time share one fetch.
+  `GET /app/<platform>` gets the runtime first too, for a client with no sheet.
+- The file lands as `<file>.part`, renamed when whole. It unpacks into a folder beside the
+  platform's, which takes the name only once `runtime.tar.gz` is the one `runtime.id` names. A
+  fetched file then goes either way, and one put there by hand stays until it unpacks.
+- reqwest 0.13, on the rustls and aws-lc-rs the server has, with the system's certificates and
+  proxies. 15 s to connect, 60 s with no data.
+- A failure says the address, why, and which file to put in which folder by hand.
+- `--runtimes-from <url>` names a mirror of the release's files, for a site with no way to
+  GitHub, and for the tests.
+- The sheet: Download on a platform whose runtime is on the release has the server get it first,
+  under a bar and "Getting the Windows runtime: 45 of 166 MB.", then downloads the app as
+  before. A failure shows the server's message. Closing the sheet or picking another platform
+  meanwhile leaves the app undownloaded.
+- Tested:
+  - cargo tests with a release on loopback: one fetch for two asks, a damaged runtime refused
+    leaving nothing, a missing file saying where to put it, then that file put there by hand.
+  - Scenario app-fetch: a slow release on loopback, the bar, the app built from what came, a
+    second app fetching nothing, and the error for a platform the release lacks.
+  - A real asset fetched from GitHub through its redirect, checked against Windows' roots.
+
+Choices worth a second look:
+
+- Downloading an app fetches its runtime when needed, rather than refusing until asked ahead.
+- A failed fetch is not remembered, so each ask tries again.
