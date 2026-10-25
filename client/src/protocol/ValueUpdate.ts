@@ -3,6 +3,7 @@ import type { Value } from "./Value";
 
 /**
  * A mesh import's or variable's latest value. `known` is false while its entity is off the
- * mesh, and the last value stays for reference.
+ * mesh, and the last value stays for reference. With a base, a big value goes to a screen as
+ * the change from that one, which the screen holds, and says its batch as `base`.
  */
 export type ValueUpdate = { alias: string, value: Value | null, known: boolean, };

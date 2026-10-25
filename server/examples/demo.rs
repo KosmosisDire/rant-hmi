@@ -1,13 +1,14 @@
 //! A small line to try the HMI on: a conveyor, a jog topic, a reset function, a moving robot,
 //! a camera with the boxes a detector finds in its frames and a home it counts, the same view
-//! as MJPEG video, and a label camera showing a real conveyor shot with a parcel and its labels.
+//! as MJPEG video, a label camera showing a real conveyor shot with a parcel and its labels, and
+//! a 3D scan of the cell's floor with that part on it.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use rant::types::{AlignedBox2D, Double2, Double3, Empty, Image, ImageFormat, JointState, Pose, Quaternion, Timestamp, VideoCodec, VideoFrame};
+use rant::types::{AlignedBox2D, Double2, Double3, Empty, Float3, Image, ImageFormat, JointState, Pose, Quaternion, Timestamp, VideoCodec, VideoFrame};
 use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, Request, VariableOptions};
 
 #[derive(rant::Message, Clone)]
@@ -27,6 +28,12 @@ struct Settings {
 #[derive(rant::Message, Clone)]
 struct Detections {
     boxes: Vec<AlignedBox2D>,
+}
+
+/// Where a 3D camera over the cell met something, each point in metres.
+#[derive(rant::Message, Clone)]
+struct Scan {
+    points: Vec<Float3>,
 }
 
 #[derive(rant::Enum, Clone, Copy, Debug, PartialEq)]
@@ -62,6 +69,7 @@ fn main() -> Result<(), rant::Error> {
     let detections = node.publisher::<Detections>("Cell/Detections", Qos::new())?;
     let label_cam = node.publisher::<VideoFrame>("Line1/LabelCam", Qos::new())?;
     let labels = node.publisher::<Detections>("Line1/LabelCam/Detections", Qos::new())?;
+    let scan = node.publisher::<Scan>("Cell/Scan", Qos::new())?;
     let jog = Arc::new(Mutex::new(None::<f64>));
     let heard = jog.clone();
     let _jog = node.subscriber::<f64>("Line1/Jog", Qos::new(), move |m| *heard.lock().unwrap() = Some(m.into_inner()))?;
@@ -120,9 +128,24 @@ fn main() -> Result<(), rant::Error> {
         if frame.is_multiple_of(4) {
             label_cam.send(&VideoFrame { codec: VideoCodec::Mjpeg, width: 960, height: 540, keyframe: true, pts: Timestamp::now(), data: SHOT.to_vec() })?;
             labels.send(&Detections { boxes: SHOT_FINDS.iter().map(|&[x0, y0, x1, y1]| AlignedBox2D { min: Double2 { x: x0, y: y0 }, max: Double2 { x: x1, y: y1 } }).collect() })?;
+            scan.send(&scan_of(t))?;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// The cell's floor, 4 by 2 m in 20000 points, with a part 0.4 m wide and 0.3 high on it that
+/// wanders along x, as a 3D camera over it sees them.
+fn scan_of(t: f64) -> Scan {
+    let at = 1.5 * (t * 0.5).sin() as f32;
+    let points = (0..20_000)
+        .map(|i| {
+            let (x, y) = ((i % 200) as f32 * 0.02 - 2.0, (i / 200) as f32 * 0.02 - 1.0);
+            let on = (x - at).abs() < 0.2 && y.abs() < 0.2;
+            Float3 { x, y, z: if on { 0.3 } else { 0.0 } }
+        })
+        .collect();
+    Scan { points }
 }
 
 /// A real conveyor shot for the label camera, 960 by 540, and what a detector finds in it, in

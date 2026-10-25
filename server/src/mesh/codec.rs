@@ -44,6 +44,27 @@ fn bare(shapes: &[Shape]) -> Option<&Shape> {
     }
 }
 
+/// Only the fields `keep` names, by paths such as `points.x`, so a value decodes without the
+/// rest. A field named keeps all it holds, and a bare type stays whole.
+pub fn kept(shapes: &[Shape], keep: &[String]) -> Vec<Shape> {
+    if bare(shapes).is_some() {
+        return shapes.to_vec();
+    }
+    let mut out = Vec::new();
+    for s in shapes {
+        let name = s.field.name.as_str();
+        if keep.iter().any(|k| k == name) {
+            out.push(s.clone());
+            continue;
+        }
+        let inner: Vec<String> = keep.iter().filter_map(|k| k.strip_prefix(name)?.strip_prefix('.')).map(str::to_owned).collect();
+        if !inner.is_empty() {
+            out.push(Shape { members: kept(&s.members, &inner), ..s.clone() });
+        }
+    }
+    out
+}
+
 /// The names of the top level's fields, none for a bare type.
 pub fn top_fields(shapes: &[Shape]) -> Vec<String> {
     if bare(shapes).is_some() { Vec::new() } else { shapes.iter().map(|s| s.field.name.clone()).collect() }
@@ -488,6 +509,16 @@ Cloud { stamp: f64, points: LidarPoint[], corners: Double2[2], poses: Pose[], ra
         assert_eq!(["points", "corners", "poses", "ranges", "big", "marks"].map(kind), ["records", "records", "records", "F32", "list", "list"]);
         // packed values write back as they read
         assert_eq!(decode(&schema.view(&encode(&schema, &shapes, &read).unwrap()), &shapes), read);
+        // an import that keeps some fields reads only those, from records too
+        let keep = ["stamp", "points.x", "points.z", "poses.position", "nothing.here"].map(str::to_owned);
+        let some = decode(&schema.view(&encode(&schema, &shapes, &written).unwrap()), &kept(&shapes, &keep));
+        assert_eq!(
+            plain(&some),
+            plain(&value!({ "stamp": 7.0, "points": [ { "x": 1.0, "z": 3.0 }, { "x": -1.0, "z": 0.25 } ],
+                            "poses": [ { "position": { "x": 1.0, "y": 0.5, "z": 0.0 } }, { "position": { "x": 2.0, "y": 0.5, "z": 0.0 } } ] }))
+        );
+        assert!(matches!(some.get("points"), Some(Value::Records(_))));
+        assert_eq!(kept(&super::shapes(&node.schema("f64").unwrap()), &keep).len(), 1);
     }
 
     #[test]

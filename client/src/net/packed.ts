@@ -8,7 +8,7 @@ import { addExtension, type Extension } from "cbor-x";
 type Numbers = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | Float32Array | Float64Array;
 
 /** What a packed list is over: its numbers, or for records a column a field. */
-type Column = Numbers | Fields;
+export type Column = Numbers | Fields;
 interface Fields {
   readonly [field: string]: Column;
 }
@@ -29,6 +29,8 @@ const KINDS: Record<number, Kind> = {
 const RECORDS_TAG = 41000;
 /** Numbers shuffled then LZ4 compressed: their typed array's tag, then the block, its size first. */
 const COMPRESSED_TAG = 41001;
+/** A list as the change from the one the screen holds: its length, the ops, its new rows. */
+const CHANGE_TAG = 41002;
 
 const behind = new WeakMap<object, Column>();
 
@@ -45,13 +47,150 @@ export function readPacked() {
   decodes(RECORDS_TAG, (columns: Record<string, unknown>) => list(Object.fromEntries(Object.entries(columns).map(([k, c]) => [k, behind.get(c as object)!]))));
 }
 
+/** A column as the data worker reads it, which can cross to the main thread, where `revive`
+ *  makes it a packed list. */
+interface Marked {
+  packed: Column;
+}
+
+/** Reads the system's typed arrays as their columns marked `packed`, in the data worker, and a
+ *  list sent as a change as one. */
+export function readPackedPlain() {
+  const decodes = <R>(tag: number, decode: (item: R) => unknown) => addExtension({ tag, decode } as unknown as Extension<unknown, R>);
+  for (const [tag, Kind] of Object.entries(KINDS)) decodes(Number(tag), (bytes: Uint8Array): Marked => ({ packed: new Kind(bytes.slice().buffer) }));
+  decodes(COMPRESSED_TAG, ([tag, block]: [number, Uint8Array]): Marked => ({ packed: unpack(KINDS[tag], block) }));
+  decodes(RECORDS_TAG, (columns: Record<string, Marked>): Marked => ({ packed: Object.fromEntries(Object.entries(columns).map(([k, c]) => [k, c.packed])) }));
+  decodes(CHANGE_TAG, ([rows, code, fresh]: [number, Uint8Array, Fresh]) => new Change(rows, code, fresh));
+}
+
+/** The new rows of a changed list, each column's as compressed numbers, a map for records. */
+type Fresh = Uint8Array | { readonly [field: string]: Fresh };
+
+/** A list sent as the change from one the data worker holds (the backend's delta.rs). */
+export class Change {
+  constructor(
+    readonly rows: number,
+    readonly code: Uint8Array,
+    readonly fresh: Fresh,
+  ) {}
+}
+
+/** List `base` changed by `c`: in turn new rows, then a run of `base`'s rows. Throws when `c`
+ *  does not fit `base`. */
+export function changed(base: Column, c: Change): Column {
+  const ops = varints(lz4(c.code, new Uint8Array(sizeOf(c.code))));
+  // each column of the list with its new rows and the column made
+  const columns: [Numbers, Numbers, Numbers][] = [];
+  const made = (b: Column, f: Fresh | undefined): Column => {
+    if (isNumbers(b)) {
+      if (!(f instanceof Uint8Array)) throw new Error("a change that does not fit its list");
+      const Kind = b.constructor as Kind;
+      const out = new Kind(new ArrayBuffer(c.rows * Kind.BYTES_PER_ELEMENT));
+      columns.push([b, unpack(Kind, f), out]);
+      return out;
+    }
+    if (f === undefined || f instanceof Uint8Array) throw new Error("a change that does not fit its list");
+    return Object.fromEntries(Object.entries(b).map(([k, x]) => [k, made(x, f[k])]));
+  };
+  const out = made(base, c.fresh);
+  let [at, taken, next] = [0, 0, 0];
+  for (let n = ops[0], i = 1; n > 0; n--, i += 3) {
+    const [fresh, z, len] = [ops[i], ops[i + 1], ops[i + 2]];
+    const from = next + (z % 2 ? -(z + 1) / 2 : z / 2);
+    for (const [b, f, o] of columns) {
+      o.set(f.subarray(taken, taken + fresh), at);
+      if (len) o.set(b.subarray(from, from + len), at + fresh);
+    }
+    taken += fresh;
+    at += fresh + len;
+    next = from + len;
+  }
+  if (at !== c.rows) throw new Error("a change that does not fit its list");
+  return out;
+}
+
+/** The varints in `b`, unsigned. */
+function varints(b: Uint8Array): number[] {
+  const out: number[] = [];
+  let [v, scale] = [0, 1];
+  for (const x of b) {
+    v += (x & 0x7f) * scale;
+    if (x & 0x80) scale *= 128;
+    else {
+      out.push(v);
+      [v, scale] = [0, 1];
+    }
+  }
+  return out;
+}
+
+/** The buffers of the marked columns in `v`, to hand over rather than copy. */
+export function buffers(v: unknown, out = new Set<ArrayBuffer>()): ArrayBuffer[] {
+  if (ArrayBuffer.isView(v)) out.add(v.buffer as ArrayBuffer);
+  else if (Array.isArray(v)) for (const x of v) buffers(x, out);
+  else if (typeof v === "object" && v !== null) for (const x of Object.values(v)) buffers(x, out);
+  return [...out];
+}
+
+/** `v` as the data worker hands it on, each column it marked with its ref a packed list again,
+ *  and each it kept a far list. */
+export function revive(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(revive);
+  if (typeof v !== "object" || v === null || ArrayBuffer.isView(v)) return v;
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o).sort().join();
+  if (keys === "packed,ref" && typeof o.packed === "object" && typeof o.ref === "string") {
+    const p = list(o.packed as Column);
+    refs.set(p, o.ref);
+    return p;
+  }
+  if (keys === "far,length" && typeof o.far === "string" && typeof o.length === "number") return farList(o.far, o.length);
+  return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, revive(x)]));
+}
+
+/** The ref of each list the data worker keeps, which a scene's points follow there. */
+const refs = new WeakMap<object, string>();
+
+/** The ref of a list the data worker keeps, or undefined. */
+export function refOf(v: unknown): string | undefined {
+  return typeof v === "object" && v !== null ? refs.get(v) : undefined;
+}
+
+/** Thrown by reading an item of a far list, which counts as reading a value not known. */
+export class Far extends Error {
+  constructor(readonly alias: string) {
+    super(`${alias} is drawn without the page`);
+  }
+}
+
+/** A list of `length` items the data worker keeps, whose items the page cannot read, which a
+ *  scene's points follow by its ref. */
+function farList(ref: string, length: number): unknown[] {
+  const p = new Proxy<unknown[]>([], {
+    get: (t, key, receiver) => {
+      if (index(key, length) >= 0) throw new Far(ref.split("/")[0]);
+      return key === "length" ? length : Reflect.get(t, key, receiver);
+    },
+    has: (t, key) => index(key, length) >= 0 || Reflect.has(t, key),
+    set: () => false,
+    defineProperty: () => false,
+    deleteProperty: () => false,
+    setPrototypeOf: () => false,
+    preventExtensions: () => false,
+  });
+  refs.set(p, ref);
+  fars.add(p);
+  return p;
+}
+const fars = new WeakSet<object>();
+
 /** LZ4's output for numbers wider than a byte, kept, as it is copied out at once. */
 let unpacked = new Uint8Array(0);
 
 /** Numbers of kind `Kind` from LZ4 block `block`, whose bytes were shuffled: every number's
  *  first byte, then every second byte and so on. */
 function unpack(Kind: Kind, block: Uint8Array): Numbers {
-  const size = (block[0] | (block[1] << 8) | (block[2] << 16) | (block[3] << 24)) >>> 0;
+  const size = sizeOf(block);
   const w = Kind.BYTES_PER_ELEMENT;
   if (w === 1) return new Kind(lz4(block, new Uint8Array(size)).buffer);
   if (unpacked.length < size) unpacked = new Uint8Array(size);
@@ -71,6 +210,9 @@ function unpack(Kind: Kind, block: Uint8Array): Numbers {
   }
   return new Kind(out.buffer);
 }
+
+/** The size lz4_flex writes before its block. */
+const sizeOf = (block: Uint8Array) => (block[0] | (block[1] << 8) | (block[2] << 16) | (block[3] << 24)) >>> 0;
 
 /** LZ4 block `src`, after the size lz4_flex writes first, unpacked into `out`. */
 function lz4<T extends Uint8Array>(src: Uint8Array, out: T): T {
@@ -109,9 +251,9 @@ function lz4<T extends Uint8Array>(src: Uint8Array, out: T): T {
   return out;
 }
 
-/** Whether `v` is a packed list. */
+/** Whether `v` is a packed list, or a far one. */
 export function packed(v: unknown): boolean {
-  return typeof v === "object" && v !== null && behind.has(v);
+  return typeof v === "object" && v !== null && (behind.has(v) || fars.has(v));
 }
 
 /** Field `field`'s numbers in packed records `v`, or undefined. They are the list's own, so

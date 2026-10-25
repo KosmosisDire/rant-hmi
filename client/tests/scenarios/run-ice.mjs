@@ -1,12 +1,12 @@
-// A screen's data connection finds its way through a NAT. The backend asks the project's STUN
-// server what the outside sees of its port and tells the screen, which reaches it there alone:
-// a NAT in the test stands between them, and the screen hears of no other address.
+// A screen's WebRTC connection, which it opens to play a video, finds its way through a NAT. The
+// backend asks the project's STUN server what the outside sees of its port and tells the screen,
+// which reaches it there alone: a NAT in the test stands between them, and the screen hears of
+// no other address.
 
 import dgram from "node:dgram";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const OVER_CHANNELS = "Reached over WebRTC data channels";
 const COOKIE = [0x21, 0x12, 0xa4, 0x42];
 
 async function udp() {
@@ -16,6 +16,15 @@ async function udp() {
 }
 
 export default async function ({ page, hmi, sys, check, eventually }) {
+  check(sys.transcoder, "rant-transcoder is not built: build transcoder-rant or set HMI_TRANSCODER");
+  if (!hmi.state.imports.some((i) => i.alias === "Camera")) await hmi.import("Camera", "Cell/Camera");
+  const pageId = await hmi.addPage("Through a NAT");
+  await hmi.addElement(pageId, "media", { name: "camera", x: "4", y: "4", w: "32", h: "24", src: "Camera" });
+  const said = await hmi.addElement(pageId, "span", { name: "Said", x: "4", y: "30", w: "30", h: "4", text: 'link.webrtc ? "webrtc" : "socket"' });
+  // its start page first, which the backend writes to hmi.toml, then the test's servers there
+  const started = hmi.next((m) => m.type === "project");
+  hmi.send({ type: "set_start", page: pageId });
+  await started;
   // each outside sender gets its own inside port toward the backend, as a NAT gives
   const nat = await udp();
   const carried = { in: 0, out: 0 };
@@ -59,7 +68,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   const before = readFileSync(file, "utf8");
   const urls = `stun:127.0.0.1:${stun.address().port}`;
   const reloaded = hmi.next((m) => m.type === "project");
-  writeFileSync(file, `name = "Demo line"\n[[ice]]\nurls = "${urls}"\n`);
+  writeFileSync(file, `name = "Demo line"\nstart = "${pageId}"\n[[ice]]\nurls = "${urls}"\n`);
   await reloaded;
 
   const context = await page.context().browser().newContext();
@@ -85,10 +94,10 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     };
   });
   const screen = await context.newPage();
-  await screen.goto(sys.url);
+  await screen.goto(`${sys.url}/run`);
   try {
-    const link = screen.locator(".statusbar .stat").first();
-    await eventually(async () => (await link.getAttribute("title")) === OVER_CHANNELS, "the screen's channels to open through the NAT");
+    const shown = screen.locator(`.run-layer:not([hidden]) .el[data-id="${said}"]`);
+    await eventually(async () => (await shown.textContent()) === "webrtc", "the screen's connection to open through the NAT", 20000);
     const given = await screen.evaluate(() => window.given);
     check(JSON.stringify(given[0]) === JSON.stringify([{ urls }]), `the screen was given the servers ${JSON.stringify(given)}`);
     const told = await screen.evaluate(() => window.told);

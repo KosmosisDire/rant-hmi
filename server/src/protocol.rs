@@ -4,8 +4,9 @@
 use std::collections::BTreeMap;
 
 use axum::body::Bytes;
+use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
-use crate::value::Value;
+use crate::value::{Against, Value};
 use ts_rs::TS;
 
 use crate::pages::logic::Rule;
@@ -18,8 +19,10 @@ use crate::project::{Computed, Import, Kind, ProjectInfo, Record, Token, Variabl
 #[ts(export)]
 pub enum ServerMsg {
     /// The first message on a connection. `build` names the client script this backend
-    /// serves, so a screen running another knows to load it.
-    Hello { session: u32, project: ProjectInfo, version: String, node: String, build: String },
+    /// serves, so a screen running another knows to load it. `key` opens the session's second
+    /// socket, at `/bulk?key=`, which brings its big values, or on https its WebTransport at
+    /// the same address, whose certificate has the SHA-256 `wt` in hex while it serves.
+    Hello { session: u32, project: ProjectInfo, version: String, node: String, build: String, key: String, wt: Option<String> },
     /// The project's settings, whole, after a change.
     Project { project: ProjectInfo },
     /// Every import, whole, after any change.
@@ -54,9 +57,9 @@ pub enum ServerMsg {
     Made { page: String, id: String },
     /// The answer to a ping, for the round trip.
     Pong { t: f64 },
-    /// The answer to a screen's offer of its WebRTC connection, first or again. None when the
-    /// backend cannot make it, so the screen stays on its socket.
-    Channels { answer: Option<String> },
+    /// The answer to a screen's offer of its WebRTC connection for video, first or again. None
+    /// when the backend cannot make it, so the screen decodes its video itself.
+    Video { answer: Option<String> },
     /// An address of this host the screen's connection may reach it on, found after the answer,
     /// as an `a=candidate` line without its `a=`.
     Candidate { candidate: String },
@@ -115,20 +118,31 @@ pub enum ClientMsg {
         #[ts(optional)]
         rtt: Option<f64>,
     },
-    /// Opens the screen's data channels: its WebRTC offer, which the backend answers.
-    Channels { offer: String },
     /// An address the screen found its connection may be reached on, as its `a=candidate` line
     /// without its `a=`.
     Candidate { candidate: String },
-    /// From here on the screen's events, sets and answers come on its reliable channel. The
-    /// backend holds what the channel brings until this comes, so nothing the screen sent on
-    /// its socket before comes after.
-    OnChannels,
-    /// The screen's channels broke, so what it sent on them may be lost.
-    OffChannels,
-    /// Offers the screen's data connection again with the videos it plays, each import's on the
-    /// transceiver named by its mid. A video left out stops.
+    /// Offers the screen's WebRTC connection, first or again, with the videos it plays, each
+    /// import's on the transceiver named by its mid. A video left out stops.
     Play { offer: String, videos: Vec<Played> },
+    /// The imports and computed values the screen shows, in place of those it named before, or
+    /// None for all of them. Only those come to it, from the screen's first value on. `previews`
+    /// while it only previews them, as the editor's Data tab does, so its big values come slower.
+    Watch {
+        names: Option<Vec<String>>,
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        previews: bool,
+    },
+    /// The screen took in the big value of `alias` from batch `seq`, so the next may come.
+    /// `missed` when it could not, as it no longer held the value that one was the change from.
+    Took {
+        alias: String,
+        #[ts(type = "number")]
+        seq: u64,
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        missed: bool,
+    },
     /// The imports whose video the screen decodes itself, their frames sent on its socket, in
     /// place of those it named before. It asks while their video does not come over WebRTC.
     Frames { aliases: Vec<String> },
@@ -187,6 +201,12 @@ pub fn encode(msg: &ServerMsg) -> Bytes {
     let mut out = Vec::new();
     ciborium::into_writer(msg, &mut out).expect("every server message encodes");
     out.into()
+}
+
+/// As `encode`, but big lists of numbers as they are, never compressed, for a screen on this
+/// host, which the bytes cost nothing to reach and unpacking would only cost time.
+pub fn encode_plain(msg: &ServerMsg) -> Bytes {
+    crate::value::plain(|| encode(msg))
 }
 
 /// One entity on the mesh.
@@ -266,13 +286,39 @@ pub enum FieldKind {
 }
 
 /// A mesh import's or variable's latest value. `known` is false while its entity is off the
-/// mesh, and the last value stays for reference.
-#[derive(Serialize, TS, Clone, Debug)]
+/// mesh, and the last value stays for reference. With a base, a big value goes to a screen as
+/// the change from that one, which the screen holds, and says its batch as `base`.
+#[derive(TS, Clone, Debug)]
 #[ts(export)]
 pub struct ValueUpdate {
     pub alias: String,
     pub value: Option<Value>,
     pub known: bool,
+    #[ts(skip)]
+    pub base: Option<Base>,
+}
+
+/// A value a screen holds, and the batch it came in.
+#[derive(Clone, Debug)]
+pub struct Base {
+    pub seq: u64,
+    pub value: Value,
+}
+
+impl Serialize for ValueUpdate {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut m = s.serialize_struct("ValueUpdate", 3 + usize::from(self.base.is_some()))?;
+        m.serialize_field("alias", &self.alias)?;
+        match (&self.value, &self.base) {
+            (Some(v), Some(base)) => {
+                m.serialize_field("value", &Against(v, &base.value))?;
+                m.serialize_field("base", &base.seq)?;
+            }
+            _ => m.serialize_field("value", &self.value)?,
+        }
+        m.serialize_field("known", &self.known)?;
+        m.end()
+    }
 }
 
 /// One sample of a record: when, in ms since 1970, and the value then.
@@ -337,7 +383,7 @@ mod tests {
     #[test]
     fn a_backend_message_writes_as_cbor() {
         let msg = ServerMsg::Values {
-            values: vec![ValueUpdate { alias: "Joints".into(), value: Some(value!([0.5, -1, "x"])), known: true }],
+            values: vec![ValueUpdate { alias: "Joints".into(), value: Some(value!([0.5, -1, "x"])), known: true, base: None }],
             seq: 7,
         };
         let back: Value = ciborium::from_reader(&cbor(&msg)[..]).unwrap();

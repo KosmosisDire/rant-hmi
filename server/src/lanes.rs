@@ -1,12 +1,14 @@
-//! What a screen is sent on its socket, or on its reliable channel once it has channels, in
-//! lanes that take turns, as Rant's transport sends a peer's topics:
-//! each message is cut into pieces and each lane with work sends a piece's worth in its turn,
-//! so a small message never waits behind a whole picture, nor small ones behind each other.
-//! What is not values, then small values, go first when they have work, so a picture slows to
-//! leave them room, and a message of theirs that fits a piece goes even while the way is full. A piece is a binary frame, `[u16 lane][u8 more]` then its share of the
-//! message, `more` 1 while pieces of it follow. A lane that keeps only the latest holds one message waiting at
-//! most, as Rant's KEEP_LAST does, so a camera on a slow link sends what is newest at the
-//! rate the link carries. A video's lane keeps every frame, since each needs those before it.
+//! What a screen is sent on its socket or its second way, in lanes that take turns, as
+//! Rant's transport sends a peer's topics: each message is cut into pieces and each lane with
+//! work sends a piece's worth in its turn, so a small message never waits behind a whole
+//! picture, nor small ones behind each other. What is not values, then small values, go first
+//! when they have work, so a picture slows to leave them room, and a message of theirs that fits
+//! a piece goes even while the way is full. A piece is a binary frame, `[u16 lane][u8 more]`
+//! then its share of the message, `more` 1 while pieces of it follow. A big value's lane has
+//! `BIG` set, so the page hands its messages to its data worker unread. A lane that keeps only
+//! the latest holds one message waiting at most, as Rant's KEEP_LAST does, so a camera on a slow
+//! link sends what is newest at the rate the link carries. A video's lane keeps every frame,
+//! since each needs those before it.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
@@ -17,12 +19,15 @@ use tokio::sync::Notify;
 
 use crate::rtc::FRAME_LATE;
 
-/// The most of a message one piece carries.
-pub const PIECE: usize = 8 << 10;
+/// The most of a message one piece carries, and the most a value may be to share a message.
+/// Bigger pieces cost less on both ends, and past this a slow link falls behind.
+pub const PIECE: usize = 16 << 10;
 /// Everything but values: pages, edits, answers. It goes first whenever it has work.
 pub const CONTROL: u16 = 0;
 /// Values small enough to share a message. They go next whenever they have work.
 pub const VALUES: u16 = 1;
+/// Set on the lane of each import's value too big to share a message.
+pub const BIG: u16 = 0x8000;
 /// A screen with this many batches of small values waiting gets no more, and then all values
 /// at once in place of those waiting, so a link that stalls a while never carries what is no
 /// longer so.
@@ -135,7 +140,7 @@ impl Lanes {
     pub fn alone(&self, alias: &str, message: Bytes) {
         let lane = {
             let mut l = self.inner.lock().expect("lanes");
-            let next = l.new_lane();
+            let next = l.new_lane() | BIG;
             *l.own.entry(alias.to_owned()).or_insert(next)
         };
         self.put(lane, message, true);
@@ -395,7 +400,7 @@ mod tests {
         // the newer replaces the one waiting
         lanes.alone("Cam", Bytes::from_static(b"three"));
         let lanes_of: Vec<(u16, Bytes)> = std::iter::from_fn(|| lanes.take(true)).map(|p| (lane_of(&p).0, p.slice(3..))).collect();
-        assert_eq!(lanes_of, vec![(VALUES + 1, Bytes::from_static(b"three")), (VALUES + 2, Bytes::from_static(b"two"))]);
+        assert_eq!(lanes_of, vec![((VALUES + 1) | BIG, Bytes::from_static(b"three")), ((VALUES + 2) | BIG, Bytes::from_static(b"two"))]);
     }
 
     /// Puts a frame of the video Cam, as `name`, which came `ago` ms back.
@@ -412,7 +417,7 @@ mod tests {
             frame(&lanes, name, 0);
         }
         let lanes_of: Vec<u16> = std::iter::from_fn(|| lanes.take(true)).map(|p| lane_of(&p).0).collect();
-        assert_eq!(lanes_of, vec![VALUES + 1, VALUES + 2, VALUES + 2, VALUES + 2]);
+        assert_eq!(lanes_of, vec![(VALUES + 1) | BIG, VALUES + 2, VALUES + 2, VALUES + 2]);
         for name in ["k1", "d1", "d2"] {
             frame(&lanes, name, 0);
         }

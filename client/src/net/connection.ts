@@ -1,36 +1,35 @@
 // The link to the backend: one socket, or in rant-hmi-app the window's own link (link.ts), CBOR
-// both ways, and over a network a WebRTC data connection offered over it: a reliable ordered
-// channel, a reliable unordered one for small messages, which never wait behind a big one, a
-// best effort one, and the video of each import the screen plays, which plays on a plain http
-// page where WebCodecs cannot. The link carries everything the channels do not, a
-// video's frames too while WebRTC brings none, and reconnects by itself, at once when the page
-// shows again. The round trip for the status bar is timed the way a person's actions go.
+// both ways. Small values, pongs and everything not values come on it and are read here. Big
+// values come on a second way the data worker opens, WebTransport on https where it opens and
+// else a second socket, or on the link while it has none. The worker reads them either way
+// (data.worker.ts), so the main thread never unpacks one, and draws the scenes. Each big value
+// is said to be taken once it is shown, so the next comes only then. A WebRTC
+// connection opens beside the link once the screen plays a video, which it brings where WebCodecs
+// cannot decode the video's frames from the link. The link reconnects by itself, at once when
+// the page shows again. The round trip for the status bar is timed the way a person's actions go.
 
 import { Decoder, Encoder } from "cbor-x";
-import { type Accessor, createSignal, type Setter, untrack } from "solid-js";
+import { type Accessor, createEffect, createRoot, createSignal, type Setter, untrack } from "solid-js";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
-import { cameBack, notify, receive, setState, state } from "../state/store";
+import { cameBack, notify, onReading, receive, setState, state } from "../state/store";
+import { countRead, previewing, watched, wholeNames } from "../state/watch";
+import type { FromData, Second, ToData } from "./data.worker";
+import type { Drawing, Drew } from "./draw";
 import { decodes, Decoded } from "./decode";
-import { type Link, openLink } from "./link";
-import { readPacked } from "./packed";
+import { inApp, type Link, openLink } from "./link";
+import { readPacked, revive } from "./packed";
+import { BIG, joiner, own } from "./pieces";
 
 /** 20 times a second, so the round trip shown is a fresh one. */
 const ROUND_TRIP_EVERY_MS = 50;
 const RETRY_MAX_MS = 2000;
-/** How long the channels may take to open, and to answer their first ping, before they count
- *  as failed. */
-const CHANNELS_WAIT_MS = 10_000;
-/** Failed channels are offered again after this, doubling each time up to a minute. */
-const CHANNELS_RETRY_MS = 2000;
-const CHANNELS_RETRY_MAX_MS = 60_000;
-/** A ping on the channels unanswered this long, once one was answered, means they broke, so
- *  the link takes over. */
-const CHANNELS_SILENT_MS = 1000;
-
-/** What a person does on a running page, which goes on the reliable channel while it is open,
- *  and the ping that times it. */
-const ON_CHANNEL: ReadonlySet<ClientMsg["type"]> = new Set(["fire", "set", "answer", "ping"]);
+/** How long the WebRTC connection may take to answer and connect before it counts as failed. */
+const RTC_WAIT_MS = 10_000;
+/** A failed WebRTC connection is offered again after this, doubling each time up to a minute,
+ *  as is a second way that closed. */
+const RETRY_LATER_MS = 2000;
+const RETRY_LATER_MAX_MS = 60_000;
 
 // cbor-x reads this option and its README names it, but its types leave it out
 declare module "cbor-x" {
@@ -49,11 +48,17 @@ let beat: number | undefined;
 let retry: number | undefined;
 let tries = 0;
 
-interface Channels {
+/** The data worker, made once, and the second way it should have, how often it failed, and when
+ *  it is tried again. */
+const data = new Worker(new URL("./data.worker.ts", import.meta.url), { type: "module" });
+let second: Second | null = null;
+let secondTries = 0;
+/** The link's session, from its hello, null while it has none. */
+let session: number | null = null;
+let secondRetry: number | undefined;
+
+interface Rtc {
   pc: RTCPeerConnection;
-  reliable: RTCDataChannel;
-  small: RTCDataChannel;
-  bestEffort: RTCDataChannel;
   /** An offer is out, so a change to the videos waits for its answer. */
   offering: boolean;
   /** The videos changed while an offer was out. */
@@ -71,7 +76,7 @@ interface Video extends Playing {
   users: number;
   setStream: Setter<MediaStream | null>;
   setDecoded: Setter<Decoded | null>;
-  /** Where it comes in on the data connection, once offered there. */
+  /** Where it comes in on the WebRTC connection, once offered there. */
   transceiver: RTCRtpTransceiver | null;
   /** Its frames come over WebRTC, so the link need not bring them. */
   live: boolean;
@@ -80,17 +85,16 @@ interface Video extends Playing {
 /** The imports whose video this screen plays, each shared by every element showing it. */
 const videos = new Map<string, Video>();
 
-let channels: Channels | null = null;
-let channelsRetry: number | undefined;
-let channelsTries = 0;
-/** When the oldest ping on the channels still unanswered went, and whether one was answered
- *  since they opened. Until one is, its answer waits for the switch, which goes on the link. */
-let unanswered: number | null = null;
-let answeredThere = false;
+let rtc: Rtc | null = null;
+let rtcRetry: number | undefined;
+let rtcTries = 0;
 /** The last round trip timed, which the next ping tells the backend. */
 let timed: number | undefined;
-/** The videos whose frames the link brings, as last asked. */
+/** The videos whose frames the link brings, and the names watched, as last told. */
 let asked = "";
+let toldWatch: string | undefined;
+/** What the data worker was last told is read whole and shown. */
+let toldData: string | undefined;
 /** WebRTC did not open, or broke, and has not opened again since. */
 const [stuck, setStuck] = createSignal(false);
 
@@ -104,149 +108,191 @@ export function connect() {
       setState("link", "open");
       beat = window.setInterval(ping, ROUND_TRIP_EVERY_MS);
     },
-    heard: joiner(),
+    heard: joiner(heard),
     closed() {
       clearInterval(beat);
       link = null;
-      closeChannels();
+      session = null;
+      closeRtc();
+      openSecond(null);
       setState({ link: "closed", rttMs: null });
       retry = window.setTimeout(connect, Math.min(RETRY_MAX_MS, 200 * 2 ** tries++));
     },
   });
 }
 
-/** Joins what the link or the reliable channel brings into messages. Each comes in pieces,
- *  `[u16 lane][u8 more]` then its share, the lanes taking turns as the backend's lanes.rs
- *  sends them, so a small message never waits behind a whole picture. */
-function joiner(): (data: ArrayBuffer) => void {
-  const parts = new Map<number, Uint8Array[]>();
-  return (data) => {
-    const bytes = new Uint8Array(data);
-    const lane = bytes[0] | (bytes[1] << 8);
-    const piece = bytes.subarray(3);
-    const before = parts.get(lane);
-    if (bytes[2] === 1) {
-      if (before) before.push(piece);
-      else parts.set(lane, [piece]);
-      return;
-    }
-    if (!before) return heard(piece);
-    parts.delete(lane);
-    const whole = new Uint8Array(before.reduce((n, p) => n + p.length, piece.length));
-    let at = 0;
-    for (const p of [...before, piece]) {
-      whole.set(p, at);
-      at += p.length;
-    }
-    heard(whole);
-  };
-}
-
-function heard(bytes: Uint8Array) {
+/** A message the link brought: a big value's, handed to the data worker unread, or any other,
+ *  read here. */
+function heard(bytes: Uint8Array, lane: number) {
+  if (lane & BIG) {
+    const message = own(bytes);
+    return tell({ message }, [message]);
+  }
   const msg = cbor.decoder.decode(bytes) as ServerMsg;
   if (msg.type === "frame") {
     videos.get(msg.alias)?.decoded()?.feed(msg);
   } else if (msg.type === "pong") {
     const rtt = performance.now() - msg.t;
     timed = rtt;
-    if (unanswered !== null && msg.t >= unanswered) {
-      unanswered = null;
-      answeredThere = true;
-    }
     setState("rttMs", state.rttMs === null ? rtt : state.rttMs * 0.8 + rtt * 0.2);
     cameBack(msg.t);
-  } else if (msg.type === "channels") {
+  } else if (msg.type === "video") {
     answered(msg.answer);
   } else if (msg.type === "candidate") {
     // one for an earlier connection, which this one cannot take, is left
-    channels?.pc.addIceCandidate({ candidate: msg.candidate, sdpMLineIndex: 0 }).catch(() => {});
+    rtc?.pc.addIceCandidate({ candidate: msg.candidate, sdpMLineIndex: 0 }).catch(() => {});
   } else {
     receive(msg);
-    // the hello names the servers the channels find their way through, and starts a session
-    // that has asked for no frames yet
+    // a new session has asked for no frames and watches nothing yet, and its big values come
+    // on its own second way
     if (msg.type === "hello") {
       asked = "";
       askFrames();
-      channelsTries = 0;
-      void openChannels();
+      toldWatch = undefined;
+      tellWatch();
+      secondTries = 0;
+      session = msg.session;
+      const [secure, path] = [location.protocol === "https:", `/bulk?session=${msg.session}&key=${msg.key}`];
+      const wt = secure && msg.wt ? { url: `https://${location.host}${path}`, hash: msg.wt } : undefined;
+      openSecond(inApp ? null : { socket: `${secure ? "wss" : "ws"}://${location.host}${path}`, wt });
+      if (videos.size > 0) void offerVideos();
     }
   }
 }
 
+function tell(m: ToData, transfer: Transferable[] = []) {
+  data.postMessage(m, transfer);
+}
+
+data.onmessage = (e: MessageEvent<FromData>) => {
+  const d = e.data;
+  if ("drew" in d) return drew(d.drew);
+  // read for a session before the link came again, whose batches count apart
+  if (("msg" in d || "took" in d) && d.session !== session) return;
+  if (!("msg" in d) && "took" in d) return void send(d.missed ? { type: "took", alias: d.took, seq: d.seq, missed: true } : { type: "took", alias: d.took, seq: d.seq });
+  if ("open" in d) {
+    setState("second", d.open);
+    if (d.open) secondTries = 0;
+    // a second way that closed while the link stays is opened again a while later
+    else if (second !== null) secondRetry = window.setTimeout(() => openSecond(second), Math.min(RETRY_LATER_MAX_MS, RETRY_LATER_MS * 2 ** secondTries++));
+    return;
+  }
+  const msg = revive(d.msg) as ServerMsg;
+  receive(msg, d.far);
+  // shown now, as the page draws what changed in the same task, so the next may come
+  if (msg.type === "values") for (const alias of d.took) send({ type: "took", alias, seq: msg.seq });
+};
+
+/** Tells the scenes the data worker draws, handing over `transfer`. */
+export function drawing(m: Drawing, transfer: Transferable[] = []) {
+  tell({ draw: m }, transfer);
+}
+
+/** Hears what the scenes found. */
+let drew: (d: Drew) => void = () => {};
+export function onDrew(f: (d: Drew) => void) {
+  drew = f;
+}
+
+/** Has the data worker open the screen's second way, or close it with null. */
+function openSecond(to: Second | null) {
+  clearTimeout(secondRetry);
+  second = to;
+  setState("second", null);
+  tell({ second: to, session });
+}
+
+/** Tells the backend the names this screen shows, once they changed. */
+function tellWatch() {
+  if (state.link !== "open") return;
+  const [names, previews] = [watched(), previewing()];
+  const key = `${previews}${names === null ? "" : `\n${names.join("\n")}`}`;
+  if (key === toldWatch) return;
+  toldWatch = key;
+  send({ type: "watch", names, previews });
+}
+
+/** Tells the data worker the names read whole and those shown, once they changed. */
+function tellData() {
+  const [whole, shown] = [wholeNames(), watched()];
+  const key = JSON.stringify([whole, shown]);
+  if (key === toldData) return;
+  toldData = key;
+  tell({ whole, watched: shown });
+}
+
+createRoot(() =>
+  createEffect(() => {
+    tellWatch();
+    tellData();
+  }),
+);
+// a name something drawn reads joins what the screen watches while it does, told once the
+// drawing ends
+let retell = false;
+onReading((alias, whole) =>
+  countRead(alias, whole, () => {
+    if (retell) return;
+    retell = true;
+    queueMicrotask(() => {
+      retell = false;
+      tellWatch();
+      tellData();
+    });
+  }),
+);
+
 function ping() {
-  const t = performance.now();
-  const silent = answeredThere ? CHANNELS_SILENT_MS : CHANNELS_WAIT_MS;
-  if (state.channels && unanswered !== null && t - unanswered > silent) channelsFailed();
-  if (state.channels) unanswered ??= t;
-  send({ type: "ping", t, rtt: timed });
+  send({ type: "ping", t: performance.now(), rtt: timed });
   timed = undefined;
 }
 
 /** Sends at once, true when it went. Without a link nothing can be done, so the person hears
  *  it was not. */
 export function send(msg: ClientMsg): boolean {
-  if (state.channels && channels?.reliable.readyState === "open" && ON_CHANNEL.has(msg.type)) {
-    channels.reliable.send(cbor.encoder.encode(msg));
-    return true;
-  }
   if (link?.send(cbor.encoder.encode(msg))) return true;
-  if (msg.type !== "ping") notify("The HMI is out of reach, so that was not done.", "warn");
+  if (msg.type !== "ping" && msg.type !== "took" && msg.type !== "watch") notify("The HMI is out of reach, so that was not done.", "warn");
   return false;
 }
 
-/** Offers the data channels over the link, where a network lies under it. They count once all
- *  are open. */
-async function openChannels() {
-  closeChannels();
-  if (state.link !== "open" || !link?.network) return;
-  if (typeof RTCPeerConnection === "undefined") return setStuck(true);
+/** Opens the WebRTC connection for this screen's videos, where a network lies under the link. */
+function openRtc(): Rtc | null {
+  if (rtc) return rtc;
+  if (state.link !== "open" || !link?.network) return null;
+  if (typeof RTCPeerConnection === "undefined") {
+    setStuck(true);
+    return null;
+  }
   // the null the backend sends for no username would reach the browser as the word null
   const iceServers = (state.project?.ice ?? []).map(({ urls, username, credential }) => (username == null ? { urls } : { urls, username, credential: credential ?? "" }));
   const pc = new RTCPeerConnection({ iceServers });
-  const c: Channels = {
-    pc,
-    reliable: pc.createDataChannel("reliable"),
-    small: pc.createDataChannel("small", { ordered: false }),
-    bestEffort: pc.createDataChannel("best-effort", { ordered: false, maxRetransmits: 0 }),
-    offering: false,
-    again: videos.size > 0,
-  };
-  channels = c;
-  const join = joiner();
-  c.reliable.onmessage = (e) => join(e.data as ArrayBuffer);
-  c.small.onmessage = c.bestEffort.onmessage = (e) => heard(new Uint8Array(e.data as ArrayBuffer));
-  const all = [c.reliable, c.small, c.bestEffort];
-  for (const ch of all) {
-    ch.binaryType = "arraybuffer";
-    ch.onopen = () => {
-      if (channels === c && all.every((a) => a.readyState === "open")) {
-        channelsTries = 0;
-        setStuck(false);
-        // the backend holds what the channel brings until this, so the link's come first
-        send({ type: "on_channels" });
-        setState("channels", true);
-      }
-    };
-    ch.onclose = () => {
-      if (channels === c) channelsFailed();
-    };
-  }
+  // a section that never plays, so an offer with every video stopped still bundles one, which
+  // the backend needs, and the connection outlives a page without video
+  pc.addTransceiver("video", { direction: "inactive" });
+  const c: Rtc = { pc, offering: false, again: false };
+  rtc = c;
   pc.onicecandidate = (e) => {
-    if (channels === c && e.candidate?.candidate) send({ type: "candidate", candidate: e.candidate.candidate });
+    if (rtc === c && e.candidate?.candidate) send({ type: "candidate", candidate: e.candidate.candidate });
   };
   pc.onconnectionstatechange = () => {
-    if (channels === c && pc.connectionState === "failed") channelsFailed();
+    if (rtc !== c) return;
+    if (pc.connectionState === "connected") {
+      rtcTries = 0;
+      setStuck(false);
+      setState("webrtc", true);
+    }
+    if (pc.connectionState === "failed") rtcFailed();
   };
   window.setTimeout(() => {
-    if (channels === c && !state.channels) channelsFailed();
-  }, CHANNELS_WAIT_MS);
-  await offer(c, (sdp) => ({ type: "channels", offer: sdp }));
+    if (rtc === c && pc.connectionState !== "connected") rtcFailed();
+  }, RTC_WAIT_MS);
+  return c;
 }
 
-/** Offers the data connection again with the videos this screen plays now. A new video gets
- *  its transceiver here, and a stopped one's stopped with it. */
+/** Offers the WebRTC connection with the videos this screen plays now, opening it for the first.
+ *  A new video gets its transceiver here, and a stopped one's stopped with it. */
 async function offerVideos() {
-  const c = channels;
+  const c = openRtc();
   if (!c) return;
   if (c.offering) {
     c.again = true;
@@ -265,51 +311,37 @@ async function offerVideos() {
       askFrames();
     };
   }
-  // a transceiver has its mid once the offer is set
-  await offer(c, (sdp) => ({
-    type: "play",
-    offer: sdp,
-    videos: [...videos].flatMap(([alias, v]) => (v.transceiver?.mid ? [{ mid: v.transceiver.mid, alias }] : [])),
-  }));
-}
-
-/** Makes an offer on the connection and sends it, unless the connection closed while it was
- *  made. The next offer waits for its answer. */
-async function offer(c: Channels, msg: (sdp: string) => ClientMsg) {
   c.offering = true;
   try {
     await c.pc.setLocalDescription(await c.pc.createOffer());
   } catch (e) {
-    if (channels === c) throw e;
+    if (rtc === c) throw e;
     return;
   }
-  if (channels === c && c.pc.localDescription) send(msg(c.pc.localDescription.sdp));
+  // a transceiver has its mid once the offer is set
+  if (rtc === c && c.pc.localDescription)
+    send({ type: "play", offer: c.pc.localDescription.sdp, videos: [...videos].flatMap(([alias, v]) => (v.transceiver?.mid ? [{ mid: v.transceiver.mid, alias }] : [])) });
 }
 
-/** The backend's answer completes the offer. Without one to the first the backend cannot make
- *  channels, so the screen stays on its link until it connects again. Without one to a later
- *  offer the connection is gone, so it is made again. */
+/** The backend's answer completes the offer. Without one the connection cannot carry video, so
+ *  it is made again later. */
 function answered(answer: string | null) {
-  const c = channels;
+  const c = rtc;
   if (!c) return;
-  if (answer === null) {
-    if (c.pc.remoteDescription) return channelsFailed();
-    closeChannels();
-    return setStuck(true);
-  }
+  if (answer === null) return rtcFailed();
   if (c.pc.signalingState !== "have-local-offer") return;
   c.pc.setRemoteDescription({ type: "answer", sdp: answer }).then(
     () => {
       c.offering = false;
-      if (channels === c && c.again) void offerVideos();
+      if (rtc === c && c.again) void offerVideos();
     },
-    () => channels === c && channelsFailed(),
+    () => rtc === c && rtcFailed(),
   );
 }
 
-/** Starts or joins playing an import's video, over WebRTC once the data connection is open,
- *  and from frames on the link until WebRTC brings it. An effect calls it, so it tracks none
- *  of what it reads: its decoder, set here, would run that effect again, and stop it. */
+/** Starts or joins playing an import's video, over WebRTC once it connects, and from frames on
+ *  the link until WebRTC brings it. An effect calls it, so it tracks none of what it reads: its
+ *  decoder, set here, would run that effect again, and stop it. */
 export function play(alias: string): Playing {
   return untrack(() => {
     let v = videos.get(alias);
@@ -365,13 +397,11 @@ export function unplayable(): string | null {
   return window.isSecureContext ? "WebRTC did not connect, and this browser cannot decode video without it" : "WebRTC did not connect, and video without it needs this page on https";
 }
 
-/** Ends the data connection, and with it every video this screen plays until it opens again. */
-function closeChannels() {
-  clearTimeout(channelsRetry);
-  const c = channels;
-  channels = null;
-  unanswered = null;
-  answeredThere = false;
+/** Ends the WebRTC connection, and with it every video this screen plays until it opens again. */
+function closeRtc() {
+  clearTimeout(rtcRetry);
+  const c = rtc;
+  rtc = null;
   c?.pc.close();
   for (const v of videos.values()) {
     v.transceiver = null;
@@ -379,18 +409,15 @@ function closeChannels() {
     v.live = false;
   }
   askFrames();
-  setState("channels", false);
+  setState("webrtc", false);
 }
 
-/** The channels broke while the link stays, so the backend hears it there at once, and they
- *  are offered again a while later. */
-function channelsFailed() {
-  const used = state.channels;
-  closeChannels();
+/** The WebRTC connection broke while the link stays, so it is offered again a while later. */
+function rtcFailed() {
+  closeRtc();
   setStuck(true);
   if (state.link !== "open") return;
-  if (used) send({ type: "off_channels" });
-  channelsRetry = window.setTimeout(() => void openChannels(), Math.min(CHANNELS_RETRY_MAX_MS, CHANNELS_RETRY_MS * 2 ** channelsTries++));
+  rtcRetry = window.setTimeout(() => videos.size > 0 && void offerVideos(), Math.min(RETRY_LATER_MAX_MS, RETRY_LATER_MS * 2 ** rtcTries++));
 }
 
 document.addEventListener("visibilitychange", () => {

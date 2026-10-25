@@ -74,34 +74,44 @@ export async function startSystem({ empty, slot = 0 } = {}) {
   await new Promise((r) => setTimeout(r, 300));
   // a home of its own, where the backend keeps its certificate, never the user's
   const home = join(temp, "home");
-  const backend = run(join(BUILD, `rant-hmi${exe}`), [
-    project,
-    "--port", String(portOf(slot)),
-    "--domain", domain,
-    "--loopback",
-    "--client", CLIENT,
-  ], { HOME: home, USERPROFILE: home });
   const url = `http://127.0.0.1:${portOf(slot)}`;
-  const start = Date.now();
-  for (;;) {
-    try {
-      if ((await fetch(url)).ok) break;
-    } catch {
-      // not listening yet
+  const launch = async () => {
+    const backend = run(join(BUILD, `rant-hmi${exe}`), [
+      project,
+      "--port", String(portOf(slot)),
+      "--domain", domain,
+      "--loopback",
+      "--client", CLIENT,
+    ], { HOME: home, USERPROFILE: home });
+    const start = Date.now();
+    for (;;) {
+      try {
+        if ((await fetch(url)).ok) return backend;
+      } catch {
+        // not listening yet
+      }
+      if (Date.now() - start > 10000) throw new Error(`the backend never answered:\n${backend.log}`);
+      await new Promise((r) => setTimeout(r, 100));
     }
-    if (Date.now() - start > 10000) throw new Error(`the backend never answered:\n${backend.log}`);
-    await new Promise((r) => setTimeout(r, 100));
-  }
+  };
   return {
     url,
     ws: `ws://127.0.0.1:${portOf(slot)}/ws`,
     domain: Number(domain),
     project,
     home,
-    backend,
+    backend: await launch(),
     transcoder: video,
+    /** Ends the backend and starts it again on the same project, as a restarted HMI. */
+    async restart() {
+      const was = this.backend;
+      const ended = new Promise((r) => was.once("exit", r));
+      was.kill();
+      await ended;
+      this.backend = await launch();
+    },
     stop() {
-      backend.kill();
+      this.backend.kill();
       video?.kill();
       line.kill();
       cage.kill();

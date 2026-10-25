@@ -6,4 +6,6 @@ export default defineConfig({
   plugins: [solid()],
   server: { port: 5173, proxy: { "/ws": { target: "ws://127.0.0.1:6739", ws: true } } },
   build: { target: "es2022" },
+  // the data worker loads three.js only once a scene shows, which needs a module worker
+  worker: { format: "es" },
 });

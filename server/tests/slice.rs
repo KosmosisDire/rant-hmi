@@ -27,7 +27,7 @@ struct Conveyor {
 }
 
 fn import(alias: &str, entity: &str, kind: Kind, intent: Intent) -> Import {
-    Import { alias: alias.into(), entity: entity.into(), kind, intent }
+    Import { alias: alias.into(), entity: entity.into(), kind, intent, fields: None, rate: None }
 }
 
 fn within(what: &str, start: Instant) {
@@ -121,6 +121,9 @@ fn publishes_its_own_status() {
     mesh.publish_status(later.clone());
     assert_eq!(inbox.next("Status", || {}), status::status_value(&later));
     assert!(mesh.set("Status", "", Value::Null, None).unwrap_err().contains("only it sets"));
+    // one that keeps some fields gets only those, of its own value too
+    assert!(mesh.attach(&Import { fields: Some(vec!["clients".into(), "version".into()]), ..own.clone() }));
+    assert_eq!(inbox.next("Status", || {}), Value::map([("version", "1.2.3".into()), ("clients", 0u32.into())]));
 
     // another node reads both as the mesh carries them
     let other = Node::new("status_reader", local()).unwrap();

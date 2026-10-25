@@ -58,12 +58,29 @@ struct Attached {
     /// None for a function whose request is untyped, which the HMI sends empty.
     schema: Option<Schema>,
     shapes: Vec<Shape>,
+    /// What it reads, only the fields it keeps.
+    read: Vec<Shape>,
     handle: Handle,
+}
+
+impl Attached {
+    /// A value the HMI made of its own entity as the import reads it, written and read back so
+    /// it keeps only the fields the import does.
+    fn own(&self, value: &Value) -> Value {
+        let Some(schema) = self.schema.as_ref().filter(|_| self.import.fields.is_some()) else { return value.clone() };
+        match codec::encode(schema, &self.shapes, value) {
+            Ok(bytes) => codec::decode(&schema.view(&bytes), &self.read),
+            Err(e) => {
+                warn!("{} brings every field, as its value did not write: {e}", self.import.alias);
+                value.clone()
+            }
+        }
+    }
 }
 
 enum Handle {
     /// The subscription is held only so it lives. A topic imported to write publishes too.
-    Topic { _subscription: Subscriber<Bytes>, publisher: Option<Publisher<Bytes>>, reliable: bool },
+    Topic { _subscription: Subscriber<Bytes>, publisher: Option<Publisher<Bytes>> },
     Variable(RemoteVariable<Bytes>),
     /// A function: its request goes by the import's schema, its answer by `answer`'s.
     Function { remote: RemoteFunction<Bytes, Bytes>, answer: Option<(Schema, Vec<Shape>)> },
@@ -143,10 +160,10 @@ impl Mesh {
         }
         match self.handle(import, &entity, entity.schema.clone()) {
             Ok(a) => {
-                self.attached.insert(import.alias.clone(), a);
                 if let Some(value) = self.own.values.get(import.entity.as_str()) {
-                    let _ = self.deliveries.send(Delivery { alias: import.alias.clone(), value: value.clone() });
+                    let _ = self.deliveries.send(Delivery { alias: import.alias.clone(), value: a.own(value) });
                 }
+                self.attached.insert(import.alias.clone(), a);
                 true
             }
             Err(e) => {
@@ -182,7 +199,7 @@ impl Mesh {
     fn own_changed(&mut self, entity: &'static str, value: Value) {
         for (alias, a) in &self.attached {
             if matches!(a.handle, Handle::Own) && a.import.entity == entity {
-                let _ = self.deliveries.send(Delivery { alias: alias.clone(), value: value.clone() });
+                let _ = self.deliveries.send(Delivery { alias: alias.clone(), value: a.own(&value) });
             }
         }
         self.own.values.insert(entity, value);
@@ -214,11 +231,6 @@ impl Mesh {
         out
     }
 
-    /// Whether an import's values may be lost on the way, as a best effort topic's are.
-    pub fn best_effort(&self, alias: &str) -> bool {
-        matches!(self.attached.get(alias).map(|a| &a.handle), Some(Handle::Topic { reliable: false, .. }))
-    }
-
     pub fn detach(&mut self, alias: &str) {
         self.attached.remove(alias);
     }
@@ -226,7 +238,12 @@ impl Mesh {
     fn handle(&self, import: &Import, entity: &Entity, schema: Option<Schema>) -> Result<Attached, String> {
         let shapes = schema.as_ref().map(codec::shapes).unwrap_or_default();
         let typed = || schema.as_ref().ok_or_else(|| format!("{} has no type", import.entity));
-        let (alias, tx, tree) = (import.alias.clone(), self.deliveries.clone(), shapes.clone());
+        // what it reads is only the fields it keeps, while what it writes stays whole
+        let read = match &import.fields {
+            Some(keep) => codec::kept(&shapes, keep),
+            None => shapes.clone(),
+        };
+        let (alias, tx, tree) = (import.alias.clone(), self.deliveries.clone(), read.clone());
         let deliver = move |value: Value| {
             let _ = tx.send(Delivery { alias: alias.clone(), value });
         };
@@ -234,12 +251,17 @@ impl Mesh {
             Kind::Variable if [status::CLIENTS, status::STATUS].contains(&import.entity.as_str()) => Handle::Own,
             Kind::Topic => {
                 let qos = Qos::new().schema(typed()?).reliable(entity.reliable);
-                let sub = self.node.subscriber::<Bytes>(&import.entity, qos.clone(), move |m| deliver(codec::decode(&m, &tree)));
+                // each publisher keeps to a rate only for a best effort reader
+                let read = match import.rate {
+                    Some(hz) => qos.clone().reliable(false).max_rate_hz(hz),
+                    None => qos.clone(),
+                };
+                let sub = self.node.subscriber::<Bytes>(&import.entity, read, move |m| deliver(codec::decode(&m, &tree)));
                 let publisher = match import.intent {
                     Intent::Write => Some(self.node.publisher::<Bytes>(&import.entity, qos).map_err(|e| e.to_string())?),
                     Intent::Read => None,
                 };
-                Handle::Topic { _subscription: sub.map_err(|e| e.to_string())?, publisher, reliable: entity.reliable }
+                Handle::Topic { _subscription: sub.map_err(|e| e.to_string())?, publisher }
             }
             Kind::Variable => {
                 let var = self
@@ -266,7 +288,7 @@ impl Mesh {
             }
             Kind::Task => Handle::Task,
         };
-        Ok(Attached { import: import.clone(), generation: entity.generation, schema, shapes, handle })
+        Ok(Attached { import: import.clone(), generation: entity.generation, schema, shapes, read, handle })
     }
 
     /// Plays an import's video: the entity itself when it carries video frames, else its

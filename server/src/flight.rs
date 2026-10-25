@@ -1,7 +1,7 @@
-//! How much a screen's socket or reliable channel may have on its way, as the screen confirms
-//! it: on the socket each ping carries the bytes written before it and its pong says they all
-//! arrived, and on the channel its acks say so. The socket pings after each piece, not waiting
-//! for the last pong, so it hears as pieces arrive, as the channel does. Each keeps on the way
+//! How much a screen's socket may have on its way, as the screen confirms it: each ping
+//! carries the bytes written before it and its pong says they all arrived, or WebTransport's
+//! acks say what arrived. The socket pings after each piece, not waiting for the last pong, so
+//! it hears as pieces arrive. Each keeps on the way
 //! what the link carries in its shortest round trip and a margin more, so what it sends next
 //! waits that long at most and nothing piles up in buffers it cannot take back. The margin is
 //! the least the link keeps its pace with. A link that holds acks and lets them go together, as
@@ -31,7 +31,7 @@ const SPAN: u64 = 50_000;
 const RATES: u64 = 1_000_000;
 
 /// One way's bytes on the way. Times are in us since it opened.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Flight {
     written: u64,
     confirmed: u64,
@@ -57,7 +57,7 @@ pub struct Flight {
 }
 
 /// Where a try of a wider window is, each step from when and the bytes confirmed then.
-#[derive(Default)]
+#[derive(Clone, Default)]
 enum Trying {
     #[default]
     Rest,
@@ -93,7 +93,7 @@ impl Flight {
         }
         let trip = now.checked_sub(sent)?;
         self.trip(trip);
-        self.heard(written, sent, now);
+        self.heard(written, sent, now, !self.room());
         Some(Duration::from_micros(trip))
     }
 
@@ -102,17 +102,17 @@ impl Flight {
         self.least = Some(self.least.map_or(trip, |l| l.min(trip)));
     }
 
-    /// How many bytes the way says are still on it `now`, the rest confirmed.
-    pub fn on_way(&mut self, bytes: u64, now: u64) {
-        let confirmed = self.written.saturating_sub(bytes);
+    /// What a way that counts its own acks heard `now`: `confirmed` bytes in all arrived, every
+    /// one of them sent by `left`, and the way was `full` until then.
+    pub fn acked(&mut self, confirmed: u64, left: u64, full: bool, now: u64) {
         if confirmed > self.confirmed {
-            self.heard(confirmed, now, now);
+            self.heard(confirmed, left, now, full);
         }
     }
 
-    /// `confirmed` bytes in all arrived, every one of them sent by `left`.
-    fn heard(&mut self, confirmed: u64, left: u64, now: u64) {
-        let full = !self.room();
+    /// `confirmed` bytes in all arrived, every one of them sent by `left`, the way `full` until
+    /// they came.
+    fn heard(&mut self, confirmed: u64, left: u64, now: u64, full: bool) {
         if full {
             self.full_for += now.saturating_sub(self.last_heard);
         }
@@ -186,7 +186,7 @@ impl Flight {
         LEAST.max((self.rate() * (self.least.unwrap_or(0) + margin) as f64) as u64)
     }
 
-    fn window(&self) -> u64 {
+    pub(crate) fn window(&self) -> u64 {
         let window = self.carried(self.margin.unwrap_or(MARGIN));
         match self.trying {
             Trying::Wider { .. } => window * 3 / 2,
@@ -257,7 +257,8 @@ mod tests {
                     confirmed = due.pop_front().unwrap().1;
                 }
             }
-            f.on_way(written - confirmed, t * 1000);
+            let full = !f.room();
+            f.acked(confirmed, t * 1000, full, t * 1000);
             if t + 1000 == ms {
                 second_ago = confirmed;
             }
@@ -303,7 +304,7 @@ mod tests {
     fn a_rate_is_forgotten_after_a_second() {
         let mut f = Flight::default();
         pong(&mut f, 0, 1_000);
-        f.wrote(1 << 20);
+        f.wrote(2 << 20);
         pong(&mut f, 100_000, 101_000);
         assert!(f.window() > LEAST);
         pong(&mut f, 1_200_000, 1_201_000);

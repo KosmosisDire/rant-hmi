@@ -15,9 +15,9 @@ The screens connected, a list. Each holds:
   HMI in turn with what the screen sends, and back the way its values come.
 - `jitter_ms`: how much the round trip wavers, smoothed as RTP does: each new round trip
   moves it a sixteenth of the way to how far that one was from the last
-- `webrtc`: whether its WebRTC connection is open, which carries its values and video too.
-  Without it the screen gets everything over its socket, its video as frames it decodes
-  itself, which only a page on https or localhost can do.
+- `webrtc`: whether its WebRTC connection, which a screen opens to play a video, is open.
+  Without it the screen gets its video as frames over its socket and decodes them itself,
+  which only a page on https or localhost can do.
 
 ## Hmi/Status
 

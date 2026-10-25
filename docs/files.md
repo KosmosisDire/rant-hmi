@@ -35,6 +35,13 @@ alias = "Speed"
 entity = "Line1/Speed"
 kind = "variable"            # topic, variable, function or task
 intent = "write"             # or read
+[[import]]
+alias = "Lidar"
+entity = "Lab/Lidar"
+kind = "topic"
+intent = "read"
+fields = ["stamp", "points.x", "points.y", "points.z"]   # only these come, every field when left out
+rate = 5                     # at most 5 values a second, all it sends when left out
 
 # data/variables.toml
 [[variable]]
@@ -65,9 +72,34 @@ light = "#0088ff"            # left out, worked out from dark
 Code sets a variable by assignment (`Speed = 0.5`), calls a function with `await Reset()` and
 publishes on a topic with `Jog.send({ x: 1, y: 0 })`.
 
+## How screens get their values
+
+- A screen gets the values of only the imports and computed values its pages show, all of
+  them while the editor's Data tab previews them. The previews' big values come 250 KB a
+  second at most, so they leave the link to the screens that show them.
+- An import that reads may bring only some fields, which the HMI reads alone, so screens and
+  handlers alike see only those. A field named brings all it holds. A lidar's x, y and z
+  without its intensity came 12% smaller across a LAN.
+- A topic it reads may take a rate: each publisher then sends it that many a second at most,
+  best effort, the newest at each turn. A value waits for its turn, up to the time between two
+  its source sends: up to 100 ms for a source sending 10 a second.
+- Small values, replies and what a screen sends go on its socket. A value over 16 KiB goes on a
+  second socket, read off the page's main thread, one at a time per import: the next waits
+  until the screen has shown the last, and only the newest waits.
+- A page on https takes those big values over WebTransport instead, on the HMI's port over
+  UDP, and over the second socket where WebTransport does not open within 5 s.
+- A screen on the HMI's own host gets big lists of numbers as they are, any other compressed.
+- After its first, a big list goes to a screen on another host as the change from the one it
+  showed last: the rows it kept, wherever they moved, and its new rows. A map of a million
+  points that gained a few goes as about what is new. A list mostly new, as a lidar's, goes
+  whole, and so does a list of single bytes, as a grid's.
+- The screen's scenes draw off its main thread too, beside the big values. A big value only
+  a scene's points read stays there, and each new one draws as it comes. Anything else that
+  reads it, as a text showing its length, brings it to the page whole.
+
 ## WebRTC
 
-A screen opens a WebRTC connection beside its socket where it can, for speed and video.
+A screen opens a WebRTC connection beside its socket once it plays a video, which it carries.
 
 - A new project starts with two public STUN servers in `ice`. `ice = []` asks none.
 - The HMI offers every address of its host, and the address its NAT shows the outside, as
@@ -85,6 +117,11 @@ gamepads and to decode video itself.
 - The HMI makes its own certificate once and keeps it in `~/.rant/hmi` for every project on
   the host. A browser warns about it until told to trust it.
 - `--cert` and `--key` take a real certificate and its key, as PEM files.
+- WebTransport has a certificate of its own, which a page trusts by the hash the HMI tells it,
+  with no warning. A browser takes one that way for two weeks at most, so the HMI makes a new
+  one each week.
+- WebTransport takes UDP on the HMI's port. Where a firewall passes only TCP, a screen's big
+  values come on its socket for its first 5 s, then on its second socket.
 
 ## As an app
 

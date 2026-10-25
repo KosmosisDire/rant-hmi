@@ -391,7 +391,9 @@ function ElementView(p: ElementProps & { at?: At }) {
     const diagram = p.element.tag === "svg" ? { box: diagramBox(), fit: take("fit") } : undefined;
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
     const canvas = p.element.tag === "canvas" ? contextOf(take("context"), faults) : undefined;
-    const media = p.element.tag === "media" ? { alias: playable(p.element.props.src, () => take("src")), src: take("src"), fit: String(take("fit") ?? "meet") } : undefined;
+    // an import's media reads its value only when it shows its pictures, not its video
+    const playsFrom = p.element.tag === "media" ? playable(p.element.props.src, () => take("src")) : null;
+    const media = p.element.tag === "media" ? { alias: playsFrom, src: playsFrom ? null : take("src"), fit: String(take("fit") ?? "meet") } : undefined;
     const first = p.element.tag === "div" && take("stack") === "first" ? p.element.children.length * COPIES : undefined;
     return { style, unknown, faults, text, value, diagram, markup, canvas, media, holder: { ox, oy, flow, first } as Holder };
   });

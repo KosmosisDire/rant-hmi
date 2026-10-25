@@ -1,5 +1,6 @@
-//! HTTP and WebSocket: the built client from one folder, and one socket per screen at `/ws`,
-//! plain or over TLS on the one port.
+//! HTTP and WebSocket: the built client from one folder, one socket per screen at `/ws`, and
+//! a second at `/bulk` that brings it its big values, plain or over TLS on the one port. A page
+//! on https takes its big values over WebTransport instead (`wt.rs`).
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -10,15 +11,17 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::connect_info::Connected;
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::serve::{IncomingStream, Listener};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::get;
+use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
@@ -28,7 +31,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeader;
 use tracing::{debug, error, warn};
 
-use crate::app::{Door, Inbound};
+use crate::app::{Door, Inbound, Outbox};
 use crate::apps::{self, Apps};
 use crate::flight::Flight;
 use crate::lanes::Lanes;
@@ -51,7 +54,7 @@ pub fn files(client: &Path) -> Files {
 /// Serves on `listener`, https too for a connection that opens with a TLS hello when `tls`
 /// answers one.
 pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: &Path, door: Door, apps: Apps) {
-    let app = Router::new().route("/ws", get(upgrade)).with_state(door).merge(apps::router(apps)).fallback_service(files(client));
+    let app = Router::new().route("/ws", get(upgrade)).route("/bulk", get(upgrade_bulk)).with_state(door).merge(apps::router(apps)).fallback_service(files(client));
     let front = Front::open(listener, tls);
     if let Err(e) = axum::serve(front, app.into_make_service_with_connect_info::<Reached>()).await {
         error!("the web server stopped: {e}");
@@ -149,59 +152,106 @@ async fn upgrade(ws: WebSocketUpgrade, State(door): State<Door>, ConnectInfo(rea
     ws.on_upgrade(move |socket| screen(socket, door, reached))
 }
 
+/// The second way a screen opens, a socket or WebTransport, for its session, proven by the key
+/// its hello carried.
+#[derive(Deserialize)]
+pub(crate) struct Second {
+    pub session: u32,
+    key: String,
+}
+
+impl Second {
+    /// Hands the loop the second way, sent what `lanes` carry, once its key is its session's.
+    pub async fn open(self, door: &Door, lanes: &Arc<Lanes>) -> bool {
+        let (ok, answer) = oneshot::channel();
+        door.send(Inbound::Bulk { session: self.session, key: self.key, out: Outbox::new(lanes.clone()), ok }) && answer.await == Ok(true)
+    }
+}
+
+/// What a screen sent on its second way, which takes only that it took a value.
+pub(crate) fn took(door: &Door, session: u32, data: &[u8]) {
+    match ciborium::from_reader::<ClientMsg, _>(data) {
+        Ok(msg @ ClientMsg::Took { .. }) => {
+            door.send(Inbound::Message { session, msg });
+        }
+        Ok(_) => warn!("screen {session} sent on its second way what only its socket takes"),
+        Err(e) => warn!("screen {session} sent what this backend cannot read: {e}"),
+    }
+}
+
+async fn upgrade_bulk(ws: WebSocketUpgrade, State(door): State<Door>, Query(second): Query<Second>) -> Response {
+    ws.on_upgrade(move |socket| bulk(socket, door, second))
+}
+
 /// What a socket has on its way, shared by its reader, which hears the pongs, and its writer,
 /// which waits for them when the way is full.
-#[derive(Default)]
 struct Way {
     flight: Mutex<Flight>,
     heard: Notify,
+    born: Instant,
+}
+
+impl Default for Way {
+    fn default() -> Way {
+        Way { flight: Mutex::default(), heard: Notify::new(), born: Instant::now() }
+    }
+}
+
+impl Way {
+    fn now(&self) -> u64 {
+        self.born.elapsed().as_micros() as u64
+    }
+
+    fn pong(&self, data: &[u8]) {
+        self.flight.lock().expect("flight").pong(data, self.now());
+        self.heard.notify_one();
+    }
+}
+
+/// Sends what `lanes` carry in pieces, as fast as the screen confirms them (`flight.rs`),
+/// pinging after each piece and every PING_EVERY. Ends once the lanes close and are sent.
+async fn write(mut sink: SplitSink<WebSocket, Message>, lanes: Arc<Lanes>, way: Arc<Way>) {
+    let ping = || Message::Ping(Bytes::copy_from_slice(&way.flight.lock().expect("flight").ping(way.now())));
+    let mut tick = interval(PING_EVERY);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        let heard = way.heard.notified();
+        let (room, ask) = {
+            let f = way.flight.lock().expect("flight");
+            (f.room(), f.ask())
+        };
+        let frame = if ask {
+            // a piece went since the last ping, so a ping at once, whose pong says it arrived
+            ping()
+        } else {
+            tokio::select! {
+                piece = lanes.next(room) => match piece {
+                    Some(piece) => {
+                        way.flight.lock().expect("flight").wrote(piece.len());
+                        Message::Binary(piece)
+                    }
+                    None => break,
+                },
+                _ = heard, if !room => continue,
+                _ = tick.tick() => ping(),
+            }
+        };
+        if sink.send(frame).await.is_err() {
+            break;
+        }
+    }
+    let _ = sink.close().await;
 }
 
 /// One screen's socket: binary CBOR frames in become messages for the loop, and what the
-/// loop sends goes out in pieces of its lanes, as fast as the screen confirms them
-/// (`flight.rs`). When the loop drops the screen, its lanes close and the socket closes once
-/// they are sent.
+/// loop sends goes out in pieces of its lanes. When the loop drops the screen, its lanes close
+/// and the socket closes once they are sent.
 async fn screen(socket: WebSocket, door: Door, reached: Reached) {
     let lanes = Arc::new(Lanes::default());
     let Some(session) = door.open(lanes.clone(), reached.local, reached.remote) else { return };
-    let (mut sink, mut stream) = socket.split();
-    let born = Instant::now();
-    let now = move || born.elapsed().as_micros() as u64;
+    let (sink, mut stream) = socket.split();
     let way = Arc::new(Way::default());
-    let writing = way.clone();
-    let writer = tokio::spawn(async move {
-        let way = writing;
-        let ping = || Message::Ping(Bytes::copy_from_slice(&way.flight.lock().expect("flight").ping(now())));
-        let mut tick = interval(PING_EVERY);
-        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        loop {
-            let heard = way.heard.notified();
-            let (room, ask) = {
-                let f = way.flight.lock().expect("flight");
-                (f.room(), f.ask())
-            };
-            let frame = if ask {
-                // a piece went since the last ping, so a ping at once, whose pong says it arrived
-                ping()
-            } else {
-                tokio::select! {
-                    piece = lanes.next(room) => match piece {
-                        Some(piece) => {
-                            way.flight.lock().expect("flight").wrote(piece.len());
-                            Message::Binary(piece)
-                        }
-                        None => break,
-                    },
-                    _ = heard, if !room => continue,
-                    _ = tick.tick() => ping(),
-                }
-            };
-            if sink.send(frame).await.is_err() {
-                break;
-            }
-        }
-        let _ = sink.close().await;
-    });
+    let writer = tokio::spawn(write(sink, lanes, way.clone()));
     // the loop hears the screen is there once a ping's time at most, though the writer pings more
     let mut told: Option<Instant> = None;
     while let Some(Ok(frame)) = stream.next().await {
@@ -213,8 +263,7 @@ async fn screen(socket: WebSocket, door: Door, reached: Reached) {
                 Err(e) => warn!("screen {session} sent what this backend cannot read: {e}"),
             },
             Message::Pong(data) => {
-                way.flight.lock().expect("flight").pong(&data, now());
-                way.heard.notify_one();
+                way.pong(&data);
                 if told.is_none_or(|t| t.elapsed() >= PING_EVERY) {
                     told = Some(Instant::now());
                     door.send(Inbound::Heard { session });
@@ -225,5 +274,28 @@ async fn screen(socket: WebSocket, door: Door, reached: Reached) {
         }
     }
     door.send(Inbound::Close { session });
+    writer.abort();
+}
+
+/// A screen's second socket, which brings it its big values as the loop sends them and hears
+/// when it took each. The loop checks its key first, and closes it with the session.
+async fn bulk(socket: WebSocket, door: Door, second: Second) {
+    let session = second.session;
+    let lanes = Arc::new(Lanes::default());
+    if !second.open(&door, &lanes).await {
+        return;
+    }
+    let (sink, mut stream) = socket.split();
+    let way = Arc::new(Way::default());
+    let writer = tokio::spawn(write(sink, lanes.clone(), way.clone()));
+    while let Some(Ok(frame)) = stream.next().await {
+        match frame {
+            Message::Binary(data) => took(&door, session, &data),
+            Message::Pong(data) => way.pong(&data),
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+    door.send(Inbound::BulkClosed { session, lanes });
     writer.abort();
 }

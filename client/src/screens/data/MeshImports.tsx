@@ -1,7 +1,7 @@
 import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
 import { capital, choosesIntent, intentWords } from "../../state/format";
-import { live } from "../../state/store";
+import { preview } from "../../state/preview";
 import { KindIcon } from "../../ui/marks";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
@@ -35,7 +35,7 @@ export function MeshImports(p: Picking) {
             </span>
           </td>
           <td class="cell-value">
-            <Preview value={live(i.alias).value} known={live(i.alias).known} />
+            <Preview value={preview(i.alias).value} known={preview(i.alias).known} />
           </td>
         </>
       )}

@@ -7,9 +7,12 @@ import { ALIAS } from "../../protocol/rules";
 import type { Value } from "../../protocol/Value";
 import { change } from "../../state/change";
 import { choosesIntent, intents, intentWords, typeLabel } from "../../state/format";
-import { entity, importOf, live, setState, state } from "../../state/store";
+import { bare } from "../../state/kept";
+import { preview } from "../../state/preview";
+import { entity, importOf, setState, state } from "../../state/store";
 import { KindIcon } from "../../ui/marks";
 import { Choice } from "../../ui/Choice";
+import { DraftInput } from "../../ui/DraftInput";
 import { COMPUTED, ComputedView } from "./Computed";
 import type { Picking } from "./DataScreen";
 import { ImportForm } from "./ImportForm";
@@ -98,10 +101,16 @@ export const IMPORTS: Kind<Import> = {
 /** A variable whose owner takes no sets can only be read. */
 export const canWrite = (imp: Import) => imp.kind !== "variable" || (entity(imp.entity)?.writable ?? true);
 
+/** A topic's rate, a whole number of values a second Rant can ask for. */
+const rateOf = (text: string): number | undefined => (/^[1-9]\d{0,4}$/.test(text.trim()) && Number(text) <= 65535 ? Number(text) : undefined);
+
 function ImportView(p: { imp: Import; picking: Picking }) {
   const e = () => entity(p.imp.entity);
-  const v = () => live(p.imp.alias);
+  const v = () => preview(p.imp.alias);
   const writable = () => p.imp.intent === "write" && p.imp.kind === "variable";
+  // only an import that reads may leave fields out, and only a topic it reads take a rate
+  const reads = () => p.imp.intent === "read" && (p.imp.kind === "topic" || p.imp.kind === "variable");
+  const rated = () => reads() && p.imp.kind === "topic";
   const set = (path: string, value: Value) => {
     setState("refused", null);
     send({ type: "set", alias: p.imp.alias, path, value });
@@ -116,10 +125,23 @@ function ImportView(p: { imp: Import; picking: Picking }) {
         <Choice
           options={intents(p.imp.kind)}
           value={p.imp.intent}
-          onPick={(intent) => change({ intent })}
+          onPick={(intent) => change(intent === "write" ? { intent, fields: undefined, rate: undefined } : { intent })}
           off={(i) => (i === "write" && !canWrite(p.imp) ? "Its owner takes no sets" : undefined)}
         />
       </div>
+      <div class="field" hidden={!rated()}>
+        <label>Rate</label>
+        <DraftInput
+          value={p.imp.rate ? String(p.imp.rate) : ""}
+          placeholder="All it sends"
+          title="The most values a second it brings"
+          accept={(t) => t.trim() === "" || rateOf(t) !== undefined}
+          onCommit={(t) => change({ rate: rateOf(t) })}
+        />
+      </div>
+      <Show when={rated() && p.imp.rate}>
+        <div class="field-hint">At most {p.imp.rate} a second. A value waits for its turn, up to the time between two its source sends.</div>
+      </Show>
       <About
         rows={[
           ["Entity", p.imp.entity],
@@ -133,7 +155,16 @@ function ImportView(p: { imp: Import; picking: Picking }) {
           {(t) => (
             <>
               <div class="section">Value</div>
-              <ValueTree fields={t().fields} value={v().value} known={v().known} onSet={writable() ? set : undefined} />
+              <Show when={reads() && !bare(t().fields)}>
+                <div class="field-hint">Only the checked fields come, to screens and handlers alike.</div>
+              </Show>
+              <ValueTree
+                fields={t().fields}
+                value={v().value}
+                known={v().known}
+                onSet={writable() ? set : undefined}
+                keep={reads() ? { fields: p.imp.fields, onKeep: (fields) => change({ fields }) } : undefined}
+              />
             </>
           )}
         </Match>

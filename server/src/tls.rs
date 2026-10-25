@@ -1,5 +1,6 @@
 //! https beside http on the one port: a certificate given as PEM files, or the HMI's own,
 //! made once and kept per host so a browser that accepted it keeps it for every project there.
+//! WebTransport takes a brief one of its own, which a page trusts by its hash.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
@@ -9,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Result, anyhow};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
-use rcgen::{CertificateParams, DnType, KeyPair};
+use rcgen::{Certificate as Made, CertificateParams, DnType, KeyPair};
 use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -22,6 +23,9 @@ use x509_cert::der::Decode;
 const LASTS: Duration = Duration::from_secs(825 * 24 * 3600);
 /// How near its end a start makes it anew, so a running HMI seldom outlives it.
 const RENEW: Duration = Duration::from_secs(30 * 24 * 3600);
+/// How long a brief certificate lasts from now. A browser takes one by its hash for two weeks at
+/// most, and each begins a day back.
+const BRIEF: Duration = Duration::from_secs((13 * 24 - 1) * 3600);
 
 /// Where the certificate comes from.
 pub enum Certificate {
@@ -63,9 +67,9 @@ fn own(dir: &Path) -> Result<(PathBuf, PathBuf)> {
     let (cert, key) = (dir.join("cert.pem"), dir.join("key.pem"));
     if !lasting(&cert) || !key.exists() {
         std::fs::create_dir_all(dir).with_context(|| format!("could not make {}", dir.display()))?;
-        let (pem, key_pem) = make(SystemTime::now() + LASTS)?;
-        std::fs::write(&key, key_pem).with_context(|| format!("could not write {}", key.display()))?;
-        std::fs::write(&cert, pem).with_context(|| format!("could not write {}", cert.display()))?;
+        let (made, key_pair) = make(SystemTime::now() + LASTS)?;
+        std::fs::write(&key, key_pair.serialize_pem()).with_context(|| format!("could not write {}", key.display()))?;
+        std::fs::write(&cert, made.pem()).with_context(|| format!("could not write {}", cert.display()))?;
         info!("made the HMI's own certificate in {}", dir.display());
     }
     Ok((cert, key))
@@ -81,9 +85,15 @@ fn lasting(path: &Path) -> bool {
     end().is_some_and(|end| SystemTime::UNIX_EPOCH + end > SystemTime::now() + RENEW)
 }
 
-/// A self signed certificate until `until`, and its key, as PEM. It names this host as a screen
-/// may reach it: localhost, the host's name, and its addresses now.
-fn make(until: SystemTime) -> Result<(String, String)> {
+/// A brief certificate and its key, as DER, which a page takes by its hash.
+pub fn brief() -> Result<(Vec<u8>, Vec<u8>)> {
+    let (made, key) = make(SystemTime::now() + BRIEF)?;
+    Ok((made.der().to_vec(), key.serialize_der()))
+}
+
+/// A self signed certificate until `until`, and its key. It names this host as a screen may
+/// reach it: localhost, the host's name, and its addresses now.
+fn make(until: SystemTime) -> Result<(Made, KeyPair)> {
     let mut names = vec!["localhost".to_owned()];
     if let Some(host) = host_name() {
         names.extend([format!("{host}.local"), host]);
@@ -100,7 +110,7 @@ fn make(until: SystemTime) -> Result<(String, String)> {
     params.not_after = until.into();
     let key = KeyPair::generate()?;
     let cert = params.self_signed(&key).map_err(|e| anyhow!("could not make a certificate: {e}"))?;
-    Ok((cert.pem(), key.serialize_pem()))
+    Ok((cert, key))
 }
 
 /// This host's name, where the system tells it.
@@ -127,7 +137,7 @@ mod tests {
         let first = std::fs::read(dir.join("cert.pem")).unwrap();
         acceptor(&Certificate::Own(dir.clone())).unwrap();
         assert_eq!(std::fs::read(dir.join("cert.pem")).unwrap(), first, "a second start keeps it");
-        let (near, _) = make(SystemTime::now() + RENEW / 2).unwrap();
+        let near = make(SystemTime::now() + RENEW / 2).unwrap().0.pem();
         std::fs::write(dir.join("cert.pem"), &near).unwrap();
         acceptor(&Certificate::Own(dir.clone())).unwrap();
         assert_ne!(std::fs::read_to_string(dir.join("cert.pem")).unwrap(), near, "one near its end is made anew");
@@ -139,12 +149,22 @@ mod tests {
         let dir = temp("given");
         std::fs::create_dir_all(&dir).unwrap();
         let (cert, key) = make(SystemTime::now() + LASTS).unwrap();
-        std::fs::write(dir.join("c.pem"), cert).unwrap();
-        std::fs::write(dir.join("k.pem"), key).unwrap();
+        std::fs::write(dir.join("c.pem"), cert.pem()).unwrap();
+        std::fs::write(dir.join("k.pem"), key.serialize_pem()).unwrap();
         let given = |cert: &str, key: &str| acceptor(&Certificate::Given { cert: dir.join(cert), key: dir.join(key) }).err().map(|e| e.to_string());
         assert_eq!(given("c.pem", "k.pem"), None);
         assert!(given("c.pem", "none.pem").is_some_and(|e| e.contains("could not read the key")));
         assert!(given("k.pem", "k.pem").is_some(), "a key is no certificate");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_brief_certificate_lasts_two_weeks_at_most() {
+        let (der, _) = brief().unwrap();
+        let validity = x509_cert::Certificate::from_der(&der).unwrap().tbs_certificate.validity;
+        let (from, to) = (validity.not_before.to_unix_duration(), validity.not_after.to_unix_duration());
+        assert!(to - from <= Duration::from_secs(14 * 24 * 3600), "{:?}", to - from);
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        assert!(from < now && to > now + Duration::from_secs(12 * 24 * 3600));
     }
 }

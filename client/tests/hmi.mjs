@@ -27,7 +27,10 @@ export class Hmi {
       const parts = [...(this.parts.get(lane) ?? []), bytes.subarray(3)];
       if (bytes[2] === 1) return this.parts.set(lane, parts);
       this.parts.delete(lane);
-      this.receive(decoder.decode(parts.length === 1 ? parts[0] : Buffer.concat(parts)));
+      const msg = decoder.decode(parts.length === 1 ? parts[0] : Buffer.concat(parts));
+      this.receive(msg);
+      // a big value's lane, whose next value comes once this one is said to be taken
+      if (lane & 0x8000 && msg.type === "values") for (const v of msg.values) this.send({ type: "took", alias: v.alias, seq: msg.seq });
     };
     this.ws.onopen = () => {
       // the heartbeat: a silent screen is dropped
@@ -86,6 +89,19 @@ export class Hmi {
       if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${what}`);
       await new Promise((r) => setTimeout(r, 25));
     }
+  }
+
+  /** How many values of `alias` come in `ms`. */
+  async count(alias, ms) {
+    let n = 0;
+    const counting = (msg) => {
+      if (msg.type === "values") n += msg.values.filter((v) => v.alias === alias).length;
+      return false;
+    };
+    this.waiters.push(counting);
+    await new Promise((r) => setTimeout(r, ms));
+    this.waiters = this.waiters.filter((w) => w !== counting);
+    return n;
   }
 
   async import(alias, entity, intent = "read") {

@@ -8,7 +8,8 @@ import { change } from "../../state/change";
 import { complete, type Suggestion } from "../../state/complete";
 import { freeLocal } from "../../state/names";
 import { systemScope } from "../../state/bind";
-import { live, state } from "../../state/store";
+import { preview } from "../../state/preview";
+import { state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
 import { Sigma } from "../../ui/icons";
 import { Preview } from "../../ui/Preview";
@@ -60,7 +61,7 @@ export function ComputedTable(p: Picking) {
           <td class="mono">{c.get}</td>
           <td class="mono">{c.set ? c.set.target : ""}</td>
           <td class="cell-value">
-            <Preview value={live(c.name).value} known={live(c.name).known} />
+            <Preview value={preview(c.name).value} known={preview(c.name).known} />
             <Show when={c.unit}>
               <span class="pv-none"> {c.unit}</span>
             </Show>
@@ -128,7 +129,7 @@ export function ComputedView(p: { computed: Computed; picking: Picking }) {
       <div class="field">
         <label>Value</label>
         <span>
-          <Preview value={live(p.computed.name).value} known={live(p.computed.name).known} />
+          <Preview value={preview(p.computed.name).value} known={preview(p.computed.name).known} />
           <Show when={p.computed.unit}>
             <span class="pv-none"> {p.computed.unit}</span>
           </Show>

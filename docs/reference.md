@@ -222,6 +222,10 @@ each an expression.
   its pose.
 - A box, a sphere and a cylinder sit centred on their pose.
 - A model file loads once however many parts show it, and draws in its own materials.
+- A scene draws off the page's main thread, so a big cloud never holds up the page. Points
+  that are a big value from the mesh, as `Scan.points`, draw each new value as it comes.
+  Points code makes from one, as `Scan.points.filter((p) => p.z > 0)`, bring the value to the
+  page first, which costs more.
 - A value that cannot be read gives way to the default, and the editor says why on the
   scene. A part whose values are not known yet draws nothing.
 - The camera moves only by its properties, so a person turns it through handlers on the
@@ -447,6 +451,8 @@ Each `[[import]]` in `data/imports.toml`:
 | `entity` | its path on the mesh, as `Line1/Speed` |
 | `kind` | `topic`, `variable`, `function` or `task` |
 | `intent` | `read`, or `write` to set, send or call it. A function or a task is always `write` |
+| `fields` | for an import that reads, the only fields that come, by paths such as `points.x`. Left out for all |
+| `rate` | for a topic it reads, the most values a second, sent best effort. Left out for all it sends |
 
 Each `[[variable]]` in `data/variables.toml`:
 

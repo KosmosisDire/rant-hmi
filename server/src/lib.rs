@@ -4,6 +4,7 @@
 pub mod app;
 pub mod apps;
 pub mod authorize;
+pub mod delta;
 pub mod events;
 pub mod lanes;
 pub mod files;
@@ -26,6 +27,7 @@ pub mod tls;
 pub mod value;
 pub mod watch;
 pub mod web;
+pub mod wt;
 
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
@@ -33,7 +35,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow};
 use notify::RecommendedWatcher;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tracing::{info, warn};
 
 use app::{App, Door, Sources};
@@ -94,10 +96,11 @@ impl Hmi {
         // the built client's script, whose name changes with each build
         let build = index.split("src=\"").nth(1).and_then(|s| s.split('"').next()).filter(|s| s.starts_with("/assets/")).unwrap_or_default().to_owned();
         let (door, screens) = Door::new();
+        let (hashes, wt) = unbounded_channel();
         if let Some(web) = o.web {
             let runtimes = kept().map(|kept| kept.join("runtimes").join(env!("CARGO_PKG_VERSION"))).unwrap_or_default();
             let apps = Apps { project: o.project.clone(), runtimes, domain: o.domain, loopback: o.loopback, trust: None };
-            serve(web, &project.info.name, o.client, door.clone(), apps).await?;
+            serve(web, &project.info.name, o.client, door.clone(), apps, hashes).await?;
         }
         let (said, script) = unbounded_channel();
         let runner = script::Script::start(said);
@@ -105,7 +108,7 @@ impl Hmi {
         let _watcher = watch::watch(&o.project, changes).map_err(|e| warn!("could not watch {}: {e}", o.project.display())).ok();
         let name = project.info.name.clone();
         let app = App::new(project, pages, node, runner, connections, NODE.to_owned(), build);
-        Ok(Hmi { app, from: Sources { mesh, screens, script, files, rtc, frames }, door, name, _watcher })
+        Ok(Hmi { app, from: Sources { mesh, screens, script, files, rtc, frames, wt }, door, name, _watcher })
     }
 
     /// The door a screen in this process comes in by.
@@ -125,8 +128,9 @@ impl Hmi {
     }
 }
 
-/// Listens on the network for screens, the editor's included, and the apps it builds.
-async fn serve(web: Web, name: &str, client: PathBuf, door: Door, mut apps: Apps) -> Result<()> {
+/// Listens on the network for screens, the editor's included, and the apps it builds, and with
+/// https for WebTransport on the same port over UDP, whose certificates' hashes go to `hashes`.
+async fn serve(web: Web, name: &str, client: PathBuf, door: Door, mut apps: Apps, hashes: UnboundedSender<String>) -> Result<()> {
     let listener = TcpListener::bind((web.bind.as_str(), web.port))
         .await
         .with_context(|| format!("could not listen on {}:{}", web.bind, web.port))?;
@@ -147,7 +151,10 @@ async fn serve(web: Web, name: &str, client: PathBuf, door: Door, mut apps: Apps
     };
     let at = listener.local_addr()?;
     match tls {
-        Some(_) => info!("{name} on http://{at} and https://{at}"),
+        Some(_) => {
+            info!("{name} on http://{at} and https://{at}");
+            tokio::spawn(wt::serve(at, door.clone(), hashes));
+        }
         None => info!("{name} on http://{at}"),
     }
     tokio::spawn(async move { web::serve(listener, tls, &client, door, apps).await });

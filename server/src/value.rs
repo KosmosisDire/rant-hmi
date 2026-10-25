@@ -2,6 +2,7 @@
 //! whole. It goes to screens as CBOR and into the project's files as TOML, never as JSON.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -11,13 +12,35 @@ use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use ts_rs::TS;
 
+use crate::delta::{self, Matched, Rows};
+
 /// The CBOR tag of [`Records`], a map of their columns. Unassigned, in the range anyone may take.
 const RECORDS_TAG: u64 = 41000;
 /// The CBOR tag of [`Numbers`] shuffled then LZ4 compressed: their typed array's tag, then the
 /// block with its size first. Unassigned, beside [`RECORDS_TAG`].
 const COMPRESSED_TAG: u64 = 41001;
+/// The CBOR tag of a list written as the change from one a screen holds (`delta.rs`): its
+/// length, the ops LZ4 compressed, then its new rows as compressed numbers, a map for records.
+const DELTA_TAG: u64 = 41002;
 /// Numbers of fewer bytes go as they are, as compressing them never pays.
 const COMPRESS_FROM: usize = 4096;
+/// Lists whose rows are narrower go whole, as their matches are short and many to apply.
+const DELTA_WIDTH: usize = 4;
+
+thread_local! {
+    /// Whether what is written now compresses big lists of numbers.
+    // clippy 1.96 flags a const initializer as if it had none
+    #[allow(clippy::missing_const_for_thread_local)]
+    static PACK: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Runs `write` with big lists of numbers written as they are.
+pub fn plain<T>(write: impl FnOnce() -> T) -> T {
+    PACK.set(false);
+    let out = write();
+    PACK.set(true);
+    out
+}
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum Value {
@@ -86,6 +109,13 @@ impl Value {
             Value::List(items) => Some(Cow::Borrowed(items)),
             Value::Numbers(n) => Some(Cow::Owned(n.iter().collect())),
             Value::Records(r) => Some(Cow::Owned((0..r.len).map(|i| r.get(i)).collect())),
+            _ => None,
+        }
+    }
+
+    fn as_list(&self) -> Option<&[Value]> {
+        match self {
+            Value::List(items) => Some(items),
             _ => None,
         }
     }
@@ -220,16 +250,22 @@ impl Numbers {
         self.bytes.chunks_exact(self.kind.width()).map(|b| self.kind.read(b))
     }
 
-    /// Written for a screen: a typed array, compressed when that makes it smaller.
+    /// Written for a screen: a typed array, compressed when that makes it smaller, unless the
+    /// screen is on this host.
     fn typed<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        if self.bytes.len() >= COMPRESS_FROM {
-            let block = lz4_flex::compress_prepend_size(&shuffled(&self.bytes, self.kind.width()));
+        if self.bytes.len() >= COMPRESS_FROM && PACK.get() {
+            let block = packed(&self.bytes, self.kind.width());
             if block.len() < self.bytes.len() {
                 return Captured(Some(COMPRESSED_TAG), (self.kind.tag(), Raw(&block))).serialize(s);
             }
         }
         Captured(Some(self.kind.tag()), Raw(&self.bytes)).serialize(s)
     }
+}
+
+/// Numbers shuffled then LZ4 compressed, the size first.
+fn packed(bytes: &[u8], width: usize) -> Vec<u8> {
+    lz4_flex::compress_prepend_size(&shuffled(bytes, width))
 }
 
 /// Every number's first byte, then every second byte and so on, so the bytes that barely change
@@ -270,6 +306,93 @@ impl Records {
     /// Record `i`, which must be there.
     fn get(&self, i: usize) -> Value {
         Value::Map(self.fields.iter().map(|(k, column)| (k.clone(), cell(column, i))).collect())
+    }
+
+    /// Whether `o` has the same fields of the same kinds, so its rows line up with these.
+    fn same_shape(&self, o: &Records) -> bool {
+        self.fields.len() == o.fields.len()
+            && self.fields.iter().zip(o.fields.iter()).all(|((k, a), (l, b))| {
+                k == l
+                    && match (a, b) {
+                        (Value::Numbers(a), Value::Numbers(b)) => a.kind == b.kind,
+                        (Value::Records(a), Value::Records(b)) => a.same_shape(b),
+                        _ => false,
+                    }
+            })
+    }
+}
+
+/// A list's columns as the matcher reads them, a struct's in turn.
+fn rows(list: &Value) -> Rows<'_> {
+    fn columns<'a>(v: &'a Value, out: &mut Vec<(&'a [u8], usize)>) {
+        match v {
+            Value::Numbers(n) => out.push((&n.bytes, n.kind.width())),
+            Value::Records(r) => r.fields.iter().for_each(|(_, c)| columns(c, out)),
+            _ => {}
+        }
+    }
+    let len = match list {
+        Value::Numbers(n) => n.len(),
+        Value::Records(r) => r.len,
+        _ => 0,
+    };
+    let mut cols = Vec::new();
+    columns(list, &mut cols);
+    Rows { len, cols }
+}
+
+/// How big list `new` is made from `base`, when both are lists of the same kind and that is
+/// smaller than `new` whole.
+fn change(new: &Value, base: &Value) -> Option<Matched> {
+    let alike = match (new, base) {
+        (Value::Numbers(a), Value::Numbers(b)) => a.kind == b.kind,
+        (Value::Records(a), Value::Records(b)) => a.same_shape(b),
+        _ => false,
+    };
+    let (new, base) = (rows(new), rows(base));
+    let big = new.len * new.width() >= COMPRESS_FROM;
+    (alike && big && PACK.get() && new.width() >= DELTA_WIDTH).then(|| delta::matched(&base, &new)).flatten()
+}
+
+/// A value written for a screen as the change from `.1`, the one it holds: each big list beside
+/// one of its kind there as the runs of that one's rows it kept and its new rows, unless most
+/// of them are new.
+pub struct Against<'a>(pub &'a Value, pub &'a Value);
+
+impl Serialize for Against<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        const NULL: &Value = &Value::Null;
+        match (self.0, self.1) {
+            (Value::Map(fields), base) => s.collect_map(fields.iter().map(|(k, v)| (k, Against(v, base.get(k).unwrap_or(NULL))))),
+            (Value::List(items), base) => {
+                let old = base.as_list().unwrap_or_default();
+                s.collect_seq(items.iter().enumerate().map(|(i, v)| Against(v, old.get(i).unwrap_or(NULL))))
+            }
+            (new, base) => match change(new, base) {
+                Some(m) => {
+                    let code = lz4_flex::compress_prepend_size(&m.code());
+                    Captured(Some(DELTA_TAG), (rows(new).len, Raw(&code), Fresh(new, &m.fresh))).serialize(s)
+                }
+                None => new.serialize(s),
+            },
+        }
+    }
+}
+
+/// The new rows of a list, `.1` their ranges: numbers compressed, a map of them for records.
+struct Fresh<'a>(&'a Value, &'a [(usize, usize)]);
+
+impl Serialize for Fresh<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Numbers(n) => {
+                let w = n.kind.width();
+                let rows: Vec<u8> = self.1.iter().flat_map(|&(a, b)| &n.bytes[a * w..b * w]).copied().collect();
+                Raw(&packed(&rows, w)).serialize(s)
+            }
+            Value::Records(r) => s.collect_map(r.fields.iter().map(|(k, c)| (k, Fresh(c, self.1)))),
+            _ => s.serialize_unit(),
+        }
     }
 }
 
@@ -559,6 +682,10 @@ mod tests {
     use super::*;
 
     fn cbor(v: &Value) -> Vec<u8> {
+        cbor_of(v)
+    }
+
+    fn cbor_of(v: &impl Serialize) -> Vec<u8> {
         let mut out = Vec::new();
         ciborium::into_writer(v, &mut out).unwrap();
         out
@@ -616,6 +743,115 @@ mod tests {
             })
             .collect();
         assert_eq!(read(&Value::Numbers(Numbers::new(Num::U8, noise.clone()).unwrap())), C::Tag(64, Box::new(C::Bytes(noise))));
+    }
+
+    #[test]
+    fn big_numbers_go_as_they_are_to_a_screen_on_this_host() {
+        use ciborium::Value as C;
+        let floats: Vec<u8> = (0..2000).flat_map(|i| (i as f32 * 0.01).to_le_bytes()).collect();
+        let v = Value::Numbers(Numbers::new(Num::F32, floats.clone()).unwrap());
+        let read = ciborium::from_reader::<C, _>(&plain(|| cbor(&v))[..]).unwrap();
+        assert_eq!(read, C::Tag(85, Box::new(C::Bytes(floats))));
+        // and compressed again after
+        assert!(matches!(ciborium::from_reader::<C, _>(&cbor(&v)[..]).unwrap(), C::Tag(41001, _)));
+    }
+
+    /// Points with a field of a struct, so a column of records too, each made from its number.
+    fn cloud(ids: &[u32]) -> Value {
+        let at = |id: u32, k: u32| ((id.wrapping_mul(2_654_435_761) ^ k.wrapping_mul(40_503)) % 100_000) as f32 / 100.0;
+        let column = |k| Value::Numbers(Numbers::new(Num::F32, ids.iter().flat_map(|&id| at(id, k).to_le_bytes()).collect::<Vec<u8>>()).unwrap());
+        let tint = Records::new(ids.len(), vec![("r".into(), column(4)), ("g".into(), column(5))]).unwrap();
+        let points = Records::new(ids.len(), vec![("x".into(), column(1)), ("y".into(), column(2)), ("tint".into(), Value::Records(tint))]).unwrap();
+        Value::map([("stamp", Value::Int(ids[0].into())), ("points", Value::Records(points))])
+    }
+
+    /// The columns of records `v` in turn, as their bytes.
+    fn columns(v: &Value) -> Vec<Vec<u8>> {
+        match v {
+            Value::Numbers(n) => vec![n.bytes.to_vec()],
+            Value::Records(r) => r.fields.iter().flat_map(|(_, c)| columns(c)).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// A list's columns made from the change written for it, as a screen makes them.
+    fn applied(base: &Value, change: &ciborium::Value) -> Vec<Vec<u8>> {
+        use ciborium::Value as C;
+        let C::Tag(DELTA_TAG, content) = change else { panic!("not a change: {change:?}") };
+        let C::Array(parts) = &**content else { panic!("not a change") };
+        let [C::Integer(rows), C::Bytes(code), fresh] = &parts[..] else { panic!("not a change") };
+        let rows = u64::try_from(*rows).unwrap() as usize;
+        let mut v = Vec::new();
+        let (mut n, mut s) = (0u64, 0);
+        for b in lz4_flex::decompress_size_prepended(code).unwrap() {
+            n |= ((b & 0x7f) as u64) << s;
+            s += 7;
+            if b & 0x80 == 0 {
+                v.push(n);
+                (n, s) = (0, 0);
+            }
+        }
+        fn blocks(c: &ciborium::Value, out: &mut Vec<Vec<u8>>) {
+            match c {
+                ciborium::Value::Bytes(b) => out.push(lz4_flex::decompress_size_prepended(b).unwrap()),
+                ciborium::Value::Map(fields) => fields.iter().for_each(|(_, c)| blocks(c, out)),
+                _ => panic!("not new rows"),
+            }
+        }
+        let mut fresh_cols = Vec::new();
+        blocks(fresh, &mut fresh_cols);
+        let base_cols = columns(base);
+        let widths: Vec<usize> = base_cols.iter().map(|_| 4).collect();
+        // the new rows unshuffled, a number's bytes together again
+        let fresh_cols: Vec<Vec<u8>> = fresh_cols
+            .iter()
+            .zip(&widths)
+            .map(|(b, &w)| {
+                let n = b.len() / w;
+                (0..b.len()).map(|i| b[(i % w) * n + i / w]).collect()
+            })
+            .collect();
+        let mut out: Vec<Vec<u8>> = base_cols.iter().map(|_| Vec::new()).collect();
+        let (mut taken, mut next) = (0usize, 0i64);
+        for op in v[1..].chunks(3) {
+            let (new_rows, z, len) = (op[0] as usize, op[1] as i64, op[2] as usize);
+            let at = next + ((z >> 1) ^ -(z & 1));
+            for (k, col) in out.iter_mut().enumerate() {
+                let w = widths[k];
+                col.extend_from_slice(&fresh_cols[k][taken * w..(taken + new_rows) * w]);
+                col.extend_from_slice(&base_cols[k][at as usize * w..(at as usize + len) * w]);
+            }
+            taken += new_rows;
+            next = at + len as i64;
+        }
+        assert!(out.iter().all(|c| c.len() == rows * 4));
+        out
+    }
+
+    #[test]
+    fn a_big_list_goes_as_the_change_from_the_one_the_screen_holds() {
+        use ciborium::Value as C;
+        let old: Vec<u32> = (0..3000).collect();
+        let mut now = old.clone();
+        now.drain(500..520);
+        now.splice(1000..1000, 7000..7010);
+        now.extend(10_000..10_030);
+        let (base, new) = (cloud(&old), cloud(&now));
+        let change = cbor_of(&Against(&new, &base));
+        let C::Map(fields) = ciborium::from_reader::<C, _>(&change[..]).unwrap() else { panic!("not a map") };
+        assert_eq!(fields[0], (C::Text("stamp".into()), C::Integer(0.into())));
+        assert_eq!(applied(base.get("points").unwrap(), &fields[1].1), columns(new.get("points").unwrap()));
+        assert!(change.len() * 20 < cbor(&new).len(), "a change of {} bytes against {} whole", change.len(), cbor(&new).len());
+    }
+
+    #[test]
+    fn a_list_mostly_new_or_of_bytes_or_for_this_host_goes_whole() {
+        let (old, other) = (cloud(&(0..3000).collect::<Vec<_>>()), cloud(&(5000..8000).collect::<Vec<_>>()));
+        assert_eq!(cbor_of(&Against(&other, &old)), cbor(&other));
+        let bytes = |b: u8| Value::Numbers(Numbers::new(Num::U8, (0..20_000).map(|i| (i % 251) as u8 ^ b).collect::<Vec<u8>>()).unwrap());
+        assert_eq!(cbor_of(&Against(&bytes(0), &bytes(0))), cbor(&bytes(0)));
+        let moved = cloud(&(10..3010).collect::<Vec<_>>());
+        assert_eq!(plain(|| cbor_of(&Against(&moved, &old))), plain(|| cbor(&moved)));
     }
 
     #[test]

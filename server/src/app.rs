@@ -1,10 +1,11 @@
 //! The backend's one loop. It owns the project, the mesh and every screen's session, so
 //! nothing is shared and nothing locks.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::ops::Deref;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -12,7 +13,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::body::Bytes;
 use rant::types::Timestamp;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tracing::{info, warn};
+use tokio::sync::oneshot;
+use tracing::{debug, info, warn};
 
 use crate::authorize::{Who, authorize};
 use crate::events;
@@ -23,11 +25,11 @@ use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
 use crate::project::{Computed, Import, Kind, Per, Project, Record, Target, Token, Variable};
 use crate::rules;
-use crate::protocol::{ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate, encode};
+use crate::protocol::{Base, ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate, encode, encode_plain};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{Client, HmiStatus};
 use crate::value::Value;
-use crate::rtc::{Connections, Frame, FromRtc, MESSAGE_MAX, ToRtc, Way};
+use crate::rtc::{Connections, Frame, FromRtc, ToRtc};
 
 /// How often a value may go to screens, the engine judges and the mesh is checked.
 const TICK: Duration = Duration::from_millis(33);
@@ -38,6 +40,12 @@ const SILENCE: Duration = Duration::from_millis(500);
 /// A screen silent this long is lost. A busy page stops reading its socket a while, which
 /// is no reason to start it over.
 const LOST: Duration = Duration::from_secs(5);
+/// A big value a screen has not said it took after this long counts as taken, so a value lost
+/// on the way never stops its import for good.
+const TAKE_MOST: Duration = Duration::from_secs(5);
+/// The bytes a second a screen that only previews values, as the editor's Data tab does, takes
+/// its big ones at, so its previews leave the link to the screens that show them.
+const PREVIEW_BYTES: f64 = 250_000.0;
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
@@ -50,6 +58,11 @@ pub enum Inbound {
     /// The screen answered the socket's ping, so it is there.
     Heard { session: u32 },
     Close { session: u32 },
+    /// A screen's second way, a socket or WebTransport, opened with `key`, which `ok` hears is
+    /// its session's or not.
+    Bulk { session: u32, key: String, out: Outbox, ok: oneshot::Sender<bool> },
+    /// A screen's second way, the one with these lanes, closed.
+    BulkClosed { session: u32, lanes: Arc<Lanes> },
 }
 
 /// How screens reach the loop, over the network or in this process, each numbered from one
@@ -87,11 +100,23 @@ pub struct Sources {
     pub files: UnboundedReceiver<()>,
     pub rtc: UnboundedReceiver<FromRtc>,
     pub frames: UnboundedReceiver<Frame>,
+    /// The hash of each certificate WebTransport serves with, as it begins.
+    pub wt: UnboundedReceiver<String>,
 }
 
 /// A screen's socket, in lanes that take turns (`lanes.rs`), which it sends as fast as the
 /// screen confirms them. They close when the screen goes.
 pub struct Outbox(Arc<Lanes>);
+
+impl Outbox {
+    pub fn new(lanes: Arc<Lanes>) -> Outbox {
+        Outbox(lanes)
+    }
+
+    fn is(&self, lanes: &Arc<Lanes>) -> bool {
+        Arc::ptr_eq(&self.0, lanes)
+    }
+}
 
 impl Deref for Outbox {
     type Target = Lanes;
@@ -109,6 +134,9 @@ impl Drop for Outbox {
 
 struct Session {
     out: Outbox,
+    /// Its second way, which brings its big values once it opened, and the key that opens it.
+    bulk: Option<Outbox>,
+    key: String,
     local: IpAddr,
     remote: IpAddr,
     /// When it connected.
@@ -116,11 +144,15 @@ struct Session {
     ping: Option<Duration>,
     /// How much the round trip wavers, in ms, smoothed.
     jitter: f64,
-    /// Whether its WebRTC data channels are open.
-    channels: bool,
-    /// Whether it sends on its channels, and what they brought before it said so.
-    switched: bool,
-    early: Vec<ClientMsg>,
+    /// Whether its WebRTC connection, for video, is open.
+    webrtc: bool,
+    /// The imports and computed values it shows, None for all.
+    watch: Option<HashSet<String>>,
+    /// While it only previews them, when its next big value may go, as its previews keep to
+    /// PREVIEW_BYTES a second.
+    previews: Option<Instant>,
+    /// Each import's big values, sent at most one at a time.
+    gates: HashMap<String, Gate>,
     heard: Instant,
     /// The edits that undo this screen's own edits, newest last, and those that redo them.
     undo: Vec<Edit>,
@@ -133,7 +165,123 @@ struct Session {
     decodes: HashSet<String>,
 }
 
+/// One import's big values to one screen: the one on its way and since when, the newest
+/// waiting for it, and the one the screen took last, which the next goes as the change from.
+#[derive(Default)]
+struct Gate {
+    out: Option<(Instant, Rc<Big>)>,
+    parked: Option<Rc<Big>>,
+    held: Option<Base>,
+    /// When its last went, so the imports a screen previews take turns.
+    went: Option<Instant>,
+}
+
+/// What became of a big value on its way to a screen.
+enum Fate {
+    Took,
+    /// The screen no longer held the value it was the change from.
+    Missed,
+    /// The screen never said, so it may be lost.
+    Lapsed,
+}
+
+/// An import's big value as it goes to screens, written whole, and once as the change from each
+/// value a screen holds, so screens that took the same share it.
+struct Big {
+    seq: u64,
+    update: ValueUpdate,
+    /// For screens on this host, which take it whole and as it is.
+    plain: bool,
+    whole: Bytes,
+    changes: RefCell<Vec<(u64, Bytes)>>,
+}
+
+impl Big {
+    /// As a screen holding `held` gets it.
+    fn written(&self, held: Option<&Base>) -> Bytes {
+        let Some(base) = held.filter(|_| !self.plain) else { return self.whole.clone() };
+        if let Some((_, bytes)) = self.changes.borrow().iter().find(|(seq, _)| *seq == base.seq) {
+            return bytes.clone();
+        }
+        let update = ValueUpdate { base: Some(base.clone()), ..self.update.clone() };
+        let change = encode(&ServerMsg::Values { values: vec![update], seq: self.seq });
+        // a change that saved nothing goes whole, which needs no base
+        let bytes = if change.len() < self.whole.len() { change } else { self.whole.clone() };
+        self.changes.borrow_mut().push((base.seq, bytes.clone()));
+        bytes
+    }
+}
+
 impl Session {
+    /// Whether the screen is on this host, so its values go as they are, never compressed.
+    fn here(&self) -> bool {
+        self.remote.is_loopback()
+    }
+
+    /// The lanes big values go in: the second way's once it opened, else the socket's.
+    fn big_way(&self) -> &Lanes {
+        self.bulk.as_ref().unwrap_or(&self.out)
+    }
+
+    /// Sends an import's big value, or keeps it as the newest while the last is on its way or,
+    /// on a screen that previews, until its previews' bytes allow.
+    fn big(&mut self, value: Rc<Big>) {
+        let alias = value.update.alias.clone();
+        let now = Instant::now();
+        let wait = self.previews.is_some_and(|at| at > now);
+        let gate = self.gates.entry(alias.clone()).or_default();
+        if gate.out.is_some() || wait {
+            gate.parked = Some(value);
+            return;
+        }
+        let bytes = value.written(gate.held.as_ref());
+        gate.out = Some((now, value));
+        gate.went = Some(now);
+        if let Some(at) = &mut self.previews {
+            *at = now + Duration::from_secs_f64(bytes.len() as f64 / PREVIEW_BYTES);
+        }
+        self.big_way().alone(&alias, bytes);
+    }
+
+    /// Sends small values together on the socket. A big value of one still waiting is older, so
+    /// it never goes after them.
+    fn small(&mut self, values: Vec<ValueUpdate>, seq: u64) {
+        for u in &values {
+            if let Some(gate) = self.gates.get_mut(&u.alias) {
+                gate.parked = None;
+            }
+        }
+        self.out.values(together(values, seq, self.here()));
+    }
+
+    /// Sends what waits with its way free, once a previewing screen's bytes allow, the import
+    /// that went longest ago first.
+    fn send_parked(&mut self) {
+        while self.previews.is_none_or(|at| at <= Instant::now()) {
+            let next = self.gates.iter().filter(|(_, g)| g.out.is_none() && g.parked.is_some()).min_by_key(|(_, g)| g.went).map(|(a, _)| a.clone());
+            let Some(value) = next.and_then(|a| self.gates.get_mut(&a)?.parked.take()) else { return };
+            self.big(value);
+        }
+    }
+
+    /// What became of the big value of `alias` from batch `seq` on its way, so the newest
+    /// waiting goes, or after a miss the one missed again, whole. Word of one sent before is
+    /// late, as after the screen let the import go, and is passed over.
+    fn took(&mut self, alias: &str, seq: u64, fate: Fate) {
+        let Some(gate) = self.gates.get_mut(alias) else { return };
+        if gate.out.as_ref().is_none_or(|(_, sent)| sent.seq != seq) {
+            return;
+        }
+        let Some((_, sent)) = gate.out.take() else { return };
+        gate.held = match fate {
+            Fate::Took => sent.update.value.clone().map(|value| Base { seq: sent.seq, value }),
+            Fate::Missed | Fate::Lapsed => None,
+        };
+        if let Some(next) = gate.parked.take().or(matches!(fate, Fate::Missed).then_some(sent)) {
+            self.big(next);
+        }
+    }
+
     /// A new round trip, and how far it was from the last.
     fn timed(&mut self, rtt: Duration) {
         if let Some(last) = self.ping {
@@ -241,6 +389,8 @@ pub struct App {
     node: String,
     /// The client script the backend serves.
     build: String,
+    /// The hash of WebTransport's certificate, while it serves.
+    wt: Option<String>,
     sessions: HashMap<u32, Session>,
     /// The last batch of values sent.
     seq: Cell<u64>,
@@ -294,6 +444,7 @@ impl App {
             moved: Vec::new(),
             node,
             build,
+            wt: None,
             sessions: HashMap::new(),
             seq: Cell::new(0),
             values: HashMap::new(),
@@ -328,6 +479,7 @@ impl App {
                 Some(()) = from.files.recv() => self.edited = Some(Instant::now()),
                 Some(r) = from.rtc.recv() => self.connection(r),
                 Some(f) = from.frames.recv() => self.frame(f),
+                Some(hash) = from.wt.recv() => self.wt = Some(hash),
                 _ = tick.tick() => self.tick(),
                 _ = &mut stop => break,
             }
@@ -360,7 +512,8 @@ impl App {
             Inbound::Open { session, out, local, remote } => {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
-                self.sessions.insert(session, Session { out, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, channels: false, switched: false, early: Vec::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
+                let key = new_key();
+                self.sessions.insert(session, Session { out, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -380,7 +533,35 @@ impl App {
                     self.end(session, "closed");
                 }
             }
+            Inbound::Bulk { session, key, out, ok } => {
+                let Some(s) = self.sessions.get_mut(&session).filter(|s| s.key == key) else {
+                    let _ = ok.send(false);
+                    return;
+                };
+                let _ = ok.send(true);
+                info!("screen {session} opened its second way");
+                // what was on its way on one it opened before, whose close may come later, is lost
+                if s.bulk.replace(out).is_some() {
+                    self.again(session);
+                }
+            }
+            Inbound::BulkClosed { session, lanes } => {
+                // one opened since takes its place
+                let Some(s) = self.sessions.get_mut(&session).filter(|s| s.bulk.as_ref().is_some_and(|b| b.is(&lanes))) else { return };
+                s.bulk = None;
+                info!("screen {session} lost its second way");
+                self.again(session);
+            }
         }
+    }
+
+    /// Sends a screen each value again, as the big ones on their way on a second way it lost may
+    /// be lost too.
+    fn again(&mut self, session: u32) {
+        if let Some(s) = self.sessions.get_mut(&session) {
+            s.gates.clear();
+        }
+        self.put_values(Some(session), self.all_values(session));
     }
 
     /// Everything a screen needs to draw, in one go.
@@ -391,6 +572,8 @@ impl App {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             node: self.node.clone(),
             build: self.build.clone(),
+            key: self.sessions.get(&session).map(|s| s.key.clone()).unwrap_or_default(),
+            wt: self.wt.clone(),
         };
         self.send(session, &hello);
         // every name a page reads comes before the pages, so a screen never draws one, nor
@@ -412,11 +595,15 @@ impl App {
         self.send(session, &ServerMsg::Health { peers: self.mesh.peers() });
     }
 
+    /// The names a screen may leave out by what it shows: the imports and computed values.
+    fn watched(&self) -> impl Iterator<Item = &String> {
+        self.project.imports.iter().map(|i| &i.alias).chain(self.project.computed.iter().map(|c| &c.name))
+    }
+
     /// Every value a screen shows: the imports', the computed ones', the shared variables' and
     /// its own.
     fn all_values(&self, session: u32) -> Vec<ValueUpdate> {
-        let names = self.project.imports.iter().map(|i| &i.alias).chain(self.project.computed.iter().map(|c| &c.name));
-        let mut values: Vec<ValueUpdate> = names.map(|name| self.update(name)).collect();
+        let mut values: Vec<ValueUpdate> = self.watched().map(|name| self.update(name)).collect();
         if let Some(s) = self.sessions.get(&session) {
             values.extend(self.shared.iter().chain(s.vars.iter()).map(|(k, v)| known(k, v)));
         }
@@ -433,42 +620,46 @@ impl App {
                 if let Some(rtt) = rtt.filter(|r| r.is_finite() && *r >= 0.0) {
                     s.timed(Duration::from_secs_f64(rtt / 1000.0));
                 }
-                let pong = encode(&ServerMsg::Pong { t });
-                match s.channels {
-                    true => self.rtc.send(ToRtc::Send { session, way: Way::Pong, bytes: pong }),
-                    false => s.out.pong(pong),
-                }
-            }
-            // a new connection plays nothing until the screen offers its videos on it
-            ClientMsg::Channels { offer } => {
-                let Some(s) = self.sessions.get_mut(&session) else { return };
-                s.plays.clear();
-                let local = s.local;
-                self.watch(session);
-                self.rtc.send(ToRtc::Channels { session, sdp: offer, local, ice: self.project.info.ice.clone() });
+                s.out.pong(encode(&ServerMsg::Pong { t }));
             }
             ClientMsg::Candidate { candidate } => {
                 self.rtc.send(ToRtc::Candidate { session, candidate });
             }
-            ClientMsg::OffChannels => {
-                self.rtc.send(ToRtc::Unlink { session });
-                self.unlinked(session);
-            }
-            ClientMsg::OnChannels => {
-                let Some(s) = self.sessions.get_mut(&session) else { return };
-                s.switched = true;
-                for msg in std::mem::take(&mut s.early) {
-                    self.handle(session, msg);
-                }
-            }
             ClientMsg::Play { offer, mut videos } => {
                 let plays = self.with_video(session, videos.iter().map(|v| v.alias.clone()));
                 videos.retain(|v| plays.contains(&v.alias));
-                if let Some(s) = self.sessions.get_mut(&session) {
-                    s.plays = plays;
-                }
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                s.plays = plays;
+                let local = s.local;
                 self.watch(session);
-                self.rtc.send(ToRtc::Play { session, sdp: offer, videos });
+                self.rtc.send(ToRtc::Play { session, sdp: offer, videos, local, ice: self.project.info.ice.clone() });
+            }
+            ClientMsg::Watch { names, previews } => {
+                let names: Option<HashSet<String>> = names.map(|n| n.into_iter().collect());
+                let all: Vec<String> = self.watched().cloned().collect();
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                // what it shows from now and did not before comes at once
+                let new: Vec<String> = match (&s.watch, &names) {
+                    (None, _) => Vec::new(),
+                    (Some(old), None) => all.into_iter().filter(|n| !old.contains(n)).collect(),
+                    (Some(old), Some(now)) => now.difference(old).cloned().collect(),
+                };
+                s.watch = names;
+                s.previews = previews.then(|| s.previews.unwrap_or_else(Instant::now));
+                // the screen lets go of what it no longer shows, so that comes whole again
+                if let Some(names) = &s.watch {
+                    s.gates.retain(|alias, _| names.contains(alias));
+                }
+                let values = new.iter().filter(|n| self.values.contains_key(*n)).map(|n| self.update(n)).collect();
+                self.put_values(Some(session), values);
+            }
+            ClientMsg::Took { alias, seq, missed } => {
+                if missed {
+                    debug!("screen {session} says it no longer held what {alias} changed from");
+                }
+                if let Some(s) = self.sessions.get_mut(&session) {
+                    s.took(&alias, seq, if missed { Fate::Missed } else { Fate::Took });
+                }
             }
             ClientMsg::Frames { aliases } => {
                 let decodes = self.with_video(session, aliases);
@@ -1262,6 +1453,14 @@ impl App {
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
             self.publish_status();
         }
+        for (id, s) in &mut self.sessions {
+            let late: Vec<(String, u64)> = s.gates.iter().filter_map(|(a, g)| g.out.as_ref().filter(|(t, _)| t.elapsed() > TAKE_MOST).map(|(_, b)| (a.clone(), b.seq))).collect();
+            for (alias, seq) in late {
+                warn!("screen {id} never said it took {alias}, so the next goes");
+                s.took(&alias, seq, Fate::Lapsed);
+            }
+            s.send_parked();
+        }
         let missed: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.out.missed()).map(|(id, _)| *id).collect();
         for session in missed {
             self.put_values(Some(session), self.all_values(session));
@@ -1320,7 +1519,7 @@ impl App {
                 connected_at: s.since,
                 ping_ms: s.ping.map_or(0.0, |p| p.as_secs_f64() * 1000.0),
                 jitter_ms: s.jitter,
-                webrtc: s.channels,
+                webrtc: s.webrtc,
             })
             .collect();
         clients.sort_by_key(|c| c.id);
@@ -1357,6 +1556,7 @@ impl App {
             alias: alias.to_owned(),
             value: slot.and_then(|s| s.value.clone()),
             known: slot.is_some_and(|s| s.known),
+            base: None,
         }
     }
 
@@ -1379,19 +1579,11 @@ impl App {
         }
     }
 
-    /// A screen's channels broke. What it sent on them may be lost, a release too, and so may
-    /// what it was sent, so it gets every value again on its socket. Its videos end with them.
+    /// A screen's WebRTC connection closed, and its videos with it.
     fn unlinked(&mut self, session: u32) {
         let Some(s) = self.sessions.get_mut(&session) else { return };
-        let open = std::mem::take(&mut s.channels);
-        s.early.clear();
+        s.webrtc = false;
         s.plays.clear();
-        if std::mem::take(&mut s.switched) {
-            self.let_go(session, "lost its data channels");
-        }
-        if open {
-            self.put_values(Some(session), self.all_values(session));
-        }
         self.watch(session);
     }
 
@@ -1468,24 +1660,13 @@ impl App {
     /// What a screen's WebRTC connection brought.
     fn connection(&mut self, r: FromRtc) {
         match r {
-            FromRtc::Channels { session, sdp } => self.send(session, &ServerMsg::Channels { answer: sdp }),
+            FromRtc::Answer { session, sdp } => self.send(session, &ServerMsg::Video { answer: sdp }),
             FromRtc::Linked { session, open: true } => {
                 if let Some(s) = self.sessions.get_mut(&session) {
-                    s.channels = true;
+                    s.webrtc = true;
                 }
             }
             FromRtc::Linked { session, open: false } => self.unlinked(session),
-            FromRtc::Message { session, msg } => {
-                let Some(s) = self.sessions.get_mut(&session) else { return };
-                match s.switched {
-                    true => self.inbound(Inbound::Message { session, msg }),
-                    false => {
-                        s.heard = Instant::now();
-                        s.early.push(msg);
-                    }
-                }
-            }
-            FromRtc::CaughtUp { session } => self.put_values(Some(session), self.all_values(session)),
             FromRtc::Candidate { session, candidate } => self.send(session, &ServerMsg::Candidate { candidate }),
         }
     }
@@ -1511,33 +1692,44 @@ impl App {
         }
     }
 
-    /// Sends values to one screen, or with None to every screen. On a socket, and on the
-    /// reliable channels of a screen with channels, the values small enough share a message and
-    /// each larger one goes alone in its import's lane. A screen with channels gets a best
-    /// effort topic's on its best effort channel, those that fit a message there.
-    fn put_values(&self, to: Option<u32>, values: Vec<ValueUpdate>) {
+    /// Sends values to one screen, or with None to every screen, those of them it shows. The
+    /// small ones share a message and each big one goes alone in its import's lane, on the
+    /// second way once it opened, one at a time until the screen took the last, and as the
+    /// change from that. A screen that previews takes big ones at PREVIEW_BYTES a second. A
+    /// screen on this host gets them whole and as they are, any other compressed.
+    fn put_values(&mut self, to: Option<u32>, values: Vec<ValueUpdate>) {
+        if values.is_empty() {
+            return;
+        }
         let seq = self.seq.get() + 1;
         self.seq.set(seq);
-        let sessions: Vec<(u32, &Session)> = match to {
-            Some(id) => self.sessions.get(&id).map(|s| (id, s)).into_iter().collect(),
-            None => self.sessions.iter().map(|(id, s)| (*id, s)).collect(),
+        let ids: Vec<u32> = match to {
+            Some(id) => vec![id],
+            None => self.sessions.keys().copied().collect(),
         };
-        let each = written(values, seq);
-        let socket = sessions.iter().any(|(_, s)| !s.channels).then(|| apart(each.clone(), seq));
-        let channels = sessions.iter().any(|(_, s)| s.channels).then(|| ways(each, |alias| self.mesh.best_effort(alias), seq));
-        for (id, s) in sessions {
-            if let (false, Some((shared, alone))) = (s.channels, &socket) {
-                if let Some(bytes) = shared {
-                    s.out.values(bytes.clone());
-                }
-                for (alias, bytes) in alone {
-                    s.out.alone(alias, bytes.clone());
+        let leaves: HashSet<String> = self.watched().cloned().collect();
+        let (mut packed, mut plain) = (None, None);
+        for id in ids {
+            let Some(s) = self.sessions.get_mut(&id) else { continue };
+            let here = s.here();
+            let each: &Vec<Written> = match here {
+                true => plain.get_or_insert_with(|| written(&values, seq, true)),
+                false => packed.get_or_insert_with(|| written(&values, seq, false)),
+            };
+            let shown = |w: &&Written| !leaves.contains(w.alias()) || s.watch.as_ref().is_none_or(|n| n.contains(w.alias()));
+            let mut small = Vec::new();
+            let mut big = Vec::new();
+            for w in each.iter().filter(shown) {
+                match w {
+                    Written::Small(u) => small.push(u.clone()),
+                    Written::Big(b) => big.push(b.clone()),
                 }
             }
-            if let (true, Some(ways)) = (s.channels, &channels) {
-                for (way, bytes) in ways {
-                    self.rtc.send(ToRtc::Send { session: id, way: way.clone(), bytes: bytes.clone() });
-                }
+            if !small.is_empty() {
+                s.small(small, seq);
+            }
+            for b in big {
+                s.big(b);
             }
         }
     }
@@ -1545,46 +1737,53 @@ impl App {
 
 /// A variable's value as a screen gets it: always known.
 fn known(name: &str, value: &Value) -> ValueUpdate {
-    ValueUpdate { alias: name.to_owned(), value: Some(value.clone()), known: true }
+    ValueUpdate { alias: name.to_owned(), value: Some(value.clone()), known: true, base: None }
 }
 
-/// Each value as a message of its own, which says how big it is. A big one is written only here.
-fn written(values: Vec<ValueUpdate>, seq: u64) -> Vec<(ValueUpdate, Bytes)> {
-    values.into_iter().map(|v| (v.clone(), encode(&ServerMsg::Values { values: vec![v], seq }))).collect()
+/// A value small enough to share a message with others, or a big one, which goes alone.
+enum Written {
+    Small(ValueUpdate),
+    Big(Rc<Big>),
 }
 
-/// Values together in one message, or the one alone as it was written.
-fn together(mut each: Vec<(ValueUpdate, Bytes)>, seq: u64) -> Bytes {
-    match each.len() {
-        1 => each.remove(0).1,
-        _ => encode(&ServerMsg::Values { values: each.into_iter().map(|(v, _)| v).collect(), seq }),
-    }
-}
-
-/// Values as messages for lanes: those that fit a piece together in one, and each larger one
-/// alone with its import's name.
-fn apart(each: Vec<(ValueUpdate, Bytes)>, seq: u64) -> (Option<Bytes>, Vec<(String, Bytes)>) {
-    let (small, alone): (Vec<_>, Vec<_>) = each.into_iter().partition(|(_, bytes)| bytes.len() <= PIECE);
-    ((!small.is_empty()).then(|| together(small, seq)), alone.into_iter().map(|(v, bytes)| (v.alias, bytes)).collect())
-}
-
-/// Values as messages for a screen with channels. A best effort topic's go on the best effort
-/// channel, one batch when it fits a message there, else each alone. The rest, and any too big
-/// for a message there, go on the reliable channels as `apart` cuts them.
-fn ways(each: Vec<(ValueUpdate, Bytes)>, best_effort: impl Fn(&str) -> bool, seq: u64) -> Vec<(Way, Bytes)> {
-    let (fast, rest): (Vec<_>, Vec<_>) = each.into_iter().partition(|(v, bytes)| best_effort(&v.alias) && bytes.len() <= MESSAGE_MAX);
-    let mut out = Vec::new();
-    if !fast.is_empty() {
-        let alone: Vec<Bytes> = fast.iter().map(|(_, bytes)| bytes.clone()).collect();
-        match together(fast, seq) {
-            batch if batch.len() <= MESSAGE_MAX => out.push((Way::BestEffort, batch)),
-            _ => out.extend(alone.into_iter().map(|bytes| (Way::BestEffort, bytes))),
+impl Written {
+    fn alias(&self) -> &str {
+        match self {
+            Written::Small(u) => &u.alias,
+            Written::Big(b) => &b.update.alias,
         }
     }
-    let (shared, alone) = apart(rest, seq);
-    out.extend(shared.map(|bytes| (Way::Values, bytes)));
-    out.extend(alone.into_iter().map(|(alias, bytes)| (Way::Alone(alias), bytes)));
-    out
+}
+
+/// Each value as a message of its own, which says how big it is, `plain` for a screen on this
+/// host.
+fn written(values: &[ValueUpdate], seq: u64, plain: bool) -> Vec<Written> {
+    values
+        .iter()
+        .map(|v| {
+            let msg = ServerMsg::Values { values: vec![v.clone()], seq };
+            let whole = if plain { encode_plain(&msg) } else { encode(&msg) };
+            match whole.len() <= PIECE {
+                true => Written::Small(v.clone()),
+                false => Written::Big(Rc::new(Big { seq, update: v.clone(), plain, whole, changes: RefCell::default() })),
+            }
+        })
+        .collect()
+}
+
+/// Small values together in one message.
+fn together(values: Vec<ValueUpdate>, seq: u64, plain: bool) -> Bytes {
+    let msg = ServerMsg::Values { values, seq };
+    if plain { encode_plain(&msg) } else { encode(&msg) }
+}
+
+/// A new key for a screen's second way, which only that screen hears.
+fn new_key() -> String {
+    let mut key = [0u8; 16];
+    if getrandom::fill(&mut key).is_err() {
+        warn!("no random key for a screen's second way");
+    }
+    key.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Each record's source by name, as the engine reads them.
@@ -1600,38 +1799,178 @@ fn since_epoch() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::{Num, Numbers, Records};
 
     fn update(alias: &str, value: Value) -> ValueUpdate {
-        ValueUpdate { alias: alias.into(), value: Some(value), known: true }
+        ValueUpdate { alias: alias.into(), value: Some(value), known: true, base: None }
+    }
+
+    /// A big value whose message is `size` bytes of `first`, which goes whole when `plain`.
+    fn sized(alias: &str, first: u8, size: usize, plain: bool) -> Rc<Big> {
+        Rc::new(Big { seq: first.into(), update: update(alias, Value::Int(first.into())), plain, whole: Bytes::from(vec![first; size]), changes: RefCell::default() })
+    }
+
+    fn big(alias: &str, first: u8) -> Rc<Big> {
+        sized(alias, first, 10, false)
+    }
+
+    fn session(remote: IpAddr) -> Session {
+        let out = Outbox::new(Arc::new(Lanes::default()));
+        Session { out, bulk: None, key: new_key(), local: remote, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars: HashMap::new(), plays: HashSet::new(), decodes: HashSet::new() }
+    }
+
+    /// The messages waiting in `lanes`, each joined from its pieces.
+    fn sent(lanes: &Lanes) -> Vec<Vec<u8>> {
+        let mut joining: HashMap<u16, Vec<u8>> = HashMap::new();
+        let mut out = Vec::new();
+        while let Some(piece) = lanes.take(true) {
+            let message = joining.entry(u16::from_le_bytes([piece[0], piece[1]])).or_default();
+            message.extend_from_slice(&piece[3..]);
+            if piece[2] == 0 {
+                out.push(std::mem::take(message));
+            }
+        }
+        out
+    }
+
+    /// The big values waiting in `lanes`, each as its first byte.
+    fn waiting(lanes: &Lanes) -> Vec<u8> {
+        sent(lanes).iter().map(|m| m[0]).collect()
+    }
+
+    #[test]
+    fn a_big_value_goes_once_the_screen_took_the_last_and_only_the_newest_waits() {
+        let mut s = session(IpAddr::from([10, 0, 0, 2]));
+        s.big(big("Cam", 1));
+        s.big(big("Cam", 2));
+        s.big(big("Cam", 3));
+        // another import's goes beside it
+        s.big(big("Map", 9));
+        assert_eq!(waiting(&s.out), vec![1, 9]);
+        s.took("Cam", 1, Fate::Took);
+        assert_eq!(waiting(&s.out), vec![3]);
+        s.took("Cam", 3, Fate::Took);
+        assert!(waiting(&s.out).is_empty());
+        s.big(big("Cam", 4));
+        assert_eq!(waiting(&s.out), vec![4]);
+        // one never said taken may be lost, so the next goes without it
+        s.big(big("Cam", 5));
+        s.took("Cam", 4, Fate::Lapsed);
+        assert_eq!(waiting(&s.out), vec![5]);
+        assert!(s.gates["Cam"].held.is_none());
+        // word of it taken after all is late, and lets nothing more go
+        s.big(big("Cam", 6));
+        s.took("Cam", 4, Fate::Took);
+        assert!(waiting(&s.out).is_empty());
+        s.took("Cam", 5, Fate::Took);
+        assert_eq!(waiting(&s.out), vec![6]);
+    }
+
+    #[test]
+    fn a_small_value_leaves_an_older_big_one_waiting_unsent() {
+        let mut s = session(IpAddr::from([10, 0, 0, 2]));
+        s.big(big("Cam", 1));
+        s.big(big("Cam", 2));
+        s.small(vec![update("Cam", Value::Int(3))], 3);
+        s.took("Cam", 1, Fate::Took);
+        let went = waiting(&s.out);
+        assert!(went.len() == 2 && went.contains(&1) && !went.contains(&2), "{went:?}");
+    }
+
+    #[test]
+    fn a_screen_that_previews_takes_its_big_values_in_turns_at_a_rate_in_bytes() {
+        let mut s = session(IpAddr::from([10, 0, 0, 2]));
+        s.previews = Some(Instant::now());
+        // each takes a second of the previews' bytes
+        let second = PREVIEW_BYTES as usize;
+        s.big(sized("Cam", 1, second, true));
+        s.big(sized("Map", 9, second, true));
+        assert_eq!(waiting(&s.out), vec![1]);
+        s.took("Cam", 1, Fate::Took);
+        s.big(sized("Cam", 2, second, true));
+        s.send_parked();
+        assert!(waiting(&s.out).is_empty());
+        // once the bytes allow, the import that went longest ago goes first
+        s.previews = Some(Instant::now());
+        s.send_parked();
+        assert_eq!(waiting(&s.out), vec![9]);
+        // a screen that stops previewing gets at once what waits with its way free
+        s.previews = None;
+        s.send_parked();
+        assert_eq!(waiting(&s.out), vec![2]);
+    }
+
+    #[test]
+    fn big_values_take_the_second_socket_once_it_opened() {
+        let mut s = session(IpAddr::from([10, 0, 0, 2]));
+        let second = Arc::new(Lanes::default());
+        s.bulk = Some(Outbox::new(second.clone()));
+        s.big(big("Cam", 1));
+        assert!(waiting(&s.out).is_empty());
+        assert_eq!(waiting(&second), vec![1]);
+    }
+
+    /// A cloud of a point each number, at places no two numbers share, so it barely compresses.
+    fn cloud(ids: std::ops::Range<u32>) -> Value {
+        let at = |id: u32, k: u32| ((id.wrapping_mul(2_654_435_761) ^ k.wrapping_mul(40_503)) % 100_000) as f32 / 100.0;
+        let column = |k| Value::Numbers(Numbers::new(Num::F32, ids.clone().flat_map(|id| at(id, k).to_le_bytes()).collect::<Vec<u8>>()).unwrap());
+        let points = Records::new(ids.len(), vec![("x".into(), column(1)), ("y".into(), column(2)), ("z".into(), column(3))]).unwrap();
+        Value::map([("points", Value::Records(points))])
+    }
+
+    /// The base a big value's message says it is the change from.
+    fn base_of(message: &[u8]) -> Option<u64> {
+        use ciborium::Value as C;
+        let field = |m: &C, k: &str| m.as_map()?.iter().find(|(f, _)| f.as_text() == Some(k)).map(|(_, v)| v.clone());
+        let msg = ciborium::from_reader::<C, _>(message).unwrap();
+        let update = field(&msg, "values")?.as_array()?[0].clone();
+        field(&update, "base")?.as_integer().map(|n| u64::try_from(n).unwrap())
+    }
+
+    #[test]
+    fn a_big_value_goes_as_the_change_from_the_one_the_screen_took_and_whole_after_a_miss() {
+        let each = |seq, v| match written(&[update("Scan", v)], seq, false).remove(0) {
+            Written::Big(b) => b,
+            Written::Small(_) => panic!("a cloud too small to go alone"),
+        };
+        // each moves on 100 points
+        let (one, two, three) = (each(1, cloud(0..4000)), each(2, cloud(100..4100)), each(3, cloud(200..4200)));
+        let mut s = session(IpAddr::from([10, 0, 0, 2]));
+        s.big(one.clone());
+        assert_eq!(sent(&s.out), vec![one.whole.to_vec()]);
+        s.big(two.clone());
+        s.took("Scan", 1, Fate::Took);
+        let change = sent(&s.out).remove(0);
+        assert_eq!(base_of(&change), Some(1));
+        assert!(change.len() * 10 < two.whole.len(), "a change of {} bytes against {} whole", change.len(), two.whole.len());
+        // a screen that no longer held the first gets the second again whole
+        s.took("Scan", 2, Fate::Missed);
+        assert_eq!(sent(&s.out), vec![two.whole.to_vec()]);
+        s.took("Scan", 2, Fate::Took);
+        s.big(three.clone());
+        assert_eq!(base_of(&sent(&s.out).remove(0)), Some(2));
+        // a screen that took the same shares the change, and one on this host gets it whole
+        let mut other = session(IpAddr::from([10, 0, 0, 3]));
+        other.gates.insert("Scan".into(), Gate { held: s.gates["Scan"].held.clone(), ..Gate::default() });
+        other.big(three.clone());
+        assert_eq!(three.changes.borrow().len(), 1);
+        let here = match written(&[update("Scan", cloud(200..4200))], 3, true).remove(0) {
+            Written::Big(b) => b,
+            Written::Small(_) => panic!("a cloud too small to go alone"),
+        };
+        assert_eq!(here.written(s.gates["Scan"].held.as_ref()), here.whole);
+    }
+
+    #[test]
+    fn a_screen_on_this_host_gets_values_as_they_are() {
+        assert!(session(IpAddr::from([127, 0, 0, 1])).here());
+        assert!(!session(IpAddr::from([192, 168, 1, 7])).here());
     }
 
     #[test]
     fn a_value_too_big_to_share_goes_alone() {
-        let (shared, alone) = apart(written(vec![update("Speed", Value::Float(1.5)), update("Cam", Value::Bytes(vec![0; PIECE]))], 1), 1);
-        assert!(shared.is_some());
-        assert_eq!(alone.iter().map(|(alias, _)| alias.as_str()).collect::<Vec<_>>(), vec!["Cam"]);
-    }
-
-    #[test]
-    fn a_screen_with_channels_gets_a_best_effort_topic_s_there_and_the_rest_reliably() {
-        let kinds = |values: Vec<ValueUpdate>| -> Vec<String> {
-            ways(written(values, 1), |alias| alias.starts_with("Fast"), 1)
-                .into_iter()
-                .map(|(way, _)| match way {
-                    Way::BestEffort => "best effort".into(),
-                    Way::Values => "values".into(),
-                    Way::Alone(alias) => alias,
-                    Way::Control => "control".into(),
-                    Way::Pong => "pong".into(),
-                })
-                .collect()
-        };
-        let joints = update("FastJoints", Value::Float(1.0));
-        let picture = update("FastCam", Value::Bytes(vec![0; MESSAGE_MAX]));
-        let note = update("note", Value::Float(2.0));
-        assert_eq!(kinds(vec![joints.clone(), note.clone()]), vec!["best effort", "values"]);
-        // too big for a message on the best effort channel, so it goes in pieces on the other
-        assert_eq!(kinds(vec![joints, picture]), vec!["best effort", "FastCam"]);
-        assert_eq!(kinds(vec![note]), vec!["values"]);
+        let each = written(&[update("Speed", Value::Float(1.5)), update("Cam", Value::Bytes(vec![0; PIECE]))], 1, false);
+        assert!(matches!(each[0], Written::Small(_)));
+        assert!(matches!(each[1], Written::Big(_)));
     }
 }

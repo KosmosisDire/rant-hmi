@@ -3,6 +3,7 @@
 
 import { batch, createSignal, type Signal, untrack } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
+import type { Way } from "../net/data.worker";
 import { packed, samePacked } from "../net/packed";
 import type { Computed } from "../protocol/Computed";
 import type { EntityInfo } from "../protocol/EntityInfo";
@@ -37,8 +38,8 @@ export interface Notice {
   level: Level;
 }
 
-/** The batch each value last came in. The channels pass the socket and the best effort one
- *  reorders, so a value never gives way to an older batch's. */
+/** The batch each value last came in. A big value on the second way may pass a small one
+ *  on the link, so a value never gives way to an older batch's. */
 const batches = new Map<string, number>();
 
 /** How long a notice stays, by how much it matters. */
@@ -48,8 +49,10 @@ export interface State {
   link: "connecting" | "open" | "closed";
   /** The smoothed round trip to the backend. */
   rttMs: number | null;
-  /** Whether the WebRTC data channels to the backend are open. */
-  channels: boolean;
+  /** Whether the WebRTC connection, which brings video, is open. */
+  webrtc: boolean;
+  /** The second way, which brings big values, while it is open. */
+  second: Way | null;
   project: ProjectInfo | null;
   node: string;
   version: string;
@@ -78,7 +81,8 @@ export interface State {
 export const [state, setState] = createStore<State>({
   link: "connecting",
   rttMs: null,
-  channels: false,
+  webrtc: false,
+  second: null,
   project: null,
   node: "",
   version: "",
@@ -123,7 +127,9 @@ export function dismiss(n: number) {
   setState("notices", (all) => all.filter((x) => x.n !== n));
 }
 
-export function receive(msg: ServerMsg) {
+/** Takes a message from the backend. `far` names the imports whose values in it hold lists the
+ *  data worker keeps. */
+export function receive(msg: ServerMsg, far: readonly string[] = []) {
   switch (msg.type) {
     case "hello":
       batches.clear();
@@ -177,6 +183,8 @@ export function receive(msg: ServerMsg) {
         for (const u of msg.values) {
           if ((batches.get(u.alias) ?? 0) > msg.seq) continue;
           batches.set(u.alias, msg.seq);
+          if (far.includes(u.alias)) kept.add(u.alias);
+          else kept.delete(u.alias);
           give(u.alias, u.value, u.known);
           const p = untrack(cell(promised, u.alias)[0]);
           if (p && same(p.value, u.value)) settle(u.alias);
@@ -222,7 +230,7 @@ export function receive(msg: ServerMsg) {
       closeWith(msg.answer);
       break;
     case "pong":
-    case "channels":
+    case "video":
       break;
   }
 }
@@ -316,8 +324,41 @@ function same(a: unknown, b: unknown): boolean {
   return Object.keys(x).length === Object.keys(y).length && Object.keys(x).every((k) => same(x[k], y[k]));
 }
 
-/** A mesh import is shown as known only while the backend link is up too. */
+/** Hears each name read for the screen, so one the pages' text does not name still comes, and
+ *  whether it was read whole, so its lists come to the main thread. */
+let reading: (alias: string, whole: boolean) => void = () => {};
+export function onReading(f: (alias: string, whole: boolean) => void) {
+  reading = f;
+}
+
+/** The imports whose value now holds lists the data worker keeps, and the names read by what
+ *  runs in `readFar`, which may take those, or null outside it. */
+const kept = new Set<string>();
+let farReads: string[] | null = null;
+
+/** Runs `read`, in which an import whose lists the data worker keeps reads as it is, each a far
+ *  list a scene's points follow there. Gives back what it gave and the names it read. */
+export function readFar<T>(read: () => T): { value: T; names: string[] } {
+  const [was, names] = [farReads, [] as string[]];
+  farReads = names;
+  try {
+    return { value: read(), names };
+  } finally {
+    farReads = was;
+  }
+}
+
+/** Counts `names` as read whole, as by a part whose points they make but are no far list. */
+export function readWhole(names: string[]) {
+  for (const n of names) reading(n, true);
+}
+
+/** A mesh import is shown as known only while the backend link is up too. Read whole, one whose
+ *  lists the data worker keeps is not known until they come. */
 export function live(alias: string): Live {
+  farReads?.push(alias);
+  reading(alias, farReads === null);
+  if (farReads === null && kept.has(alias) && cell(values, alias)[0]()) return { value: null, known: false };
   const p = cell(promised, alias)[0]();
   if (p) return { value: p.value, known: state.link === "open" };
   const v = cell(values, alias)[0]();

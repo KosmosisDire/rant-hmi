@@ -7,7 +7,7 @@ import { arith } from "../lang/arith.js";
 import { isHex, tokens } from "../lang/lex";
 import { LIBRARY, setClock } from "../lang/math.js";
 import { send } from "../net/connection";
-import { packed } from "../net/packed";
+import { Far, packed } from "../net/packed";
 import type { Page } from "../protocol/Page";
 import { MISSING, TOKEN_FIXED, WHOLE } from "../protocol/rules";
 import type { Token } from "../protocol/Token";
@@ -165,7 +165,7 @@ const link = Object.freeze({
     return state.link === "open";
   },
   get webrtc() {
-    return state.channels;
+    return state.webrtc;
   },
   get pingMs() {
     return state.rttMs === null ? null : Math.round(state.rttMs);
@@ -512,7 +512,7 @@ export function runDraw(code: string, scope: Scope, own: Record<string, unknown>
 
 /** Why code that threw `e` gave nothing: a value unknown yet, or its error in words. */
 function failed(e: unknown, scope: Scope): Resolved {
-  if (e instanceof Unknown) return { ok: false, unknown: e.alias };
+  if (e instanceof Unknown || e instanceof Far) return { ok: false, unknown: e.alias };
   if (e instanceof ReferenceError) return { ok: false, error: e.message.replace(/^(\S+) is not defined$/, (_, name: string) => scope.missing(name)) };
   return { ok: false, error: (e as Error).message ?? String(e) };
 }

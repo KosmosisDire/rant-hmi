@@ -32,6 +32,8 @@ rquickjs = "=0.14.0"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# a WebTransport session's address names its screen as the second socket's does
+serde_urlencoded = "0.7"
 sha2 = "0.10"
 # pure Rust crypto, so no OpenSSL to find on Windows or a target
 str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"] }
@@ -44,6 +46,10 @@ tower-http = { version = "0.6", features = ["fs", "set-header"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = "10"
+# a page on https takes its big values over WebTransport, on the aws-lc-rs WebRTC already builds
+wtransport = { version = "=0.7.2", default-features = false, features = ["aws-lc-rs", "quinn"] }
+# the round trip type its congestion control hears, which quinn does not name
+quinn-proto = { version = "=0.11.19", default-features = false }
 x509-cert = { version = "0.2", default-features = false }
 
 [dev-dependencies]

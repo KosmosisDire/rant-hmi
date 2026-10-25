@@ -89,6 +89,15 @@ pub struct Import {
     pub entity: String,
     pub kind: Kind,
     pub intent: Intent,
+    /// Only these fields of its value come, to screens and handlers alike, by paths such as
+    /// `points.x`. A field named brings all it holds. None brings every field.
+    #[serde(default)]
+    #[ts(optional)]
+    pub fields: Option<Vec<String>>,
+    /// The most values a second a topic brings, best effort, each the newest at its turn.
+    #[serde(default)]
+    #[ts(optional)]
+    pub rate: Option<u16>,
 }
 
 impl Keyed for Import {
@@ -232,6 +241,7 @@ impl Project {
         let info: ProjectInfo = toml::from_str(&read(&hmi)?).with_context(|| format!("reading {}", files::shown(root, &hmi)))?;
         info.ice.iter().try_for_each(check_ice).map_err(|e| anyhow!("{}: {e}", files::shown(root, &hmi)))?;
         let imports = load::<ImportsFile>(root, &imports_file(root))?.imports;
+        imports.iter().try_for_each(check_options).map_err(|e| anyhow!("{}: {e}", files::shown(root, &imports_file(root))))?;
         let variables = load::<VariablesFile>(root, &variables_file(root))?.variables;
         let records = load::<RecordsFile>(root, &records_file(root))?.records;
         let computed = load::<ComputedFile>(root, &computed_file(root))?.computed;
@@ -369,6 +379,7 @@ impl Project {
     pub fn import(&mut self, mut import: Import) -> Result<(), String> {
         check_alias(&import.alias)?;
         import.intent = callable(import.kind).unwrap_or(import.intent);
+        check_options(&import)?;
         if self.find(&import.alias).is_some() {
             return Err(format!("{} is already an import", import.alias));
         }
@@ -386,9 +397,10 @@ impl Project {
         files::write_toml(&self.root.join("hmi.toml"), &self.info)
     }
 
-    /// Changes an import's alias or intent and saves. Its entity and kind stay.
+    /// Changes an import's alias, intent, fields or rate and saves. Its entity and kind stay.
     pub fn change(&mut self, alias: &str, mut to: Import) -> Result<(), String> {
         to.intent = callable(to.kind).unwrap_or(to.intent);
+        check_options(&to)?;
         let at = self.imports.iter().position(|i| i.alias == alias).ok_or_else(|| format!("{alias} is not an import"))?;
         let old = &self.imports[at];
         if to.entity != old.entity || to.kind != old.kind {
@@ -418,6 +430,20 @@ impl Project {
 /// A function or a task is only called, so its import is always one to write.
 fn callable(kind: Kind) -> Option<Intent> {
     matches!(kind, Kind::Function | Kind::Task).then_some(Intent::Write)
+}
+
+/// Only an import that reads brings some of its fields, and only a topic it reads takes a rate,
+/// as a write starts from the whole value. The error is for the user.
+fn check_options(i: &Import) -> Result<(), String> {
+    let reads = i.intent == Intent::Read;
+    if i.fields.is_some() && !reads {
+        return Err(format!("{} is imported to write, so it brings every field", i.alias));
+    }
+    match i.rate {
+        Some(_) if i.kind != Kind::Topic || !reads => Err(format!("{} takes no rate, as only a topic imported to read does", i.alias)),
+        Some(0) => Err(format!("{} needs a rate of 1 a second or more", i.alias)),
+        _ => Ok(()),
+    }
 }
 
 fn imports_file(root: &Path) -> PathBuf {
@@ -556,7 +582,7 @@ mod tests {
     }
 
     fn speed() -> Import {
-        Import { alias: "Speed".into(), entity: "Line1/Speed".into(), kind: Kind::Variable, intent: Intent::Write }
+        Import { alias: "Speed".into(), entity: "Line1/Speed".into(), kind: Kind::Variable, intent: Intent::Write, fields: None, rate: None }
     }
 
     #[test]
@@ -710,6 +736,26 @@ mod tests {
         assert_eq!(p.import(Import { alias: "Pace".into(), ..speed() }).unwrap_err(), "Line1/Speed is already imported as Speed");
         p.unimport("Speed").unwrap();
         assert!(p.imports.is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn only_an_import_that_reads_takes_fields_and_only_a_topic_a_rate() {
+        let dir = scratch("options");
+        let mut p = Project::open(&dir).unwrap();
+        let some = Some(vec!["stamp".to_owned(), "points.x".to_owned()]);
+        assert_eq!(p.import(Import { fields: some.clone(), ..speed() }).unwrap_err(), "Speed is imported to write, so it brings every field");
+        assert_eq!(p.import(Import { intent: Intent::Read, rate: Some(5), ..speed() }).unwrap_err(), "Speed takes no rate, as only a topic imported to read does");
+        let cloud = Import { alias: "Lidar".into(), entity: "Lab/Lidar".into(), kind: Kind::Topic, intent: Intent::Read, fields: some, rate: Some(5) };
+        p.import(cloud.clone()).unwrap();
+        assert_eq!(p.change("Lidar", Import { rate: Some(0), ..cloud.clone() }).unwrap_err(), "Lidar needs a rate of 1 a second or more");
+        assert_eq!(p.change("Lidar", Import { intent: Intent::Write, ..cloud.clone() }).unwrap_err(), "Lidar is imported to write, so it brings every field");
+        let file = fs::read_to_string(dir.join("data/imports.toml")).unwrap();
+        assert!(file.contains("fields = [\"stamp\", \"points.x\"]") && file.contains("rate = 5"), "{file}");
+        assert_eq!(Project::open(&dir).unwrap().imports, vec![cloud]);
+        // a hand edit the editor would refuse keeps the project from opening, saying why
+        fs::write(dir.join("data/imports.toml"), file.replace("\"read\"", "\"write\"")).unwrap();
+        assert!(format!("{:#}", Project::open(&dir).err().unwrap()).contains("Lidar is imported to write"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
