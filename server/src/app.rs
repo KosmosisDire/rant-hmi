@@ -382,6 +382,9 @@ pub struct App {
     /// run ends: a stream's latest event, those before gathered in, and every end, since a held
     /// input never loses its end.
     waiting: HashMap<(u32, HandlerKey), VecDeque<Waiting>>,
+    /// Screens gone whose runs, or the ends waiting for them, still go on, so the engine keeps
+    /// their own variables until those end.
+    leaving: HashSet<u32>,
     /// When each timer rule is next due.
     timers: HashMap<String, Instant>,
     turned: HashMap<String, Turned>,
@@ -440,6 +443,7 @@ impl App {
             asks: HashMap::new(),
             held: HashMap::new(),
             waiting: HashMap::new(),
+            leaving: HashSet::new(),
             timers: HashMap::new(),
             turned: HashMap::new(),
             moved: Vec::new(),
@@ -1178,17 +1182,20 @@ impl App {
                     warn!("{}: {text}", self.label(run));
                     self.tell(run, level, text);
                 }
-                // the first of what waited for this run goes now, if its screen is still here
+                // the first of what waited for this run goes now, while its screen is here, and an
+                // end even once it went, as a held input never loses its end
                 let Some(r) = self.runs.remove(&run) else { return };
                 let Some(session) = r.session else { return };
                 let key = (session, r.of);
+                let goes = self.sessions.contains_key(&session) || events::ended_by(&key.1.event).is_some();
                 let next = self.waiting.get_mut(&key).and_then(VecDeque::pop_front);
-                if !self.sessions.contains_key(&session) || self.waiting.get(&key).is_some_and(VecDeque::is_empty) {
+                if !goes || self.waiting.get(&key).is_some_and(VecDeque::is_empty) {
                     self.waiting.remove(&key);
                 }
-                if let Some((payload, at)) = next.filter(|_| self.sessions.contains_key(&session)) {
+                if let Some((payload, at)) = next.filter(|_| goes) {
                     self.fire(session, key.1, payload, at);
                 }
+                self.forget(session);
             }
         }
     }
@@ -1567,7 +1574,7 @@ impl App {
     fn end(&mut self, session: u32, why: &str) {
         if self.sessions.remove(&session).is_some() {
             info!("screen {session} {why}");
-            self.script.send(ToScript::Gone(session));
+            self.leaving.insert(session);
             self.watch(session);
             self.rtc.send(ToRtc::Unlink { session });
             // a page the screen showed answers nothing, so no handler waits on it for ever
@@ -1577,7 +1584,16 @@ impl App {
                 self.script.send(ToScript::Answer { call: ask, outcome: Ok(Value::Null) });
             }
             self.let_go(session, why);
+            self.forget(session);
             self.run_rules(|r| matches!(r.when, When::Leaves), Value::map([("screen", session.into())]));
+        }
+    }
+
+    /// Lets the engine drop a gone screen's own variables, once nothing of its runs goes on.
+    fn forget(&mut self, session: u32) {
+        let busy = self.runs.values().any(|r| r.session == Some(session)) || self.waiting.keys().any(|(s, _)| *s == session);
+        if !busy && self.leaving.remove(&session) {
+            self.script.send(ToScript::Gone(session));
         }
     }
 
