@@ -32,7 +32,7 @@ const LOOKS = [
 
 /** What to do with the file once downloaded, by the platform it is for. */
 function after(target: string): string {
-  if (target.startsWith("windows")) return "Windows may warn about an unknown app: choose More info, then Run anyway. The first start unpacks it, which takes a few seconds.";
+  if (target.startsWith("win-")) return "Windows may warn about an unknown app: choose More info, then Run anyway. The first start unpacks it, which takes a few seconds.";
   if (target.startsWith("linux")) return "Mark it as a program first: Properties, Permissions, Is executable, or chmod +x. On a Steam Deck, Add to Steam puts it in Game Mode.";
   return "The first start unpacks it, which takes a few seconds.";
 }
