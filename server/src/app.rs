@@ -334,9 +334,9 @@ struct Held {
     by: Filter,
 }
 
-/// An event waiting for its handler's run to end: its screen, what it brought and the copy of a
-/// repeat it happened on.
-type Waiting = (u32, Value, Option<(u32, Value)>);
+/// An event waiting for its screen's run of its handler to end: what it brought and the copy of
+/// a repeat it happened on.
+type Waiting = (Value, Option<(u32, Value)>);
 
 /// A rule's condition: true since when, and whether it has fired since it turned true, for the
 /// condition and code it was judged with.
@@ -378,9 +378,10 @@ pub struct App {
     /// What screens hold on elements with a handler for its end.
     /// What each brings to its end should the screen be lost.
     held: HashMap<Held, Value>,
-    /// What came while its handler still ran, run in order as each run ends: a stream's latest
-    /// event, those before gathered in, and every end, since a held input never loses its end.
-    waiting: HashMap<HandlerKey, VecDeque<Waiting>>,
+    /// What came from each screen while its run of the handler went on, run in order as each
+    /// run ends: a stream's latest event, those before gathered in, and every end, since a held
+    /// input never loses its end.
+    waiting: HashMap<(u32, HandlerKey), VecDeque<Waiting>>,
     /// When each timer rule is next due.
     timers: HashMap<String, Instant>,
     turned: HashMap<String, Turned>,
@@ -974,23 +975,24 @@ impl App {
         }
     }
 
-    /// Runs the element's handler `of` names, unless it still runs from before. Then a stream's
-    /// event and an end wait for it, while a one off start is dropped. `at` is the copy of a
-    /// repeat it happened on, its index and item.
+    /// Runs the element's handler `of` names, unless the screen's run of it from before goes on.
+    /// Then a stream's event and an end wait for it, while a one off start is dropped. Each
+    /// screen runs its own, so one never drops another's. `at` is the copy of a repeat it
+    /// happened on, its index and item.
     fn fire(&mut self, session: u32, of: HandlerKey, payload: Value, at: Option<(u32, Value)>) {
         let Some(e) = self.pages.element(&of.page, &of.id) else { return };
         let Some(h) = e.handlers.iter().find(|h| h.event == of.event && h.filter == of.filter) else { return };
-        if self.runs.values().any(|r| r.of == of) {
+        if self.runs.values().any(|r| r.of == of && r.session == Some(session)) {
             let stream = !events::find(&of.event).is_some_and(|e| e.once);
             let end = events::ended_by(&of.event).is_some();
             if !stream && !end {
                 return;
             }
-            let queue = self.waiting.entry(of.clone()).or_default();
+            let queue = self.waiting.entry((session, of.clone())).or_default();
             match queue.back_mut() {
-                // a stream's events from the same screen and copy gather in, so no move is lost
-                Some((s, was, a)) if stream && *s == session && a.as_ref().map(|a| a.0) == at.as_ref().map(|a| a.0) => *was = events::gather(&of.event, was, payload),
-                _ => queue.push_back((session, payload, at)),
+                // a stream's events on the same copy gather in, so no move is lost
+                Some((was, a)) if stream && a.as_ref().map(|a| a.0) == at.as_ref().map(|a| a.0) => *was = events::gather(&of.event, was, payload),
+                _ => queue.push_back((payload, at)),
             }
             return;
         }
@@ -1178,14 +1180,14 @@ impl App {
                 }
                 // the first of what waited for this run goes now, if its screen is still here
                 let Some(r) = self.runs.remove(&run) else { return };
-                while let Some((session, payload, at)) = self.waiting.get_mut(&r.of).and_then(VecDeque::pop_front) {
-                    if self.sessions.contains_key(&session) {
-                        self.fire(session, r.of.clone(), payload, at);
-                        break;
-                    }
+                let Some(session) = r.session else { return };
+                let key = (session, r.of);
+                let next = self.waiting.get_mut(&key).and_then(VecDeque::pop_front);
+                if !self.sessions.contains_key(&session) || self.waiting.get(&key).is_some_and(VecDeque::is_empty) {
+                    self.waiting.remove(&key);
                 }
-                if self.waiting.get(&r.of).is_some_and(VecDeque::is_empty) {
-                    self.waiting.remove(&r.of);
+                if let Some((payload, at)) = next.filter(|_| self.sessions.contains_key(&session)) {
+                    self.fire(session, key.1, payload, at);
                 }
             }
         }
