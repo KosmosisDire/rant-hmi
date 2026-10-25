@@ -64,6 +64,16 @@ jobs:
         with:
           components: clippy
 
+      # the addon builds for the MSVC target, so all of Windows does, and the runtime reuses the build
+      - name: One target on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "CARGO_BUILD_TARGET=x86_64-pc-windows-msvc" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+
       - name: Lint
         run: cargo clippy --locked --release --all-targets -- -D warnings
 
@@ -75,7 +85,7 @@ jobs:
         run: cargo test --locked --release
 
       - name: Build
-        run: cargo build --locked --release --bins
+        run: cargo build --locked --release --bins --examples
 
       - uses: actions/download-artifact@v8
         with:
@@ -107,6 +117,23 @@ jobs:
           name: rant-hmi-${{ matrix.platform }}
           path: out/*
 
+      # what the app checks start, from this build, so they build nothing
+      - name: What the app checks start
+        if: matrix.runtime
+        shell: bash
+        run: |
+          built=target/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}release
+          exe=$([ "$RUNNER_OS" = Windows ] && echo .exe || true)
+          mkdir -p checks/examples
+          cp "$built/rant-hmi$exe" checks/
+          cp "$built/examples/demo$exe" "$built/examples/cage$exe" checks/examples/
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.runtime
+        with:
+          name: checks-${{ matrix.platform }}
+          path: checks
+
   # The Linux backend must start on the oldest and newest distributions people run.
   check-linux:
     needs: build
@@ -136,6 +163,10 @@ jobs:
     name: check apps ${{ matrix.platform }}
     needs: build
     runs-on: ${{ matrix.os }}
+    env:
+      # the release build, and the addon the runtime carries for the window run from source
+      HMI_BUILD: ${{ github.workspace }}/checks
+      HMI_ADDON: ${{ github.workspace }}/checks/resources/app/rant-hmi.node
     strategy:
       fail-fast: false
       matrix:
@@ -146,11 +177,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            app/package-lock.json
 
       - uses: actions/download-artifact@v8
         with:
@@ -162,17 +195,23 @@ jobs:
           name: rant-hmi-${{ matrix.platform }}
           path: out
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: checks-${{ matrix.platform }}
+          path: checks
+
+      # an artifact keeps no file modes, so the programs are marked as programs again
       - name: The runtime the release attaches
         shell: bash
         run: |
           mkdir -p target/app/${{ matrix.platform }}
           tar -xzf out/rant-hmi-runtime-*-${{ matrix.platform }}.tar.gz -C target/app/${{ matrix.platform }}
+          tar -xzf target/app/${{ matrix.platform }}/runtime.tar.gz -C checks resources/app/rant-hmi.node
+          chmod +x checks/rant-hmi* checks/examples/*
 
-      - name: Build what the scenarios start
+      - name: What the scenarios drive
         shell: bash
         run: |
-          cargo build --locked -p rant-hmi --bins --examples
-          cargo build --locked -p rant-hmi-addon ${{ runner.os == 'Windows' && '--target x86_64-pc-windows-msvc' || '' }}
           (cd client && npm ci)
           (cd app && npm ci)
 

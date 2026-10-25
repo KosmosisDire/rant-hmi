@@ -6,8 +6,10 @@ set -e
 platform=$1
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' server/Cargo.toml | head -1)
 name="rant-hmi-$version-$platform"
+# where cargo built, under the target CARGO_BUILD_TARGET names when it names one
+built=target/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}release
 rm -rf pkg && mkdir -p pkg/bin out
-for f in target/release/rant-hmi target/release/rant-hmi.exe; do
+for f in "$built/rant-hmi" "$built/rant-hmi.exe"; do
   if [ -f "$f" ]; then cp "$f" pkg/bin/; fi
 done
 test -f pkg/bin/rant-hmi || test -f pkg/bin/rant-hmi.exe
