@@ -97,8 +97,10 @@ seams, which all stay. Only the window shell changes.
 
 ### Wayland and X11
 
-Since Electron 38 Chromium picks Wayland in a Wayland session and X11 elsewhere, as Steam's Game
-Mode, KDE and GNOME each offer. `--ozone-platform=x11` stays a way out.
+Since Electron 38 Chromium picks Wayland in a session that says it is one (`XDG_SESSION_TYPE`),
+as GNOME and KDE do, and X11 elsewhere, as Steam's Game Mode offers. A compositor alone, as a
+kiosk or a panel runs one, says no session, and Chromium then looks only for X11 and ends. So
+the launcher names Wayland where it is the only display. `--ozone-platform=x11` stays a way out.
 
 On Linux Chromium's sandbox needs unprivileged user namespaces. Ubuntu 24.04 and later restrict
 them for programs without an AppArmor profile, and Electron apps then fail at start. The app
@@ -177,6 +179,7 @@ Chosen: a launcher with archives appended.
 - Each release will attach every platform's, and the server fetch the one a build needs from
   its own version's release the first time it is asked (slice 7). An offline server takes the
   files copied there by hand.
+- Platforms take the names the release's archives have, as `rant install` reads them.
 
 ## Part 4: built from the editor
 
@@ -201,10 +204,37 @@ Chosen: a launcher with archives appended.
 5. Built from the editor: the `/app` route, the runtime cache, the sheet, the domain and the
    certificate written in. Built.
 6. Linux: runtimes for x64 and arm64, run under Wayland and X11 (WSLg offers both here), the
-   sandbox check. Then on a Steam Deck, in the desktop and in Game Mode.
+   sandbox check. Then on a Steam Deck, in the desktop and in Game Mode. Built for x64, arm64
+   comes with CI.
 7. Release: CI builds every runtime and attaches them, the server fetches by its version, docs
    and the agent skill.
-8. macOS: the app bundle and its ad hoc signature.
+8. macOS: the app bundle and its ad hoc signature. Later, as its own item.
+
+## Runtimes for released servers
+
+Item 31, the user's ask of 2026-10-24: a released server on Ubuntu offered no app for any
+platform, its sheet saying it had no runtime, since only `npm run runtime` in a checkout makes
+one, and only for its own host. The parts:
+
+1. Where a server gets each platform's runtime. A Linux server builds a Windows app for a panel
+   PC too, so it needs runtimes it cannot build.
+2. Who builds them. Only a host of that platform can: the addon and launcher are native code,
+   and Electron comes per platform. So CI builds them, one runner each.
+3. Linux had never run: the sandbox check, Wayland and X11, arm64.
+4. macOS needs an app bundle signed after the project goes in.
+
+| Where runtimes come from | For | Against |
+| --- | --- | --- |
+| The release attaches each, the server fetches one on first use | The package stays 8 MB, only what is used is fetched, any server builds any platform | The first build of each platform downloads 166 MB, an offline server takes the file by hand |
+| Every package carries all | Offline | `rant install hmi` grows to about 520 MB, headless servers too |
+| Each package carries its own | Offline | About 180 MB, and a Linux server builds no Windows app |
+| The server assembles Electron's own release with a small part of ours | Release files about 20 MB | It repacks Electron, more code and a second source to pin |
+| Built on demand | | A compiler and every target's tools on the server |
+
+Chosen by the user, 2026-10-24: fetched from the release, platforms named as the release names
+them (`win-x64`, `linux-x64`, `linux-arm64`, `osx-arm64`), macOS later. The steps: Linux runs
+(slice 6), CI builds and attaches every runtime, the server fetches its version's, docs and the
+skill, then a release when the user says.
 
 ## Open questions for the user
 
@@ -360,3 +390,38 @@ Choices worth a second look:
 - Unpacked apps stay in `~/.rant/hmi/unpacked` for good. Nothing yet clears old ones.
 - The project in an app is a snapshot. An app does not update itself.
 - The unpacked project is where the app's HMI keeps its state, so a new download starts afresh.
+
+### Slice 6, Linux
+
+- The launcher on Linux, before it starts the window:
+  - checks the sandbox: a child it forks makes a user namespace and maps this user into it, as
+    Chromium's sandbox does. Where that fails the window gets `--no-sandbox`. Ubuntu 24.04 and
+    later make the namespace but deny the map to a program with no AppArmor profile, and older
+    switches (Debian's `unprivileged_userns_clone`, `max_user_namespaces` 0) deny the namespace.
+  - names Wayland, `--ozone-platform=wayland`, where `WAYLAND_DISPLAY` is set and `DISPLAY` is
+    not. Before this, Wayland alone under WSLg ended at start with "Missing X server or $DISPLAY".
+- The window closes on SIGTERM as on Ctrl C, as a session ending on Linux sends it.
+- `runtime.mjs --built-client` takes the client in `client/dist` as it is, for CI.
+- The app scenarios run on Linux. The harness closes a window with SIGTERM where Windows has
+  taskkill, and finds a downloaded app's window through `/proc`, by its program's link, since
+  Chromium writes its whole command line over its first argument. app-export takes this host's
+  platform and its label from `/app/targets`, and sets the run bit on what it downloads, as a
+  person must.
+- Tested:
+  - karbon, Ubuntu 22.04 on its X11 desktop: app-window and app-export pass. Its runtime built
+    there in about 2 minutes and is 133 MB, the Windows one 166 MB.
+  - An app built by the server ran sandboxed. Inside `unshare --user`, where a nested namespace
+    cannot map its user, as under Ubuntu 24.04's rule, it ran without the sandbox, and its
+    Electron alone there ended at start with Chromium's "The SUID sandbox helper binary was
+    found, but is not configured correctly".
+  - WSLg on Ubuntu 24.04, whose kernel has no AppArmor: a Wayland desktop's session (both
+    displays and `XDG_SESSION_TYPE=wayland`) ran on Wayland with no X11 window, an X11 desktop
+    on X11, and Wayland alone once the launcher named it.
+- Not tried: arm64, which CI builds next, a Steam Deck, Ubuntu 24.04's AppArmor rule on a real
+  machine, a desktop with no GPU.
+
+Choices worth a second look:
+
+- No sandbox where the check fails, rather than an AppArmor profile, which needs root to install.
+- Where the launcher cannot start on Linux it says why on stderr only, which a start from a file
+  manager never shows.
