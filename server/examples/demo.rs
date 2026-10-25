@@ -89,6 +89,8 @@ fn main() -> Result<(), rant::Error> {
     let start = Instant::now();
     let mut tick = 0u32;
     let mut frame = 0u64;
+    // 20 rounds a second whatever each takes, so values keep their rates
+    let mut next = start;
     loop {
         if let Some(v) = jog.lock().unwrap().take() {
             speed.set(&v)?;
@@ -130,7 +132,11 @@ fn main() -> Result<(), rant::Error> {
             labels.send(&Detections { boxes: SHOT_FINDS.iter().map(|&[x0, y0, x1, y1]| AlignedBox2D { min: Double2 { x: x0, y: y0 }, max: Double2 { x: x1, y: y1 } }).collect() })?;
             scan.send(&scan_of(t))?;
         }
-        std::thread::sleep(Duration::from_millis(50));
+        next += Duration::from_millis(50);
+        match next.checked_duration_since(Instant::now()) {
+            Some(wait) => std::thread::sleep(wait),
+            None => next = Instant::now(),
+        }
     }
 }
 
