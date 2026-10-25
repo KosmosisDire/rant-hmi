@@ -120,7 +120,7 @@ jobs:
       - name: The archive holds the package
         run: |
           mkdir pkg
-          tar -xzf out/rant-hmi-*-linux-x64.tar.gz -C pkg
+          tar -xzf out/rant-hmi-[0-9]*-linux-x64.tar.gz -C pkg
           test -f pkg/package.rant && test -f pkg/Hmi.run && test -f pkg/client/index.html
 
       - name: It starts everywhere
