@@ -281,6 +281,9 @@ function exited(child) {
   });
 }
 
+/** The headless Chrome the scenarios drive, or the Chromium HMI_BROWSER names where Chrome has no
+ *  build, as Linux on ARM. */
 export function startBrowser() {
-  return chromium.launch({ channel: "chrome", headless: true });
+  const named = process.env.HMI_BROWSER;
+  return chromium.launch(named ? { executablePath: named, headless: true } : { channel: "chrome", headless: true });
 }
