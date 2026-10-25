@@ -181,6 +181,25 @@ fn sleep_waits_and_writes_go_out_at_each_await() {
 }
 
 #[test]
+fn a_run_going_on_reads_what_another_wrote_before_it_waited_or_ended() {
+    let (script, mut rx) = engine();
+    // both wake from their sleeps together, each adding to what the other wrote
+    for (run, session) in [(1, 7), (2, 8)] {
+        script.send(ToScript::Run { run, session: Some(session), code: "await sleep(40);\ncount = count + 1;\nawait sleep(1);\ncount = count + 1;".into(), p: Value::Null, at: None });
+    }
+    let mut said = until_done(&mut rx, 1);
+    if !said.iter().any(|m| matches!(m, FromScript::Done { run: 2, .. })) {
+        said.extend(until_done(&mut rx, 2));
+    }
+    let counts: Vec<Value> = writes(&said).into_iter().filter(|(a, _)| a == "count").map(|(_, v)| v).collect();
+    assert_eq!(counts.last(), Some(&value!(4)), "{counts:?}");
+    // one that throws sends nothing of what it wrote since it last waited
+    script.send(ToScript::Run { run: 3, session: Some(7), code: "count = 10;\nawait sleep(1);\ncount = 20;\nthrow new Error(\"no\");".into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 3);
+    assert_eq!(writes(&said), [("count".to_string(), value!(10))]);
+}
+
+#[test]
 fn pages_open_and_close_by_name() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "open(Pages.RobotCell);\nopen(Pages.Overview, { replace: true });\nclose();\nclose({ ok: true });".into(), p: Value::Null, at: None });

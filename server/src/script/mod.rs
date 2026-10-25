@@ -675,8 +675,9 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
             s.live.insert(run);
             s.sessions.insert(run, session);
             drop(s);
-            // rewritten first, since the rewrite runs in a context of its own and one runs at a time
-            let source = match rw.rewrite(&format!("(async () => {{\n{code}\n}})().then(() => __end(\"ok\"), __finish);"), Some(1)) {
+            // rewritten first, since the rewrite runs in a context of its own and one runs at a time.
+            // What the run wrote goes out as it ends, before another run goes on, unless it threw.
+            let source = match rw.rewrite(&format!("(async () => {{ try {{\n{code}\n}} catch (e) {{ __drop(); throw e; }} finally {{ __yield(); }} }})().then(() => __end(\"ok\"), __finish);"), Some(1)) {
                 Ok(source) => source,
                 Err(why) => return finish(shared, run, End::Fault(why)),
             };
@@ -780,6 +781,19 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         Ok(())
     };
     g.set("__write", Function::new(ctx.clone(), write)?)?;
+
+    // what the run wrote goes out as it waits, and is dropped where it threw
+    let s = shared.clone();
+    let yielded = move |v: Opt<rquickjs::Value<'js>>| -> Option<rquickjs::Value<'js>> {
+        s.borrow_mut().flush(run);
+        v.0
+    };
+    g.set("__yield", Function::new(ctx.clone(), yielded)?)?;
+    let s = shared.clone();
+    let thrown = move || {
+        s.borrow_mut().pending.remove(&run);
+    };
+    g.set("__drop", Function::new(ctx.clone(), thrown)?)?;
 
     let s = shared.clone();
     let call = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<Promise<'js>> {

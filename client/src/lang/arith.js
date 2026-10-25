@@ -2,7 +2,7 @@
 // code becomes a call into math.js, and so does a call by one of its method names, so vectors,
 // quaternions and poses take arithmetic and methods while numbers and text behave as JS has them.
 // A call by a library function's name always reaches it, so `max(a, b)` works where `max` alone
-// is a component's input.
+// is a component's input. What an await waits on goes through `__yield` first.
 
 import { parse } from "./acorn/acorn.mjs";
 import { FUNCTION_NAMES, METHOD_NAMES } from "./math.js";
@@ -74,6 +74,8 @@ function emit(src, node) {
       }
       break;
     }
+    case "AwaitExpression":
+      return `${src.slice(node.start, node.argument.start)}__yield(${at(node.argument)})`;
     case "CallExpression": {
       const c = node.callee;
       if (!node.optional && c.type === "MemberExpression" && !c.computed && !optional(c) && c.object.type !== "Super" && METHODS.has(c.property.name)) {

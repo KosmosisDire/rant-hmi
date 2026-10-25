@@ -267,6 +267,8 @@ the event brings as `p`.
   expression.
 - A filter takes only the events that bring its value, as `key="a"`, and any when left out.
   An element holds one handler per event and filter.
+- What a run writes goes out each time it waits and as it ends, so a run going on meanwhile
+  builds on it, and a run that fails drops what it wrote since it last waited.
 - An event that comes while its handler still runs waits for the run when it is an end, such as
   `keyup`, so a held input always gets its end, or a stream's next, gathering what comes
   meanwhile. Any other is dropped. A stream that ends at rest comes once more with

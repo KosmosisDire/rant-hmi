@@ -340,6 +340,7 @@ export const LIBRARY = {
   __neg,
   __method,
   __fn,
+  __yield,
 };
 
 /** The library's functions, which a call by name reaches though a name of the page's own,
@@ -348,4 +349,10 @@ export const FUNCTION_NAMES = Object.keys(LIBRARY).filter((k) => !k.startsWith("
 
 function __fn(name, ...args) {
   return LIBRARY[name](...args);
+}
+
+/** What an await waits on, as it is. The system's handlers take one of their own, which first
+ *  sends what the run wrote, so another run going on meanwhile reads it. */
+function __yield(v) {
+  return v;
 }
