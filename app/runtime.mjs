@@ -19,7 +19,8 @@ const release = builtIn(target, "release");
 /** Runs a command with its output shown. npm is a script on Windows, which only a shell runs. */
 const run = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: "inherit", shell: process.platform === "win32" && command === "npm" });
 
-run("npm", ["run", "build"], join(root, "client"));
+// --built-client takes the client already in client/dist, as CI builds it once for every platform
+if (!process.argv.includes("--built-client")) run("npm", ["run", "build"], join(root, "client"));
 run("cargo", cargoArgs("release", ["rant-hmi-addon", "rant-hmi-launcher", "rant-hmi-pack"]), root);
 
 // Electron as it ships, the window in resources/app and the client beside it, where the window looks for it
