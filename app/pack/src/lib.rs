@@ -90,7 +90,14 @@ pub enum Shows {
 
 /// An id for what `bytes` hold, which names the folder they are unpacked in.
 pub fn id(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)[..16].iter().map(|b| format!("{b:02x}")).collect()
+    id_of(bytes).expect("reading memory never fails")
+}
+
+/// The id of what `r` reads, as `id` names those bytes, read a piece at a time.
+pub fn id_of(mut r: impl Read) -> io::Result<String> {
+    let mut hash = Sha256::new();
+    io::copy(&mut r, &mut hash)?;
+    Ok(hash.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Writes all of `dir` but what is named with a leading dot, as a gzipped tar.
@@ -130,13 +137,22 @@ pub fn unpack(r: impl Read, into: &Path) -> io::Result<()> {
 /// The part of `file` in `range`, unpacked into `dir` unless an earlier start did. It lands whole
 /// or not at all, so a start cut short never leaves half of it.
 pub fn unpacked(file: &mut (impl Read + Seek), range: &Range<u64>, dir: &Path) -> io::Result<()> {
+    file.seek(SeekFrom::Start(range.start))?;
+    unpack_whole(file.take(range.end - range.start), dir, |_| Ok(()))
+}
+
+/// Unpacks a gzipped tar from `r` into `dir` unless it is there, whole or not at all: into a
+/// folder beside it first, which `check` looks over before it takes the name.
+pub fn unpack_whole(r: impl Read, dir: &Path, check: impl FnOnce(&Path) -> io::Result<()>) -> io::Result<()> {
     if dir.exists() {
         return Ok(());
     }
     let part = dir.with_extension(format!("part{}", std::process::id()));
     let _ = fs::remove_dir_all(&part);
-    file.seek(SeekFrom::Start(range.start))?;
-    unpack(file.take(range.end - range.start), &part)?;
+    if let Err(e) = unpack(r, &part).and_then(|()| check(&part)) {
+        let _ = fs::remove_dir_all(&part);
+        return Err(e);
+    }
     match fs::rename(&part, dir) {
         Ok(()) => Ok(()),
         // another start of the same app got there first
@@ -207,6 +223,24 @@ mod tests {
         let mut bad = vec![0u8; 100];
         Trailer { runtime: 0..500, project: 0..0, settings: 0..0 }.write(&mut bad).unwrap();
         assert_eq!(Trailer::read(&mut Cursor::new(bad)).unwrap(), None, "a range past the end is no trailer");
+    }
+
+    #[test]
+    fn what_its_check_refuses_is_not_unpacked() {
+        let project = folder("refused");
+        let mut archived = Vec::new();
+        archive(&project, &mut archived).unwrap();
+        let into = project.with_extension("refused");
+        let _ = fs::remove_dir_all(&into);
+        let refused = unpack_whole(&archived[..], &into, |part| {
+            assert!(part.join("hmi.toml").is_file(), "the check sees it unpacked");
+            Err(io::Error::other("not this one"))
+        });
+        assert_eq!(refused.unwrap_err().to_string(), "not this one");
+        let left: Vec<_> = fs::read_dir(project.parent().unwrap()).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().contains("refused")).map(|e| e.file_name()).collect();
+        assert_eq!(left, [project.file_name().unwrap()], "nothing but the project is left");
+        assert_eq!(id_of(&archived[..]).unwrap(), id(&archived));
+        fs::remove_dir_all(&project).unwrap();
     }
 
     #[test]

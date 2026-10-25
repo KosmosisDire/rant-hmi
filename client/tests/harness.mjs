@@ -3,7 +3,7 @@
 // drive.
 
 import { execFile, spawn } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { cp, readdir, readFile, readlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -11,7 +11,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron, chromium } from "playwright-core";
-import { built, platform, program } from "../../app/addon.mjs";
+import { built, platform, program, version } from "../../app/addon.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(here, "..", "..");
@@ -19,7 +19,7 @@ const exe = process.platform === "win32" ? ".exe" : "";
 
 /** The build the scenarios run, and the client it serves. HMI_BUILD and HMI_CLIENT name others,
  *  so they can run while a backend from target/debug is open, serving client/dist. */
-const BUILD = resolve(process.env.HMI_BUILD ?? join(ROOT, "target", "debug"));
+export const BUILD = resolve(process.env.HMI_BUILD ?? join(ROOT, "target", "debug"));
 const CLIENT = resolve(process.env.HMI_CLIENT ?? join(ROOT, "client", "dist"));
 
 /** rant-transcoder, which makes the H264 a video plays, as its crate builds it in the RANT folder
@@ -75,13 +75,14 @@ export async function startSystem({ empty, slot = 0 } = {}) {
   // a home of its own, where the backend keeps its certificate, never the user's
   const home = join(temp, "home");
   const url = `http://127.0.0.1:${portOf(slot)}`;
-  const launch = async () => {
+  const launch = async (more = []) => {
     const backend = run(join(BUILD, `rant-hmi${exe}`), [
       project,
       "--port", String(portOf(slot)),
       "--domain", domain,
       "--loopback",
       "--client", CLIENT,
+      ...more,
     ], { HOME: home, USERPROFILE: home });
     const start = Date.now();
     for (;;) {
@@ -102,13 +103,14 @@ export async function startSystem({ empty, slot = 0 } = {}) {
     home,
     backend: await launch(),
     transcoder: video,
-    /** Ends the backend and starts it again on the same project, as a restarted HMI. */
-    async restart() {
+    /** Ends the backend and starts it again on the same project, as a restarted HMI, with the
+     *  flags `more` too. */
+    async restart(more = []) {
       const was = this.backend;
       const ended = new Promise((r) => was.once("exit", r));
       was.kill();
       await ended;
-      this.backend = await launch();
+      this.backend = await launch(more);
     },
     stop() {
       this.backend.kill();
@@ -241,7 +243,6 @@ async function windowsIn(home) {
 export async function giveRuntime(home) {
   const from = join(ROOT, "target", "app", platform);
   if (!existsSync(join(from, "runtime.id"))) throw new Error(`no ${platform} runtime for apps: run npm run runtime in app`);
-  const version = /^version = "(.+)"/m.exec(readFileSync(join(ROOT, "server", "Cargo.toml"), "utf8"))[1];
   // copied without blocking, as the runner standing still stalls every worker
   await cp(from, join(home, ".rant", "hmi", "runtimes", version, platform), { recursive: true });
 }

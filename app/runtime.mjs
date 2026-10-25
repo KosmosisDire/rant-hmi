@@ -4,11 +4,11 @@
 // editor offers this platform.
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { built, builtIn, cargoArgs, platform, program } from "./addon.mjs";
+import { built, builtIn, cargoArgs, pack, platform, program, version } from "./addon.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -34,16 +34,13 @@ for (const file of ["main.mjs", "preload.cjs", "package.json", "icon.ico", "icon
 copyFileSync(built(target, "release"), join(app, "rant-hmi.node"));
 cpSync(join(root, "client", "dist"), join(stage, "resources", "client", "dist"), { recursive: true });
 
-/** Archives `folder` into `file` as apps carry folders, answering its id. */
-const pack = (folder, file) => execFileSync(join(release, program("rant-hmi-pack")), [folder, file], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }).trim();
-writeFileSync(join(out, "runtime.id"), pack(stage, join(out, "runtime.tar.gz")));
+writeFileSync(join(out, "runtime.id"), pack(release, stage, join(out, "runtime.tar.gz")));
 copyFileSync(join(release, program("rant-hmi-app")), join(out, program("launcher")));
 rmSync(stage, { recursive: true, force: true });
 
 // what a release attaches for this platform, which a server unpacks where it builds apps from
-const version = /^version = "(.+)"/m.exec(readFileSync(join(root, "server", "Cargo.toml"), "utf8"))[1];
 const attached = join(target, "app", `rant-hmi-runtime-${version}-${platform}.tar.gz`);
-pack(out, attached);
+pack(release, out, attached);
 console.log(`a release attaches ${attached}`);
 
 // where this host's server finds it, under the version the server is, by the folder the addon says it keeps

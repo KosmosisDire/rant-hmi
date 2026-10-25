@@ -1,5 +1,5 @@
 // The editor gets the HMI as an app for a device. Its sheet picks this device's platform and offers
-// only those the server has a runtime for. The app it downloads starts as a person starts it,
+// only those the server has a runtime for or gets one for. The app it downloads starts as a person starts it,
 // unpacks its runtime and its project once, runs the HMI with no server, and ends as its window
 // closes, a second start unpacking nothing. What it unpacked is a whole app, whose window reads
 // the line on the server's domain. An app of the server's screen shows it, over http as the sheet
@@ -38,7 +38,7 @@ export default async function ({ page, sys, check, eventually }) {
   try {
     const targets = await (await fetch(`${sys.url}/app/targets`)).json();
     const here = targets.find((t) => t.target === platform).label;
-    const lacking = targets.find((t) => !t.ready).label;
+    const lacking = targets.find((t) => t.runtime === "none").label;
     await page.getByTitle("Get this HMI as an app for a device").click();
     const sheet = page.locator(".popover.get-app");
     const option = (words) => sheet.locator(".choice button", { hasText: new RegExp(`^${words}$`) });
