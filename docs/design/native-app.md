@@ -449,8 +449,8 @@ Choices worth a second look:
 - CI shares one build per platform. Windows builds everything for the MSVC target the addon
   needs, so the runtime reuses the build. check-apps runs the build job's release programs and
   the addon the runtime carries, building nothing. Swatinem's rust-cache keeps each platform's
-  dependencies between runs. The first run after took 13 minutes against 29: the Windows build
-  10.6 against 16.5, its app check 2 against 12.5.
+  dependencies between runs. A run took 29 minutes before, 13 with the cache empty, and 7.8
+  with it filled: the Windows build 16.5, 10.6, then 5.4, its app check 12.5 then 2.
 
 The server gets a platform's runtime the first time an app for it is asked for:
 
