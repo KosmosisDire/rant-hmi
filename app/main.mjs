@@ -106,7 +106,8 @@ async function show() {
     window.setFullScreen(!window.isFullScreen());
     event.preventDefault();
   });
-  process.on("SIGINT", () => window.close());
+  // Ctrl C, or a session ending as Linux ends one, closes the window as a person does
+  for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => window.close());
   if (!address) return window.loadURL(url);
   // a server that does not answer, as when a panel starts before it, is tried again until it does
   window.webContents.on("did-fail-load", (_event, code, why, _url, mainFrame) => {
