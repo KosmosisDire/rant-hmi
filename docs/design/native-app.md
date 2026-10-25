@@ -171,8 +171,8 @@ Chosen: a launcher with archives appended.
 ### Where runtimes come from
 
 - A server builds apps from `~/.rant/hmi/runtimes/<version>/<platform>/`: `launcher[.exe]`,
-  `runtime.tar.gz` and `runtime.id`, for `windows-x64`, `linux-x64`, `linux-arm64` and
-  `macos-arm64`.
+  `runtime.tar.gz` and `runtime.id`, for `win-x64`, `linux-x64`, `linux-arm64` and
+  `osx-arm64`.
 - `npm run runtime` in `app` builds this host's and puts it there (built, slice 4).
 - Each release will attach every platform's, and the server fetch the one a build needs from
   its own version's release the first time it is asked (slice 7). An offline server takes the

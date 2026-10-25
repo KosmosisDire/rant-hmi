@@ -49,8 +49,8 @@ async function thisDevice(): Promise<string | null> {
   const os = (agent?.platform ?? navigator.platform).toLowerCase();
   const arch = (await agent?.getHighEntropyValues?.(["architecture"]).catch(() => undefined))?.architecture ?? navigator.platform;
   const arm = /arm|aarch64/i.test(arch);
-  if (os.startsWith("win")) return "windows-x64";
-  if (os.startsWith("mac")) return "macos-arm64";
+  if (os.startsWith("win")) return "win-x64";
+  if (os.startsWith("mac")) return "osx-arm64";
   if (os.includes("linux") && !/android/i.test(navigator.userAgent)) return arm ? "linux-arm64" : "linux-x64";
   return null;
 }
@@ -79,7 +79,7 @@ function AppChoices() {
   const [picked, setPicked] = createSignal<string | null>(null);
   const [runs, setRuns] = createSignal<Runs>("device");
   const [fullscreen, setFullscreen] = createSignal(false);
-  const target = () => picked() ?? device() ?? "windows-x64";
+  const target = () => picked() ?? device() ?? "win-x64";
   const chosen = () => targets()?.find((t) => t.target === target());
   const href = () => `/app/${target()}?runs=${runs()}&fullscreen=${fullscreen()}${runs() === "screen" ? `&address=${encodeURIComponent(location.origin)}` : ""}`;
   return (

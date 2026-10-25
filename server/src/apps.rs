@@ -22,7 +22,7 @@ use tokio_util::io::ReaderStream;
 use crate::project::Project;
 
 /// The platforms an app is built for, each with what a person calls it.
-const TARGETS: [(&str, &str); 4] = [("windows-x64", "Windows"), ("linux-x64", "Linux"), ("linux-arm64", "Linux on ARM"), ("macos-arm64", "macOS")];
+const TARGETS: [(&str, &str); 4] = [("win-x64", "Windows"), ("linux-x64", "Linux"), ("linux-arm64", "Linux on ARM"), ("osx-arm64", "macOS")];
 
 /// What the server builds apps from.
 #[derive(Clone)]
@@ -88,7 +88,7 @@ async fn build(State(apps): State<Apps>, extract::Path(target): extract::Path<St
     };
     match app(&apps, &runtime, shows, ask.fullscreen).await {
         Ok((name, len, body)) => {
-            let file = format!("{name}{}", if target.starts_with("windows") { ".exe" } else { "" });
+            let file = format!("{name}{}", if target.starts_with("win-") { ".exe" } else { "" });
             ([(header::CONTENT_TYPE, "application/octet-stream".to_owned()), (header::CONTENT_LENGTH, len.to_string()), (header::CONTENT_DISPOSITION, attachment(&file))], body).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")).into_response(),
@@ -177,7 +177,7 @@ mod tests {
         std::fs::create_dir_all(project.join("pages")).unwrap();
         std::fs::write(project.join("hmi.toml"), "name = \"Packing line\"\n").unwrap();
         std::fs::write(project.join("pages").join("main.html"), "<page name=\"main\"/>\n").unwrap();
-        let windows = dir.join("runtimes").join("windows-x64");
+        let windows = dir.join("runtimes").join("win-x64");
         std::fs::create_dir_all(dir.join("runtime").join("resources")).unwrap();
         std::fs::write(dir.join("runtime").join("electron.exe"), "ELECTRON").unwrap();
         std::fs::create_dir_all(&windows).unwrap();
@@ -199,7 +199,7 @@ mod tests {
     #[tokio::test]
     async fn an_app_carries_the_launcher_its_runtime_and_the_project() {
         let (apps, dir) = apps("device");
-        let (status, disposition, body) = get(&apps, "/app/windows-x64?runs=device&fullscreen=true").await;
+        let (status, disposition, body) = get(&apps, "/app/win-x64?runs=device&fullscreen=true").await;
         assert_eq!(status, StatusCode::OK);
         assert!(disposition.unwrap().contains("filename*=UTF-8''Packing%20line.exe"));
         assert_eq!(&body[..8], b"LAUNCHER");
@@ -220,7 +220,7 @@ mod tests {
     async fn an_app_showing_the_screen_trusts_this_server_over_https() {
         let (apps, dir) = apps("screen");
         for (address, trust) in [("https://host:6739/", Some("sha256/abc".to_owned())), ("http://host:6739", None)] {
-            let (status, _, body) = get(&apps, &format!("/app/windows-x64?runs=screen&address={}", address.replace(':', "%3A").replace('/', "%2F"))).await;
+            let (status, _, body) = get(&apps, &format!("/app/win-x64?runs=screen&address={}", address.replace(':', "%3A").replace('/', "%2F"))).await;
             assert_eq!(status, StatusCode::OK);
             let mut file = Cursor::new(body);
             let t = Trailer::read(&mut file).unwrap().unwrap();
@@ -229,7 +229,7 @@ mod tests {
             assert_eq!(settings.shows, Shows::Address(address.trim_end_matches('/').to_owned()));
             assert_eq!(settings.trust, trust);
         }
-        assert_eq!(get(&apps, "/app/windows-x64?runs=screen").await.0, StatusCode::BAD_REQUEST);
+        assert_eq!(get(&apps, "/app/win-x64?runs=screen").await.0, StatusCode::BAD_REQUEST);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -239,7 +239,7 @@ mod tests {
         let (_, _, body) = get(&apps, "/app/targets").await;
         let listed: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let ready: Vec<_> = listed.as_array().unwrap().iter().filter(|t| t["ready"] == true).map(|t| t["target"].as_str().unwrap()).collect();
-        assert_eq!(ready, ["windows-x64"]);
+        assert_eq!(ready, ["win-x64"]);
         assert_eq!(get(&apps, "/app/linux-x64?runs=device").await.0, StatusCode::NOT_FOUND);
         assert_eq!(get(&apps, "/app/amiga?runs=device").await.0, StatusCode::NOT_FOUND);
         std::fs::remove_dir_all(&dir).unwrap();

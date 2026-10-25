@@ -85,7 +85,7 @@ export default async function ({ page, sys, check, eventually }) {
 
     // and one reaching it over https, its own certificate, which a browser warns about, trusted
     const https = sys.url.replace("http:", "https:");
-    const built = await fetch(`${sys.url}/app/windows-x64?runs=screen&address=${encodeURIComponent(https)}`);
+    const built = await fetch(`${sys.url}/app/win-x64?runs=screen&address=${encodeURIComponent(https)}`);
     if (!built.ok) check(false, `the server built no https screen app: ${built.status} ${await built.text()}`);
     const httpsFile = join(temp, "https", "Export line.exe");
     mkdirSync(join(temp, "https"));
