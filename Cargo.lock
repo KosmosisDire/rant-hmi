@@ -2119,6 +2119,7 @@ name = "rant-hmi-launcher"
 version = "0.0.1"
 dependencies = [
  "embed-resource",
+ "libc",
  "rant-hmi-pack",
  "serde_json",
  "windows-sys 0.61.2",
