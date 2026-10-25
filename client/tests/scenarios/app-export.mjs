@@ -46,6 +46,7 @@ export default async function ({ page, sys, check, eventually }) {
     check(await option(here).evaluate((b) => b.classList.contains("on")), "the sheet did not pick this device's platform");
     check(await option(lacking).isDisabled(), `the sheet offered ${lacking}, whose runtime the server lacks`);
     check(await option("In the app").evaluate((b) => b.classList.contains("on")), "an app runs the HMI itself unless asked");
+    await sheet.getByText(platform.startsWith("win-") ? "choose More info, then Run anyway" : "Mark it as a program first", { exact: false }).waitFor();
 
     const download = async (into) => {
       const [got] = await Promise.all([page.waitForEvent("download"), sheet.getByText("Download", { exact: true }).click()]);
