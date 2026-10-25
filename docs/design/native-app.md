@@ -176,9 +176,10 @@ Chosen: a launcher with archives appended.
   `runtime.tar.gz` and `runtime.id`, for `win-x64`, `linux-x64`, `linux-arm64` and
   `osx-arm64`.
 - `npm run runtime` in `app` builds this host's and puts it there (built, slice 4).
-- Each release will attach every platform's, and the server fetch the one a build needs from
-  its own version's release the first time it is asked (slice 7). An offline server takes the
-  files copied there by hand.
+- Each release attaches every platform's as `rant-hmi-runtime-<version>-<platform>.tar.gz`,
+  those three files archived, and the server will fetch the one a build needs from its own
+  version's release the first time it is asked (slice 7). An offline server takes the file by
+  hand.
 - Platforms take the names the release's archives have, as `rant install` reads them.
 
 ## Part 4: built from the editor
@@ -425,3 +426,23 @@ Choices worth a second look:
 - No sandbox where the check fails, rather than an AppArmor profile, which needs root to install.
 - Where the launcher cannot start on Linux it says why on stderr only, which a start from a file
   manager never shows.
+
+### Slice 7, runtimes in each release
+
+- `rant-hmi-pack <folder> <file>` archives a folder as apps carry one and prints its id.
+  `runtime.mjs` archives the runtime with it, then the platform's folder (the launcher,
+  `runtime.tar.gz` and `runtime.id`) as the file a release attaches, so a checkout makes the
+  same file CI does. The runtime inside is gzipped twice, which costs a few seconds and keeps one
+  archive format for every part.
+- CI's build job builds the runtime on `win-x64`, `linux-x64` and `linux-arm64` after the
+  package, Linux in the manylinux_2_28 containers, and lints the addon and the launcher there.
+  macOS waits for slice 8.
+- A new job, check-apps, takes each platform's file as the release will carry it, unpacks it as
+  a server would, and runs app-export, then app-window, on Windows and on Linux under Xvfb. Linux
+  on ARM drives the editor in Playwright's Chromium, named by `HMI_BROWSER`, since Chrome has no
+  build there. The release waits for it.
+- GitHub's Ubuntu 24.04 runners keep `apparmor_restrict_unprivileged_userns` at 1, so
+  app-export proves the launcher's sandbox check on x64 and arm64. Electron run from source has
+  no such check, so app-window runs with the rule off.
+- `release.py` checks that each release carries what it must: the HMI's four package archives
+  and three runtimes, Rant's TypeScript package.
