@@ -2,6 +2,9 @@
 // goes back to it, which closes the page the opener waits from, so that wait ends at once and
 // never holds the button that started it.
 
+// a system of its own, as run-pages makes pages of the same names
+export const fresh = true;
+
 export default async function ({ page, hmi, d, sys, eventually }) {
   const add = async (pageId, name, x, code) => {
     const id = await hmi.addElement(pageId, "div", { name, x, y: "44", w: "120", h: "88", background: "#2a2f35" });
