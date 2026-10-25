@@ -80,15 +80,20 @@ export default async function ({ sys, check, eventually }) {
       check(errors.length === 0, `the screen logged errors:\n  ${errors.join("\n  ")}`);
       check(await driven.close(), `the app did not end as its window closed:\n${driven.process.log}`);
     } finally {
-      driven.stop();
+      await driven.stop();
     }
 
     const app = await openApp(project, { home, domain: DOMAIN });
     try {
       // the backend and its screen share the process with no socket between them
-      const listening = execFileSync("netstat", ["-ano", "-p", "TCP"], { encoding: "utf8" })
-        .split(/\r?\n/)
-        .filter((line) => /LISTENING/.test(line) && line.trim().split(/\s+/).at(-1) === String(app.app.pid));
+      const listening =
+        process.platform === "win32"
+          ? execFileSync("netstat", ["-ano", "-p", "TCP"], { encoding: "utf8" })
+              .split(/\r?\n/)
+              .filter((line) => /LISTENING/.test(line) && line.trim().split(/\s+/).at(-1) === String(app.app.pid))
+          : execFileSync("ss", ["-Hltnp"], { encoding: "utf8" })
+              .split("\n")
+              .filter((line) => line.includes(`pid=${app.app.pid},`));
       check(listening.length === 0, `the app listens on\n${listening.join("\n")}`);
       // past the 5 s a silent screen is lost in, the window's screen still has its one session
       await new Promise((r) => setTimeout(r, 6000));
@@ -112,7 +117,7 @@ export default async function ({ sys, check, eventually }) {
       check((await remote.window.evaluate(() => window.rantHmiApp)) === undefined, "the HMI elsewhere was told it is in the app");
       check(await remote.close(), `the app showing the HMI elsewhere did not end as its window closed:\n${remote.process.log}`);
     } finally {
-      remote.stop();
+      await remote.stop();
     }
 
     // a project that cannot open leaves the window saying why until it is closed
@@ -125,7 +130,7 @@ export default async function ({ sys, check, eventually }) {
       check(failed.process.exitCode === null, "the app ended before its window was closed");
       check(await failed.close(), `the failed app did not end as its window closed:\n${failed.process.log}`);
     } finally {
-      failed.stop();
+      await failed.stop();
     }
 
     // given nothing to show it says what to give it, and never makes the folder it runs in a project
@@ -138,7 +143,7 @@ export default async function ({ sys, check, eventually }) {
       check(await bare.close(), `the app given nothing did not end as its window closed:
 ${bare.process.log}`);
     } finally {
-      bare.stop();
+      await bare.stop();
     }
   } finally {
     // the window's browser lets go of its files a while after the app ends
