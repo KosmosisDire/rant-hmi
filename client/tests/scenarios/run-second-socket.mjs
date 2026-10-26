@@ -5,6 +5,9 @@
 
 import { countBig, keptUp, pictures, refusing } from "../links.mjs";
 
+// a system of its own, as the editor previews every import there and plays the first page's video
+export const fresh = true;
+
 const SECOND = "Reached over the socket, big values over a second one";
 const ALONE = "Reached over the socket alone";
 

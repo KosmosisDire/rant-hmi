@@ -5,6 +5,9 @@
 
 import { between, countBig, keptUp, pictures } from "../links.mjs";
 
+// a system of its own, as the editor previews every import there in turns at a set pace
+export const fresh = true;
+
 const WT = "Reached over the socket, big values over WebTransport";
 const SECOND = "Reached over the socket, big values over a second one";
 

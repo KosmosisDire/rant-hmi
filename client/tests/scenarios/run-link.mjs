@@ -2,6 +2,9 @@
 // after the dot, the text follows the socket going down and coming back, its ping is the status
 // bar's, and a screen that plays no video, so opens no WebRTC, reads that it has none.
 
+// a system of its own, as the editor plays the first page's video there, which opens WebRTC
+export const fresh = true;
+
 /** Sends each new socket nowhere while `__cut` is set, and keeps the last one to close. */
 function tap() {
   const Made = window.WebSocket;
