@@ -27,7 +27,7 @@ use crate::project::{Computed, Import, Kind, Per, Project, Record, Target, Token
 use crate::rules;
 use crate::protocol::{Base, ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate, encode, encode_plain};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
-use crate::status::{Client, HmiStatus};
+use crate::status::{self, Client, HmiStatus};
 use crate::value::Value;
 use crate::rtc::{Connections, Frame, FromRtc, ToRtc};
 
@@ -49,6 +49,9 @@ const PREVIEW_BYTES: f64 = 250_000.0;
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
+/// How long a screen may take to open its WebRTC link channel before `Hmi/Status` warns that it
+/// has none.
+const WEBRTC_GRACE: Duration = Duration::from_secs(15);
 
 /// What a screen's connection hands the loop.
 pub enum Inbound {
@@ -133,7 +136,13 @@ impl Drop for Outbox {
 }
 
 struct Session {
+    /// Its socket.
     out: Outbox,
+    /// Its WebRTC link channel, which carries what the socket did once it opened.
+    channel: Option<Outbox>,
+    /// What came on the link channel before the screen said on its socket it switched, held
+    /// so nothing it did goes out of turn, None once it switched.
+    held: Option<Vec<ClientMsg>>,
     /// Its second way, which brings its big values once it opened, and the key that opens it.
     bulk: Option<Outbox>,
     key: String,
@@ -146,6 +155,13 @@ struct Session {
     jitter: f64,
     /// Whether its WebRTC connection, for video, is open.
     webrtc: bool,
+    /// The last while of round trips and of big values' trips, for `Hmi/Clients`.
+    trips: Trips,
+    /// When it connected, and why its WebRTC connection did not open, as it said.
+    opened: Instant,
+    webrtc_problem: Option<String>,
+    /// The warning on the node's status that it has no WebRTC, as last raised.
+    warned: Option<String>,
     /// The imports and computed values it shows, None for all.
     watch: Option<HashSet<String>>,
     /// While it only previews them, when its next big value may go, as its previews keep to
@@ -174,7 +190,14 @@ struct Gate {
     held: Option<Base>,
     /// When its last went, so the imports a screen previews take turns.
     went: Option<Instant>,
+    /// The last few that lapsed, each with when it went, as a slow link may still bring one
+    /// whole after the next went: the screen's word that it took it makes it the base then, else
+    /// a value too big to arrive in TAKE_MOST would go whole for ever.
+    lapsed: VecDeque<(Instant, Rc<Big>)>,
 }
+
+/// How many lapsed values a gate keeps.
+const LAPSED_KEPT: usize = 3;
 
 /// What became of a big value on its way to a screen.
 enum Fate {
@@ -220,7 +243,13 @@ impl Session {
 
     /// The lanes big values go in: the second way's once it opened, else the socket's.
     fn big_way(&self) -> &Lanes {
-        self.bulk.as_ref().unwrap_or(&self.out)
+        self.channel.as_ref().or(self.bulk.as_ref()).unwrap_or(&self.out)
+    }
+
+    /// The way it is sent what is not big values: its link channel once that opened, else its
+    /// socket.
+    fn way(&self) -> &Outbox {
+        self.channel.as_ref().unwrap_or(&self.out)
     }
 
     /// Sends an import's big value, or keeps it as the newest while the last is on its way or,
@@ -251,7 +280,7 @@ impl Session {
                 gate.parked = None;
             }
         }
-        self.out.values(together(values, seq, self.here()));
+        self.way().values(together(values, seq, self.here()));
     }
 
     /// Sends what waits with its way free, once a previewing screen's bytes allow, the import
@@ -270,9 +299,30 @@ impl Session {
     fn took(&mut self, alias: &str, seq: u64, fate: Fate) {
         let Some(gate) = self.gates.get_mut(alias) else { return };
         if gate.out.as_ref().is_none_or(|(_, sent)| sent.seq != seq) {
+            if matches!(fate, Fate::Took)
+                && let Some(i) = gate.lapsed.iter().position(|(_, b)| b.seq == seq)
+            {
+                let (went, late) = gate.lapsed.remove(i).expect("just found");
+                gate.lapsed.retain(|(_, b)| b.seq > seq);
+                self.trips.big(went.elapsed());
+                if gate.held.as_ref().is_none_or(|h| h.seq < seq) {
+                    gate.held = late.update.value.clone().map(|value| Base { seq, value });
+                }
+            }
             return;
         }
-        let Some((_, sent)) = gate.out.take() else { return };
+        let Some((went, sent)) = gate.out.take() else { return };
+        match fate {
+            Fate::Took => self.trips.big(went.elapsed()),
+            Fate::Lapsed => {
+                self.trips.lapsed += 1;
+                gate.lapsed.push_back((went, sent.clone()));
+                if gate.lapsed.len() > LAPSED_KEPT {
+                    gate.lapsed.pop_front();
+                }
+            }
+            Fate::Missed => {}
+        }
         gate.held = match fate {
             Fate::Took => sent.update.value.clone().map(|value| Base { seq: sent.seq, value }),
             Fate::Missed | Fate::Lapsed => None,
@@ -288,6 +338,89 @@ impl Session {
             self.jitter += ((rtt.as_secs_f64() - last.as_secs_f64()).abs() * 1000.0 - self.jitter) / 16.0;
         }
         self.ping = Some(rtt);
+        self.trips.ping(rtt);
+    }
+}
+
+/// How long `Trips` keeps what it measured.
+const TRIPS_FOR: Duration = Duration::from_secs(10);
+
+/// A screen's last while: each round trip its pings took, which go the way small values do,
+/// and each big value's trip, from when it went until the screen said it took it, which is what
+/// that value took to arrive, be read and be shown, and the word coming back.
+#[derive(Default)]
+struct Trips {
+    pings: VecDeque<(Instant, f64)>,
+    bigs: VecDeque<(Instant, f64)>,
+    /// Big values the screen never said it took, in all.
+    lapsed: u32,
+    /// The bytes its ways had taken, by when.
+    bytes: VecDeque<(Instant, u64)>,
+    /// What `Hmi/Clients` shows of them, worked out once a second, so the list changes as each
+    /// ping is measured and then, not on each turn of the loop.
+    shown: Shown,
+}
+
+/// A screen's last while as `Hmi/Clients` shows it.
+#[derive(Clone, Copy, Default)]
+struct Shown {
+    pings: [f64; 3],
+    bigs: [f64; 3],
+    rate: f64,
+    kbps: f64,
+}
+
+impl Trips {
+    fn ping(&mut self, rtt: Duration) {
+        Self::keep(&mut self.pings, rtt);
+    }
+
+    fn big(&mut self, trip: Duration) {
+        Self::keep(&mut self.bigs, trip);
+    }
+
+    fn keep(list: &mut VecDeque<(Instant, f64)>, d: Duration) {
+        let now = Instant::now();
+        list.push_back((now, d.as_secs_f64() * 1000.0));
+        while list.front().is_some_and(|(at, _)| now.duration_since(*at) > TRIPS_FOR) {
+            list.pop_front();
+        }
+    }
+
+    /// The median, the 90th percentile and the most of a list, 0 for none.
+    fn spread(list: &VecDeque<(Instant, f64)>) -> [f64; 3] {
+        let now = Instant::now();
+        let mut v: Vec<f64> = list.iter().filter(|(at, _)| now.duration_since(*at) <= TRIPS_FOR).map(|(_, ms)| *ms).collect();
+        if v.is_empty() {
+            return [0.0; 3];
+        }
+        v.sort_by(f64::total_cmp);
+        let at = |q: f64| v[((v.len() - 1) as f64 * q).round() as usize];
+        [at(0.5), at(0.9), at(1.0)]
+    }
+
+    /// Works out anew what `Hmi/Clients` shows, `total` the bytes its ways took by now.
+    fn refresh(&mut self, total: u64) {
+        let kbps = self.kbps(total);
+        self.shown = Shown { pings: Self::spread(&self.pings), bigs: Self::spread(&self.bigs), rate: self.rate(), kbps };
+    }
+
+    /// Notes the bytes its ways took by now, and gives the kilobits a second over the while kept.
+    fn kbps(&mut self, total: u64) -> f64 {
+        let now = Instant::now();
+        self.bytes.push_back((now, total));
+        while self.bytes.front().is_some_and(|(at, _)| now.duration_since(*at) > TRIPS_FOR) {
+            self.bytes.pop_front();
+        }
+        let Some((first, from)) = self.bytes.front() else { return 0.0 };
+        let span = now.duration_since(*first).as_secs_f64();
+        if span < 1.0 { 0.0 } else { (total.saturating_sub(*from)) as f64 * 8.0 / 1000.0 / span }
+    }
+
+    /// Big values taken a second, over the while kept.
+    fn rate(&self) -> f64 {
+        let now = Instant::now();
+        self.bigs.iter().filter(|(at, _)| now.duration_since(*at) <= TRIPS_FOR).count() as f64 / TRIPS_FOR.as_secs_f64()
     }
 }
 
@@ -518,7 +651,7 @@ impl App {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
                 let key = new_key();
-                self.sessions.insert(session, Session { out, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
+                self.sessions.insert(session, Session { out, channel: None, held: None, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -620,12 +753,26 @@ impl App {
             return self.refuse(session, text, None);
         }
         match msg {
+            ClientMsg::Switch => {
+                let Some(held) = self.sessions.get_mut(&session).and_then(|s| s.held.take()) else { return };
+                for msg in held {
+                    self.handle(session, msg);
+                }
+            }
+            ClientMsg::Unswitch => self.channel_closed(session),
+            ClientMsg::WebrtcProblem { problem } => {
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                if let Some(p) = &problem {
+                    warn!("screen {session} has no WebRTC: {}", status::webrtc_problem_words(p));
+                }
+                s.webrtc_problem = problem.map(|p| p.chars().take(24).collect());
+            }
             ClientMsg::Ping { t, rtt } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
                 if let Some(rtt) = rtt.filter(|r| r.is_finite() && *r >= 0.0) {
                     s.timed(Duration::from_secs_f64(rtt / 1000.0));
                 }
-                s.out.pong(encode(&ServerMsg::Pong { t }));
+                s.way().pong(encode(&ServerMsg::Pong { t }));
             }
             ClientMsg::Candidate { candidate } => {
                 self.rtc.send(ToRtc::Candidate { session, candidate });
@@ -1460,6 +1607,10 @@ impl App {
         if self.health_at.elapsed() >= HEALTH_EVERY {
             self.health_at = Instant::now();
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
+            for s in self.sessions.values_mut() {
+                let total = s.out.taken() + s.bulk.as_ref().map_or(0, |b| b.taken()) + s.channel.as_ref().map_or(0, |c| c.taken());
+                s.trips.refresh(total);
+            }
             self.publish_status();
         }
         for (id, s) in &mut self.sessions {
@@ -1470,7 +1621,7 @@ impl App {
             }
             s.send_parked();
         }
-        let missed: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.out.missed()).map(|(id, _)| *id).collect();
+        let missed: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.way().missed()).map(|(id, _)| *id).collect();
         for session in missed {
             self.put_values(Some(session), self.all_values(session));
         }
@@ -1523,12 +1674,19 @@ impl App {
             .sessions
             .iter()
             .map(|(id, s)| Client {
+                kbps: s.trips.shown.kbps,
                 id: *id,
                 address: s.remote.to_string().as_str().try_into().unwrap_or_default(),
                 connected_at: s.since,
                 ping_ms: s.ping.map_or(0.0, |p| p.as_secs_f64() * 1000.0),
                 jitter_ms: s.jitter,
                 webrtc: s.webrtc,
+                channel: s.channel.is_some() && s.held.is_none(),
+                ping_spread_ms: s.trips.shown.pings,
+                big_spread_ms: s.trips.shown.bigs,
+                bigs_per_s: s.trips.shown.rate,
+                lapsed: s.trips.lapsed,
+                webrtc_problem: s.webrtc_problem.as_deref().unwrap_or("").try_into().unwrap_or_default(),
             })
             .collect();
         clients.sort_by_key(|c| c.id);
@@ -1540,6 +1698,23 @@ impl App {
         let missing = self.project.imports.iter().filter(|i| !self.mesh.live(i)).filter_map(|i| i.entity.as_str().try_into().ok()).collect();
         let status = HmiStatus { version: env!("CARGO_PKG_VERSION").into(), project: self.project.info.name.clone(), started_at: self.started_at, clients: self.sessions.len() as u32, missing };
         self.mesh.publish_status(status);
+        self.warn_webrtc();
+    }
+
+    /// Keeps a warning on the node's Rant status for each screen with no WebRTC link channel,
+    /// past the while it may take to open, and why, as the screen found. A screen on this host
+    /// keeps to its socket, as near, so it is never warned of.
+    fn warn_webrtc(&mut self) {
+        for (id, s) in &mut self.sessions {
+            let text = (!s.here() && s.channel.is_none() && s.opened.elapsed() >= WEBRTC_GRACE).then(|| {
+                let why = s.webrtc_problem.as_deref().map_or("it has not said why", status::webrtc_problem_words);
+                format!("Screen {id} ({}) has no WebRTC connection, so its latency is increased: {why}", s.remote)
+            });
+            if text != s.warned {
+                self.mesh.screen_warning(*id, text.as_deref());
+                s.warned = text;
+            }
+        }
     }
 
     /// Tells the engine what each import's message is made of, and it and every screen the
@@ -1572,8 +1747,11 @@ impl App {
     /// Ends a screen's session, which closes its socket. Its pages answer nothing, what it held
     /// pressed is let go, and the rules for a lost screen run.
     fn end(&mut self, session: u32, why: &str) {
-        if self.sessions.remove(&session).is_some() {
+        if let Some(s) = self.sessions.remove(&session) {
             info!("screen {session} {why}");
+            if s.warned.is_some() {
+                self.mesh.screen_warning(session, None);
+            }
             self.leaving.insert(session);
             self.watch(session);
             self.rtc.send(ToRtc::Unlink { session });
@@ -1686,7 +1864,41 @@ impl App {
             }
             FromRtc::Linked { session, open: false } => self.unlinked(session),
             FromRtc::Candidate { session, candidate } => self.send(session, &ServerMsg::Candidate { candidate }),
+            FromRtc::Channel { session, lanes } => {
+                let Some(s) = self.sessions.get_mut(&session) else { return lanes.close() };
+                // a screen on this host has its socket as near, and reads big values off its
+                // main thread there
+                if s.here() {
+                    return lanes.close();
+                }
+                // the marker goes last on the way in use, so the screen reads what came there first
+                s.way().send(encode(&ServerMsg::Switched));
+                s.channel = Some(Outbox::new(lanes));
+                s.held = Some(Vec::new());
+            }
+            FromRtc::Message { session, msg } => {
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                s.heard = Instant::now();
+                match &mut s.held {
+                    Some(held) => held.push(msg),
+                    None => self.handle(session, msg),
+                }
+            }
+            FromRtc::ChannelClosed { session } => self.channel_closed(session),
         }
+    }
+
+    /// The link channel broke, so the socket carries all again. What was on its way there may be
+    /// lost, so the screen gets every value again, big ones whole.
+    fn channel_closed(&mut self, session: u32) {
+        let Some(s) = self.sessions.get_mut(&session) else { return };
+        if s.channel.take().is_none() {
+            return;
+        }
+        s.held = None;
+        s.gates.clear();
+        info!("screen {session} goes back to its socket");
+        self.put_values(Some(session), self.all_values(session));
     }
 
     fn refuse(&self, session: u32, text: String, alias: Option<String>) {
@@ -1696,7 +1908,7 @@ impl App {
 
     fn send(&self, session: u32, msg: &ServerMsg) {
         if let Some(s) = self.sessions.get(&session) {
-            s.out.send(encode(msg));
+            s.way().send(encode(msg));
         }
     }
 
@@ -1706,7 +1918,7 @@ impl App {
         }
         let text = encode(msg);
         for s in self.sessions.values() {
-            s.out.send(text.clone());
+            s.way().send(text.clone());
         }
     }
 
@@ -1834,7 +2046,7 @@ mod tests {
 
     fn session(remote: IpAddr) -> Session {
         let out = Outbox::new(Arc::new(Lanes::default()));
-        Session { out, bulk: None, key: new_key(), local: remote, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars: HashMap::new(), plays: HashSet::new(), decodes: HashSet::new() }
+        Session { out, channel: None, held: None, bulk: None, key: new_key(), local: remote, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars: HashMap::new(), plays: HashSet::new(), decodes: HashSet::new() }
     }
 
     /// The messages waiting in `lanes`, each joined from its pieces.

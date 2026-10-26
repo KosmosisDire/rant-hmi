@@ -106,7 +106,7 @@ fn publishes_its_own_status() {
     let (frames, _) = unbounded_channel();
     let mut mesh = Mesh::open(&MeshOptions { name: "hmi_status".into(), domain: DOMAIN + 2, loopback: true }, tx, frames).unwrap();
     let status = HmiStatus { version: "1.2.3".into(), project: "demo".into(), started_at: Timestamp { us: 1_700_000_000_000_000 }, clients: 1, missing: vec!["Line1/Gone".try_into().unwrap()] };
-    let clients = vec![Client { id: 4, address: "10.0.0.9".try_into().unwrap(), connected_at: Timestamp { us: 1_700_000_001_000_000 }, ping_ms: 2.5, jitter_ms: 0.4, webrtc: true }];
+    let clients = vec![Client { id: 4, address: "10.0.0.9".try_into().unwrap(), connected_at: Timestamp { us: 1_700_000_001_000_000 }, ping_ms: 2.5, jitter_ms: 0.4, webrtc: true, channel: true, ping_spread_ms: [2.4, 3.1, 4.0], big_spread_ms: [9.5, 14.0, 20.0], bigs_per_s: 11.5, lapsed: 0, kbps: 1500.0, webrtc_problem: "".try_into().unwrap() }];
     mesh.publish_status(status.clone());
     mesh.publish_clients(clients.clone());
 

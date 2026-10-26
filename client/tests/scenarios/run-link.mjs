@@ -1,6 +1,7 @@
 // What a screen shows reads its link to the system as `link`: completion offers its fields
 // after the dot, the text follows the socket going down and coming back, its ping is the status
-// bar's, and a screen that plays no video, so opens no WebRTC, reads that it has none.
+// bar's, a screen opens WebRTC as it connects and reads that it has it, and one whose browser
+// has no WebRTC reads that it has none.
 
 // a system of its own, as the editor plays the first page's video there, which opens WebRTC
 export const fresh = true;
@@ -27,7 +28,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await text.click();
   await text.fill("");
   await page.keyboard.type("link.");
-  await eventually(async () => (await page.locator(".suggest .suggest-name").allTextContents()).join() === "open,webrtc,pingMs", "the link's fields offered after link.");
+  await eventually(async () => (await page.locator(".suggest .suggest-name").allTextContents()).join() === "open,webrtc,path,pingMs", "the link's fields offered after link.");
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
   await hmi.setProps(pageId, shown, { text: '[link.open ? "open" : "closed", link.webrtc ? "webrtc" : "socket", link.pingMs === null ? "no ping" : "ping"].join(" ")' });
@@ -46,7 +47,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   };
 
   const s = await open(tap);
-  await s.reads("open socket ping");
+  await s.reads("open webrtc ping");
   // the ping as the status bar shows it, read in one go so both are the same round trip
   const [said, bar] = await s.screen.evaluate(([at]) => [document.querySelector(at).textContent, document.querySelector(".statusbar .stat").textContent], [`.run-layer:not([hidden]) .el[data-id="${ping}"]`]);
   check(bar.includes(`${said} ms`), `the page read a ping of ${said}, the status bar ${bar}`);
@@ -57,7 +58,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   });
   await s.reads("closed socket no ping");
   await s.screen.evaluate(() => (window.__cut = false));
-  await s.reads("open socket ping");
+  await s.reads("open webrtc ping");
   await s.context.close();
 
   const plain = await open(() => (window.RTCPeerConnection = undefined));

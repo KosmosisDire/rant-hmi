@@ -12,6 +12,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::Instant;
 
 use axum::body::Bytes;
@@ -112,6 +113,8 @@ impl Inner {
 pub struct Lanes {
     inner: Mutex<Inner>,
     ready: Notify,
+    /// The bytes its way has taken from them, for the rate `Hmi/Clients` shows.
+    taken: AtomicU64,
 }
 
 impl Lanes {
@@ -213,6 +216,16 @@ impl Lanes {
         l.closed && l.turn.is_empty()
     }
 
+    /// The bytes taken from them so far.
+    pub fn taken(&self) -> u64 {
+        self.taken.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Waits until something was put on them, or they closed.
+    pub async fn ready(&self) {
+        self.ready.notified().await;
+    }
+
     /// Whether the loop is done with them.
     pub fn closed(&self) -> bool {
         self.inner.lock().expect("lanes").closed
@@ -249,6 +262,7 @@ impl Lanes {
         piece.extend_from_slice(&lane.to_le_bytes());
         piece.push(more as u8);
         piece.extend_from_slice(&message[from..end]);
+        self.taken.fetch_add(piece.len() as u64, AtomicOrdering::Relaxed);
         if more {
             at.insert(lane, end);
         } else {

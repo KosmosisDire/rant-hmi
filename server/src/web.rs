@@ -26,7 +26,7 @@ use tokio::time::{MissedTickBehavior, interval, timeout};
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
 use tokio_util::either::Either;
-use axum::http::{HeaderValue, header};
+use axum::http::{HeaderMap, HeaderValue, header};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeader;
 use tracing::{debug, error, warn};
@@ -54,7 +54,8 @@ pub fn files(client: &Path) -> Files {
 /// Serves on `listener`, https too for a connection that opens with a TLS hello when `tls`
 /// answers one.
 pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: &Path, door: Door, apps: Apps) {
-    let app = Router::new().route("/ws", get(upgrade)).route("/bulk", get(upgrade_bulk)).with_state(door).merge(apps::router(apps)).fallback_service(files(client));
+    let port = listener.local_addr().map_or(0, |a| a.port());
+    let app = Router::new().route("/ws", get(upgrade)).route("/bulk", get(upgrade_bulk)).with_state(door).merge(apps::router(apps)).merge(crate::probe::router(port)).fallback_service(files(client));
     let front = Front::open(listener, tls);
     if let Err(e) = axum::serve(front, app.into_make_service_with_connect_info::<Reached>()).await {
         error!("the web server stopped: {e}");
@@ -148,8 +149,23 @@ impl Connected<IncomingStream<'_, Front>> for Reached {
     }
 }
 
-async fn upgrade(ws: WebSocketUpgrade, State(door): State<Door>, ConnectInfo(reached): ConnectInfo<Reached>) -> Response {
+async fn upgrade(ws: WebSocketUpgrade, State(door): State<Door>, ConnectInfo(mut reached): ConnectInfo<Reached>, headers: HeaderMap) -> Response {
+    if let Some(from) = forwarded(&reached, &headers) {
+        reached.remote = from;
+    }
     ws.on_upgrade(move |socket| screen(socket, door, reached))
+}
+
+/// Where a screen that came through a proxy on this host, as cloudflared is, really is: the
+/// address the proxy names. Only a proxy here is believed, so a screen elsewhere cannot pass
+/// for another, and one through a tunnel is never taken for one on this host, which gets its
+/// values whole and uncompressed.
+fn forwarded(reached: &Reached, headers: &HeaderMap) -> Option<IpAddr> {
+    if !reached.remote.is_loopback() {
+        return None;
+    }
+    let named = headers.get("cf-connecting-ip").or_else(|| headers.get("x-forwarded-for"))?.to_str().ok()?;
+    named.split(',').next()?.trim().parse::<IpAddr>().ok().map(|ip| ip.to_canonical())
 }
 
 /// The second way a screen opens, a socket or WebTransport, for its session, proven by the key

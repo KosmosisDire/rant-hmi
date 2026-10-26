@@ -413,6 +413,7 @@ by the part's name, `root` for the whole. A handler sets a name by assignment:
 | `link` | this screen's link to the system | what a screen draws and a component's handlers |
 | `link.open` | true while the screen reaches the system | what a screen draws and a component's handlers |
 | `link.webrtc` | true while its WebRTC connection is open too | what a screen draws and a component's handlers |
+| `link.path` | the way values, pings and actions go, "channel" on WebRTC or "socket" | what a screen draws and a component's handlers |
 | `link.pingMs` | the round trip in ms, smoothed, null before one | what a screen draws and a component's handlers |
 | `keys` | the keys held, each true by what it types or where it sits, as keys.a or keys.KeyA | what a screen draws and a component's handlers |
 | `gamepads` | the gamepads, gamepads[0] the first, null where none is | what a screen draws and a component's handlers |

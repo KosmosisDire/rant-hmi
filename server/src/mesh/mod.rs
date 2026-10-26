@@ -11,7 +11,7 @@ use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, 
 use crate::value::Value;
 use crate::rtc::Frame;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::project::{Import, Intent, Kind};
 use crate::protocol::{EntityInfo, EnumInfo, PeerInfo};
@@ -181,6 +181,19 @@ impl Mesh {
                 warn!("could not publish {}: {e}", status::CLIENTS);
             }
             self.own_changed(status::CLIENTS, value);
+        }
+    }
+
+    /// Raises or updates the warning on this node's Rant status that screen `id` has no WebRTC,
+    /// or with None clears it. Each screen's is its own condition.
+    pub fn screen_warning(&self, id: u32, text: Option<&str>) {
+        let key = format!("screen-{id}-webrtc");
+        let done = match text {
+            Some(text) => self.node.set_status(&key, rant::Level::Warn, text, rant::StatusOptions::new()),
+            None => self.node.clear_status(&key),
+        };
+        if let Err(e) = done {
+            debug!("the status of screen {id}'s WebRTC did not go out: {e}");
         }
     }
 

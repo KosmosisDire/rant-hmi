@@ -99,13 +99,23 @@ publishes on a topic with `Jog.send({ x: 1, y: 0 })`.
 
 ## WebRTC
 
-A screen opens a WebRTC connection beside its socket once it plays a video, which it carries.
+A screen opens a WebRTC connection beside its socket as it connects. It carries the screen's
+video, and its `link` channel carries what the socket did: values, big values, pings and
+actions, as that way is direct where the socket may come through a proxy, as a Cloudflare
+tunnel. The socket says last that the channel takes over, each way, so nothing comes out of
+turn, and the channel keeps on the way only what arrives in its round trip. A channel that
+breaks gives all back to the socket, and the screen every value anew. A screen on the HMI's
+own host keeps to its socket.
 
 - A new project starts with two public STUN servers in `ice`. `ice = []` asks none.
 - The HMI offers every address of its host, and the address its NAT shows the outside, as
   the STUN servers tell. `rtc_ports=6740-6759` on `rant run Hmi` pins its ports, to open them
   in a firewall or forward them.
 - A TURN server relays for a screen that reaches the HMI no other way.
+- A screen whose WebRTC did not open says why in a banner: a browser that gathered no address
+  at all is told not to use UDP, as a VPN or a privacy extension makes so.
+- Behind a proxy on the HMI's host, as cloudflared, a screen counts where the proxy says it
+  is (`CF-Connecting-IP`, `X-Forwarded-For`), so it gets its values compressed.
 - Without WebRTC a screen decodes video itself from frames on its socket, which only a page
   on https or localhost can do. Elsewhere the video says why it does not play.
 

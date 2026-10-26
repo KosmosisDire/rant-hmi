@@ -13,6 +13,7 @@ import "./ui/touch";
 
 import { render } from "solid-js/web";
 import { connect, send } from "./net/connection";
+import "./net/probe";
 import { App } from "./shell/App";
 import { Operator } from "./shell/Operator";
 import { operator } from "./state/mode";
