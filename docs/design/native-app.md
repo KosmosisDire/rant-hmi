@@ -208,7 +208,7 @@ Chosen: a launcher with archives appended.
    sandbox check. Then on a Steam Deck, in the desktop and in Game Mode. Built for x64, arm64
    comes with CI.
 7. Release: CI builds every runtime and attaches them, the server fetches by its version, docs
-   and the agent skill. Built but for the docs and the skill.
+   and the agent skill. Built.
 8. macOS: the app bundle and its ad hoc signature. Later, as its own item.
 
 ## Runtimes for released servers
@@ -483,3 +483,6 @@ Choices worth a second look:
 
 - Downloading an app fetches its runtime when needed, rather than refusing until asked ahead.
 - A failed fetch is not remembered, so each ask tries again.
+
+The docs' As an app section says where runtimes come from, how to take one by hand, and how to
+get an app with curl. The agent skill's HMI section has the same in a row and a line.
