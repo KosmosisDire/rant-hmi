@@ -167,6 +167,9 @@ const link = Object.freeze({
   get webrtc() {
     return state.webrtc;
   },
+  get path() {
+    return state.path;
+  },
   get pingMs() {
     return state.rttMs === null ? null : Math.round(state.rttMs);
   },

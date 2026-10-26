@@ -62,6 +62,7 @@ export const API = [
     fields: [
       { name: "open", words: "true while the screen reaches the system" },
       { name: "webrtc", words: "true while its WebRTC connection is open too" },
+      { name: "path", words: "the way values, pings and actions go, \"channel\" on WebRTC or \"socket\"" },
       { name: "pingMs", words: "the round trip in ms, smoothed, null before one" },
     ],
   },

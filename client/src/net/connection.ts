@@ -5,14 +5,17 @@
 // (data.worker.ts), so the main thread never unpacks one, and draws the scenes. Each big value
 // is said to be taken once it is shown, so the next comes only then. A WebRTC
 // connection opens beside the link once the screen plays a video, which it brings where WebCodecs
-// cannot decode the video's frames from the link. The link reconnects by itself, at once when
-// the page shows again. The round trip for the status bar is timed the way a person's actions go.
+// cannot decode the video's frames from the link. It opens at once, and its `link` channel
+// carries what the link did once the backend switches to it, big values too, as that way is
+// direct where the link may come through a proxy. The link reconnects by itself, at once when
+// the page shows again. The round trip for the status bar is timed the way a person's actions
+// and the values go, on the link channel once it carries them.
 
 import { Decoder, Encoder } from "cbor-x";
 import { type Accessor, createEffect, createRoot, createSignal, type Setter, untrack } from "solid-js";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
-import { cameBack, notify, onReading, receive, setState, state } from "../state/store";
+import { cameBack, notify, onReading, receive, setState, state, type WebrtcProblem } from "../state/store";
 import { countRead, previewing, watched, wholeNames } from "../state/watch";
 import type { FromData, Second, ToData } from "./data.worker";
 import type { Drawing, Drew } from "./draw";
@@ -56,6 +59,14 @@ let secondTries = 0;
 /** The link's session, from its hello, null while it has none. */
 let session: number | null = null;
 let secondRetry: number | undefined;
+/** The second way the hello named, which the link channel stands in for while it carries all. */
+let secondNamed: Second | null = null;
+
+/** The WebRTC link channel, what it brought before the backend's marker on the link, held so
+ *  nothing comes out of turn, and whether the screen sends on it. */
+let channel: RTCDataChannel | null = null;
+let early: ArrayBuffer[] | null = null;
+let switched = false;
 
 interface Rtc {
   pc: RTCPeerConnection;
@@ -63,6 +74,26 @@ interface Rtc {
   offering: boolean;
   /** The videos changed while an offer was out. */
   again: boolean;
+  /** The UDP addresses it gathered, any and public, which say why it did not connect. */
+  udp: number;
+  public: number;
+}
+
+/** Why a WebRTC connection that did not connect failed, as the backend names it (status.rs). */
+function diagnose(c: Rtc | null): WebrtcProblem {
+  if (typeof RTCPeerConnection === "undefined") return "no_webrtc";
+  // a browser that gathered no address at all, not even its own, was told not to use UDP
+  if (!c || c.udp === 0) return "browser_blocks";
+  if (c.public === 0 && (state.project?.ice ?? []).length > 0) return "network_blocks_udp";
+  return "no_path";
+}
+
+/** Says why this screen has no WebRTC, or with null that it has, once that changed, and to a
+ *  new session whatever it is. */
+function problem(p: WebrtcProblem | null, again = false) {
+  if (p === state.webrtcProblem && !again) return;
+  setState("webrtcProblem", p);
+  send(p === null ? { type: "webrtc_problem" } : { type: "webrtc_problem", problem: p });
 }
 
 /** A video as an element shows it: the stream WebRTC brings, and the frames from the link
@@ -134,8 +165,21 @@ function heard(bytes: Uint8Array, lane: number) {
   } else if (msg.type === "pong") {
     const rtt = performance.now() - msg.t;
     timed = rtt;
+    pings.push(rtt);
+    if (pings.length > 1000) pings.splice(0, pings.length - 1000);
     setState("rttMs", state.rttMs === null ? rtt : state.rttMs * 0.8 + rtt * 0.2);
     cameBack(msg.t);
+  } else if (msg.type === "switched") {
+    // the last on the link before the channel, so what the channel held comes next, and the
+    // backend hears on the link, last, that what follows comes on the channel
+    if (!channel || !early) return;
+    const [held, join] = [early, joinChannel];
+    early = null;
+    for (const piece of held) join(piece);
+    send({ type: "switch" });
+    switched = true;
+    setState("path", "channel");
+    openSecond(null);
   } else if (msg.type === "video") {
     answered(msg.answer);
   } else if (msg.type === "candidate") {
@@ -146,16 +190,24 @@ function heard(bytes: Uint8Array, lane: number) {
     // a new session has asked for no frames and watches nothing yet, and its big values come
     // on its own second way
     if (msg.type === "hello") {
+      helloWt = msg.wt ?? null;
       asked = "";
       askFrames();
       toldWatch = undefined;
       tellWatch();
       secondTries = 0;
       session = msg.session;
+      if (state.webrtcProblem) problem(state.webrtcProblem, true);
       const [secure, path] = [location.protocol === "https:", `/bulk?session=${msg.session}&key=${msg.key}`];
       const wt = secure && msg.wt ? { url: `https://${location.host}${path}`, hash: msg.wt } : undefined;
-      openSecond(inApp ? null : { socket: `${secure ? "wss" : "ws"}://${location.host}${path}`, wt });
-      if (videos.size > 0) void offerVideos();
+      // for comparing: a screen told hmi.noSecond = 1 takes its big values on the link
+      let noSecond = false;
+      try {
+        noSecond = localStorage.getItem("hmi.noSecond") === "1";
+      } catch {}
+      secondNamed = inApp || noSecond ? null : { socket: `${secure ? "wss" : "ws"}://${location.host}${path}`, wt };
+      openSecond(secondNamed);
+      void offerVideos();
     }
   }
 }
@@ -249,7 +301,30 @@ function ping() {
 
 /** Sends at once, true when it went. Without a link nothing can be done, so the person hears
  *  it was not. */
+/** The round trips of the link's last pings, as they came, for the probe. */
+const pings: number[] = [];
+let helloWt: string | null = null;
+export const rawPings = () => pings;
+/** The hash of the backend's WebTransport certificate, as its hello gave it. */
+export const wtHash = () => helloWt;
+
+// for the console: the WebRTC connection as it is, connected or not
+(window as unknown as { hmiRtc: () => RTCPeerConnection | null }).hmiRtc = () => rtc?.pc ?? null;
+
+/** The screen's WebRTC connection once it connected, offered now when it has none. */
+export async function probeRtc(): Promise<RTCPeerConnection | null> {
+  if (!rtc) void offerVideos();
+  const c = rtc;
+  if (!c) return null;
+  for (let i = 0; i < 100 && c.pc.connectionState !== "connected"; i++) await new Promise((r) => setTimeout(r, 100));
+  return c.pc.connectionState === "connected" ? c.pc : null;
+}
+
 export function send(msg: ClientMsg): boolean {
+  if (switched && channel?.readyState === "open") {
+    channel.send(cbor.encoder.encode(msg));
+    return true;
+  }
   if (link?.send(cbor.encoder.encode(msg))) return true;
   if (msg.type !== "ping" && msg.type !== "took" && msg.type !== "watch") notify("The HMI is out of reach, so that was not done.", "warn");
   return false;
@@ -261,6 +336,7 @@ function openRtc(): Rtc | null {
   if (state.link !== "open" || !link?.network) return null;
   if (typeof RTCPeerConnection === "undefined") {
     setStuck(true);
+    problem("no_webrtc");
     return null;
   }
   // the null the backend sends for no username would reach the browser as the word null
@@ -269,10 +345,40 @@ function openRtc(): Rtc | null {
   // a section that never plays, so an offer with every video stopped still bundles one, which
   // the backend needs, and the connection outlives a page without video
   pc.addTransceiver("video", { direction: "inactive" });
-  const c: Rtc = { pc, offering: false, again: false };
+  // in the first offer, so later channels, the probe's too (probe.ts), open with no offer of
+  // their own
+  // for comparing: a screen told hmi.noChannel = 1 keeps all on its link
+  let noChannel = false;
+  try {
+    noChannel = localStorage.getItem("hmi.noChannel") === "1";
+  } catch {}
+  const ch = pc.createDataChannel(noChannel ? "keep" : "link");
+  ch.binaryType = "arraybuffer";
+  [channel, early, switched] = [ch, [], false];
+  joinChannel = joiner(heard);
+  ch.onmessage = (e) => {
+    if (channel !== ch) return;
+    const bytes = new Uint8Array(e.data as ArrayBuffer);
+    // a mark, `[u16 0xFFFF]` and the backend's ping, goes back at once as `[0xFF]` and the ping,
+    // so the backend keeps on the way what arrives in a round trip (rtc.rs)
+    if (bytes[0] === 0xff && bytes[1] === 0xff) {
+      const back = new Uint8Array(bytes.length - 1);
+      back[0] = 0xff;
+      back.set(bytes.subarray(2), 1);
+      return ch.send(back);
+    }
+    if (early) early.push(e.data as ArrayBuffer);
+    else joinChannel(e.data as ArrayBuffer);
+  };
+  ch.onclose = () => channel === ch && channelLost();
+  const c: Rtc = { pc, offering: false, again: false, udp: 0, public: 0 };
   rtc = c;
   pc.onicecandidate = (e) => {
-    if (rtc === c && e.candidate?.candidate) send({ type: "candidate", candidate: e.candidate.candidate });
+    const line = e.candidate?.candidate;
+    if (rtc !== c || !line) return;
+    if (/ udp /i.test(line)) c.udp++;
+    if (/ typ (srflx|relay) /.test(line)) c.public++;
+    send({ type: "candidate", candidate: line });
   };
   pc.onconnectionstatechange = () => {
     if (rtc !== c) return;
@@ -280,6 +386,7 @@ function openRtc(): Rtc | null {
       rtcTries = 0;
       setStuck(false);
       setState("webrtc", true);
+      problem(null);
     }
     if (pc.connectionState === "failed") rtcFailed();
   };
@@ -397,9 +504,24 @@ export function unplayable(): string | null {
   return window.isSecureContext ? "WebRTC did not connect, and this browser cannot decode video without it" : "WebRTC did not connect, and video without it needs this page on https";
 }
 
+/** Joins what the link channel brings, as the link's own joiner does what it brings. */
+let joinChannel: (data: ArrayBuffer) => void = () => {};
+
+/** The link channel closed, so the link carries all again, and the second way the big values. */
+function channelLost() {
+  const was = switched;
+  [channel, early, switched] = [null, null, false];
+  setState("path", "socket");
+  if (!was || state.link !== "open") return;
+  // the backend hears at once, so it sends on the socket again and every value anew
+  send({ type: "unswitch" });
+  openSecond(secondNamed);
+}
+
 /** Ends the WebRTC connection, and with it every video this screen plays until it opens again. */
 function closeRtc() {
   clearTimeout(rtcRetry);
+  if (channel) channelLost();
   const c = rtc;
   rtc = null;
   c?.pc.close();
@@ -414,10 +536,12 @@ function closeRtc() {
 
 /** The WebRTC connection broke while the link stays, so it is offered again a while later. */
 function rtcFailed() {
+  const failed = rtc;
   closeRtc();
   setStuck(true);
   if (state.link !== "open") return;
-  rtcRetry = window.setTimeout(() => videos.size > 0 && void offerVideos(), Math.min(RETRY_LATER_MAX_MS, RETRY_LATER_MS * 2 ** rtcTries++));
+  problem(diagnose(failed));
+  rtcRetry = window.setTimeout(() => void offerVideos(), Math.min(RETRY_LATER_MAX_MS, RETRY_LATER_MS * 2 ** rtcTries++));
 }
 
 document.addEventListener("visibilitychange", () => {

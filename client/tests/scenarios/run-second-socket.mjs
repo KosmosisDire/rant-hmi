@@ -1,7 +1,7 @@
 // A screen's big values come on a second socket its data worker opens, and the status bar says
 // so. A screen whose second socket cannot open gets them on its socket, which hands them to the
-// worker unread, and shows them all the same. Hmi/Clients lists neither with WebRTC, which only
-// a video opens.
+// worker unread, and shows them all the same. Hmi/Clients lists neither on its WebRTC link
+// channel, as a screen on the HMI's host keeps to its socket.
 
 import { countBig, keptUp, pictures, refusing } from "../links.mjs";
 
@@ -44,7 +44,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     check(keptUp(alone), `the screen without a second socket got ${alone.got} of the camera's ${alone.sent} pictures in 1.5 s on its socket`);
 
     await eventually(() => ours().length === 2, "both screens listed");
-    check(ours().every((c) => !c.webrtc), `a screen showing no video lists WebRTC: ${JSON.stringify(ours())}`);
+    check(ours().every((c) => !c.channel), `a screen on the HMI's host lists its link channel: ${JSON.stringify(ours())}`);
   } finally {
     await context.close();
     way.close();

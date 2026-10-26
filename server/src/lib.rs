@@ -14,6 +14,7 @@ pub mod link;
 pub mod list;
 pub mod mesh;
 pub mod pages;
+pub mod probe;
 pub mod project;
 pub mod protocol;
 #[cfg(test)]

@@ -26,6 +26,22 @@ pub struct Client {
     /// Whether its WebRTC connection is open. Without it all goes over its socket, its video
     /// as frames the screen decodes itself.
     pub webrtc: bool,
+    /// Whether its values, pings and actions go on its WebRTC link channel, else its socket.
+    pub channel: bool,
+    /// The round trips of the last 10 s, as `[median, 90th percentile, most]` in ms.
+    pub ping_spread_ms: [f64; 3],
+    /// The trips of the big values it took in the last 10 s, from going until it said it took
+    /// each, as `[median, 90th percentile, most]` in ms.
+    pub big_spread_ms: [f64; 3],
+    /// How many big values it took a second, over the last 10 s.
+    pub bigs_per_s: f64,
+    /// The big values it never said it took, since it connected.
+    pub lapsed: u32,
+    /// What its ways carried to it over the last 10 s, in kilobits a second.
+    pub kbps: f64,
+    /// Why its WebRTC connection did not open, as the screen found, one of WEBRTC_PROBLEMS,
+    /// empty while it is open or the screen has not said.
+    pub webrtc_problem: rant::String<24>,
 }
 
 /// The HMI's own state.
@@ -42,6 +58,19 @@ pub struct HmiStatus {
     pub missing: Vec<rant::String<64>>,
 }
 
+/// Why a screen's WebRTC connection did not open, as the screen tells it, and what each means.
+pub const WEBRTC_PROBLEMS: [(&str, &str); 4] = [
+    ("no_webrtc", "its browser does not support WebRTC"),
+    ("browser_blocks", "check it for a VPN, a privacy extension or a policy preventing WebRTC"),
+    ("network_blocks_udp", "check its network for a firewall or policy blocking UDP"),
+    ("no_path", "no direct route was found between its network and the HMI"),
+];
+
+/// What a problem the screen named means, or the name itself for one this backend does not know.
+pub fn webrtc_problem_words(problem: &str) -> &str {
+    WEBRTC_PROBLEMS.iter().find(|(name, _)| *name == problem).map_or(problem, |(_, words)| words)
+}
+
 /// The screens as a value, as the mesh decodes them.
 pub fn clients_value(list: &[Client]) -> Value {
     Value::List(
@@ -54,6 +83,13 @@ pub fn clients_value(list: &[Client]) -> Value {
                     ("ping_ms", c.ping_ms.into()),
                     ("jitter_ms", c.jitter_ms.into()),
                     ("webrtc", c.webrtc.into()),
+                    ("channel", c.channel.into()),
+                    ("ping_spread_ms", Value::List(c.ping_spread_ms.iter().map(|&v| v.into()).collect())),
+                    ("big_spread_ms", Value::List(c.big_spread_ms.iter().map(|&v| v.into()).collect())),
+                    ("bigs_per_s", c.bigs_per_s.into()),
+                    ("lapsed", Value::Int(c.lapsed.into())),
+                    ("kbps", c.kbps.into()),
+                    ("webrtc_problem", (*c.webrtc_problem).into()),
                 ])
             })
             .collect(),

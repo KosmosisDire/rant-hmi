@@ -57,6 +57,9 @@ pub enum ServerMsg {
     Made { page: String, id: String },
     /// The answer to a ping, for the round trip.
     Pong { t: f64 },
+    /// The last message on the socket before the screen's link channel carries what it did. The
+    /// screen holds what the channel brings until this, so nothing comes out of turn.
+    Switched,
     /// The answer to a screen's offer of its WebRTC connection for video, first or again. None
     /// when the backend cannot make it, so the screen decodes its video itself.
     Video { answer: Option<String> },
@@ -117,6 +120,18 @@ pub enum ClientMsg {
         #[serde(default)]
         #[ts(optional)]
         rtt: Option<f64>,
+    },
+    /// The last message on the socket before the screen sends on its link channel, which the
+    /// backend holds what comes on until this.
+    Switch,
+    /// The screen lost its link channel, so the socket carries all again from now.
+    Unswitch,
+    /// Why the screen's WebRTC connection did not open, as one of WEBRTC_PROBLEMS, None once it
+    /// did.
+    WebrtcProblem {
+        #[serde(default)]
+        #[ts(optional)]
+        problem: Option<String>,
     },
     /// An address the screen found its connection may be reached on, as its `a=candidate` line
     /// without its `a=`.

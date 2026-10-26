@@ -83,6 +83,12 @@ fn config(at: SocketAddr, identity: Identity) -> ServerConfig {
 /// the page closes it, or when the loop lets its lanes go.
 async fn session(incoming: IncomingSession, door: Door) {
     let Ok(request) = incoming.await else { return };
+    if request.path() == "/probe" {
+        if let Ok(conn) = request.accept().await {
+            crate::probe::wt(conn).await;
+        }
+        return;
+    }
     let Some(second) = request.path().strip_prefix("/bulk?").and_then(|q| serde_urlencoded::from_str::<Second>(q).ok()) else {
         debug!("a WebTransport session at {} named no screen", request.path());
         return request.not_found().await;

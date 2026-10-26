@@ -45,6 +45,9 @@ const batches = new Map<string, number>();
 /** How long a notice stays, by how much it matters. */
 const STAYS: Record<Level, number> = { info: 4000, warn: 7000, fault: 10000 };
 
+/** Why a WebRTC connection did not open, as the backend names it (status.rs WEBRTC_PROBLEMS). */
+export type WebrtcProblem = "no_webrtc" | "browser_blocks" | "network_blocks_udp" | "no_path";
+
 export interface State {
   link: "connecting" | "open" | "closed";
   /** The smoothed round trip to the backend. */
@@ -53,6 +56,10 @@ export interface State {
   webrtc: boolean;
   /** The second way, which brings big values, while it is open. */
   second: Way | null;
+  /** The way values, pings and actions go: the socket, or the WebRTC link channel. */
+  path: "socket" | "channel";
+  /** Why the WebRTC connection did not open, null while it did or has not failed. */
+  webrtcProblem: WebrtcProblem | null;
   project: ProjectInfo | null;
   node: string;
   version: string;
@@ -83,6 +90,8 @@ export const [state, setState] = createStore<State>({
   rttMs: null,
   webrtc: false,
   second: null,
+  path: "socket",
+  webrtcProblem: null,
   project: null,
   node: "",
   version: "",

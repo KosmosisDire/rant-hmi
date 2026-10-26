@@ -1,7 +1,8 @@
 //! WebRTC for screens' video, set up over each screen's socket. A screen opens one connection
 //! once it plays a video, which carries the video of each import it plays and works on a plain
-//! http page where WebCodecs cannot. Its values never go there: the socket carries them, and
-//! a second socket or WebTransport the big ones. Each H264 frame of an import's source goes out
+//! http page where WebCodecs cannot. Once its reliable `link` channel opens, the screen's
+//! lanes go there in place of its socket (`Lanes`, as a socket sends them), since that way is
+//! direct where the socket may come through a proxy. Each H264 frame of an import's source goes out
 //! to the screens playing it here as it comes. A screen without WebRTC decodes its video itself
 //! from frames on its socket (`Lanes::video`).
 
@@ -14,22 +15,40 @@ use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use str0m::change::SdpOffer;
+use str0m::channel::ChannelId;
 use str0m::format::Codec;
 use str0m::media::{MediaTime, Mid, Pt, Writer};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig};
 use tokio::net::UdpSocket;
+use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
+use crate::flight::Flight;
+use crate::lanes::Lanes;
 use crate::project::IceServer;
-use crate::protocol::Played;
+use crate::protocol::{ClientMsg, Played};
 use crate::stun;
 
 /// A frame that came off the mesh longer ago than this is dropped, and its video goes on from the
 /// next keyframe, so a busy backend or a slow socket makes video late by this at most, and never
 /// what screens send and get.
 pub const FRAME_LATE: Duration = Duration::from_millis(200);
+
+/// The label of the channel a screen's lanes go on.
+pub const LINK: &str = "link";
+
+/// The most the link channel holds unacknowledged, sent or not, as SCTP counts it. The marks'
+/// flight keeps what is on the way to the link's round trip, so this only bounds a link the
+/// flight has not measured yet: a far one needs its round trip's worth on the way.
+const LINK_BUFFERED: usize = 2 << 20;
+
+/// The lane of a mark on the link channel: `[u16 MARK]` then a flight's ping, which the page
+/// sends back at once as `[0xFF]` then the ping, so the channel keeps on the way what the link
+/// carries in its round trip, as a socket does (`flight.rs`), not all SCTP's window lets out.
+pub const MARK: u16 = 0xFFFF;
+const MARK_BACK: u8 = 0xFF;
 
 /// How long the outside address a STUN server told for a port holds before a new screen asks
 /// again, since a NAT may map the port anew once it went quiet.
@@ -65,6 +84,29 @@ pub enum FromRtc {
     Linked { session: u32, open: bool },
     /// An address of this host a screen's connection may be reached on, found after its answer.
     Candidate { session: u32, candidate: String },
+    /// The screen's link channel opened, which sends what these lanes carry until they close.
+    Channel { session: u32, lanes: Arc<Lanes> },
+    /// What the screen sent on its link channel.
+    Message { session: u32, msg: ClientMsg },
+    /// The screen's link channel closed, or its connection with it.
+    ChannelClosed { session: u32 },
+}
+
+/// A screen's link channel and the lanes it sends.
+struct Link {
+    id: ChannelId,
+    lanes: Arc<Lanes>,
+    flight: Flight,
+    born: Instant,
+    /// A piece the channel would not take yet, which goes before any other, as a message
+    /// missing one never joins.
+    held: Option<Bytes>,
+}
+
+impl Link {
+    fn now(&self) -> u64 {
+        self.born.elapsed().as_micros() as u64
+    }
 }
 
 /// A screen's connection.
@@ -74,6 +116,9 @@ struct Peer {
     wake: Instant,
     connected: bool,
     videos: Vec<Video>,
+    link: Option<Link>,
+    /// The channels the page's probe times this way on (`probe.rs`), each echoed.
+    probes: Vec<ChannelId>,
 }
 
 struct Video {
@@ -162,6 +207,8 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
     let mut asking: HashMap<stun::Id, (IpAddr, Instant)> = HashMap::new();
     let mut servers: Vec<String> = Vec::new();
     let mut peers: Vec<Peer> = Vec::new();
+    // a link channel's lanes have something to send
+    let kick = Arc::new(Notify::new());
     loop {
         let wake = peers.iter().map(|p| p.wake).min().unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
         // frames go last, so they wait behind what screens send and get, never the other way
@@ -176,10 +223,12 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                             let ips = addresses(local, reach.loopback);
                             open(&mut ports, &ips, &reach, &arrived).await;
                             ask(&mut ports, &mut asking, &mut servers, &ice);
-                            let config = RtcConfig::new().clear_codecs().enable_h264(true);
+                            // str0m refuses a write past its own bound, 128 KB at first, so it is set past the link's,
+                            // with room for the probe's channels
+                            let config = RtcConfig::new().clear_codecs().enable_h264(true).set_sctp_max_buffered_amount(LINK_BUFFERED + (256 << 10));
                             answer(&ports, &ips, config, &sdp).map(|(rtc, sdp)| {
                                 info!("screen {session} opens its WebRTC connection");
-                                let mut p = Peer { session, rtc, wake: Instant::now(), connected: false, videos: Vec::new() };
+                                let mut p = Peer { session, rtc, wake: Instant::now(), connected: false, videos: Vec::new(), link: None, probes: Vec::new() };
                                 p.take(videos);
                                 peers.push(p);
                                 sdp
@@ -224,6 +273,7 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                     let _ = p.rtc.handle_input(Input::Timeout(now));
                 }
             }
+            _ = kick.notified() => {}
             Some(Frame { alias, keyframe, pts, data, at }) = frames.recv() => {
                 let late = at.elapsed() > FRAME_LATE;
                 let data: Arc<[u8]> = Arc::from(&data[..]);
@@ -233,7 +283,10 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
             }
         }
         for p in &mut peers {
-            drive(p, &ports, &said).await;
+            drive(p, &ports, &said, &kick).await;
+            if send_link(p) {
+                drive(p, &ports, &said, &kick).await;
+            }
         }
         close(&mut peers, &said, |p| !p.rtc.is_alive());
     }
@@ -242,6 +295,9 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
 /// Drops the connections `gone` picks, telling the loop each screen lost its connection.
 fn close(peers: &mut Vec<Peer>, said: &UnboundedSender<FromRtc>, gone: impl Fn(&Peer) -> bool) {
     for p in peers.iter().filter(|p| gone(p)) {
+        if p.link.is_some() {
+            let _ = said.send(FromRtc::ChannelClosed { session: p.session });
+        }
         let _ = said.send(FromRtc::Linked { session: p.session, open: false });
     }
     peers.retain(|p| !gone(p));
@@ -395,7 +451,7 @@ async fn bind(ip: IpAddr, ports: Option<RangeInclusive<u16>>, arrived: Unbounded
 
 /// Sends what the connection has to send, hands on what it took, and learns when it next
 /// needs a turn.
-async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSender<FromRtc>) {
+async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSender<FromRtc>, kick: &Arc<Notify>) {
     loop {
         match p.rtc.poll_output() {
             Ok(Output::Timeout(t)) => {
@@ -417,6 +473,37 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
                     info!("screen {} has its WebRTC connection", p.session);
                     let _ = said.send(FromRtc::Linked { session: p.session, open: true });
                 }
+                Event::ChannelOpen(id, label) if label == LINK => {
+                    let lanes = Arc::new(Lanes::default());
+                    tokio::spawn(wake_on(lanes.clone(), kick.clone()));
+                    p.link = Some(Link { id, lanes: lanes.clone(), flight: Flight::default(), born: Instant::now(), held: None });
+                    info!("screen {} opened its link channel", p.session);
+                    let _ = said.send(FromRtc::Channel { session: p.session, lanes });
+                }
+                Event::ChannelOpen(id, label) if label.starts_with("probe") => p.probes.push(id),
+                Event::ChannelData(d) if d.data.first() == Some(&MARK_BACK) && p.link.as_ref().is_some_and(|l| l.id == d.id) => {
+                    if let Some(link) = &mut p.link {
+                        let now = link.now();
+                        link.flight.pong(&d.data[1..], now);
+                    }
+                }
+                Event::ChannelData(d) if p.link.as_ref().is_some_and(|l| l.id == d.id) => match ciborium::from_reader::<ClientMsg, _>(&d.data[..]) {
+                    Ok(msg) => {
+                        let _ = said.send(FromRtc::Message { session: p.session, msg });
+                    }
+                    Err(e) => warn!("screen {} sent on its link channel what this backend cannot read: {e}", p.session),
+                },
+                // the page's probe (probe.rs) times this way by its echo
+                Event::ChannelData(d) if p.probes.contains(&d.id) => {
+                    if let Some(mut ch) = p.rtc.channel(d.id) {
+                        let _ = ch.write(d.binary, &d.data);
+                    }
+                }
+                Event::ChannelClose(id) if p.link.as_ref().is_some_and(|l| l.id == id) => {
+                    p.link = None;
+                    info!("screen {} closed its link channel", p.session);
+                    let _ = said.send(FromRtc::ChannelClosed { session: p.session });
+                }
                 _ => {}
             },
             Err(e) => {
@@ -426,6 +513,52 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
             }
         }
     }
+}
+
+/// Writes what the link's lanes have while the channel holds less than LINK_BUFFERED unsent,
+/// true when it wrote any. Lanes the loop closed close the channel.
+fn send_link(p: &mut Peer) -> bool {
+    let Some(link) = &p.link else { return false };
+    if link.lanes.closed() {
+        let id = link.id;
+        p.rtc.direct_api().close_data_channel(id);
+        p.link = None;
+        return true;
+    }
+    let Some(link) = &mut p.link else { return false };
+    let Some(mut ch) = p.rtc.channel(link.id) else { return false };
+    let mut wrote = false;
+    while ch.buffered_amount() < LINK_BUFFERED {
+        let now = link.now();
+        // a piece went since the last mark, so a mark at once, whose echo says it arrived
+        let piece = if let Some(piece) = link.held.take() {
+            piece
+        } else if link.flight.ask() {
+            let mut mark = MARK.to_le_bytes().to_vec();
+            mark.extend_from_slice(&link.flight.ping(now));
+            mark.into()
+        } else {
+            let Some(piece) = link.lanes.take(link.flight.room()) else { break };
+            link.flight.wrote(piece.len());
+            piece
+        };
+        if !matches!(ch.write(true, &piece), Ok(true)) {
+            debug!("the link channel of screen {} took no piece yet", p.session);
+            link.held = Some(piece);
+            break;
+        }
+        wrote = true;
+    }
+    wrote
+}
+
+/// Kicks the task each time `lanes` have something new, until they close.
+async fn wake_on(lanes: Arc<Lanes>, kick: Arc<Notify>) {
+    while !lanes.closed() {
+        lanes.ready().await;
+        kick.notify_one();
+    }
+    kick.notify_one();
 }
 
 /// Writes a frame of an import's video to the screen, where it plays it. A late one is left
