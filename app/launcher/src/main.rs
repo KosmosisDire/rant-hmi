@@ -58,6 +58,16 @@ fn run() -> Result<ExitCode, String> {
     if let Some(trust) = &settings.trust {
         window.arg(format!("--trust={trust}"));
     }
+    // Chromium ends at start where it cannot sandbox, so the window goes without it there
+    #[cfg(target_os = "linux")]
+    if !sandboxed() {
+        window.arg("--no-sandbox");
+    }
+    // Chromium takes Wayland only in a session that says it is one, never a lone compositor as a kiosk runs
+    #[cfg(target_os = "linux")]
+    if env::var_os("WAYLAND_DISPLAY").is_some() && env::var_os("DISPLAY").is_none() {
+        window.arg("--ozone-platform=wayland");
+    }
     // what the app was started with goes on to the window, after what it was built with
     window.args(env::args_os().skip(1));
     // Electron runs as plain Node where this is set, as a VS Code extension's children inherit it
@@ -78,4 +88,33 @@ fn say(why: &str) {
 #[cfg(not(windows))]
 fn say(why: &str) {
     eprintln!("{why}");
+}
+
+/// Whether Chromium's sandbox can run here: a child maps this user into a user namespace, as the
+/// sandbox does. Ubuntu 24.04 and later make the namespace but deny the map to unknown programs.
+#[cfg(target_os = "linux")]
+fn sandboxed() -> bool {
+    let map = format!("0 {} 1", unsafe { libc::getuid() });
+    let write = |path: &std::ffi::CStr, text: &[u8]| unsafe {
+        let fd = libc::open(path.as_ptr(), libc::O_WRONLY);
+        let wrote = fd >= 0 && libc::write(fd, text.as_ptr().cast(), text.len()) == text.len() as isize;
+        if fd >= 0 {
+            libc::close(fd);
+        }
+        wrote
+    };
+    // SAFETY: the launcher has one thread here, and the child makes only system calls before it exits
+    unsafe {
+        match libc::fork() {
+            -1 => false,
+            0 => {
+                let made = libc::unshare(libc::CLONE_NEWUSER) == 0 && write(c"/proc/self/setgroups", b"deny") && write(c"/proc/self/uid_map", map.as_bytes());
+                libc::_exit(if made { 0 } else { 1 })
+            }
+            child => {
+                let mut status = 0;
+                libc::waitpid(child, &mut status, 0) == child && libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0
+            }
+        }
+    }
 }

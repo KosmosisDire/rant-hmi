@@ -1,5 +1,6 @@
 # Builds and tests the HMI on every platform it ships for, and packs the archive rant install
-# unpacks. A pushed tag v<version> also cuts a GitHub Release with the archives.
+# unpacks and the runtime a server builds apps from. A pushed tag v<version> also cuts a GitHub
+# Release with them.
 name: ci
 
 on:
@@ -37,7 +38,7 @@ jobs:
           path: client/dist
 
   # Linux builds in the manylinux_2_28 containers, as Rant's wheels do, so the backend runs on
-  # any glibc since 2.28.
+  # any glibc since 2.28. Each platform an app runs on builds its runtime too.
   build:
     name: build ${{ matrix.platform }}
     needs: client
@@ -47,9 +48,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,    platform: linux-x64,   container: 'quay.io/pypa/manylinux_2_28_x86_64' }
-          - { os: ubuntu-24.04-arm, platform: linux-arm64, container: 'quay.io/pypa/manylinux_2_28_aarch64' }
-          - { os: windows-latest,   platform: win-x64 }
+          - { os: ubuntu-latest,    platform: linux-x64,   container: 'quay.io/pypa/manylinux_2_28_x86_64', runtime: true }
+          - { os: ubuntu-24.04-arm, platform: linux-arm64, container: 'quay.io/pypa/manylinux_2_28_aarch64', runtime: true }
+          - { os: windows-latest,   platform: win-x64, runtime: true }
           - { os: macos-15,         platform: osx-arm64 }
     steps:
       - uses: actions/checkout@v7
@@ -63,14 +64,28 @@ jobs:
         with:
           components: clippy
 
+      # the addon builds for the MSVC target, so all of Windows does, and the runtime reuses the build
+      - name: One target on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "CARGO_BUILD_TARGET=x86_64-pc-windows-msvc" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+
       - name: Lint
         run: cargo clippy --locked --release --all-targets -- -D warnings
+
+      - name: Lint the app's parts
+        if: matrix.runtime
+        run: cargo clippy --locked --release -p rant-hmi-addon -p rant-hmi-launcher -- -D warnings
 
       - name: Test
         run: cargo test --locked --release
 
       - name: Build
-        run: cargo build --locked --release --bins
+        run: cargo build --locked --release --bins --examples
 
       - uses: actions/download-artifact@v8
         with:
@@ -81,10 +96,43 @@ jobs:
         shell: bash
         run: sh ci/archive.sh ${{ matrix.platform }}
 
+      - uses: actions/setup-node@v5
+        if: matrix.runtime
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Runtime for apps
+        if: matrix.runtime
+        shell: bash
+        working-directory: app
+        run: |
+          npm ci
+          node runtime.mjs --built-client
+          cp ../target/app/rant-hmi-runtime-*.tar.gz ../out/
+
       - uses: actions/upload-artifact@v7
         with:
           name: rant-hmi-${{ matrix.platform }}
           path: out/*
+
+      # what the app checks start, from this build, so they build nothing
+      - name: What the app checks start
+        if: matrix.runtime
+        shell: bash
+        run: |
+          built=target/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}release
+          exe=$([ "$RUNNER_OS" = Windows ] && echo .exe || true)
+          mkdir -p checks/examples
+          cp "$built/rant-hmi$exe" checks/
+          cp "$built/examples/demo$exe" "$built/examples/cage$exe" checks/examples/
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.runtime
+        with:
+          name: checks-${{ matrix.platform }}
+          path: checks
 
   # The Linux backend must start on the oldest and newest distributions people run.
   check-linux:
@@ -99,7 +147,7 @@ jobs:
       - name: The archive holds the package
         run: |
           mkdir pkg
-          tar -xzf out/rant-hmi-*-linux-x64.tar.gz -C pkg
+          tar -xzf out/rant-hmi-[0-9]*-linux-x64.tar.gz -C pkg
           test -f pkg/package.rant && test -f pkg/Hmi.run && test -f pkg/client/index.html
 
       - name: It starts everywhere
@@ -109,9 +157,96 @@ jobs:
             docker run --rm -v "$PWD/pkg:/p" "$image" /p/bin/rant-hmi --version
           done
 
+  # Each platform's app from the runtime the release attaches, downloaded from the editor, started
+  # as a person starts it and driven, on Windows and on Linux under Xvfb.
+  check-apps:
+    name: check apps ${{ matrix.platform }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    env:
+      # the release build, and the addon the runtime carries for the window run from source
+      HMI_BUILD: ${{ github.workspace }}/checks
+      HMI_ADDON: ${{ github.workspace }}/checks/resources/app/rant-hmi.node
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    platform: linux-x64 }
+          - { os: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { os: windows-latest,   platform: win-x64 }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            app/package-lock.json
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: client
+          path: client/dist
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: rant-hmi-${{ matrix.platform }}
+          path: out
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: checks-${{ matrix.platform }}
+          path: checks
+
+      # an artifact keeps no file modes, so the programs are marked as programs again
+      - name: The runtime the release attaches
+        shell: bash
+        run: |
+          mkdir -p target/app/${{ matrix.platform }}
+          tar -xzf out/rant-hmi-runtime-*-${{ matrix.platform }}.tar.gz -C target/app/${{ matrix.platform }}
+          tar -xzf target/app/${{ matrix.platform }}/runtime.tar.gz -C checks resources/app/rant-hmi.node
+          chmod +x checks/rant-hmi* checks/examples/*
+
+      - name: What the scenarios drive
+        shell: bash
+        run: |
+          (cd client && npm ci)
+          (cd app && npm ci)
+
+      - name: A display, and what Electron needs on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 libxss1 libxtst6 libnotify4
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+
+      # Google Chrome has no build for Linux on ARM, so the editor is driven in Playwright's Chromium there
+      - name: A browser on Linux on ARM
+        if: matrix.platform == 'linux-arm64'
+        working-directory: client
+        run: |
+          npx playwright-core install --with-deps chromium
+          echo "HMI_BROWSER=$(node -e 'import("playwright-core").then((p) => console.log(p.chromium.executablePath()))')" >> "$GITHUB_ENV"
+
+      - name: An app downloaded from the editor
+        shell: bash
+        working-directory: client
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a' || '' }} node tests/run.mjs app-export --workers 1
+
+      # Ubuntu 24.04 denies the sandbox to programs with no profile. The launcher checks for that and
+      # Electron run from source does not, so the window from source runs with that rule off.
+      - name: The window run from source
+        shell: bash
+        working-directory: client
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true; fi
+          ${{ runner.os == 'Linux' && 'xvfb-run -a' || '' }} node tests/run.mjs app-window --workers 1
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, check-linux]
+    needs: [build, check-linux, check-apps]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8

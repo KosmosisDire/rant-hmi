@@ -36,6 +36,10 @@ struct Args {
     /// The certificate's private key, as PEM.
     #[arg(long, requires = "cert")]
     key: Option<PathBuf>,
+    /// Where the runtimes apps are built from are fetched: a mirror of the files the HMI's release
+    /// attaches, for a site with no way to GitHub. The release itself by default.
+    #[arg(long)]
+    runtimes_from: Option<String>,
 }
 
 /// A range of ports, or none.
@@ -71,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
                 (Some(cert), Some(key)) => Some(Certificate::Given { cert, key }),
                 _ => rant_hmi::kept().map(Certificate::Own),
             },
+            runtimes_from: a.runtimes_from,
         }),
     })
     .await?;

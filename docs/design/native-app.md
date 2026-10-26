@@ -97,8 +97,10 @@ seams, which all stay. Only the window shell changes.
 
 ### Wayland and X11
 
-Since Electron 38 Chromium picks Wayland in a Wayland session and X11 elsewhere, as Steam's Game
-Mode, KDE and GNOME each offer. `--ozone-platform=x11` stays a way out.
+Since Electron 38 Chromium picks Wayland in a session that says it is one (`XDG_SESSION_TYPE`),
+as GNOME and KDE do, and X11 elsewhere, as Steam's Game Mode offers. A compositor alone, as a
+kiosk or a panel runs one, says no session, and Chromium then looks only for X11 and ends. So
+the launcher names Wayland where it is the only display. `--ozone-platform=x11` stays a way out.
 
 On Linux Chromium's sandbox needs unprivileged user namespaces. Ubuntu 24.04 and later restrict
 them for programs without an AppArmor profile, and Electron apps then fail at start. The app
@@ -171,12 +173,14 @@ Chosen: a launcher with archives appended.
 ### Where runtimes come from
 
 - A server builds apps from `~/.rant/hmi/runtimes/<version>/<platform>/`: `launcher[.exe]`,
-  `runtime.tar.gz` and `runtime.id`, for `windows-x64`, `linux-x64`, `linux-arm64` and
-  `macos-arm64`.
+  `runtime.tar.gz` and `runtime.id`, for `win-x64`, `linux-x64`, `linux-arm64` and
+  `osx-arm64`.
 - `npm run runtime` in `app` builds this host's and puts it there (built, slice 4).
-- Each release will attach every platform's, and the server fetch the one a build needs from
-  its own version's release the first time it is asked (slice 7). An offline server takes the
-  files copied there by hand.
+- Each release attaches every platform's as `rant-hmi-runtime-<version>-<platform>.tar.gz`,
+  those three files archived, and the server fetches the one a build needs from its own
+  version's release the first time it is asked (slice 7). An offline server takes the file by
+  hand, put in the runtimes folder as it is.
+- Platforms take the names the release's archives have, as `rant install` reads them.
 
 ## Part 4: built from the editor
 
@@ -201,10 +205,37 @@ Chosen: a launcher with archives appended.
 5. Built from the editor: the `/app` route, the runtime cache, the sheet, the domain and the
    certificate written in. Built.
 6. Linux: runtimes for x64 and arm64, run under Wayland and X11 (WSLg offers both here), the
-   sandbox check. Then on a Steam Deck, in the desktop and in Game Mode.
+   sandbox check. Then on a Steam Deck, in the desktop and in Game Mode. Built for x64, arm64
+   comes with CI.
 7. Release: CI builds every runtime and attaches them, the server fetches by its version, docs
-   and the agent skill.
-8. macOS: the app bundle and its ad hoc signature.
+   and the agent skill. Built.
+8. macOS: the app bundle and its ad hoc signature. Later, as its own item.
+
+## Runtimes for released servers
+
+Item 31, the user's ask of 2026-10-24: a released server on Ubuntu offered no app for any
+platform, its sheet saying it had no runtime, since only `npm run runtime` in a checkout makes
+one, and only for its own host. The parts:
+
+1. Where a server gets each platform's runtime. A Linux server builds a Windows app for a panel
+   PC too, so it needs runtimes it cannot build.
+2. Who builds them. Only a host of that platform can: the addon and launcher are native code,
+   and Electron comes per platform. So CI builds them, one runner each.
+3. Linux had never run: the sandbox check, Wayland and X11, arm64.
+4. macOS needs an app bundle signed after the project goes in.
+
+| Where runtimes come from | For | Against |
+| --- | --- | --- |
+| The release attaches each, the server fetches one on first use | The package stays 8 MB, only what is used is fetched, any server builds any platform | The first build of each platform downloads 166 MB, an offline server takes the file by hand |
+| Every package carries all | Offline | `rant install hmi` grows to about 520 MB, headless servers too |
+| Each package carries its own | Offline | About 180 MB, and a Linux server builds no Windows app |
+| The server assembles Electron's own release with a small part of ours | Release files about 20 MB | It repacks Electron, more code and a second source to pin |
+| Built on demand | | A compiler and every target's tools on the server |
+
+Chosen by the user, 2026-10-24: fetched from the release, platforms named as the release names
+them (`win-x64`, `linux-x64`, `linux-arm64`, `osx-arm64`), macOS later. The steps: Linux runs
+(slice 6), CI builds and attaches every runtime, the server fetches its version's, docs and the
+skill, then a release when the user says.
 
 ## Open questions for the user
 
@@ -360,3 +391,98 @@ Choices worth a second look:
 - Unpacked apps stay in `~/.rant/hmi/unpacked` for good. Nothing yet clears old ones.
 - The project in an app is a snapshot. An app does not update itself.
 - The unpacked project is where the app's HMI keeps its state, so a new download starts afresh.
+
+### Slice 6, Linux
+
+- The launcher on Linux, before it starts the window:
+  - checks the sandbox: a child it forks makes a user namespace and maps this user into it, as
+    Chromium's sandbox does. Where that fails the window gets `--no-sandbox`. Ubuntu 24.04 and
+    later make the namespace but deny the map to a program with no AppArmor profile, and older
+    switches (Debian's `unprivileged_userns_clone`, `max_user_namespaces` 0) deny the namespace.
+  - names Wayland, `--ozone-platform=wayland`, where `WAYLAND_DISPLAY` is set and `DISPLAY` is
+    not. Before this, Wayland alone under WSLg ended at start with "Missing X server or $DISPLAY".
+- The window closes on SIGTERM as on Ctrl C, as a session ending on Linux sends it.
+- `runtime.mjs --built-client` takes the client in `client/dist` as it is, for CI.
+- The app scenarios run on Linux. The harness closes a window with SIGTERM where Windows has
+  taskkill, and finds a downloaded app's window through `/proc`, by its program's link, since
+  Chromium writes its whole command line over its first argument. app-export takes this host's
+  platform and its label from `/app/targets`, and sets the run bit on what it downloads, as a
+  person must.
+- Tested:
+  - karbon, Ubuntu 22.04 on its X11 desktop: app-window and app-export pass. Its runtime built
+    there in about 2 minutes and is 133 MB, the Windows one 166 MB.
+  - An app built by the server ran sandboxed. Inside `unshare --user`, where a nested namespace
+    cannot map its user, as under Ubuntu 24.04's rule, it ran without the sandbox, and its
+    Electron alone there ended at start with Chromium's "The SUID sandbox helper binary was
+    found, but is not configured correctly".
+  - WSLg on Ubuntu 24.04, whose kernel has no AppArmor: a Wayland desktop's session (both
+    displays and `XDG_SESSION_TYPE=wayland`) ran on Wayland with no X11 window, an X11 desktop
+    on X11, and Wayland alone once the launcher named it.
+- Not tried: arm64, which CI builds next, a Steam Deck, Ubuntu 24.04's AppArmor rule on a real
+  machine, a desktop with no GPU.
+
+Choices worth a second look:
+
+- No sandbox where the check fails, rather than an AppArmor profile, which needs root to install.
+- Where the launcher cannot start on Linux it says why on stderr only, which a start from a file
+  manager never shows.
+
+### Slice 7, runtimes in each release
+
+- `rant-hmi-pack <folder> <file>` archives a folder as apps carry one and prints its id.
+  `runtime.mjs` archives the runtime with it, then the platform's folder (the launcher,
+  `runtime.tar.gz` and `runtime.id`) as the file a release attaches, so a checkout makes the
+  same file CI does. The runtime inside is gzipped twice, which costs a few seconds and keeps one
+  archive format for every part.
+- CI's build job builds the runtime on `win-x64`, `linux-x64` and `linux-arm64` after the
+  package, Linux in the manylinux_2_28 containers, and lints the addon and the launcher there.
+  macOS waits for slice 8.
+- A new job, check-apps, takes each platform's file as the release will carry it, unpacks it as
+  a server would, and runs app-export, then app-window, on Windows and on Linux under Xvfb. Linux
+  on ARM drives the editor in Playwright's Chromium, named by `HMI_BROWSER`, since Chrome has no
+  build there. The release waits for it.
+- GitHub's Ubuntu 24.04 runners keep `apparmor_restrict_unprivileged_userns` at 1, so
+  app-export proves the launcher's sandbox check on x64 and arm64. Electron run from source has
+  no such check, so app-window runs with the rule off.
+- `release.py` checks that each release carries what it must: the HMI's four package archives
+  and three runtimes, Rant's TypeScript package.
+- CI shares one build per platform. Windows builds everything for the MSVC target the addon
+  needs, so the runtime reuses the build. check-apps runs the build job's release programs and
+  the addon the runtime carries, building nothing. Swatinem's rust-cache keeps each platform's
+  dependencies between runs. A run took 29 minutes before, 13 with the cache empty, and 7.8
+  with it filled: the Windows build 16.5, 10.6, then 5.4, its app check 12.5 then 2.
+
+The server gets a platform's runtime the first time an app for it is asked for:
+
+- `/app/targets` says of each platform whether its runtime is `here`, on the `release`, or
+  `none` (macOS, until slice 8). The release's file put in the runtimes folder by hand counts as
+  here.
+- `POST /app/<platform>/runtime` gets it, answering a line of JSON as it goes: fetching, with
+  the bytes got and of, unpacking, then done or failed. Asks at the same time share one fetch.
+  `GET /app/<platform>` gets the runtime first too, for a client with no sheet.
+- The file lands as `<file>.part`, renamed when whole. It unpacks into a folder beside the
+  platform's, which takes the name only once `runtime.tar.gz` is the one `runtime.id` names. A
+  fetched file then goes either way, and one put there by hand stays until it unpacks.
+- reqwest 0.13, on the rustls and aws-lc-rs the server has, with the system's certificates and
+  proxies. 15 s to connect, 60 s with no data.
+- A failure says the address, why, and which file to put in which folder by hand.
+- `--runtimes-from <url>` names a mirror of the release's files, for a site with no way to
+  GitHub, and for the tests.
+- The sheet: Download on a platform whose runtime is on the release has the server get it first,
+  under a bar and "Getting the Windows runtime: 45 of 166 MB.", then downloads the app as
+  before. A failure shows the server's message. Closing the sheet or picking another platform
+  meanwhile leaves the app undownloaded.
+- Tested:
+  - cargo tests with a release on loopback: one fetch for two asks, a damaged runtime refused
+    leaving nothing, a missing file saying where to put it, then that file put there by hand.
+  - Scenario app-fetch: a slow release on loopback, the bar, the app built from what came, a
+    second app fetching nothing, and the error for a platform the release lacks.
+  - A real asset fetched from GitHub through its redirect, checked against Windows' roots.
+
+Choices worth a second look:
+
+- Downloading an app fetches its runtime when needed, rather than refusing until asked ahead.
+- A failed fetch is not remembered, so each ask tries again.
+
+The docs' As an app section says where runtimes come from, how to take one by hand, and how to
+get an app with curl. The agent skill's HMI section has the same in a row and a line.

@@ -61,6 +61,8 @@ pub struct Web {
     pub port: u16,
     /// What https serves with, else it serves http only.
     pub certificate: Option<tls::Certificate>,
+    /// Where the runtimes apps are built from are fetched, else this version's release.
+    pub runtimes_from: Option<String>,
 }
 
 pub use rant_hmi_pack::kept;
@@ -99,7 +101,8 @@ impl Hmi {
         let (hashes, wt) = unbounded_channel();
         if let Some(web) = o.web {
             let runtimes = kept().map(|kept| kept.join("runtimes").join(env!("CARGO_PKG_VERSION"))).unwrap_or_default();
-            let apps = Apps { project: o.project.clone(), runtimes, domain: o.domain, loopback: o.loopback, trust: None };
+            let from = web.runtimes_from.clone().unwrap_or_else(apps::release);
+            let apps = Apps { project: o.project.clone(), runtimes, from, domain: o.domain, loopback: o.loopback, trust: None, getting: Default::default() };
             serve(web, &project.info.name, o.client, door.clone(), apps, hashes).await?;
         }
         let (said, script) = unbounded_channel();

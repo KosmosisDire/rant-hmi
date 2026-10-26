@@ -2,16 +2,16 @@
 // own loopback domain and port, with a fresh copy of the test project, and a headless Chrome to
 // drive.
 
-import { execFile, execFileSync, spawn } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { cp } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { cp, readdir, readFile, readlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron, chromium } from "playwright-core";
-import { built, platform, program } from "../../app/addon.mjs";
+import { built, platform, program, version } from "../../app/addon.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(here, "..", "..");
@@ -19,7 +19,7 @@ const exe = process.platform === "win32" ? ".exe" : "";
 
 /** The build the scenarios run, and the client it serves. HMI_BUILD and HMI_CLIENT name others,
  *  so they can run while a backend from target/debug is open, serving client/dist. */
-const BUILD = resolve(process.env.HMI_BUILD ?? join(ROOT, "target", "debug"));
+export const BUILD = resolve(process.env.HMI_BUILD ?? join(ROOT, "target", "debug"));
 const CLIENT = resolve(process.env.HMI_CLIENT ?? join(ROOT, "client", "dist"));
 
 /** rant-transcoder, which makes the H264 a video plays, as its crate builds it in the RANT folder
@@ -75,13 +75,14 @@ export async function startSystem({ empty, slot = 0 } = {}) {
   // a home of its own, where the backend keeps its certificate, never the user's
   const home = join(temp, "home");
   const url = `http://127.0.0.1:${portOf(slot)}`;
-  const launch = async () => {
+  const launch = async (more = []) => {
     const backend = run(join(BUILD, `rant-hmi${exe}`), [
       project,
       "--port", String(portOf(slot)),
       "--domain", domain,
       "--loopback",
       "--client", CLIENT,
+      ...more,
     ], { HOME: home, USERPROFILE: home });
     const start = Date.now();
     for (;;) {
@@ -102,13 +103,14 @@ export async function startSystem({ empty, slot = 0 } = {}) {
     home,
     backend: await launch(),
     transcoder: video,
-    /** Ends the backend and starts it again on the same project, as a restarted HMI. */
-    async restart() {
+    /** Ends the backend and starts it again on the same project, as a restarted HMI, with the
+     *  flags `more` too. */
+    async restart(more = []) {
       const was = this.backend;
       const ended = new Promise((r) => was.once("exit", r));
       was.kill();
       await ended;
-      this.backend = await launch();
+      this.backend = await launch(more);
     },
     stop() {
       this.backend.kill();
@@ -166,9 +168,8 @@ export async function driveApp(what, { home, domain = null, more = [], cwd = ROO
       line?.kill();
       return ended;
     },
-    stop() {
-      // Playwright starts Electron through cmd.exe here, so only ending that tree ends the app
-      if (child.exitCode === null) execFileSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" });
+    async stop() {
+      if (child.exitCode === null) await end(child.pid);
       line?.kill();
     },
   };
@@ -193,7 +194,7 @@ export async function openApp(project, { home, domain }) {
     /** Closes the window as a person does, true once the app ended by itself. */
     async close() {
       const ended = exited(app);
-      execFileSync("taskkill", ["/PID", String(app.pid)], { stdio: "ignore" });
+      await close(app.pid);
       line.kill();
       return ended;
     },
@@ -207,12 +208,41 @@ export async function openApp(project, { home, domain }) {
 /** A program run to its end without blocking, as the runner standing still stalls every worker. */
 const run$ = promisify(execFile);
 
+/** Asks the program `pid` to close its window as a person does: taskkill without /F sends that on
+ *  Windows. Elsewhere SIGTERM, as a session ending sends, which the window takes as its close. */
+async function close(pid) {
+  if (process.platform === "win32") await run$("taskkill", ["/PID", String(pid)]);
+  else process.kill(pid, "SIGTERM");
+}
+
+/** Ends the program `pid` at once. On Windows Playwright starts Electron through cmd.exe, so the
+ *  whole tree goes. Elsewhere Chromium's helpers end with their window. */
+async function end(pid) {
+  if (process.platform === "win32") await run$("taskkill", ["/F", "/T", "/PID", String(pid)]);
+  else process.kill(pid, "SIGKILL");
+}
+
+/** The Electron windows started from under `home`, leaving out Chromium's helpers, which say their `--type=`.
+ *  On Linux Chromium writes its command line over its first argument, so the program is read from its link. */
+async function windowsIn(home) {
+  if (process.platform === "win32") {
+    const find = `Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | Where-Object { $_.CommandLine -like '*${home}*' -and $_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.ProcessId }`;
+    return (await run$("powershell", ["-NoProfile", "-Command", find])).stdout.split(/\s+/).filter(Boolean).map(Number);
+  }
+  const found = [];
+  for (const pid of (await readdir("/proc")).filter((d) => /^\d+$/.test(d))) {
+    const program = await readlink(`/proc/${pid}/exe`).catch(() => "");
+    if (basename(program) !== "electron" || !program.startsWith(home)) continue;
+    if (!(await readFile(`/proc/${pid}/cmdline`, "utf8").catch(() => "")).includes("--type=")) found.push(Number(pid));
+  }
+  return found;
+}
+
 /** This host's runtime for apps, which `npm run runtime` in app builds, put where the server
  *  keeping its files in `home` builds apps from. */
 export async function giveRuntime(home) {
   const from = join(ROOT, "target", "app", platform);
   if (!existsSync(join(from, "runtime.id"))) throw new Error(`no ${platform} runtime for apps: run npm run runtime in app`);
-  const version = /^version = "(.+)"/m.exec(readFileSync(join(ROOT, "server", "Cargo.toml"), "utf8"))[1];
   // copied without blocking, as the runner standing still stalls every worker
   await cp(from, join(home, ".rant", "hmi", "runtimes", version, platform), { recursive: true });
 }
@@ -221,21 +251,24 @@ export async function giveRuntime(home) {
  *  Its window is Electron's, from the runtime it unpacks there, a child of the app. */
 export function startDownloaded(file, home) {
   const app = run(file, [], { HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: undefined }, { shown: true });
-  const find = `Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | Where-Object { $_.CommandLine -like '*${home}*' -and $_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.ProcessId }`;
-  const windows = async () => (await run$("powershell", ["-NoProfile", "-Command", find])).stdout.split(/\s+/).filter(Boolean);
   return {
     app,
     /** Closes its window as a person does, true once the app ended by itself. */
     async close() {
       const ended = exited(app);
-      const found = await windows();
-      for (const pid of found) await run$("taskkill", ["/PID", pid]);
+      const found = await windowsIn(home);
+      for (const pid of found) await close(pid);
       return found.length > 0 && (await ended);
     },
     /** Ends the app and its window, which outlives the app when only the app is ended. */
     async stop() {
-      if (app.exitCode === null) await run$("taskkill", ["/F", "/T", "/PID", String(app.pid)]).catch(() => {});
-      for (const pid of await windows()) await run$("taskkill", ["/F", "/T", "/PID", pid]).catch(() => {});
+      for (const pid of [app.exitCode === null ? app.pid : null, ...(await windowsIn(home))]) {
+        try {
+          if (pid !== null) await end(pid);
+        } catch {
+          // ended already
+        }
+      }
     },
   };
 }
@@ -249,6 +282,9 @@ function exited(child) {
   });
 }
 
+/** The headless Chrome the scenarios drive, or the Chromium HMI_BROWSER names where Chrome has no
+ *  build, as Linux on ARM. */
 export function startBrowser() {
-  return chromium.launch({ channel: "chrome", headless: true });
+  const named = process.env.HMI_BROWSER;
+  return chromium.launch(named ? { executablePath: named, headless: true } : { channel: "chrome", headless: true });
 }

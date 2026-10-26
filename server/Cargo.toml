@@ -26,6 +26,8 @@ if-addrs = "0.15"
 lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode"] }
 notify = "8"
 rant-hmi-pack = { path = "../app/pack" }
+# fetches the runtimes apps are built from out of the release, on that aws-lc-rs and through any proxy set
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "system-proxy"] }
 # the HMI's own certificate for https, on the aws-lc-rs WebRTC already builds
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 rquickjs = "=0.14.0"

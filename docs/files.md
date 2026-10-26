@@ -129,7 +129,7 @@ The download button in the editor's top bar gets the HMI as an app for a device:
 editor on the device, pick what the app does, and download it. The app is one file with
 everything it needs, so nothing is installed first.
 
-- **Platform**: this device's is picked. The server offers a platform once it has its runtime.
+- **Platform**: this device's is picked, of Windows, Linux and Linux on ARM. macOS comes later.
 - **Runs**: in the app, the HMI and its logic run on the device with no server, on the domain
   the server is on. On this server, the app shows the server's screen, trusting its own
   certificate.
@@ -137,6 +137,22 @@ everything it needs, so nothing is installed first.
 
 The first start unpacks the app into `~/.rant/hmi/unpacked`, which takes a few seconds, and later
 starts begin at once. An app is the HMI as it was when downloaded: download it again for a newer one.
+
+- Windows warns about an app from an unknown publisher: choose More info, then Run anyway.
+- Linux needs the file marked as a program first, with `chmod +x` or in its properties.
+- `curl -o line.exe "http://host:6739/app/win-x64?runs=device"` gets one with no editor. The
+  platforms are `win-x64`, `linux-x64` and `linux-arm64`. `runs=screen&address=http://host:6739`
+  gets one showing that screen, and `fullscreen=true` one that opens full screen.
+
+An app is built from its platform's runtime, the window it runs in. The server gets a
+platform's from the [HMI's release](https://github.com/KosmosisDire/rant-hmi/releases) of its
+own version the first time an app for it is downloaded, about 170 MB, and keeps it in
+`~/.rant/hmi/runtimes/<version>/<platform>`.
+
+- A server with no way to GitHub takes the file by hand: get
+  `rant-hmi-runtime-<version>-<platform>.tar.gz` from that release and put it in
+  `~/.rant/hmi/runtimes/<version>/` as it is.
+- `--runtimes-from <url>` fetches them from a mirror of the release's files instead.
 
 ## In a window
 

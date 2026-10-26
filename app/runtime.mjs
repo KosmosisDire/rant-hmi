@@ -1,13 +1,14 @@
 // Builds this host's runtime for apps: Electron with the window, the backend addon and the client inside, archived
-// beside the launcher that unpacks it, into target/app/<platform>. It goes where this host's HMI server builds apps
-// from too, ~/.rant/hmi/runtimes/<version>/<platform>, so the editor offers this platform.
+// beside the launcher that unpacks it, into target/app/<platform>, and that folder archived as a release attaches it.
+// It goes where this host's HMI server builds apps from too, ~/.rant/hmi/runtimes/<version>/<platform>, so the
+// editor offers this platform.
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { built, builtIn, cargoArgs, platform, program } from "./addon.mjs";
+import { built, builtIn, cargoArgs, pack, platform, program, version } from "./addon.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -19,7 +20,8 @@ const release = builtIn(target, "release");
 /** Runs a command with its output shown. npm is a script on Windows, which only a shell runs. */
 const run = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: "inherit", shell: process.platform === "win32" && command === "npm" });
 
-run("npm", ["run", "build"], join(root, "client"));
+// --built-client takes the client already in client/dist, as CI builds it once for every platform
+if (!process.argv.includes("--built-client")) run("npm", ["run", "build"], join(root, "client"));
 run("cargo", cargoArgs("release", ["rant-hmi-addon", "rant-hmi-launcher", "rant-hmi-pack"]), root);
 
 // Electron as it ships, the window in resources/app and the client beside it, where the window looks for it
@@ -32,12 +34,16 @@ for (const file of ["main.mjs", "preload.cjs", "package.json", "icon.ico", "icon
 copyFileSync(built(target, "release"), join(app, "rant-hmi.node"));
 cpSync(join(root, "client", "dist"), join(stage, "resources", "client", "dist"), { recursive: true });
 
-run(join(release, program("rant-hmi-pack")), [stage, out], root);
+writeFileSync(join(out, "runtime.id"), pack(release, stage, join(out, "runtime.tar.gz")));
 copyFileSync(join(release, program("rant-hmi-app")), join(out, program("launcher")));
 rmSync(stage, { recursive: true, force: true });
 
+// what a release attaches for this platform, which a server unpacks where it builds apps from
+const attached = join(target, "app", `rant-hmi-runtime-${version}-${platform}.tar.gz`);
+pack(release, out, attached);
+console.log(`a release attaches ${attached}`);
+
 // where this host's server finds it, under the version the server is, by the folder the addon says it keeps
-const version = /^version = "(.+)"/m.exec(readFileSync(join(root, "server", "Cargo.toml"), "utf8"))[1];
 const addon = { exports: {} };
 process.dlopen(addon, built(target, "release"));
 const kept = addon.exports.kept();
