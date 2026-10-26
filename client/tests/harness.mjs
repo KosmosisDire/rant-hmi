@@ -140,10 +140,10 @@ function appRunning(project, domain) {
   return { line, args: [project, `--domain=${domain}`, "--loopback", `--client=${CLIENT}`] };
 }
 
-/** What the app's environment adds: the addon, unless it brings its own, and a home of its own,
- *  where the window keeps its data. Electron runs as plain Node where ELECTRON_RUN_AS_NODE is set,
- *  as a VS Code extension's children inherit it. */
-const appEnv = (home, addon = ADDON) => ({ HMI_ADDON: addon, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: undefined });
+/** What the app's environment adds: `addon`, or none for a runtime that brings its own, and a home
+ *  of its own, where the window keeps its data. Electron runs as plain Node where
+ *  ELECTRON_RUN_AS_NODE is set, as a VS Code extension's children inherit it. */
+const appEnv = (home, addon) => ({ HMI_ADDON: addon, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: undefined });
 
 /** rant-hmi-app showing `what`, a project with a demo line on `domain`, an HMI's address or null for
  *  nothing, in a window Playwright drives, started in `cwd` with `more` arguments. It runs from
@@ -151,7 +151,7 @@ const appEnv = (home, addon = ADDON) => ({ HMI_ADDON: addon, HOME: home, USERPRO
  *  checks what the app does alone. */
 export async function driveApp(what, { home, domain = null, more = [], cwd = ROOT, runtime = null }) {
   const { line, args } = domain === null ? { line: null, args: what === null ? [] : [what] } : appRunning(what, domain);
-  const from = runtime ? { executablePath: join(runtime, program("electron")), args: [...args, ...more], env: environment(appEnv(home, undefined)) } : { executablePath: electron(), args: [APP, ...args, ...more], env: environment(appEnv(home)) };
+  const from = runtime ? { executablePath: join(runtime, program("electron")), args: [...args, ...more], env: environment(appEnv(home)) } : { executablePath: electron(), args: [APP, ...args, ...more], env: environment(appEnv(home, ADDON)) };
   const app = await _electron.launch({ ...from, cwd });
   const child = app.process();
   child.log = "";
@@ -179,7 +179,7 @@ export async function driveApp(what, { home, domain = null, more = [], cwd = ROO
  *  once its screen has connected. Its log tells what the window did. */
 export async function openApp(project, { home, domain }) {
   const { line, args } = appRunning(project, domain);
-  const app = run(electron(), [APP, ...args], appEnv(home), { shown: true });
+  const app = run(electron(), [APP, ...args], appEnv(home, ADDON), { shown: true });
   const start = Date.now();
   while (!app.log.includes("screen 1 connected")) {
     if (Date.now() - start > 20000) {
