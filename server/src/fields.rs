@@ -105,6 +105,38 @@ impl Keep {
         }
     }
 
+    /// The paths that read what this keeps of a value made of `shapes`, each the steps after
+    /// the name, so a screen can tell which fields come without knowing their types.
+    pub fn paths(&self, shapes: &[Shape]) -> Vec<Vec<String>> {
+        let mut out = Vec::new();
+        self.walk(shapes, &mut Vec::new(), &mut out);
+        out
+    }
+
+    /// Adds the paths under `at` to `out`, this the tree of a struct of `members`.
+    fn walk(&self, members: &[Shape], at: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+        let Keep::Some(fields) = self else { return out.push(at.clone()) };
+        for s in members {
+            let Some(keep) = fields.get(&s.field.name) else { continue };
+            at.push(s.field.name.clone());
+            match keep {
+                // a list kept with none of its items' fields is read by its length
+                Keep::Some(items) if items.is_empty() && matches!(s.field.kind, FieldType::Array | FieldType::VArray) => {
+                    at.push("length".to_owned());
+                    out.push(at.clone());
+                    at.pop();
+                }
+                Keep::Some(_) if matches!(s.field.kind, FieldType::Array | FieldType::VArray) => {
+                    at.push(ITEM.to_owned());
+                    keep.walk(&s.members, at, out);
+                    at.pop();
+                }
+                _ => keep.walk(&s.members, at, out),
+            }
+            at.pop();
+        }
+    }
+
     /// `value` with only the fields this keeps.
     pub fn cut(&self, value: &Value) -> Value {
         let Keep::Some(fields) = self else { return value.clone() };
@@ -212,5 +244,20 @@ Scan { stamp: f64, name: string<16>, pose: Place, points: Point[], ranges: f32[]
         assert_eq!(Keep::none().shapes(&crate::mesh::codec::shapes(&node.schema("f64").unwrap())).len(), 1);
         keep.merge(Keep::All);
         assert_eq!(keep, Keep::All);
+    }
+
+    #[test]
+    fn a_keeps_paths_read_it_again() {
+        let (shapes, _) = scan();
+        let typed = |p: &[&str]| Keep::typed(&shapes, &paths(p));
+        let shown = |k: &Keep| k.paths(&shapes).iter().map(|p| p.join(".")).collect::<Vec<_>>();
+        let keep = typed(&["pose.x", "points.[].z", "name.length", "spots.length", "spots.[].at.y"]);
+        assert_eq!(shown(&keep), ["name", "pose.x", "points.[].z", "spots.[].at.y"]);
+        assert_eq!(shown(&typed(&["ranges.length", "spots.length"])), ["ranges", "spots.length"]);
+        assert_eq!(shown(&Keep::All), [""]);
+        assert!(shown(&Keep::none()).is_empty());
+        for k in [keep, typed(&["spots.length", "pose"]), Keep::All, Keep::none()] {
+            assert_eq!(Keep::typed(&shapes, &k.paths(&shapes)), k);
+        }
     }
 }

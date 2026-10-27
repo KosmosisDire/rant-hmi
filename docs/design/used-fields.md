@@ -87,10 +87,57 @@ seldom changes would wait for its next change.
 - The `fields` key goes, and so do the boxes. `rate` stays, as a trade of data against delay
   that code cannot make.
 
+## The Data tab
+
+How the Data tab shows which fields come and what reads each, two ways:
+
+- It shows each value as the HMI brings it, a field nothing reads marked so, and one picked
+  comes while picked.
+- It keeps previewing every value whole, and marks each field by whether it would come
+  without the Data tab.
+
+The user picked the first on 2026-10-27. The Data tab then shows what the HMI does, and its
+previews no longer make the backend decode every field.
+
+- The Data tab reads no field of its own, only the one it peeks at. Every value comes to it as
+  the HMI holds it, with all the fields screens and the HMI's own code read, and a value decoded
+  again when those grow comes to it too.
+- The backend tells a screen that previews, for each import, the paths that read what it
+  decodes, and each piece of its own code with the paths it reads of it. The screen finds what
+  each page reads itself, with the analysis that finds what it shows.
+- A path reads a field when one of the two holds the other: `boxes.[].min.x` reads `boxes`
+  and `boxes.[].min`, and `pose` reads `pose.x`. The screen matches fields by that alone,
+  never by their types, which stay on the backend.
+- A field that does not come says `not read`, and so does the table for an import of which
+  nothing comes. A list of records shows its items' fields under it, as the point cloud's
+  `intensity` is where most is left out.
+- A field picked says what reads it, `Read by the Overview page, the Alarm rule`, and comes
+  while picked, decoded again from the last value at once. One field at a time, let go when
+  another import is picked.
+
 ## Steps
 
 1. `reads.js`: the paths code reads, with tests run through QuickJS.
 2. The screen sends paths, the backend types them and sends each screen only those.
 3. The backend reads its own code, decodes the union, and decodes the last sample again.
    `fields` and the boxes go here, as what the backend decodes takes their place.
-4. The Data tab shows which fields come, docs.
+4. The Data tab shows which fields come and what reads each, docs.
+
+## As built
+
+On this host, a screen showing a page that reads `LabelCam.width`, against one reading all of
+LabelCam (960 by 540 JPEG frames):
+
+| Page reads | Bytes a second |
+| --- | --- |
+| Its width | 1.0 KB, mostly pings |
+| All of it | 303 KB |
+
+- `server/src/fields.rs`: the tree of what is read, typed against the import's shapes, the
+  decode shapes it keeps, and the paths that read it again for screens.
+- `client/src/lang/reads.js`: the analysis, which the backend's QuickJS loads.
+- `client/src/state/paths.ts`: what pages read, through components, repeats and media.
+- `server/src/app.rs`: what each screen and the HMI's own code read, the keep of each import,
+  and what it tells the Data tab.
+- `server/src/mesh/mod.rs`: decoding with only the kept shapes, and decoding the last sample
+  again.

@@ -5,6 +5,7 @@ import { batch, createSignal, type Signal, untrack } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import type { Way } from "../net/data.worker";
 import { packed, samePacked } from "../net/packed";
+import type { Brought } from "../protocol/Brought";
 import type { Computed } from "../protocol/Computed";
 import type { EntityInfo } from "../protocol/EntityInfo";
 import type { EnumInfo } from "../protocol/EnumInfo";
@@ -88,6 +89,9 @@ export interface State {
   session: number | null;
   /** Every screen's problems, as the backend last sent them, null until it has. */
   problems: Reported[] | null;
+  /** What the HMI brings of each import and what its own code reads of it, as the backend
+   *  tells a screen that previews values. */
+  brings: Brought[];
 }
 
 export const [state, setState] = createStore<State>({
@@ -115,6 +119,7 @@ export const [state, setState] = createStore<State>({
   notices: [],
   session: null,
   problems: null,
+  brings: [],
 });
 
 /** Loads the client the backend serves when this screen runs another, as after an update.
@@ -241,6 +246,9 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
       break;
     case "problems":
       setState("problems", msg.problems);
+      break;
+    case "brings":
+      setState("brings", reconcile(msg.imports, { key: "alias" }));
       break;
     case "open":
       push(msg.page, msg.replace, msg.ask);

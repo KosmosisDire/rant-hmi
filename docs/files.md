@@ -75,9 +75,11 @@ last function for each progress update: `await Fill(5, (p) => { filled = p })`.
 
 ## How screens get their values
 
-- A screen gets the values of only the imports and computed values its pages show, all of
-  them while the editor's Data tab previews them. The previews' big values come 250 KB a
-  second at most, so they leave the link to the screens that show them.
+- A screen gets the values of only the imports and computed values its pages show. The
+  editor's Data tab gets every one as the HMI brings it, its big values 250 KB a second at most,
+  so they leave the link to the screens that show them.
+- The Data tab says which fields of an import come and what reads each. A field picked there
+  comes while it stays picked, though nothing else reads it.
 - A screen gets only the fields its pages read of each value, and the HMI decodes only those a
   screen or its own code reads, found from the code without running it. A page that shows a
   camera's width never brings its pictures. Code that hands a value on whole, or that the HMI

@@ -28,7 +28,7 @@ use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Targe
 use crate::reads::Reads;
 use crate::rules;
 use crate::problems::Problems;
-use crate::protocol::{Base, ClientMsg, EnumInfo, Level, Reported, Sample, ServerMsg, ValueUpdate, encode, encode_plain};
+use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Reader, Reported, Sample, ServerMsg, ValueUpdate, encode, encode_plain};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{self, Client, HmiStatus};
 use crate::value::Value;
@@ -255,6 +255,11 @@ impl Big {
 }
 
 impl Session {
+    /// What it shows of `name`, the steps after it of each path, or None while it does not.
+    fn shows(&self, name: &str) -> Option<&[Vec<String>]> {
+        shown(&self.watch, self.previews.is_some(), name)
+    }
+
     /// Whether the screen is on this host, so its values go as they are, never compressed.
     fn here(&self) -> bool {
         self.remote.is_loopback()
@@ -579,6 +584,8 @@ pub struct App {
     problems_at: Instant,
     /// What the HMI's own code reads, so the mesh decodes those fields.
     reads: Reads,
+    /// What the HMI brings of each import, as screens that preview were last told.
+    brings: Vec<Brought>,
 }
 
 impl App {
@@ -627,6 +634,7 @@ impl App {
             problems: Problems::default(),
             problems_at: Instant::now(),
             reads: Reads::new(),
+            brings: Vec::new(),
         }
     }
 
@@ -681,10 +689,20 @@ impl App {
 
     /// Has the mesh decode only what is read of each import. The last value of one that now
     /// reads more is decoded again: a newer one goes as any value does, while the one held goes
-    /// only to the engine, as a screen that reads more is sent it by what changed its reads.
+    /// to the engine and to screens that preview, as a screen that reads more is sent it by what
+    /// changed its reads. Screens that preview hear what is brought once that changed.
     fn fields_changed(&mut self) {
         let own = self.own_reads();
-        let keeps: Vec<(String, Keep)> = self.project.imports.iter().filter_map(|i| Some((i.alias.clone(), self.keep_of(i, own.as_ref())?))).collect();
+        let keeps: Vec<(String, Keep)> = self.project.imports.iter().filter_map(|i| Some((i.alias.clone(), self.keep_of(i, &own)?))).collect();
+        let brings: Vec<Brought> = keeps.iter().filter_map(|(alias, keep)| Some(Brought { alias: alias.clone(), fields: keep.paths(self.mesh.shapes(alias)?), readers: readers_of(&own, alias) })).collect();
+        let previewing: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.previews.is_some()).map(|(id, _)| *id).collect();
+        if brings != self.brings {
+            self.brings = brings;
+            let msg = ServerMsg::Brings { imports: self.brings.clone() };
+            for id in &previewing {
+                self.send(*id, &msg);
+            }
+        }
         let mut held = Vec::new();
         for (alias, keep) in keeps {
             let Some(d) = self.mesh.keep(&alias, keep) else { continue };
@@ -697,6 +715,9 @@ impl App {
             }
         }
         if !held.is_empty() {
+            for id in previewing {
+                self.put_values(Some(id), held.clone());
+            }
             self.script.send(ToScript::Values(held.into_iter().map(|v| (v.alias, v.value.filter(|_| v.known))).collect()));
         }
     }
@@ -704,10 +725,13 @@ impl App {
     /// What an import's value must hold: all of it for one imported to write, which writes back
     /// what it holds, else what the HMI's own code and every screen read of it. None until it is
     /// on the mesh, as only its type says what its fields are.
-    fn keep_of(&self, import: &Import, own: Option<&HashMap<String, Vec<Vec<String>>>>) -> Option<Keep> {
+    fn keep_of(&self, import: &Import, own: &[OwnRead]) -> Option<Keep> {
         let shapes = self.mesh.shapes(&import.alias)?;
-        let (Intent::Read, Some(own)) = (import.intent, own) else { return Some(Keep::All) };
-        let mut keep = Keep::typed(shapes, own.get(&import.alias).map_or(&[], Vec::as_slice));
+        if import.intent == Intent::Write {
+            return Some(Keep::All);
+        }
+        let read: Vec<Vec<String>> = own.iter().filter(|r| r.reads(&import.alias)).map(|r| r.steps.clone()).collect();
+        let mut keep = Keep::typed(shapes, &read);
         for s in self.sessions.values() {
             if let Some(paths) = read_of(&s.watch, &import.alias) {
                 keep.merge(Keep::typed(shapes, paths));
@@ -716,38 +740,43 @@ impl App {
         Some(keep)
     }
 
-    /// What the HMI's own code reads of each name, the steps after it of each path: its rules,
-    /// its pages' handlers, the computed values and the records. None when some may read any.
-    fn own_reads(&self) -> Option<HashMap<String, Vec<Vec<String>>>> {
-        // each piece of code, whether it is a handler's body, and the name a rule's `p` changes
-        let mut code: Vec<(&str, bool, Option<&str>)> = Vec::new();
+    /// What each piece of the HMI's own code reads: its rules, its pages' handlers, the computed
+    /// values and the records.
+    fn own_reads(&self) -> Vec<OwnRead> {
+        // each piece of code, who it is, whether it is a handler's body, and the name a rule's `p` changes
+        let mut code: Vec<(String, &str, bool, Option<&str>)> = Vec::new();
         for r in &self.pages.rules {
+            let who = format!("the {} rule", r.name);
             let changes = match &r.when {
                 When::Turns { condition, .. } => {
-                    code.push((condition, false, None));
+                    code.push((who.clone(), condition, false, None));
                     None
                 }
                 When::Changes { name } => Some(name.as_str()),
                 _ => None,
             };
-            code.push((&r.code, true, changes));
+            code.push((who, &r.code, true, changes));
         }
-        let mut elements: Vec<&Element> = self.pages.list.iter().filter(|p| p.interface.is_none()).flat_map(|p| &p.children).collect();
-        while let Some(e) = elements.pop() {
-            code.extend(e.handlers.iter().map(|h| (h.code.as_str(), true, None)));
-            elements.extend(&e.children);
+        for p in self.pages.list.iter().filter(|p| p.interface.is_none()) {
+            let mut elements: Vec<&Element> = p.children.iter().collect();
+            while let Some(e) = elements.pop() {
+                code.extend(e.handlers.iter().map(|h| (format!("handlers on {}", p.name), h.code.as_str(), true, None)));
+                elements.extend(&e.children);
+            }
         }
         for c in &self.project.computed {
-            code.push((&c.get, false, None));
-            code.extend(c.set.iter().map(|s| (s.value.as_str(), false, None)));
+            let who = format!("the computed value {}", c.name);
+            code.push((who.clone(), &c.get, false, None));
+            code.extend(c.set.iter().map(|s| (who.clone(), s.value.as_str(), false, None)));
         }
-        code.extend(self.project.records.iter().map(|r| (r.source.as_str(), false, None)));
-        let mut out: HashMap<String, Vec<Vec<String>>> = HashMap::new();
-        for (src, body, changes) in code {
+        code.extend(self.project.records.iter().map(|r| (format!("the record {}", r.name), r.source.as_str(), false, None)));
+        let mut out = Vec::new();
+        for (who, src, body, changes) in code {
             // code that does not parse never runs, so it reads nothing
             let Some(found) = self.reads.of(src, body) else { continue };
             if found.all {
-                return None;
+                out.push(OwnRead { who, name: None, steps: Vec::new() });
+                continue;
             }
             for path in found.paths.iter().chain(&found.values) {
                 let (name, steps) = match (changes, path.as_slice()) {
@@ -760,10 +789,10 @@ impl App {
                     (_, [root, rest @ ..]) => (root.as_str(), rest),
                     _ => continue,
                 };
-                out.entry(name.to_owned()).or_default().push(steps.to_vec());
+                out.push(OwnRead { who: who.clone(), name: Some(name.to_owned()), steps: steps.to_vec() });
             }
         }
-        Some(out)
+        out
     }
 
     fn inbound(&mut self, i: Inbound) {
@@ -934,21 +963,23 @@ impl App {
                 });
                 let names: Vec<String> = self.watched().cloned().collect();
                 let Some(s) = self.sessions.get_mut(&session) else { return };
-                // what it reads differently from now comes at once where it still shows it
-                let changed: Vec<String> = names.into_iter().filter(|n| read_of(&s.watch, n) != read_of(&reads, n)).collect();
+                // what it shows differently from now comes at once where it still shows it
+                let changed: Vec<String> = names.into_iter().filter(|n| s.shows(n) != shown(&reads, previews, n)).collect();
+                let started = previews && s.previews.is_none();
                 s.watch = reads;
                 s.previews = previews.then(|| s.previews.unwrap_or_else(Instant::now));
-                // the screen lets go of what it no longer shows or reads otherwise, so that comes whole
-                if let Some(w) = &s.watch {
-                    s.gates.retain(|alias, _| w.contains_key(alias));
-                }
+                // the screen lets go of what it no longer shows or shows otherwise, so that comes whole
+                s.gates.retain(|alias, _| shown(&s.watch, previews, alias).is_some());
                 for n in &changed {
                     s.gates.remove(n);
                 }
                 self.fields_changed();
+                if started {
+                    self.send(session, &ServerMsg::Brings { imports: self.brings.clone() });
+                }
                 // one that changed goes to every screen soon anyway
                 let Some(s) = self.sessions.get(&session) else { return };
-                let shown = changed.iter().filter(|n| read_of(&s.watch, n).is_some() && !self.changed.contains(*n));
+                let shown = changed.iter().filter(|n| s.shows(n).is_some() && !self.changed.contains(*n));
                 let values = shown.filter(|n| self.values.contains_key(*n)).map(|n| self.update(n)).collect();
                 self.put_values(Some(session), values);
             }
@@ -2137,7 +2168,7 @@ impl App {
             let mut small = Vec::new();
             let mut big = Vec::new();
             for v in &values {
-                let read = read_of(&s.watch, &v.alias);
+                let read = s.shows(&v.alias);
                 if leaves.contains(&v.alias) && read.is_none() {
                     continue;
                 }
@@ -2185,14 +2216,48 @@ fn written(v: ValueUpdate, seq: u64, plain: bool) -> Written {
     }
 }
 
+/// The one path that reads all of a value.
+const WHOLE: &[Vec<String>] = &[Vec::new()];
+
 /// What a screen's watch reads of `name`: the steps after it of each path, all of it with no
 /// watch, or None while the screen does not show it.
 fn read_of<'a>(watch: &'a Option<HashMap<String, Vec<Vec<String>>>>, name: &str) -> Option<&'a [Vec<String>]> {
-    const WHOLE: &[Vec<String>] = &[Vec::new()];
     match watch {
         None => Some(WHOLE),
         Some(w) => w.get(name).map(Vec::as_slice),
     }
+}
+
+/// What a screen shows of `name`: every one as the HMI holds it while it previews, else what its
+/// watch reads.
+fn shown<'a>(watch: &'a Option<HashMap<String, Vec<Vec<String>>>>, previews: bool, name: &str) -> Option<&'a [Vec<String>]> {
+    if previews { Some(WHOLE) } else { read_of(watch, name) }
+}
+
+/// What a piece of the HMI's own code reads: the steps after a name, or every name whole when it
+/// may read any.
+struct OwnRead {
+    who: String,
+    name: Option<String>,
+    steps: Vec<String>,
+}
+
+impl OwnRead {
+    fn reads(&self, name: &str) -> bool {
+        self.name.as_deref().is_none_or(|n| n == name)
+    }
+}
+
+/// The pieces of the HMI's own code that read `alias`, each with the paths it reads of it.
+fn readers_of(own: &[OwnRead], alias: &str) -> Vec<Reader> {
+    let mut out: Vec<Reader> = Vec::new();
+    for r in own.iter().filter(|r| r.reads(alias)) {
+        match out.iter_mut().find(|o| o.who == r.who) {
+            Some(o) => o.paths.push(r.steps.clone()),
+            None => out.push(Reader { who: r.who.clone(), paths: vec![r.steps.clone()] }),
+        }
+    }
+    out
 }
 
 /// Small values together in one message.

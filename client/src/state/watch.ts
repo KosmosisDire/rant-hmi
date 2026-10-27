@@ -1,7 +1,8 @@
 // What this screen reads of the imports and computed values, which the backend sends it: the
-// paths its shown pages read, all of each while the editor's Data tab previews them.
+// paths its shown pages read, or while the editor's Data tab previews them, each as the HMI
+// brings it and the field the tab peeks at.
 
-import { getOwner, onCleanup } from "solid-js";
+import { createSignal, getOwner, onCleanup } from "solid-js";
 import type { Path } from "../lang/reads.js";
 import type { Page } from "../protocol/Page";
 import { operator } from "./mode";
@@ -38,14 +39,17 @@ export function wholeNames(): string[] {
 }
 
 /** Whether this screen previews every value, as the editor's Data tab does, which the backend
- *  sends its big ones slower for. */
+ *  sends as the HMI brings it, its big ones slower. */
 export function previewing(): boolean {
   return !operator && currentTab() === "data";
 }
 
-/** The pages this screen shows, or null while it previews every value. */
-function shownPages(): (Page | undefined)[] | null {
-  if (previewing()) return null;
+/** The field the Data tab peeks at, a path from its import's name, which comes while it does
+ *  though nothing else reads it. */
+export const [peeked, peek] = createSignal<Path | null>(null);
+
+/** The pages this screen shows. */
+function shownPages(): (Page | undefined)[] {
   const stacked = () => stack().map((o) => page(o.id));
   if (operator) return stacked();
   switch (currentTab()) {
@@ -61,8 +65,11 @@ function shownPages(): (Page | undefined)[] | null {
 /** The paths this screen reads, sorted, or null for all of every name. A name read as the screen
  *  draws that its pages' text does not show comes whole. */
 export function watched(): Path[] | null {
+  if (previewing()) {
+    const p = peeked();
+    return p ? [p] : [];
+  }
   const pages = shownPages();
-  if (pages === null) return null;
   const names = new Set([...state.imports.map((i) => i.alias), ...state.computed.map((c) => c.name)]);
   const { paths, all } = pathsOf(pages.filter((p) => p !== undefined));
   if (all) return null;
@@ -74,6 +81,7 @@ export function watched(): Path[] | null {
 
 /** The names this screen shows, sorted, or null for every one. */
 export function watchedNames(): string[] | null {
+  if (previewing()) return null;
   const paths = watched();
   return paths && [...new Set(paths.map((p) => p[0]))].sort();
 }
