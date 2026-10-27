@@ -458,7 +458,6 @@ Each `[[import]]` in `data/imports.toml`:
 | `entity` | its path on the mesh, as `Line1/Speed` |
 | `kind` | `topic`, `variable`, `function` or `task` |
 | `intent` | `read`, or `write` to set, send or call it. A function or a task is always `write` |
-| `fields` | for an import that reads, the only fields that come, by paths such as `points.x`. Left out for all |
 | `rate` | for a topic it reads, the most values a second, sent best effort. Left out for all it sends |
 
 Each `[[variable]]` in `data/variables.toml`:

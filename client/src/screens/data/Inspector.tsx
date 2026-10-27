@@ -7,7 +7,6 @@ import { ALIAS } from "../../protocol/rules";
 import type { Value } from "../../protocol/Value";
 import { change } from "../../state/change";
 import { choosesIntent, intents, intentWords, typeLabel } from "../../state/format";
-import { bare } from "../../state/kept";
 import { preview } from "../../state/preview";
 import { entity, importOf, setState, state } from "../../state/store";
 import { KindIcon } from "../../ui/marks";
@@ -108,9 +107,7 @@ function ImportView(p: { imp: Import; picking: Picking }) {
   const e = () => entity(p.imp.entity);
   const v = () => preview(p.imp.alias);
   const writable = () => p.imp.intent === "write" && p.imp.kind === "variable";
-  // only an import that reads may leave fields out, and only a topic it reads take a rate
-  const reads = () => p.imp.intent === "read" && (p.imp.kind === "topic" || p.imp.kind === "variable");
-  const rated = () => reads() && p.imp.kind === "topic";
+  const rated = () => p.imp.intent === "read" && p.imp.kind === "topic";
   const set = (path: string, value: Value) => {
     setState("refused", null);
     send({ type: "set", alias: p.imp.alias, path, value });
@@ -125,7 +122,7 @@ function ImportView(p: { imp: Import; picking: Picking }) {
         <Choice
           options={intents(p.imp.kind)}
           value={p.imp.intent}
-          onPick={(intent) => change(intent === "write" ? { intent, fields: undefined, rate: undefined } : { intent })}
+          onPick={(intent) => change(intent === "write" ? { intent, rate: undefined } : { intent })}
           off={(i) => (i === "write" && !canWrite(p.imp) ? "Its owner takes no sets" : undefined)}
         />
       </div>
@@ -155,16 +152,7 @@ function ImportView(p: { imp: Import; picking: Picking }) {
           {(t) => (
             <>
               <div class="section">Value</div>
-              <Show when={reads() && !bare(t().fields)}>
-                <div class="field-hint">Only the checked fields come, to screens and handlers alike.</div>
-              </Show>
-              <ValueTree
-                fields={t().fields}
-                value={v().value}
-                known={v().known}
-                onSet={writable() ? set : undefined}
-                keep={reads() ? { fields: p.imp.fields, onKeep: (fields) => change({ fields }) } : undefined}
-              />
+              <ValueTree fields={t().fields} value={v().value} known={v().known} onSet={writable() ? set : undefined} />
             </>
           )}
         </Match>

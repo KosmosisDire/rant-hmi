@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use rant::FieldType;
 
-use crate::mesh::codec::Shape;
+use crate::mesh::codec::{Shape, bare};
 use crate::value::{Records, Value};
 
 /// A path's step to each item of a list.
@@ -20,7 +20,7 @@ pub enum Keep {
 }
 
 impl Keep {
-    fn none() -> Keep {
+    pub fn none() -> Keep {
         Keep::Some(BTreeMap::new())
     }
 
@@ -28,7 +28,7 @@ impl Keep {
     /// A step past a field to a name its type lacks, as a method, reads that field whole.
     pub fn typed(shapes: &[Shape], paths: &[Vec<String>]) -> Keep {
         // a bare type, as a plain number, has no fields to leave out
-        if matches!(shapes, [one] if one.field.name.is_empty()) {
+        if bare(shapes).is_some() {
             return Keep::All;
         }
         let mut keep = Keep::none();
@@ -69,6 +69,42 @@ impl Keep {
         }
     }
 
+    /// Adds what `other` reads to what this reads.
+    pub fn merge(&mut self, other: Keep) {
+        let Keep::Some(fields) = self else { return };
+        let Keep::Some(more) = other else {
+            *self = Keep::All;
+            return;
+        };
+        for (name, keep) in more {
+            match fields.get_mut(&name) {
+                Some(mine) => mine.merge(keep),
+                None => {
+                    fields.insert(name, keep);
+                }
+            }
+        }
+    }
+
+    /// Whether this reads all that `other` does.
+    pub fn covers(&self, other: &Keep) -> bool {
+        match (self, other) {
+            (Keep::All, _) => true,
+            (Keep::Some(_), Keep::All) => false,
+            (Keep::Some(mine), Keep::Some(theirs)) => theirs.iter().all(|(name, keep)| mine.get(name).is_some_and(|m| m.covers(keep))),
+        }
+    }
+
+    /// Only the `shapes` this keeps, so a value decodes without the rest.
+    pub fn shapes(&self, shapes: &[Shape]) -> Vec<Shape> {
+        match self {
+            Keep::Some(fields) if bare(shapes).is_none() => {
+                shapes.iter().filter_map(|s| Some(Shape { members: fields.get(&s.field.name)?.shapes(&s.members), ..s.clone() })).collect()
+            }
+            _ => shapes.to_vec(),
+        }
+    }
+
     /// `value` with only the fields this keeps.
     pub fn cut(&self, value: &Value) -> Value {
         let Keep::Some(fields) = self else { return value.clone() };
@@ -100,20 +136,24 @@ mod tests {
         list.iter().map(|p| p.split('.').filter(|s| !s.is_empty()).map(str::to_owned).collect()).collect()
     }
 
-    /// A lidar scan and a picture, written and read back as the mesh would bring them.
+    const SCAN: &str = "Point { x: f32, y: f32, z: f32, intensity: u16 }
+Place { x: f64, y: f64 }
+Spot { at: Place, size: f32 }
+Scan { stamp: f64, name: string<16>, pose: Place, points: Point[], ranges: f32[], spots: Spot[] }
+";
+
+    /// A lidar scan, written and read back as the mesh would bring it.
     fn scan() -> (Vec<Shape>, Value) {
         let node = rant::Node::new("hmi_fields_test", rant::NodeOptions::new().domain(152).multicast_interface("127.0.0.1")).unwrap();
-        let schema = node.schema("Point { x: f32, y: f32, z: f32, intensity: u16 }
-Place { x: f64, y: f64 }
-Scan { stamp: f64, name: string<16>, pose: Place, points: Point[], ranges: f32[] }
-").unwrap();
+        let schema = node.schema(SCAN).unwrap();
         let shapes = shapes(&schema);
         let written = value!({
             "stamp": 7.0,
             "name": "front",
             "pose": { "x": 1.0, "y": 2.0 },
             "points": [ { "x": 1.0, "y": 2.0, "z": 3.0, "intensity": 9 }, { "x": -1.0, "y": 0.5, "z": 0.25, "intensity": 300 } ],
-            "ranges": [ 0.5, 2.0 ]
+            "ranges": [ 0.5, 2.0 ],
+            "spots": [ { "at": { "x": 3.0, "y": 4.0 }, "size": 0.5 } ]
         });
         let read = decode(&schema.view(&encode(&schema, &shapes, &written).unwrap()), &shapes);
         (shapes, read)
@@ -150,5 +190,27 @@ Scan { stamp: f64, name: string<16>, pose: Place, points: Point[], ranges: f32[]
         assert_eq!(plain(&keep.cut(&read)), plain(&value!({ "points": [ {}, {} ] })));
         let both = Keep::typed(&shapes, &paths(&["points.length", "points.[].intensity"]));
         assert_eq!(plain(&both.cut(&read)), plain(&value!({ "points": [ { "intensity": 9 }, { "intensity": 300 } ] })));
+    }
+
+    #[test]
+    fn readers_add_up_and_a_value_decodes_with_only_what_they_read() {
+        let (shapes, read) = scan();
+        let typed = |p: &[&str]| Keep::typed(&shapes, &paths(p));
+        let mut keep = Keep::none();
+        keep.merge(typed(&["pose.x", "points.length"]));
+        keep.merge(typed(&["points.[].z", "name"]));
+        assert_eq!(keep, typed(&["pose.x", "points.[].z", "name"]));
+        assert!(keep.covers(&typed(&["points.[].z"])) && !keep.covers(&typed(&["points.[].x"])) && !keep.covers(&Keep::All));
+        // decoding with only those shapes gives what cutting the whole value does
+        let node = rant::Node::new("hmi_fields_decode", rant::NodeOptions::new().domain(152).multicast_interface("127.0.0.1")).unwrap();
+        let schema = node.schema(SCAN).unwrap();
+        let bytes = encode(&schema, &shapes, &read).unwrap();
+        for keep in [keep.clone(), typed(&["points.length", "spots.[].at.y"]), Keep::none(), Keep::All] {
+            assert_eq!(plain(&decode(&schema.view(&bytes), &keep.shapes(&shapes))), plain(&keep.cut(&read)), "{keep:?}");
+        }
+        // a bare type decodes whole, whatever reads it
+        assert_eq!(Keep::none().shapes(&crate::mesh::codec::shapes(&node.schema("f64").unwrap())).len(), 1);
+        keep.merge(Keep::All);
+        assert_eq!(keep, Keep::All);
     }
 }

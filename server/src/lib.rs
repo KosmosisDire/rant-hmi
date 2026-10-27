@@ -19,8 +19,7 @@ pub mod probe;
 pub mod problems;
 pub mod project;
 pub mod protocol;
-#[cfg(test)]
-mod reads;
+pub mod reads;
 #[cfg(test)]
 mod reference;
 pub mod rtc;

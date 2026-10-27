@@ -7,11 +7,6 @@ import type { Kind } from "./Kind";
  */
 export type Import = { alias: string, entity: string, kind: Kind, intent: Intent, 
 /**
- * Only these fields of its value come, to screens and handlers alike, by paths such as
- * `points.x`. A field named brings all it holds. None brings every field.
- */
-fields?: Array<string>, 
-/**
  * The most values a second a topic brings, best effort, each the newest at its turn.
  */
 rate?: number, };

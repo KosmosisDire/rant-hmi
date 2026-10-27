@@ -40,7 +40,6 @@ alias = "Lidar"
 entity = "Lab/Lidar"
 kind = "topic"
 intent = "read"
-fields = ["stamp", "points.x", "points.y", "points.z"]   # only these come, every field when left out
 rate = 5                     # at most 5 values a second, all it sends when left out
 
 # data/variables.toml
@@ -79,9 +78,10 @@ last function for each progress update: `await Fill(5, (p) => { filled = p })`.
 - A screen gets the values of only the imports and computed values its pages show, all of
   them while the editor's Data tab previews them. The previews' big values come 250 KB a
   second at most, so they leave the link to the screens that show them.
-- An import that reads may bring only some fields, which the HMI reads alone, so screens and
-  handlers alike see only those. A field named brings all it holds. A lidar's x, y and z
-  without its intensity came 12% smaller across a LAN.
+- A screen gets only the fields its pages read of each value, and the HMI decodes only those a
+  screen or its own code reads, found from the code without running it. A page that shows a
+  camera's width never brings its pictures. Code that hands a value on whole, or that the HMI
+  cannot follow, reads all of it, and an import to write is read whole.
 - A topic it reads may take a rate: each publisher then sends it that many a second at most,
   best effort, the newest at each turn. A value waits for its turn, up to the time between two
   its source sends: up to 100 ms for a source sending 10 a second.

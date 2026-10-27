@@ -11,7 +11,6 @@ import type { TypeInfo } from "../protocol/TypeInfo";
 import type { Value } from "../protocol/Value";
 import { partNames, tokenValue } from "./bind";
 import { fields, typeLabel } from "./format";
-import { importFields } from "./kept";
 import { names } from "./names";
 import { entity, live, state } from "./store";
 import { KIND_WORDS, typesIn } from "./types";
@@ -381,7 +380,7 @@ function members(path: string[], place: Place): Suggestion[] {
   const known = live(root).known;
   for (const step of rest) value = at(value, step);
   if (imp) {
-    let fields: FieldInfo[] | undefined = importFields(imp);
+    let fields: FieldInfo[] | undefined = entity(imp.entity)?.schema?.fields;
     let field: FieldInfo | undefined = fields && bareType(fields) ? fields[0] : undefined;
     if (field) fields = undefined;
     for (const step of rest) {

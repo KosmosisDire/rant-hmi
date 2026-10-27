@@ -6,7 +6,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 use super::*;
 
 fn import(alias: &str, kind: Kind, intent: Intent) -> Import {
-    Import { alias: alias.into(), entity: format!("Line1/{alias}"), kind, intent, fields: None, rate: None }
+    Import { alias: alias.into(), entity: format!("Line1/{alias}"), kind, intent, rate: None }
 }
 
 /// An engine with the demo line's imports, Speed and Settings known, Running unknown.

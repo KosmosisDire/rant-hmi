@@ -28,10 +28,14 @@ export function typesIn(t: TypeInfo): string[] {
   return [...(t.name ? [t.name] : []), ...inside(t.fields)];
 }
 
+/** Whether a type is one bare value, such as a plain f64, with no fields. */
+export function bare(fields: FieldInfo[]): boolean {
+  return fields.length === 1 && fields[0].name === "";
+}
+
 /** A whole value's type as one field: a bare type's own, else a struct of its fields. */
 export function wholeType(t: TypeInfo): FieldInfo {
-  const bare = t.fields.length === 1 && t.fields[0].name === "";
-  return bare ? t.fields[0] : { name: "", kind: "struct", type_name: t.name || null, elem: null, count: 0, options: [], members: t.fields };
+  return bare(t.fields) ? t.fields[0] : { name: "", kind: "struct", type_name: t.name || null, elem: null, count: 0, options: [], members: t.fields };
 }
 
 /** The names a value of this type answers to: its type's name, its kind, number for any

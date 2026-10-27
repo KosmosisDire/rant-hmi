@@ -5,16 +5,18 @@ pub mod codec;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rant::types::{VideoCodec, VideoFrame};
-use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteTask, RemoteVariable, Response, Schema, SendError, Subscriber, TaskOptions, VariableDefinition, VariableOptions};
+use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FieldView, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteTask, RemoteVariable, Response, Schema, SendError, Subscriber, TaskOptions, VariableDefinition, VariableOptions};
 use crate::value::Value;
 use crate::rtc::Frame;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, warn};
 
+use crate::fields::Keep;
 use crate::project::{Import, Intent, Kind};
 use crate::protocol::{EntityInfo, EnumInfo, PeerInfo};
 use crate::script::{CallFailure, Form};
@@ -33,6 +35,8 @@ pub struct MeshOptions {
 pub struct Delivery {
     pub alias: String,
     pub value: Value,
+    /// Counts up across every import, so of two values of an import the higher is the newer.
+    pub seq: u64,
 }
 
 pub struct Mesh {
@@ -43,6 +47,10 @@ pub struct Mesh {
     /// The video each played import comes from, and its subscription.
     videos: HashMap<String, (String, Subscriber<VideoFrame>)>,
     own: Own,
+    /// What each import decodes of its values, by alias, kept while its handle is remade.
+    keeps: HashMap<String, Keep>,
+    /// How many values were delivered.
+    count: Arc<AtomicU64>,
 }
 
 /// What the HMI publishes about itself, and the last value of each, which its own imports of
@@ -61,23 +69,28 @@ struct Attached {
     /// None for a function or task whose request is untyped, which the HMI sends empty.
     schema: Option<Schema>,
     shapes: Vec<Shape>,
-    /// What it reads, only the fields it keeps.
-    read: Vec<Shape>,
+    /// Shared with the handle's callback on Rant's thread.
+    decoding: Arc<Mutex<Decoding>>,
     handle: Handle,
 }
 
+/// What a handle decodes of each value, and the last value as it came, so reading more decodes
+/// that again rather than waiting for the next.
+struct Decoding {
+    keep: Keep,
+    /// The shapes `keep` leaves.
+    shapes: Vec<Shape>,
+    last: Option<Vec<u8>>,
+    /// The count of the last value delivered.
+    seq: u64,
+}
+
 impl Attached {
-    /// A value the HMI made of its own entity as the import reads it, written and read back so
-    /// it keeps only the fields the import does.
-    fn own(&self, value: &Value) -> Value {
-        let Some(schema) = self.schema.as_ref().filter(|_| self.import.fields.is_some()) else { return value.clone() };
-        match codec::encode(schema, &self.shapes, value) {
-            Ok(bytes) => codec::decode(&schema.view(&bytes), &self.read),
-            Err(e) => {
-                warn!("{} brings every field, as its value did not write: {e}", self.import.alias);
-                value.clone()
-            }
-        }
+    /// A value the HMI made of its own entity as the import reads it, counted as delivered.
+    fn own(&self, value: &Value, count: &AtomicU64) -> Delivery {
+        let mut r = self.decoding.lock().expect("decoding");
+        r.seq = count.fetch_add(1, Ordering::Relaxed) + 1;
+        Delivery { alias: self.import.alias.clone(), value: r.keep.cut(value), seq: r.seq }
     }
 
     /// A call's request as it goes out. An untyped one goes empty, so the call takes nothing.
@@ -117,7 +130,7 @@ impl Mesh {
             problems: node.variable_definition(status::PROBLEMS, VariableOptions::new().read_only(true))?,
             values: HashMap::new(),
         };
-        Ok(Mesh { node, deliveries, attached: HashMap::new(), frames, videos: HashMap::new(), own })
+        Ok(Mesh { node, deliveries, attached: HashMap::new(), frames, videos: HashMap::new(), own, keeps: HashMap::new(), count: Arc::default() })
     }
 
     /// Changes whenever anything on the mesh does.
@@ -175,7 +188,7 @@ impl Mesh {
         match self.handle(import, &entity, entity.schema.clone()) {
             Ok(a) => {
                 if let Some(value) = self.own.values.get(import.entity.as_str()) {
-                    let _ = self.deliveries.send(Delivery { alias: import.alias.clone(), value: a.own(value) });
+                    let _ = self.deliveries.send(a.own(value, &self.count));
                 }
                 self.attached.insert(import.alias.clone(), a);
                 true
@@ -235,12 +248,34 @@ impl Mesh {
 
     /// Keeps an own entity's new value, and hands it to each import of it.
     fn own_changed(&mut self, entity: &'static str, value: Value) {
-        for (alias, a) in &self.attached {
+        for a in self.attached.values() {
             if matches!(a.handle, Handle::Own) && a.import.entity == entity {
-                let _ = self.deliveries.send(Delivery { alias: alias.clone(), value: a.own(&value) });
+                let _ = self.deliveries.send(a.own(&value, &self.count));
             }
         }
         self.own.values.insert(entity, value);
+    }
+
+    /// Has an import decode only what `keep` reads from now on. One that reads more than it did
+    /// gives back its last value decoded again, counted as that value.
+    pub fn keep(&mut self, alias: &str, keep: Keep) -> Option<Delivery> {
+        self.keeps.insert(alias.to_owned(), keep.clone());
+        let a = self.attached.get(alias)?;
+        let mut r = a.decoding.lock().expect("decoding");
+        if r.keep == keep {
+            return None;
+        }
+        let more = !r.keep.covers(&keep);
+        r.shapes = keep.shapes(&a.shapes);
+        r.keep = keep;
+        if !more {
+            return None;
+        }
+        let value = match &a.handle {
+            Handle::Own => r.keep.cut(self.own.values.get(a.import.entity.as_str())?),
+            _ => codec::decode(&a.schema.as_ref()?.view(r.last.as_ref()?), &r.shapes),
+        };
+        Some(Delivery { alias: alias.to_owned(), value, seq: r.seq })
     }
 
     /// What each attached topic's message and function's or task's request is made of.
@@ -286,14 +321,18 @@ impl Mesh {
     fn handle(&self, import: &Import, entity: &Entity, schema: Option<Schema>) -> Result<Attached, String> {
         let shapes = schema.as_ref().map(codec::shapes).unwrap_or_default();
         let typed = || schema.as_ref().ok_or_else(|| format!("{} has no type", import.entity));
-        // what it reads is only the fields it keeps, while what it writes stays whole
-        let read = match &import.fields {
-            Some(keep) => codec::kept(&shapes, keep),
-            None => shapes.clone(),
-        };
-        let (alias, tx, tree) = (import.alias.clone(), self.deliveries.clone(), read.clone());
-        let deliver = move |value: Value| {
-            let _ = tx.send(Delivery { alias: alias.clone(), value });
+        // a new import decodes nothing until it is told what is read, which follows its attach
+        let keep = self.keeps.get(&import.alias).cloned().unwrap_or_else(Keep::none);
+        let decoding = Arc::new(Mutex::new(Decoding { shapes: keep.shapes(&shapes), keep, last: None, seq: 0 }));
+        let (alias, tx, shared, count) = (import.alias.clone(), self.deliveries.clone(), decoding.clone(), self.count.clone());
+        // decoded and sent while the decoding is held, so a value decoded again is never older
+        let deliver = move |view: &FieldView<'_>| {
+            let mut r = shared.lock().expect("decoding");
+            let last = r.last.get_or_insert_with(Vec::new);
+            last.clear();
+            last.extend_from_slice(view.data());
+            r.seq = count.fetch_add(1, Ordering::Relaxed) + 1;
+            let _ = tx.send(Delivery { alias: alias.clone(), value: codec::decode(view, &r.shapes), seq: r.seq });
         };
         let handle = match import.kind {
             Kind::Variable if [status::CLIENTS, status::STATUS, status::PROBLEMS].contains(&import.entity.as_str()) => Handle::Own,
@@ -304,7 +343,7 @@ impl Mesh {
                     Some(hz) => qos.clone().reliable(false).max_rate_hz(hz),
                     None => qos.clone(),
                 };
-                let sub = self.node.subscriber::<Bytes>(&import.entity, read, move |m| deliver(codec::decode(&m, &tree)));
+                let sub = self.node.subscriber::<Bytes>(&import.entity, read, move |m| deliver(&m));
                 let publisher = match import.intent {
                     Intent::Write => Some(self.node.publisher::<Bytes>(&import.entity, qos).map_err(|e| e.to_string())?),
                     Intent::Read => None,
@@ -316,7 +355,7 @@ impl Mesh {
                     .node
                     .remote_variable::<Bytes>(&import.entity, VariableOptions::new().schema(typed()?))
                     .map_err(|e| e.to_string())?;
-                var.on_change(move |u| deliver(codec::decode(&u.into_inner(), &tree))).map_err(|e| e.to_string())?;
+                var.on_change(move |u| deliver(&u.into_inner())).map_err(|e| e.to_string())?;
                 Handle::Variable(var)
             }
             Kind::Function => {
@@ -345,7 +384,7 @@ impl Mesh {
                 Handle::Task { remote, progress: reading(&entity.progress_schema), answer: reading(&entity.response_schema), running: Arc::default() }
             }
         };
-        Ok(Attached { import: import.clone(), generation: entity.generation, schema, shapes, read, handle })
+        Ok(Attached { import: import.clone(), generation: entity.generation, schema, shapes, decoding, handle })
     }
 
     /// Plays an import's video: the entity itself when it carries video frames, else its
