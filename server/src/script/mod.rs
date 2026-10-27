@@ -117,14 +117,14 @@ type Reader = (Context, Vec<(String, Persistent<Function<'static>>)>);
 
 /// The math library and the operator rewrite, the client's own files, so pages and code here
 /// do the same math. Each module is named as its importers name it.
-const ACORN: (&str, &str) = ("acorn/acorn.mjs", include_str!("../../../client/src/lang/acorn/acorn.mjs"));
-const MATH: (&str, &str) = ("math.js", include_str!("../../../client/src/lang/math.js"));
-const ARITH: (&str, &str) = ("arith.js", include_str!("../../../client/src/lang/arith.js"));
+pub(crate) const ACORN: (&str, &str) = ("acorn/acorn.mjs", include_str!("../../../client/src/lang/acorn/acorn.mjs"));
+pub(crate) const MATH: (&str, &str) = ("math.js", include_str!("../../../client/src/lang/math.js"));
+pub(crate) const ARITH: (&str, &str) = ("arith.js", include_str!("../../../client/src/lang/arith.js"));
 /// Every name code reads besides the project's own, as completion lists them.
 const API: (&str, &str) = ("api.js", include_str!("../../../client/src/lang/api.js"));
 
 /// Runs a module in `ctx` and gives its exports. One it imports must have run there first.
-fn module<'js>(ctx: &Ctx<'js>, (name, source): (&str, &str)) -> rquickjs::Result<Object<'js>> {
+pub(crate) fn module<'js>(ctx: &Ctx<'js>, (name, source): (&str, &str)) -> rquickjs::Result<Object<'js>> {
     let (module, done) = Module::declare(ctx.clone(), name, source)?.eval()?;
     done.finish::<()>()?;
     module.namespace()
