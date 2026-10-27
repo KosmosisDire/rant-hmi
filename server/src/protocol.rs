@@ -46,8 +46,6 @@ pub enum ServerMsg {
         #[ts(type = "number")]
         seq: u64,
     },
-    /// The peers and how fast they answer, about once a second.
-    Health { peers: Vec<PeerInfo> },
     /// Every page, whole, on connecting and when one is added or removed.
     Pages { pages: Vec<Page> },
     /// One page, whole, after an edit changed it.
@@ -430,17 +428,6 @@ pub struct Reader {
     /// What it is, as `the Alarm rule`.
     pub who: String,
     pub paths: Vec<Vec<String>>,
-}
-
-#[derive(Serialize, TS, Clone, Debug)]
-#[ts(export)]
-pub struct PeerInfo {
-    pub id: u32,
-    pub name: String,
-    pub address: String,
-    pub active: bool,
-    /// The smoothed round trip, once measured.
-    pub rtt_ms: Option<f64>,
 }
 
 #[cfg(test)]

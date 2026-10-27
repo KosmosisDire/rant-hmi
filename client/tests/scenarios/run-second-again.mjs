@@ -9,7 +9,7 @@ export default async function ({ hmi, sys, check, eventually }) {
   const screen = new Hmi(new WebSocket(sys.ws));
   let hello;
   screen.waiters.push((m) => (m.type === "hello" && (hello = m), false));
-  await screen.next((m) => m.type === "health");
+  await screen.next((m) => m.type === "rules");
   /** A second way for the screen, keeping when each value came, never saying one was taken. */
   const second = () => {
     const ws = new WebSocket(`${sys.ws.replace(/\/ws$/, "")}/bulk?session=${hello.session}&key=${hello.key}`);

@@ -178,10 +178,6 @@
   margin-left: auto;
 }
 
-.statusbar .nodes {
-  display: none;
-}
-
 /* The faults and warnings at the status bar's end, which open the problems. */
 .statusbar .problems-count {
   gap: 10px;
@@ -517,7 +513,6 @@
 
   .logo,
   .tab .count,
-  .statusbar .node,
   .edge {
     display: none;
   }
@@ -538,10 +533,6 @@
 
   .tab:not(:last-child) {
     border-right: 0;
-  }
-
-  .statusbar .nodes {
-    display: inline-flex;
   }
 
   .detail {

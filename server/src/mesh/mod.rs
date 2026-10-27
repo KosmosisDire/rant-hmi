@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 
 use crate::fields::Keep;
 use crate::project::{Import, Intent, Kind};
-use crate::protocol::{EntityInfo, EnumInfo, PeerInfo};
+use crate::protocol::{EntityInfo, EnumInfo};
 use crate::script::{CallFailure, Form};
 use crate::status::{self, Client, HmiStatus, ProblemRow};
 use codec::Shape;
@@ -144,21 +144,6 @@ impl Mesh {
         let mut out: Vec<EntityInfo> = self.node.reflection().mesh().iter().filter_map(entity_info).collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out
-    }
-
-    pub fn peers(&self) -> Vec<PeerInfo> {
-        self.node
-            .reflection()
-            .peers()
-            .into_iter()
-            .map(|p| PeerInfo {
-                id: p.id,
-                name: p.name,
-                address: p.address,
-                active: p.active,
-                rtt_ms: (p.rtt_samples > 0).then(|| p.rtt_us as f64 / 1000.0),
-            })
-            .collect()
     }
 
     fn find(&self, import: &Import) -> Option<Entity> {

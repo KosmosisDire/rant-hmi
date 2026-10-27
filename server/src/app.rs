@@ -52,7 +52,8 @@ const TAKE_MOST: Duration = Duration::from_secs(5);
 const PREVIEW_BYTES: f64 = 250_000.0;
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
-const HEALTH_EVERY: Duration = Duration::from_secs(1);
+/// How often the screens' round trips are worked out and the HMI's status goes out.
+const STATUS_EVERY: Duration = Duration::from_secs(1);
 /// How often every screen's problems may go out, so a fault that comes each frame is one send.
 const PROBLEMS_EVERY: Duration = Duration::from_millis(250);
 /// How long a screen may take to open its WebRTC link channel before `Hmi/Status` warns that it
@@ -588,7 +589,7 @@ pub struct App {
     forms: HashMap<String, Form>,
     /// The mesh's enums code names, as the engine and the screens were last told.
     enums: Vec<EnumInfo>,
-    health_at: Instant,
+    status_at: Instant,
     /// When a project file last changed outside the HMI, until it is read.
     edited: Option<Instant>,
     /// Every screen's problems and those of runs here, and when they last went out.
@@ -641,7 +642,7 @@ impl App {
             started_at: Timestamp::now(),
             forms: HashMap::new(),
             enums: Vec::new(),
-            health_at: Instant::now(),
+            status_at: Instant::now(),
             edited: None,
             problems: Problems::default(),
             problems_at: Instant::now(),
@@ -895,9 +896,9 @@ impl App {
             let samples = self.history.get(&r.name).map(|h| h.iter().cloned().collect()).unwrap_or_default();
             self.send(session, &ServerMsg::Samples { name: r.name.clone(), samples, whole: true });
         }
+        // the rules end what is not values, so a test client waits for them as the welcome's end
         self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
         self.put_values(Some(session), self.all_values(session));
-        self.send(session, &ServerMsg::Health { peers: self.mesh.peers() });
     }
 
     /// The names a screen may leave out by what it shows: the imports and computed values.
@@ -1839,9 +1840,8 @@ impl App {
         // each screen's round trip goes out as it is measured, the rest once a second
         self.publish_clients();
         self.publish_problems();
-        if self.health_at.elapsed() >= HEALTH_EVERY {
-            self.health_at = Instant::now();
-            self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
+        if self.status_at.elapsed() >= STATUS_EVERY {
+            self.status_at = Instant::now();
             for s in self.sessions.values_mut() {
                 let total = s.out.taken() + s.bulk.as_ref().map_or(0, |b| b.taken()) + s.channel.as_ref().map_or(0, |c| c.taken());
                 s.trips.refresh(total);
