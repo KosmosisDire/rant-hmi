@@ -12,11 +12,11 @@ use crate::script::{ACORN, ARITH, MATH, module};
 const READS: (&str, &str) = ("reads.js", include_str!("../../client/src/lang/reads.js"));
 
 /// What code reads: each path a name and the fields after it, `[]` for each item of a list,
-/// read with all it holds. `value` is the path an expression's value is, when it is one.
+/// read with all it holds. `values` are the paths an expression's value may be.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 pub struct Found {
     pub paths: Vec<Vec<String>>,
-    pub value: Option<Vec<String>>,
+    pub values: Vec<Vec<String>>,
     /// It may read any name, by one worked out as it runs.
     pub all: bool,
 }
@@ -79,19 +79,27 @@ impl Default for Reads {
 mod tests {
     use super::*;
 
-    /// The paths `src` reads, each written with dots, sorted, and the path its value is.
-    fn read(reads: &Reads, src: &str, body: bool) -> (Vec<String>, Option<String>) {
+    /// The paths `src` reads and those its value may be, each written with dots, sorted.
+    fn read(reads: &Reads, src: &str, body: bool) -> (Vec<String>, Vec<String>) {
         let found = reads.of(src, body).unwrap_or_else(|| panic!("{src} parses"));
         assert!(!found.all, "{src} reads no name it works out");
-        let mut paths: Vec<String> = found.paths.iter().map(|p| p.join(".")).collect();
-        paths.sort();
-        (paths, found.value.map(|v| v.join(".")))
+        let dotted = |list: &[Vec<String>]| {
+            let mut out: Vec<String> = list.iter().map(|p| p.join(".")).collect();
+            out.sort();
+            out
+        };
+        (dotted(&found.paths), dotted(&found.values))
     }
 
     fn reads_of(reads: &Reads, src: &str, body: bool, expect: &[&str]) {
-        let (paths, value) = read(reads, src, body);
+        let (paths, values) = read(reads, src, body);
         assert_eq!(paths, expect, "{src}");
-        assert_eq!(value, None, "{src} is no path");
+        assert!(values.is_empty(), "{src} is no path");
+    }
+
+    /// `src` as an expression whose value may be `values`.
+    fn is(reads: &Reads, src: &str, paths: &[&str], values: &[&str]) {
+        assert_eq!(read(reads, src, false), (paths.iter().map(|p| p.to_string()).collect(), values.iter().map(|v| v.to_string()).collect()), "{src}");
     }
 
     #[test]
@@ -117,17 +125,22 @@ mod tests {
         reads_of(&r, "{ position: Arm.position }", false, &["Arm.position"]);
         reads_of(&r, "Robot[key] * 2", false, &["Robot.[]", "key"]);
         reads_of(&r, "Cloud.points.map(scale)", false, &["Cloud.points.[]", "Cloud.points.length", "scale"]);
-        reads_of(&r, "ok ? Lidar.a : Lidar.b", false, &["Lidar.a", "Lidar.b", "ok"]);
+        // a choice handed on reads both its branches whole
+        reads_of(&r, "fmt(ok ? Lidar.a : Lidar.b)", false, &["Lidar.a", "Lidar.b", "fmt", "ok"]);
     }
 
     #[test]
     fn an_expression_that_is_a_path_gives_it_for_its_reader() {
         let r = Reads::new();
-        assert_eq!(read(&r, "Lidar", false), (vec![], Some("Lidar".into())));
-        assert_eq!(read(&r, "Scan.points", false), (vec![], Some("Scan.points".into())));
+        is(&r, "Lidar", &[], &["Lidar"]);
+        is(&r, "Scan.points", &[], &["Scan.points"]);
         // a list's own items, filtered, are still its items
-        assert_eq!(read(&r, "Scan.points.filter((p) => p.z > 0)", false), (vec!["Scan.points.[].z".into(), "Scan.points.length".into()], Some("Scan.points".into())));
-        assert_eq!(read(&r, "Labels.boxes.find((b) => b.id == 3)", false), (vec!["Labels.boxes.[].id".into(), "Labels.boxes.length".into()], Some("Labels.boxes.[]".into())));
+        is(&r, "Scan.points.filter((p) => p.z > 0)", &["Scan.points.[].z", "Scan.points.length"], &["Scan.points"]);
+        is(&r, "Labels.boxes.find((b) => b.id == 3)", &["Labels.boxes.[].id", "Labels.boxes.length"], &["Labels.boxes.[]"]);
+        // a choice is either branch, and reads what chooses
+        is(&r, "wide ? Camera : LabelCam", &["wide"], &["Camera", "LabelCam"]);
+        is(&r, "Robot.start ? Camera : big ? Wide : null", &["Robot.start", "big"], &["Camera", "Wide"]);
+        is(&r, "Pick.cam ?? Camera", &[], &["Camera", "Pick.cam"]);
     }
 
     #[test]

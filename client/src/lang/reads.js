@@ -33,8 +33,8 @@ const ONE = new Set(["find", "findLast", "at"]);
 /** Names through which code may reach any value by a name worked out as it runs. */
 const ANY = new Set(["eval", "Function", "globalThis"]);
 
-/** The paths an expression, or with `body` a handler's code, reads whole, the path its value is,
- *  and `all` when it may read any name. Null when it does not parse, so it reads nothing. */
+/** The paths an expression, or with `body` a handler's code, reads whole, the paths its value
+ *  may be, and `all` when it may read any name. Null when it does not parse, so it reads nothing. */
 export function reads(src, body = false) {
   let program;
   try {
@@ -45,12 +45,12 @@ export function reads(src, body = false) {
   const r = new Reader();
   const env = new Env(null);
   r.hoist(program.body, env);
-  let value = null;
+  let values = [];
   for (const s of program.body) {
-    if (!body && s === program.body[0]) value = r.visit(s.argument, env);
+    if (!body && s === program.body[0]) values = r.values(s.argument, env);
     else r.read(r.visit(s, env));
   }
-  return { paths: r.paths, value, all: r.all };
+  return { paths: r.paths, values, all: r.all };
 }
 
 /** The names a scope binds: an item or a list a function or a loop takes, as its path, else
@@ -100,6 +100,18 @@ class Reader {
     if (this.#seen.has(k)) return;
     this.#seen.add(k);
     this.paths.push(path);
+  }
+
+  /** The paths `node`'s value may be: either branch's of a choice, as `wide ? Camera : LabelCam`
+   *  or `a || b`, else the one it is. */
+  values(node, env) {
+    if (node.type === "ConditionalExpression") {
+      this.read(this.visit(node.test, env));
+      return [...this.values(node.consequent, env), ...this.values(node.alternate, env)];
+    }
+    if (node.type === "LogicalExpression") return [...this.values(node.left, env), ...this.values(node.right, env)];
+    const v = this.visit(node, env);
+    return v ? [v] : [];
   }
 
   #named(name, env) {
