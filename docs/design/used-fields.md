@@ -62,6 +62,9 @@ seldom changes would wait for its next change.
 - Static analysis, on acorn, in `lang/reads.js`, shared by the screen and the backend.
 - A path is a name and the fields after it, `[]` an item of a list: `Labels.boxes[].min.x`.
   Code that reads a value in a way the analysis does not follow reads all of it.
+- An item a list's function or a loop takes is followed, as are the list itself and a reduce's
+  first item, since the big lists are read there. A let or a const reads all it is given:
+  following one paid only where code names a small part first, and was the subtlest logic.
 - The screen sends the paths its shown pages read in `watch`, and gets values with only those
   fields. A name read at runtime that its pages' text does not show comes whole.
 - The backend settles which paths are fields against each import's type. A path that goes on
