@@ -1,8 +1,8 @@
 // A designer builds a Dropdown and a mode switch in the editor alone, each laid out in whatever
 // box it gets, its look inputs that start at the theme's tokens. The dropdown keeps its open
 // state of its own, lists its options by repeating one row, closes when a press lands outside
-// it, and draws its list over what lies below, as wide as it. The switch repeats a segment per
-// option, sharing its width. Both pick a mode for the page.
+// it, and draws its list over what lies below, as wide as it, scrolling past its rows. The switch
+// repeats a segment per option, sharing its width. Both pick a mode for the page.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   hmi.send({ type: "set_variable", name: "mode", variable: { name: "mode", start: "Auto", per: "hmi" } });
@@ -11,6 +11,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.sizing("Fill");
   await d.addInput("value", '""', { twoWay: true });
   await d.addInput("options", '["Auto", "Manual", "Off"]');
+  await d.addInput("rows", "6");
   await d.addInput("fill", "$panel3");
   await d.addInput("listFill", "$panel2");
   await d.addInput("pickedFill", "$accentBg");
@@ -34,7 +35,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.add("frame", { Name: "list", x: "0", y: "100%", w: "100%", h: "hug", Fill: "listFill", Radius: "radius" });
   await d.layOut("Top to bottom", undefined, "0");
   await d.setField("Padding", "0.4");
-  await d.css('visibility: open ? "visible" : "hidden"\nmargin-top: 0.4\nbox-shadow: "0 8px 24px #000a"');
+  await d.css('visibility: open ? "visible" : "hidden"\nmargin-top: 0.4\nbox-shadow: "0 8px 24px #000a"\nmax-height: rows * 3.6 + 0.8\noverflow-y: "auto"');
   await d.add("frame", { Name: "option", w: "fill", h: "3.6", Fill: 'item === value ? pickedFill : "transparent"', Radius: "$radiusSmall" });
   await d.setField("Repeat", "options");
   await d.handler("tap", 'value = item;\nopen = false;\nemit("change", item);');
@@ -100,4 +101,23 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => hmi.state.values.mode?.value === "Off", "the switch to set the mode");
   await eventually(async () => (await inst(drop).locator('.el[data-name="label"]').textContent()) === "Off", "the dropdown to follow");
   check(card !== drop, "the card is the dropdown");
+
+  // a long one shows its rows, its padding above and below, and scrolls to the rest
+  await d.tab("Design");
+  const long = await d.place("Dropdown", { x: "4", y: "24", w: "20", h: "4", value: "mode", options: '["Auto", "Manual", "Off", "Jog", "Home", "Teach", "Test", "Service"]', rows: "4" });
+  await d.tab("Run");
+  const longList = inst(long).locator('.el[data-name="list"]');
+  await inst(long).locator('.el[data-name="face"]').click();
+  await eventually(() => longList.isVisible(), "the long list to open");
+  const [box, row] = [await longList.boundingBox(), await inst(long).locator('.el[data-name="option"]').first().boundingBox()];
+  check(Math.abs(box.height / row.height - (4 + 0.8 / 3.6)) < 0.05, `the long list to show 4 rows, ${box.height} high with rows ${row.height}`);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 400);
+  const service = inst(long).locator('.el[data-name="option"]').nth(7);
+  await eventually(async () => {
+    const s = await service.boundingBox();
+    return s.y >= box.y - 1 && s.y + s.height <= box.y + box.height + 1;
+  }, "a wheel to scroll the last option into the list");
+  await service.click();
+  await eventually(() => hmi.state.values.mode?.value === "Service", "picking the last option to set the mode");
 }
