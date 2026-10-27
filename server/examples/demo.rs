@@ -2,7 +2,8 @@
 //! reports its progress, a moving robot, a camera with the boxes a detector finds in its frames
 //! and a home it counts, the same view as MJPEG video, a label camera showing a real conveyor
 //! shot with a parcel and its labels, a 3D scan of the cell's floor with that part on it, and
-//! the floor's heat as points each with a colour and a size.
+//! the floor's heat as points each with a colour and a size, and the robot's routes, each leg
+//! a list of points of its own.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
@@ -35,6 +36,20 @@ struct Detections {
 #[derive(rant::Message, Clone)]
 struct Scan {
     points: Vec<Float3>,
+}
+
+/// One leg of a route: how fast, and the points it passes.
+#[derive(rant::Message, Clone)]
+struct Leg {
+    speed: f32,
+    pts: Vec<Double2>,
+}
+
+/// The robot's routes, lists in lists: each leg's points, and a name per route.
+#[derive(rant::Message, Clone)]
+struct Routes {
+    legs: Vec<Leg>,
+    names: Vec<String>,
 }
 
 /// How warm the cell's floor is, as a thermal camera's cloud comes: its points, and beside them
@@ -81,6 +96,7 @@ fn main() -> Result<(), rant::Error> {
     let labels = node.publisher::<Detections>("Line1/LabelCam/Detections", Qos::new())?;
     let scan = node.publisher::<Scan>("Cell/Scan", Qos::new())?;
     let heat = node.publisher::<Heat>("Cell/Heat", Qos::new())?;
+    let routes = node.publisher::<Routes>("Cell/Routes", Qos::new())?;
     let jog = Arc::new(Mutex::new(None::<f64>));
     let heard = jog.clone();
     let _jog = node.subscriber::<f64>("Line1/Jog", Qos::new(), move |m| *heard.lock().unwrap() = Some(m.into_inner()))?;
@@ -158,6 +174,7 @@ fn main() -> Result<(), rant::Error> {
             labels.send(&Detections { boxes: SHOT_FINDS.iter().map(|&[x0, y0, x1, y1]| AlignedBox2D { min: Double2 { x: x0, y: y0 }, max: Double2 { x: x1, y: y1 } }).collect() })?;
             scan.send(&scan_of(t))?;
             heat.send(&heat_of(t))?;
+            routes.send(&routes_of(t))?;
         }
         next += Duration::from_millis(50);
         match next.checked_duration_since(Instant::now()) {
@@ -179,6 +196,18 @@ fn scan_of(t: f64) -> Scan {
         })
         .collect();
     Scan { points }
+}
+
+/// Two legs of 2 and 3 points, the second's last point moving along x, and two route names.
+fn routes_of(t: f64) -> Routes {
+    let at = |x: f64, y: f64| Double2 { x, y };
+    Routes {
+        legs: vec![
+            Leg { speed: 0.5, pts: vec![at(0.0, 0.0), at(1.0, 0.0)] },
+            Leg { speed: 1.5, pts: vec![at(1.0, 0.0), at(1.0, 1.0), at(2.0 + t.sin(), 1.0)] },
+        ],
+        names: vec!["pick".to_owned(), "place and return".to_owned()],
+    }
 }
 
 /// The floor in 50 by 50 points, a warm spot circling on it: red and large where warm, blue
