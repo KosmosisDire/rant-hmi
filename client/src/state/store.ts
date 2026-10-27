@@ -386,6 +386,11 @@ export function live(alias: string): Live {
   return { value: v?.value ?? null, known: state.link === "open" && !!v?.known };
 }
 
+/** An import's value as it last came, read without counting as one of its readers. */
+export function brought(alias: string): Value | null {
+  return cell(values, alias)[0]()?.value ?? null;
+}
+
 export function entity(name: string): EntityInfo | undefined {
   return state.entities.find((e) => e.name === name);
 }
