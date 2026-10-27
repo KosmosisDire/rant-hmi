@@ -281,3 +281,28 @@ npx electron . http://host:6739
 
 A handler runs on one of `every="ms"`, `when="condition"` with an optional `for="ms"`,
 `change="name"`, `start=""`, `screen="connects"` or `screen="leaves"`.
+
+## Problems
+
+Every screen lists what goes wrong on it, and the HMI gathers every screen's in one list.
+
+- A page's: a property or drawing that fails, an instance whose component is missing, a video
+  the screen cannot play. It holds while an element shows it, and goes once fixed.
+- A run's: a handler or logic that throws or stops on an unknown value, on a screen or on the
+  system. Each counts every time it comes, and tells the person at the screen too.
+- The HMI's own: an error nothing caught, a promise nothing heard reject, an error or warning
+  on the console, in the page or its data worker, and a part of the editor that broke, which
+  shows what broke with a way to draw it again. These are bugs in the HMI, with their stack.
+
+The editor's status bar counts the faults and warnings, and opens the list. A row on an element
+opens it in Design, a row with a stack shows it, and the eraser clears those that passed from
+this list only. The operator's screen shows none of it, but sends its own.
+
+An agent reads the same list three ways:
+
+- `GET /problems` gives every problem as JSON, each with `screen` (null for the system),
+  `source`, `level`, `text`, `detail` (the stack), `page`, `element`, `count` and `at`, in ms
+  since 1970.
+- The log names each new one a screen finds, with its stack, as `screen 3 found a page's problem
+  on main e4: width: Speedd names no mesh import, variable or record`.
+- `Hmi/Problems` on the mesh ([status.md](status.md#hmiproblems)).
