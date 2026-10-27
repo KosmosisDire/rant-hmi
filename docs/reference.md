@@ -234,7 +234,10 @@ each an expression.
 - A value that cannot be read gives way to the default, and the editor says why on the
   scene. A part whose values are not known yet draws nothing.
 - The camera moves only by its properties, so a person turns it through handlers on the
-  scene: `turn = turn - p.dx * 4` on drag, with `yaw="turn"` and `turn` a screen variable.
+  scene. A scene added in the editor comes with its view, a variable each screen keeps (in a
+  component, one of its own), its camera properties reading it, and handlers that move it: a
+  left drag turns round what it looks at, another button, Shift or two fingers slide it, and a
+  wheel or a pinch brings it nearer. They are the scene's own to change or remove.
 
 ### Shapes
 
