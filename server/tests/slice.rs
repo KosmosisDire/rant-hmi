@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use rant::types::Timestamp;
-use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, VariableOptions};
+use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, TaskOptions, TaskRequest, VariableOptions};
 use rant_hmi::mesh::{Delivery, Mesh, MeshOptions};
 use rant_hmi::project::{Import, Intent, Kind};
 use rant_hmi::status::{self, Client, HmiStatus};
@@ -157,16 +157,87 @@ fn calls_a_function_that_takes_nothing() {
     while !mesh.attach(&home) {
         within("the function to attach", start);
     }
-    assert!(mesh.call("Home", &Value::map::<&str>([])).is_ok());
-    assert_eq!(mesh.call("Home", &Value::Float(1.0)).err().unwrap(), "Home takes nothing");
+    assert!(mesh.call("Home", &Value::map::<&str>([]), 1, |_| {}).is_ok());
+    assert_eq!(mesh.call("Home", &Value::Float(1.0), 2, |_| {}).err().unwrap(), "Home takes nothing");
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let start = Instant::now();
     loop {
         // the provider may not be known for a moment, so a first call can find none
-        if runtime.block_on(mesh.call("Home", &Value::Null).unwrap()).is_ok() {
+        if runtime.block_on(mesh.call("Home", &Value::Null, 3, |_| {}).unwrap()).is_ok() {
             break;
         }
         within("a call to reach the provider", start);
     }
     assert!(homed.load(Ordering::SeqCst) >= 1);
+}
+
+#[test]
+fn calls_a_task_that_reports_progress_and_cancels_it() {
+    let local = || NodeOptions::new().domain(DOMAIN + 6).multicast_interface("127.0.0.1").max_topics(16);
+    let line = Node::new("test_filler", local()).unwrap();
+    // fills `parts` parts, each a share of the run, and hands back how many it filled
+    let _fill = line
+        .task_definition("Line/Fill", TaskOptions::new(), |req: TaskRequest<u32, f32, u32>| {
+            let parts = *req;
+            let task = req.defer();
+            std::thread::spawn(move || {
+                for part in 1..=parts {
+                    if task.cancelled() {
+                        return task.complete_cancelled("stopped", Some(&(part - 1)));
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                    task.progress(&(part as f32 / parts as f32))?;
+                }
+                task.complete(&parts)
+            });
+        })
+        .unwrap();
+
+    let (tx, _rx) = unbounded_channel();
+    let (frames, _) = unbounded_channel();
+    let mut mesh = Mesh::open(&MeshOptions { name: "hmi_tasker".into(), domain: DOMAIN + 6, loopback: true }, tx, frames).unwrap();
+    let fill = import("Fill", "Line/Fill", Kind::Task, Intent::Write);
+    let start = Instant::now();
+    while !mesh.attach(&fill) {
+        within("the task to attach", start);
+    }
+    assert!(mesh.entities().iter().any(|e| e.name == "Line/Fill" && e.progress.is_some()), "a task lists its progress type");
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let (shares, heard) = std::sync::mpsc::channel();
+    let start = Instant::now();
+    let answer = loop {
+        let shares = shares.clone();
+        // the provider may not be known for a moment, so a first call can find none
+        if let Ok(answer) = runtime.block_on(mesh.call("Fill", &Value::Int(4), 1, move |v| drop(shares.send(v))).unwrap()) {
+            break answer;
+        }
+        within("a call to reach the provider", start);
+    };
+    assert_eq!(answer, Value::Int(4));
+    let got: Vec<Value> = heard.try_iter().collect();
+    assert_eq!(got, [0.25, 0.5, 0.75, 1.0].map(Value::Float), "every update comes, in order, before the answer");
+
+    // one call by its handler's id, while another goes on
+    let (shares, heard) = std::sync::mpsc::channel();
+    let one = mesh.call("Fill", &Value::Int(1000), 2, move |v| drop(shares.send(v))).unwrap();
+    let (shares, other_heard) = std::sync::mpsc::channel();
+    let other = mesh.call("Fill", &Value::Int(30), 3, move |v| drop(shares.send(v))).unwrap();
+    heard.recv_timeout(Duration::from_secs(5)).expect("the long call to start");
+    other_heard.recv_timeout(Duration::from_secs(5)).expect("the other call to start");
+    mesh.cancel("Fill", Some(2)).unwrap();
+    assert_eq!(runtime.block_on(one).err().map(|f| f.status).as_deref(), Some("cancelled"));
+    assert_eq!(runtime.block_on(other).ok(), Some(Value::Int(30)), "a cancel of one call leaves the other");
+
+    // every call in flight
+    let mut calls = Vec::new();
+    for call in [4, 5] {
+        let (shares, heard) = std::sync::mpsc::channel();
+        calls.push(mesh.call("Fill", &Value::Int(1000), call, move |v| drop(shares.send(v))).unwrap());
+        heard.recv_timeout(Duration::from_secs(5)).expect("each call to start");
+    }
+    mesh.cancel("Fill", None).unwrap();
+    for call in calls {
+        assert_eq!(runtime.block_on(call).err().map(|f| f.status).as_deref(), Some("cancelled"));
+    }
+    assert!(mesh.cancel("Fill", Some(4)).is_ok(), "a call that ended cancels to no effect");
 }

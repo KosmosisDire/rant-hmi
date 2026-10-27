@@ -240,6 +240,8 @@ pub struct EntityInfo {
     pub schema: Option<TypeInfo>,
     /// A function's or task's answer.
     pub response: Option<TypeInfo>,
+    /// What each of a task's progress updates holds.
+    pub progress: Option<TypeInfo>,
 }
 
 /// An enum the imports' types hold, which code names by its type: `Job.options`.

@@ -1273,12 +1273,20 @@ impl App {
             }
             FromScript::Call { run, call, alias, request } => {
                 info!("{} calls {alias} with {request}", self.label(run));
-                match self.mesh.call(&alias, &request) {
+                let script = self.script.clone();
+                let progress = move |value| script.send(ToScript::Progress { call, value });
+                match self.mesh.call(&alias, &request, call, progress) {
                     Ok(answer) => {
                         let script = self.script.clone();
                         tokio::spawn(async move { script.send(ToScript::Answer { call, outcome: answer.await }) });
                     }
                     Err(message) => self.script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "no_provider".into(), message }) }),
+                }
+            }
+            FromScript::Cancel { run, alias, call } => {
+                info!("{} cancels {}{alias}", self.label(run), if call.is_some() { "a call of " } else { "every call of " });
+                if let Err(text) = self.mesh.cancel(&alias, call) {
+                    self.tell(run, Level::Fault, text);
                 }
             }
             FromScript::Send { run, alias, value } => {
@@ -1288,6 +1296,7 @@ impl App {
                 }
             }
             FromScript::Notify { run, text } => self.tell(run, Level::Info, text),
+            FromScript::Fault { run, text } => self.tell(run, Level::Fault, text),
             FromScript::Log { run, text } => info!("{}: {text}", self.label(run)),
             FromScript::Open { run, page, replace, call } => match (self.pages.get(&page), self.runs.get(&run).and_then(|r| r.session)) {
                 (Some(_), Some(session)) => {

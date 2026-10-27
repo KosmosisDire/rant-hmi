@@ -1,7 +1,7 @@
-//! A small line to try the HMI on: a conveyor, a jog topic, a reset function, a moving robot,
-//! a camera with the boxes a detector finds in its frames and a home it counts, the same view
-//! as MJPEG video, a label camera showing a real conveyor shot with a parcel and its labels, and
-//! a 3D scan of the cell's floor with that part on it.
+//! A small line to try the HMI on: a conveyor, a jog topic, a reset function, a fill task that
+//! reports its progress, a moving robot, a camera with the boxes a detector finds in its frames
+//! and a home it counts, the same view as MJPEG video, a label camera showing a real conveyor
+//! shot with a parcel and its labels, and a 3D scan of the cell's floor with that part on it.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use rant::types::{AlignedBox2D, Double2, Double3, Empty, Float3, Image, ImageFormat, JointState, Pose, Quaternion, Timestamp, VideoCodec, VideoFrame};
-use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, Request, VariableOptions};
+use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, Request, TaskOptions, TaskRequest, VariableOptions};
 
 #[derive(rant::Message, Clone)]
 struct Conveyor {
@@ -76,6 +76,21 @@ fn main() -> Result<(), rant::Error> {
     let parts = Arc::new(AtomicU32::new(0));
     let cleared = parts.clone();
     let _reset = node.function_definition("Line1/Reset", FunctionOptions::new(), move |_: Request<Empty, u32>| Ok::<_, &str>(cleared.swap(0, Ordering::Relaxed)))?;
+    // fills a box with `parts` parts, 5 a second, the share done after each, until cancelled
+    let _fill = node.task_definition("Line1/Fill", TaskOptions::new(), |req: TaskRequest<u32, f32, u32>| {
+        let parts = *req;
+        let task = req.defer();
+        std::thread::spawn(move || {
+            for part in 1..=parts {
+                if task.cancelled() {
+                    return task.complete_cancelled("stopped", Some(&(part - 1)));
+                }
+                std::thread::sleep(Duration::from_millis(200));
+                task.progress(&(part as f32 / parts as f32))?;
+            }
+            task.complete(&parts)
+        });
+    })?;
     // the camera's home takes and gives nothing, untyped as many devices' commands are
     let homes = Arc::new(AtomicU32::new(0));
     let homing = homes.clone();

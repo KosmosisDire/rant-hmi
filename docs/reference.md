@@ -358,7 +358,10 @@ A component's own events, which its code sends with `emit`, take `while="true"`.
 Code reads the project's names:
 
 - each import by its alias. A topic sends with `Alias.send(...)`, and a function is called
-  as `await Alias(...)`.
+  as `await Alias(...)`. A task is called as a function is, with a last function that takes
+  each progress update: `await Fill(5, (p) => { filled = p })`. What a task call gives stops
+  that call with `.cancel()`, and `Alias.cancel()` stops every call of it. A stopped call
+  fails with `e.status` `"cancelled"`.
 - each variable, computed value and record by its name, a record as a list of `{ t, v }`,
   oldest first.
 - a mesh enum by its type's name, its `options` the names it takes.
