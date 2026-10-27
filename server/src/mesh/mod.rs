@@ -274,6 +274,11 @@ impl Mesh {
         out
     }
 
+    /// What an attached import's value is made of.
+    pub fn shapes(&self, alias: &str) -> Option<&[Shape]> {
+        self.attached.get(alias).map(|a| a.shapes.as_slice())
+    }
+
     pub fn detach(&mut self, alias: &str) {
         self.attached.remove(alias);
     }

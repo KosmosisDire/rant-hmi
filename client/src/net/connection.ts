@@ -20,7 +20,7 @@ import { faultOf } from "../state/caught";
 import { operator } from "../state/mode";
 import { problems, report } from "../state/problems";
 import { cameBack, notify, onReading, receive, setState, state, type WebrtcProblem } from "../state/store";
-import { countRead, previewing, watched, wholeNames } from "../state/watch";
+import { countRead, previewing, watched, watchedNames, wholeNames } from "../state/watch";
 import type { FromData, Second, ToData } from "./data.worker";
 import type { Drawing, Drew } from "./draw";
 import { decodes, Decoded } from "./decode";
@@ -268,14 +268,14 @@ function openSecond(to: Second | null) {
   tell({ second: to, session });
 }
 
-/** Tells the backend the names this screen shows, once they changed. */
+/** Tells the backend what this screen reads, once that changed. */
 function tellWatch() {
   if (state.link !== "open") return;
-  const [names, previews] = [watched(), previewing()];
-  const key = `${previews}${names === null ? "" : `\n${names.join("\n")}`}`;
+  const [reads, previews] = [watched(), previewing()];
+  const key = JSON.stringify([previews, reads]);
   if (key === toldWatch) return;
   toldWatch = key;
-  send({ type: "watch", names, previews });
+  send({ type: "watch", reads, previews });
 }
 
 /** Tells the backend this screen's problems once they changed, at most every PROBLEMS_EVERY_MS,
@@ -296,7 +296,7 @@ createRoot(() => createEffect(on(() => JSON.stringify(problems), tellProblems)))
 
 /** Tells the data worker the names read whole and those shown, once they changed. */
 function tellData() {
-  const [whole, shown] = [wholeNames(), watched()];
+  const [whole, shown] = [wholeNames(), watchedNames()];
   const key = JSON.stringify([whole, shown]);
   if (key === toldData) return;
   toldData = key;

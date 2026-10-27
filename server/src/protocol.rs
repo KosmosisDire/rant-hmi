@@ -187,11 +187,10 @@ pub enum ClientMsg {
     /// Offers the screen's WebRTC connection, first or again, with the videos it plays, each
     /// import's on the transceiver named by its mid. A video left out stops.
     Play { offer: String, videos: Vec<Played> },
-    /// The imports and computed values the screen shows, in place of those it named before, or
-    /// None for all of them. Only those come to it, from the screen's first value on. `previews`
-    /// while it only previews them, as the editor's Data tab does, so its big values come slower.
+    /// The paths the screen reads, as `Scan.points.[].x` split at its dots, or None for all, and
+    /// only that comes. `previews` while it only previews, as the Data tab does, slows big values.
     Watch {
-        names: Option<Vec<String>>,
+        reads: Option<Vec<Vec<String>>>,
         #[serde(default)]
         #[ts(optional, as = "Option<bool>")]
         previews: bool,

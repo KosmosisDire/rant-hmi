@@ -13,8 +13,8 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   hmi.send({ type: "set_variable", name: "slowNote", variable: { name: "slowNote", start: 0, per: "hmi" } });
   const pageId = await hmi.addPage("Slow link");
   const note = await hmi.addElement(pageId, "span", { name: "note", x: "2", y: "2", w: "30", h: "4", text: "slowNote" });
-  // the picture's width, so the screen reads its pictures even once the camera has a video
-  await hmi.addElement(pageId, "span", { name: "label", x: "2", y: "8", w: "30", h: "4", text: "String(SlowCam.width)" });
+  // the picture's bytes, so the screen reads its pictures even once the camera has a video
+  await hmi.addElement(pageId, "span", { name: "label", x: "2", y: "8", w: "30", h: "4", text: "String(SlowCam.data.length)" });
   hmi.send({ type: "set_start", page: pageId });
   const port = Number(new URL(sys.url).port);
   // the link: 150 KB/s toward the screen in one queue every connection shares

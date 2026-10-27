@@ -10,7 +10,8 @@ const most = (seconds) => CAP + 240_000 / seconds;
 export default async function ({ page, hmi, sys, check, eventually }) {
   await hmi.import("Scan", "Cell/Scan");
   const id = await hmi.addPage("Preview cap");
-  await hmi.addElement(id, "span", { name: "count", x: "2", y: "2", w: "20", h: "4", text: "String(Scan.points.length)" });
+  // every point, as the count alone would bring the points without their fields
+  await hmi.addElement(id, "span", { name: "count", x: "2", y: "2", w: "20", h: "4", text: "String(Scan.points).length" });
 
   const context = await page.context().browser().newContext();
   const bytes = new Map();
