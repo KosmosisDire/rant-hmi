@@ -1,12 +1,14 @@
 // What pages read, path by path: each expression's paths as reads.js finds them, followed into
 // the components a page holds through their inputs, and into a repeat's copies through `item`.
 
+import { createMemo, createRoot } from "solid-js";
 import { ITEM, type Path, type Reads, reads } from "../lang/reads.js";
 import { isPart } from "../page/parts";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import { colours } from "./bind";
-import { component, state, transcoded } from "./store";
+import { fields } from "./format";
+import { brought, component, state, transcoded } from "./store";
 
 /** What a part's property reads of the value it is given, where not all of it, as the scene's
  *  `positions` and `poseOf` read them. */
@@ -53,10 +55,20 @@ function within(env: Env, more: Record<string, Path[]>): Env {
   return { names: new Map([...env.names, ...Object.entries(more)]), open: env.open };
 }
 
-/** Whether media showing `path` plays its video: an import, bare as a source gives it, with the
- *  Video child the transcoder makes. Another shows its pictures, so reads all of them. */
+/** The codec of an import's last value, told again only as it changes, as each value of a
+ *  video would otherwise have every page's reads worked out again. */
+const codecs = new Map<string, () => unknown>();
+function codec(alias: string): unknown {
+  let c = codecs.get(alias);
+  if (!c) codecs.set(alias, (c = createRoot(() => createMemo(() => fields(brought(alias))?.codec))));
+  return c();
+}
+
+/** Whether media showing `path` plays its video, so reads nothing of its value: an import, bare
+ *  as a source gives it, with the Video child the transcoder makes or H264 frames of its own.
+ *  Another shows its pictures, so reads all of them. */
 function plays(path: Path): boolean {
-  return path.length === 1 && state.imports.some((i) => i.alias === path[0] && transcoded(i));
+  return path.length === 1 && state.imports.some((i) => i.alias === path[0] && (transcoded(i) || codec(i.alias) === "H264"));
 }
 
 class Collect {
