@@ -40,7 +40,7 @@ use crate::protocol::ClientMsg;
 
 /// How often the socket pings its screen, to hear what arrived and that it is there. The
 /// browser answers by itself, even in a hidden tab whose timers run slow, so a screen is lost
-/// only when its link is.
+/// only when its link is, while what it holds goes by its page's own pings (app.rs SILENCE).
 pub const PING_EVERY: Duration = Duration::from_millis(50);
 
 /// The built client's files, index.html for any path that names none.

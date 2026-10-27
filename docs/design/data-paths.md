@@ -889,6 +889,65 @@ The map's update, the backend's encoding and the page's applying in ms:
 So a big list of records should go as rows matched against the value the screen last took, and
 as the full value when that is not much smaller. No ids. A grid of bytes goes whole.
 
+## Stage 13: a page that falls behind
+
+Seen on karbon's HMI across the LAN on 2026-10-27: a tab brought back after a while hidden
+showed a ping of 33 s and then 37 s, answered inputs, and drew values that were plainly old
+as they streamed in, so it was a page far behind, not a slow link. The same page at rest had
+pings of 1 to 9 ms with runs of several seconds at 100 to 135 ms.
+
+The pings the page times run through its own main thread, so they also show how Chrome's
+renderer is scheduled: with this machine's CPU at 85 to 90% from test systems left running,
+the page's pings sat at 30 to 100 ms while a WebSocket echo through the backend from Node on
+the same machine ran at 0.5 ms median and 11 ms at the 99th percentile, and focusing the tab,
+which Windows boosts, brought the page back to 5 ms.
+
+Why:
+
+- Small values and pongs went whole past the window on purpose, and the only guard, eight
+  batches waiting in the lane, counted what the backend held, not what the link's buffers did.
+  A page whose main thread stalled, as a hidden tab's does, kept its socket's pongs going from
+  the browser's network process, so the window stayed open and the lane drained into the
+  channel's 2 MB and the socket's TCP buffers, minutes of batches at 30 a second. Back, the
+  page read them in order, each a pong among them timing the backlog.
+- Stage 6 put pongs and small values on an unordered channel, and the second way then took big
+  values off the channels. When the link channel took big values back, they shared its one
+  ordered SCTP queue with every pong, which waited behind the window's worth of a picture's
+  pieces, up to the margin's 100 ms.
+- A screen's silence was judged by its socket's pongs, which a stalled page still answers, so a
+  press held on it stayed held.
+
+Built:
+
+- The lanes send a batch of small values only while the page keeps up: each ping names the
+  newest batch the page applied (`seen`), and a batch sent 250 ms ago (`LAG`) that it has not
+  named holds those after it, a link with a longer round trip allowed twice that and the ping
+  after it (`allow`), so a slow link is never held for being slow (`run-screen-handlers` drags
+  through a 1 s delay each way). What is not values goes on past them. The lane's eight batch
+  guard then fills, and all values go in their place once the page catches up
+  (`run-stalled-page`: a main thread stalled 3 s shows at most 15 of the 60 counts it missed,
+  31 without this).
+- Pongs and small values go whole again on an unordered `small` channel beside the link
+  channel, the rest in the lanes on the link channel as before, and the link channel carries
+  them while the small one is not open. The page joins each channel's pieces apart: with one
+  joiner, a pong that overtook the pieces of a batch of small values on the LAN landed in that
+  batch, and the page read nothing (the first build on karbon faulted on every screen until
+  this). `run-big-batch` drives a far screen (the between helper's `far` names it as a proxy
+  would) through 120 KB batches beside a scan on the link channel, which no scenario had done,
+  as every test screen was on loopback and so took its socket. The overtaking itself did not
+  show on loopback, where the ordered queue drains as fast as it fills.
+- A hidden page says so (`shown`), and is sent no values and no frames until it shows again,
+  when it gets every value anew at once, big ones whole, and starts its round trips afresh.
+  Recorded on the user's Chrome with the pacing alone: a tab hidden 6 minutes had its main
+  thread run only every 10 to 16 s, each run applying the burst its ping let out, and on
+  showing again it stayed dead about 5 s, then replayed the last burst and the pongs of the
+  hidden period, which read as a ping of seconds. Nothing sent to a hidden page can be shown,
+  so nothing is (`run-hidden-values`).
+- A screen lets go of what it holds once its page has sent nothing for half a second, by its
+  own pings, while it is lost only once its link stops answering for 5 s. A hidden tab's pings
+  slow to one a second, so a hold never outlives a tab the operator left (`run-hidden-tab`,
+  which held the opposite until now at the user's earlier choice).
+
 ## Recommendations
 
 For the user to decide. Each rests on the stages above.

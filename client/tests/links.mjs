@@ -66,9 +66,11 @@ export const keptUp = ({ got, sent }) => got >= 1 && got >= Math.min(3, sent - 1
 
 /** A way to the HMI on `port` at `host`: with `rate`, that many bytes a second toward the screen
  *  in one queue every connection shares, the backend read no further while 32 KB wait, so it
- *  feels the link push back as TCP does, and with `refuse` no second socket. `cut` ends each
- *  connection whose request starts with `path` at once, mid message as it may be. */
-export async function between(port, { host = "127.0.0.1", rate = 0, refuse = false } = {}) {
+ *  feels the link push back as TCP does, and with `refuse` no second socket. With `far` each
+ *  request names a screen on another host, as a proxy does, so the backend takes the screen
+ *  for far: its values compressed, and on its WebRTC link channel once that opens. `cut` ends
+ *  each connection whose request starts with `path` at once, mid message as it may be. */
+export async function between(port, { host = "127.0.0.1", rate = 0, refuse = false, far = false } = {}) {
   const queue = [];
   let size = 0;
   const ups = new Set();
@@ -93,7 +95,7 @@ export async function between(port, { host = "127.0.0.1", rate = 0, refuse = fal
       if (refuse && path.startsWith("/bulk")) return down.destroy();
       // a socket still connecting keeps what it is given in order
       const up = net.connect(port, host);
-      up.write(first);
+      up.write(far ? Buffer.from(first.toString("latin1").replace("\r\n", "\r\nX-Forwarded-For: 203.0.113.9\r\n"), "latin1") : first);
       down.pipe(up);
       if (!rate) up.pipe(down);
       else {

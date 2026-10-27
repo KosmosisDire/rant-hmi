@@ -162,13 +162,21 @@ pub enum Source {
 #[ts(export)]
 pub enum ClientMsg {
     /// Asks for a pong, which the loop answers in turn and sends the way small values go, so
-    /// the round trip is what a value waits. `rtt` is the last one the screen timed, in ms, once.
+    /// the round trip is what a value waits. `rtt` is the last one the screen timed, in ms, once,
+    /// and `seen` the newest batch of small values it applied, which lets those after it go.
     Ping {
         t: f64,
         #[serde(default)]
         #[ts(optional)]
         rtt: Option<f64>,
+        #[serde(default)]
+        #[ts(optional, type = "number")]
+        seen: Option<u64>,
     },
+    /// The screen's page hid, as a tab behind another, or shows again. A hidden page is sent
+    /// no values, as it can show none and its browser lets it run only now and then, and one
+    /// shown again gets every value anew at once, so it never replays what it missed.
+    Shown { shown: bool },
     /// The last message on the socket before the screen sends on its link channel, which the
     /// backend holds what comes on until this.
     Switch,

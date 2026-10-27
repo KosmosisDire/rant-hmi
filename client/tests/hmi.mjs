@@ -28,13 +28,14 @@ export class Hmi {
       if (bytes[2] === 1) return this.parts.set(lane, parts);
       this.parts.delete(lane);
       const msg = decoder.decode(parts.length === 1 ? parts[0] : Buffer.concat(parts));
+      if (!(lane & 0x8000) && msg.type === "values") this.seen = msg.seq;
       this.receive(msg);
       // a big value's lane, whose next value comes once this one is said to be taken
       if (lane & 0x8000 && msg.type === "values") for (const v of msg.values) this.send({ type: "took", alias: v.alias, seq: msg.seq });
     };
     this.ws.onopen = () => {
-      // the heartbeat: a silent screen is dropped
-      this.beat = setInterval(() => this.send({ type: "ping", t: performance.now() }), 100);
+      // the heartbeat: a silent screen is dropped, and the small values it applied let the next go
+      this.beat = setInterval(() => this.send({ type: "ping", t: performance.now(), seen: this.seen }), 100);
     };
     this.ws.onclose = () => clearInterval(this.beat);
   }

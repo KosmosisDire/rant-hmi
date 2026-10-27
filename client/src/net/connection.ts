@@ -7,7 +7,8 @@
 // connection opens beside the link once the screen plays a video, which it brings where WebCodecs
 // cannot decode the video's frames from the link. It opens at once, and its `link` channel
 // carries what the link did once the backend switches to it, big values too, as that way is
-// direct where the link may come through a proxy. The link reconnects by itself, at once when
+// direct where the link may come through a proxy, with pongs and small values whole on its
+// unordered `small` channel, so none waits behind a picture. The link reconnects by itself, at once when
 // the page shows again. The round trip for the status bar is timed the way a person's actions
 // and the values go, on the link channel once it carries them.
 
@@ -73,7 +74,7 @@ let secondNamed: Second | null = null;
 /** The WebRTC link channel, what it brought before the backend's marker on the link, held so
  *  nothing comes out of turn, and whether the screen sends on it. */
 let channel: RTCDataChannel | null = null;
-let early: ArrayBuffer[] | null = null;
+let early: [ArrayBuffer, boolean][] | null = null;
 let switched = false;
 
 interface Rtc {
@@ -127,8 +128,14 @@ const videos = new Map<string, Video>();
 let rtc: Rtc | null = null;
 let rtcRetry: number | undefined;
 let rtcTries = 0;
-/** The last round trip timed, which the next ping tells the backend. */
+/** The last round trip timed, which the next ping tells the backend, and the newest batch of
+ *  small values applied, so the backend sends the next only as this screen keeps up. */
 let timed: number | undefined;
+let seen: number | undefined;
+/** When the page last showed. A pong of a ping from before, answered while the page was hidden
+ *  and read late, times nothing. */
+let shownAt = 0;
+const shown = () => document.visibilityState === "visible";
 /** The videos whose frames the link brings, and the names watched, as last told. */
 let asked = "";
 let toldWatch: string | undefined;
@@ -148,13 +155,14 @@ export function connect() {
     opened() {
       tries = 0;
       setState("link", "open");
-      beat = window.setInterval(ping, ROUND_TRIP_EVERY_MS);
+      if (shown()) beat = window.setInterval(ping, ROUND_TRIP_EVERY_MS);
     },
     heard: joiner(heard),
     closed() {
       clearInterval(beat);
       link = null;
       session = null;
+      seen = undefined;
       closeRtc();
       openSecond(null);
       setState({ link: "closed", rttMs: null });
@@ -174,19 +182,20 @@ function heard(bytes: Uint8Array, lane: number) {
   if (msg.type === "frame") {
     videos.get(msg.alias)?.decoded()?.feed(msg);
   } else if (msg.type === "pong") {
+    cameBack(msg.t);
+    if (msg.t < shownAt) return;
     const rtt = performance.now() - msg.t;
     timed = rtt;
     pings.push(rtt);
     if (pings.length > 1000) pings.splice(0, pings.length - 1000);
     setState("rttMs", state.rttMs === null ? rtt : state.rttMs * 0.8 + rtt * 0.2);
-    cameBack(msg.t);
   } else if (msg.type === "switched") {
     // the last on the link before the channel, so what the channel held comes next, and the
     // backend hears on the link, last, that what follows comes on the channel
     if (!channel || !early) return;
     const [held, join] = [early, joinChannel];
     early = null;
-    for (const piece of held) join(piece);
+    for (const [piece, fromSmall] of held) join(piece, fromSmall);
     send({ type: "switch" });
     switched = true;
     setState("path", "channel");
@@ -197,10 +206,13 @@ function heard(bytes: Uint8Array, lane: number) {
     // one for an earlier connection, which this one cannot take, is left
     rtc?.pc.addIceCandidate({ candidate: msg.candidate, sdpMLineIndex: 0 }).catch(() => {});
   } else {
+    // the small channel brings batches in any order, and the backend sends on from the newest
+    if (msg.type === "values") seen = Math.max(seen ?? 0, msg.seq);
     receive(msg);
     // a new session has asked for no frames and watches nothing yet, and its big values come
     // on its own second way
     if (msg.type === "hello") {
+      seen = undefined;
       helloWt = msg.wt ?? null;
       asked = "";
       askFrames();
@@ -221,6 +233,8 @@ function heard(bytes: Uint8Array, lane: number) {
       secondNamed = inApp || noSecond ? null : { socket: `${secure ? "wss" : "ws"}://${location.host}${path}`, wt };
       openSecond(secondNamed);
       void offerVideos();
+      // a session opened while the page hides is sent no values until it shows
+      if (!shown()) send({ type: "shown", shown: false });
     }
   }
 }
@@ -325,7 +339,7 @@ onReading((alias, whole) =>
 );
 
 function ping() {
-  send({ type: "ping", t: performance.now(), rtt: timed });
+  send({ type: "ping", t: performance.now(), rtt: timed, seen });
   timed = undefined;
 }
 
@@ -383,10 +397,15 @@ function openRtc(): Rtc | null {
     noChannel = localStorage.getItem("hmi.noChannel") === "1";
   } catch {}
   const ch = pc.createDataChannel(noChannel ? "keep" : "link");
-  ch.binaryType = "arraybuffer";
+  // pongs and small values come whole on it, each a piece of its own, never behind a picture
+  const small = pc.createDataChannel(noChannel ? "keep-small" : "small", { ordered: false });
+  ch.binaryType = small.binaryType = "arraybuffer";
   [channel, early, switched] = [ch, [], false];
-  joinChannel = joiner(heard);
-  ch.onmessage = (e) => {
+  // each channel joins its own pieces, as a whole message on one must never join those of a
+  // message part way through on the other
+  const joiners = [joiner(heard), joiner(heard)];
+  joinChannel = (data, fromSmall = false) => joiners[fromSmall ? 1 : 0](data);
+  const came = (e: MessageEvent, fromSmall: boolean) => {
     if (channel !== ch) return;
     const bytes = new Uint8Array(e.data as ArrayBuffer);
     // a mark, `[u16 0xFFFF]` and the backend's ping, goes back at once as `[0xFF]` and the ping,
@@ -397,9 +416,11 @@ function openRtc(): Rtc | null {
       back.set(bytes.subarray(2), 1);
       return ch.send(back);
     }
-    if (early) early.push(e.data as ArrayBuffer);
-    else joinChannel(e.data as ArrayBuffer);
+    if (early) early.push([e.data as ArrayBuffer, fromSmall]);
+    else joinChannel(e.data as ArrayBuffer, fromSmall);
   };
+  ch.onmessage = (e) => came(e, false);
+  small.onmessage = (e) => came(e, true);
   ch.onclose = () => channel === ch && channelLost();
   const c: Rtc = { pc, offering: false, again: false, udp: 0, public: 0 };
   rtc = c;
@@ -535,7 +556,7 @@ export function unplayable(): string | null {
 }
 
 /** Joins what the link channel brings, as the link's own joiner does what it brings. */
-let joinChannel: (data: ArrayBuffer) => void = () => {};
+let joinChannel: (data: ArrayBuffer, fromSmall?: boolean) => void = () => {};
 
 /** The link channel closed, so the link carries all again, and the second way the big values. */
 function channelLost() {
@@ -574,6 +595,20 @@ function rtcFailed() {
   rtcRetry = window.setTimeout(() => void offerVideos(), Math.min(RETRY_LATER_MAX_MS, RETRY_LATER_MS * 2 ** rtcTries++));
 }
 
+// a hidden page pings no more and is sent no values, as its browser lets it run only now and
+// then, and one shown again starts its round trips afresh and gets every value anew at once
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && !link) connect();
+  clearInterval(beat);
+  if (!shown()) {
+    send({ type: "shown", shown: false });
+    return;
+  }
+  shownAt = performance.now();
+  timed = undefined;
+  setState("rttMs", null);
+  if (!link) return connect();
+  if (state.link === "open") {
+    beat = window.setInterval(ping, ROUND_TRIP_EVERY_MS);
+    send({ type: "shown", shown: true });
+  }
 });
