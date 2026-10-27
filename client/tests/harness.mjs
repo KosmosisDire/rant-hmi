@@ -70,7 +70,7 @@ export async function startSystem({ empty, slot = 0, video: transcodes = true } 
   const domain = String(domainOf(slot));
   const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", domain]);
   const cage = run(join(BUILD, "examples", `cage${exe}`), ["--loopback", "--domain", domain]);
-  const transcoding = transcodes && transcoder();
+  const transcoding = transcodes ? transcoder() : null;
   const video = transcoding && run(transcoding, ["--domain", domain, "--interface", "127.0.0.1"]);
   await new Promise((r) => setTimeout(r, 300));
   // a home of its own, where the backend keeps its certificate, never the user's
