@@ -139,19 +139,23 @@ mod tests {
         reads_of(&r, "Lidar.points.map((Lidar) => Lidar.x)", false, &["Lidar.points.[].x", "Lidar.points.length"]);
         reads_of(&r, "Lidar.points.map(({ x, y }) => x + y)", false, &["Lidar.points.[].x", "Lidar.points.[].y", "Lidar.points.length"]);
         reads_of(&r, "Lidar.points.map((p) => p)", false, &["Lidar.points.[]", "Lidar.points.length"]);
+        // a reduce with no start begins from the first item, and a function also takes the list
+        reads_of(&r, "Boxes.boxes.reduce((a) => a).uuid", false, &["Boxes.boxes.[]", "Boxes.boxes.length"]);
+        reads_of(&r, "Boxes.boxes.reduce((a, b) => a.w + b.h)", false, &["Boxes.boxes.[].h", "Boxes.boxes.[].w", "Boxes.boxes.length"]);
+        reads_of(&r, "Cloud.points.map((p, i, all) => (all[i - 1]?.y ?? 0) + p.x)", false, &["Cloud.points.[].x", "Cloud.points.[].y", "Cloud.points.length"]);
     }
 
     #[test]
     fn code_follows_its_own_names() {
         let r = Reads::new();
         let src = "const p = Pose.position;\nlet n = 0;\nfor (const q of Cloud.points) n += q.x;\nnotify(p.x + p.y + n);";
-        reads_of(&r, src, true, &["Cloud.points.[].x", "Cloud.points.length", "Pose.position.x", "Pose.position.y", "notify"]);
-        // a name declared after the function that reads it
-        reads_of(&r, "function draw() { return p.x; }\nconst p = Pose.position;\ndraw();", true, &["Pose.position.x"]);
+        // a let or a const reads all it is given, while a loop's item is followed
+        reads_of(&r, src, true, &["Cloud.points.[].x", "Cloud.points.length", "Pose.position", "notify"]);
+        reads_of(&r, "function draw() { return p.x; }\nconst p = Pose.position;\ndraw();", true, &["Pose.position"]);
         reads_of(&r, "const { x, y } = Pose.position;\nlog(x + y);", true, &["Pose.position.x", "Pose.position.y", "log"]);
         reads_of(&r, "const { x, ...rest } = Pose.position;\nlog(x);", true, &["Pose.position", "Pose.position.x", "log"]);
         // a name given another value reads all of that value
-        reads_of(&r, "let p = A.pose;\np = B.q;\nlog(p.x);", true, &["A.pose.x", "B.q", "log"]);
+        reads_of(&r, "let p = A.pose;\np = B.q;\nlog(p.x);", true, &["A.pose", "B.q", "log"]);
         reads_of(&r, "for (const k in Settings) log(k);", true, &["Settings", "log"]);
         reads_of(&r, "Speed += 1;", true, &["Speed"]);
         reads_of(&r, "Speed = Target.value;", true, &["Target.value"]);

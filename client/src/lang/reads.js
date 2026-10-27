@@ -6,22 +6,24 @@ import { children, tree } from "./arith.js";
 /** A path's step to each item of a list. */
 export const ITEM = "[]";
 
-/** List methods whose function argument takes items, by the positions of its parameters that do. */
+/** List methods that call a function on items: what each of its parameters is, an item or the
+ *  list itself. */
+const ON_ITEM = ["item", null, "list"];
 const EACH = {
-  map: [0],
-  forEach: [0],
-  filter: [0],
-  flatMap: [0],
-  some: [0],
-  every: [0],
-  find: [0],
-  findIndex: [0],
-  findLast: [0],
-  findLastIndex: [0],
-  reduce: [1],
-  reduceRight: [1],
-  sort: [0, 1],
-  toSorted: [0, 1],
+  map: ON_ITEM,
+  forEach: ON_ITEM,
+  filter: ON_ITEM,
+  flatMap: ON_ITEM,
+  some: ON_ITEM,
+  every: ON_ITEM,
+  find: ON_ITEM,
+  findIndex: ON_ITEM,
+  findLast: ON_ITEM,
+  findLastIndex: ON_ITEM,
+  reduce: [null, "item", null, "list"],
+  reduceRight: [null, "item", null, "list"],
+  sort: ["item", "item"],
+  toSorted: ["item", "item"],
 };
 
 /** List methods that give back the list's own items, as a list or as one of them. */
@@ -51,8 +53,8 @@ export function reads(src, body = false) {
   return { paths: r.paths, value, all: r.all };
 }
 
-/** The names a scope binds, each to what it is another name for, or to null for a value of
- *  the code's own. */
+/** The names a scope binds: an item or a list a function or a loop takes, as its path, else
+ *  null. A let or a const is null too, as all of the value it is given is read. */
 class Env {
   constructor(outer, own = false) {
     this.outer = outer;
@@ -65,26 +67,6 @@ class Env {
     for (let e = this; e; e = e.outer) if (e.names.has(name)) return e.names.get(name);
     return undefined;
   }
-}
-
-/** Another name for a path: `of`, an expression worked out in `env`, or a given `path`, then
- *  `steps` on from it. Worked out once, when first read. */
-function alias(of, env, path, steps = []) {
-  return { of, env, path, steps };
-}
-
-const further = (b, step) => b && alias(b.of, b.env, b.path, [...b.steps, step]);
-
-function resolve(b) {
-  if (b === null) return null;
-  if (!("chain" in b)) {
-    if (b.busy) return null;
-    b.busy = true;
-    const base = b.path ?? new Reader().visit(b.of, b.env);
-    b.chain = base && [...base, ...b.steps];
-    b.busy = false;
-  }
-  return b.chain;
 }
 
 function step(member) {
@@ -103,6 +85,9 @@ function method(callee) {
 
 const isFunction = (n) => n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression";
 
+/** A pattern's key, as `x` in `{ x }`. */
+const key = (p) => (p.computed ? ITEM : (p.key.name ?? String(p.key.value)));
+
 class Reader {
   paths = [];
   all = false;
@@ -111,15 +96,15 @@ class Reader {
   /** Counts a path as read with all it holds. */
   read(path) {
     if (!path) return;
-    const key = path.join("\u0000");
-    if (this.#seen.has(key)) return;
-    this.#seen.add(key);
+    const k = path.join("\u0000");
+    if (this.#seen.has(k)) return;
+    this.#seen.add(k);
     this.paths.push(path);
   }
 
   #named(name, env) {
     const b = env.lookup(name);
-    if (b !== undefined) return resolve(b);
+    if (b !== undefined) return b;
     if (ANY.has(name)) this.all = true;
     return [name];
   }
@@ -146,16 +131,7 @@ class Reader {
       case "ArrowFunctionExpression":
       case "FunctionExpression":
       case "FunctionDeclaration":
-        this.#function(node, env);
-        return null;
-      case "ClassDeclaration":
-      case "ClassExpression":
-        if (node.superClass) this.read(this.visit(node.superClass, env));
-        for (const m of node.body.body) {
-          if (m.computed) this.read(this.visit(m.key, env));
-          if (m.type === "StaticBlock") this.#block(m.body, new Env(env, true));
-          else if (m.value) this.read(this.visit(m.value, new Env(env, true)));
-        }
+        this.#function(node, env, [], null);
         return null;
       case "Property":
         if (node.computed) this.read(this.visit(node.key, env));
@@ -171,14 +147,7 @@ class Reader {
         this.#block(node.body, new Env(env));
         return null;
       case "VariableDeclaration":
-        for (const d of node.declarations) {
-          if (!d.init) continue;
-          const value = this.visit(d.init, env);
-          // a let or a const is another name for its value, but a var at the top runs on the
-          // scope's own names, so a var is no other name for anything
-          if (node.kind === "var") this.read(value);
-          this.#consume(d.id, env, node.kind === "var" ? null : value);
-        }
+        for (const d of node.declarations) if (d.init) this.#take(d.id, env, this.visit(d.init, env), false);
         return null;
       case "ForStatement": {
         const loop = new Env(env);
@@ -194,11 +163,8 @@ class Reader {
         const each = node.type === "ForOfStatement" && list ? [...list, ITEM] : null;
         if (node.type === "ForOfStatement") this.read(list && [...list, "length"]);
         else this.read(list);
-        if (node.left.type === "VariableDeclaration") {
-          const id = node.left.declarations[0].id;
-          this.#declare(id, loop, each && alias(null, null, each));
-          this.#consume(id, loop, each);
-        } else {
+        if (node.left.type === "VariableDeclaration") this.#take(node.left.declarations[0].id, loop, each, true);
+        else {
           this.read(each);
           this.#targets(node.left, env);
         }
@@ -217,10 +183,7 @@ class Reader {
       }
       case "CatchClause": {
         const inner = new Env(env);
-        if (node.param) {
-          this.#declare(node.param, inner, null);
-          this.#consume(node.param, inner, null);
-        }
+        if (node.param) this.#take(node.param, inner, null, true);
         this.#block(node.body.body, inner);
         return null;
       }
@@ -238,18 +201,19 @@ class Reader {
 
   #call(node, env) {
     const m = method(node.callee);
-    const listy = m !== undefined && (Object.hasOwn(EACH, m) || LIST.has(m) || ONE.has(m));
-    if (!listy) {
+    if (m === undefined || !(Object.hasOwn(EACH, m) || LIST.has(m) || ONE.has(m))) {
       this.read(this.visit(node.callee, env));
       for (const a of node.arguments) this.read(this.visit(a, env));
       return null;
     }
     const list = this.visit(node.callee.object, env);
-    const takes = Object.hasOwn(EACH, m) ? EACH[m] : null;
+    let takes = Object.hasOwn(EACH, m) ? EACH[m] : null;
+    // a reduce with no start begins from the first item
+    if ((m === "reduce" || m === "reduceRight") && node.arguments.length < 2) takes = ["item", ...takes.slice(1)];
     const item = list && [...list, ITEM];
     if (takes && list) this.read([...list, "length"]);
     node.arguments.forEach((a, i) => {
-      if (i === 0 && takes && list && isFunction(a)) return this.#function(a, env, takes, item);
+      if (i === 0 && takes && list && isFunction(a)) return this.#function(a, env, takes, list);
       // items handed to code this does not see are read whole
       if (i === 0 && takes) this.read(item);
       this.read(this.visit(a, env));
@@ -259,17 +223,15 @@ class Reader {
     return ONE.has(m) ? item : null;
   }
 
-  /** A function, its parameters at `items` each an item of a list, the path `item`. */
-  #function(node, env, items = [], item = null) {
+  /** A function, each parameter of it an item of `list` or the list itself as `takes` says. */
+  #function(node, env, takes, list) {
     const inner = new Env(env, node.type !== "ArrowFunctionExpression");
     if (node.id && node.type !== "FunctionDeclaration") inner.names.set(node.id.name, null);
     node.params.forEach((p, i) => {
-      const of = item && items.includes(i) ? item : null;
-      this.#declare(p, inner, of && alias(null, null, of));
-      this.#consume(p, inner, of);
+      const role = list && takes[i];
+      this.#take(p, inner, role === "item" ? [...list, ITEM] : role === "list" ? list : null, true);
     });
     if (node.body.type !== "BlockStatement") return this.read(this.visit(node.body, inner));
-    vars(node.body, inner);
     this.#block(node.body.body, inner);
   }
 
@@ -278,64 +240,45 @@ class Reader {
     for (const s of statements) this.read(this.visit(s, env));
   }
 
-  /** Binds the names a block's own statements declare, a var only in its function. */
+  /** Binds the names a block's own statements declare. A var stays the scope's, as a var at the
+   *  top of code runs on the scope's own names. */
   hoist(statements, env) {
     for (const s of statements) {
-      if (s.type === "VariableDeclaration" && s.kind !== "var") {
-        for (const d of s.declarations) this.#declare(d.id, env, d.init ? alias(d.init, env, undefined) : null);
-      } else if ((s.type === "FunctionDeclaration" || s.type === "ClassDeclaration") && s.id) {
-        env.names.set(s.id.name, null);
-      }
+      if (s.type === "VariableDeclaration" && s.kind !== "var") for (const d of s.declarations) this.#take(d.id, env, null, true);
+      else if ((s.type === "FunctionDeclaration" || s.type === "ClassDeclaration") && s.id) env.names.set(s.id.name, null);
     }
   }
 
-  /** Binds each name a pattern makes to its part of `b`. */
-  #declare(pattern, env, b) {
+  /** Takes `path` apart by a pattern. With `bind` each name it makes is another name for its
+   *  part, else each part is read whole. Defaults are read, and so is all a rest gathers. */
+  #take(pattern, env, path, bind) {
     switch (pattern.type) {
       case "Identifier":
-        env.names.set(pattern.name, b);
+        if (bind) env.names.set(pattern.name, path);
+        else this.read(path);
         break;
-      case "ObjectPattern":
-        for (const p of pattern.properties) {
-          if (p.type === "RestElement") this.#declare(p.argument, env, null);
-          else this.#declare(p.value, env, further(b, !p.computed ? (p.key.name ?? String(p.key.value)) : ITEM));
-        }
-        break;
-      case "ArrayPattern":
-        for (const e of pattern.elements) if (e) this.#declare(e.type === "RestElement" ? e.argument : e, env, e.type === "RestElement" ? null : further(b, ITEM));
-        break;
-      case "AssignmentPattern":
-        this.#declare(pattern.left, env, b);
-        break;
-    }
-  }
-
-  /** Reads what a pattern reads as it takes `path` apart: its defaults, computed keys, and all
-   *  of what a rest gathers. */
-  #consume(pattern, env, path) {
-    switch (pattern.type) {
       case "ObjectPattern":
         for (const p of pattern.properties) {
           if (p.type === "RestElement") {
             this.read(path);
-            this.#consume(p.argument, env, null);
+            this.#take(p.argument, env, null, bind);
             continue;
           }
           if (p.computed) this.read(this.visit(p.key, env));
-          const key = p.computed ? ITEM : (p.key.name ?? String(p.key.value));
-          this.#consume(p.value, env, path && [...path, key]);
+          this.#take(p.value, env, path && [...path, key(p)], bind);
         }
         break;
       case "ArrayPattern":
         for (const e of pattern.elements) {
-          if (!e) continue;
-          if (e.type === "RestElement") this.read(path && [...path, ITEM]);
-          this.#consume(e.type === "RestElement" ? e.argument : e, env, e.type === "RestElement" ? null : path && [...path, ITEM]);
+          if (e?.type === "RestElement") {
+            this.read(path && [...path, ITEM]);
+            this.#take(e.argument, env, null, bind);
+          } else if (e) this.#take(e, env, path && [...path, ITEM], bind);
         }
         break;
       case "AssignmentPattern":
         this.read(this.visit(pattern.right, env));
-        this.#consume(pattern.left, env, path);
+        this.#take(pattern.left, env, path, bind);
         break;
     }
   }
@@ -363,33 +306,5 @@ class Reader {
         this.#targets(pattern.left, env);
         break;
     }
-  }
-}
-
-/** Binds every var a function's body declares, at any depth but in its inner functions. */
-function vars(node, env) {
-  if (!node || typeof node !== "object") return;
-  if (node.type === "VariableDeclaration" && node.kind === "var") {
-    for (const d of node.declarations) bindAll(d.id, env);
-    return;
-  }
-  if (isFunction(node) || node.type === "FunctionDeclaration" || node.type === "ClassDeclaration" || node.type === "ClassExpression") return;
-  for (const child of children(node)) vars(child, env);
-}
-
-function bindAll(pattern, env) {
-  switch (pattern.type) {
-    case "Identifier":
-      env.names.set(pattern.name, null);
-      break;
-    case "ObjectPattern":
-      for (const p of pattern.properties) bindAll(p.type === "RestElement" ? p.argument : p.value, env);
-      break;
-    case "ArrayPattern":
-      for (const e of pattern.elements) if (e) bindAll(e.type === "RestElement" ? e.argument : e, env);
-      break;
-    case "AssignmentPattern":
-      bindAll(pattern.left, env);
-      break;
   }
 }
