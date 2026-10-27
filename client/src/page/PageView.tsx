@@ -106,6 +106,10 @@ export function viewBox(v: unknown): [number, number, number, number] | null {
 /** The events a press on the element itself starts, which make it look pressable. */
 const PRESSES = EVENTS.filter((e) => e.from === "pointer" && e.name !== "outside").map((e) => e.name);
 
+/** How long a finger on what may scroll stays put before its press begins, in ms, as long as
+ *  Android waits to tell a tap from a scroll. */
+const SCROLL_WAIT = 100;
+
 /** The instance pressed last, drawn above the others so what it opens is never hidden. */
 const [raised, setRaised] = createSignal<Element | null>(null);
 
@@ -220,13 +224,14 @@ function Placed(p: ElementProps) {
   );
 }
 
-/** What pressing an element does, its keys, pads and scroll aside: it shows pressed at once and
- *  sends press, drag, hold, release and tap. The release is heard on the window, so letting go
+/** What pressing an element does, its keys, pads and scroll aside: it shows pressed and sends
+ *  press, drag, hold, release and tap. The release is heard on the window, so letting go
  *  anywhere ends a press, and a tap needs the release over the element. A gesture taking its
  *  finger ends it as a missed release, with no tap: two fingers always, one finger that scrolls
- *  only when it drags nothing. Where a press lands is read as it goes down the page, before
- *  any handler changes the page as it comes back up: Firefox before 125 drops the rest of a
- *  touch when its pressed shape restyles and is measured in pointerdown. */
+ *  only when it drags nothing. A finger on what may scroll begins its press only once it stays
+ *  a moment, so one that scrolls presses nothing. Where a press lands is read as it goes down
+ *  the page, before any handler changes the page as it comes back up: Firefox before 125 drops
+ *  the rest of a touch when its pressed shape restyles and is measured in pointerdown. */
 function usePress(p: ElementProps & { at?: At }) {
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
@@ -238,26 +243,43 @@ function usePress(p: ElementProps & { at?: At }) {
   };
   let self: globalThis.Element | undefined;
   let landed: { e: PointerEvent; at: Pointer } | undefined;
+  let pressing = false;
   const read = (e: PointerEvent) => {
     if (!self || !live() || e.button !== 0) return;
     landed = { e, at: pointer(self, e, partOf(e.target)) };
   };
   const down = (e: PointerEvent & { currentTarget: Element | globalThis.Element }) => {
-    if (!live() || e.button !== 0 || pressed() || landed?.e !== e || taken(e.pointerId)) return;
+    if (!live() || e.button !== 0 || pressing || landed?.e !== e || taken(e.pointerId)) return;
     const el = e.currentTarget as globalThis.Element;
     const at = landed.at;
     const on = at.on;
     landed = undefined;
-    setPressed(true);
-    fire("press", { ...at });
-    fire("drag", { ...at, dx: 0, dy: 0 });
+    pressing = true;
+    const drags = p.element.handlers.some((h) => h.event === "drag" && p.act?.hears(p.element, h, p.at));
     let last: PointerEvent = e;
-    const ms = msOf("hold", "after");
-    const held = ms === undefined ? undefined : setTimeout(() => fire("hold", pointer(el, last, on)), ms);
-    // a repeat runs at once, then on each beat until the press ends
-    const every = msOf("repeat", "every");
-    if (every !== undefined) fire("repeat", { ...at });
-    const beat = every === undefined ? undefined : setInterval(() => fire("repeat", pointer(el, last, on)), Math.max(every, QUICKEST));
+    let held: ReturnType<typeof setTimeout> | undefined;
+    let beat: ReturnType<typeof setInterval> | undefined;
+    let begun = false;
+    const begin = () => {
+      begun = true;
+      setPressed(true);
+      fire("press", { ...at });
+      fire("drag", { ...at, dx: 0, dy: 0 });
+      // a hold counts from the finger going down, however long the press waited to begin
+      const ms = msOf("hold", "after");
+      if (ms !== undefined) held = setTimeout(() => fire("hold", pointer(el, last, on)), Math.max(0, ms - (performance.now() - e.timeStamp)));
+      // a repeat runs at once, then on each beat until the press ends
+      const every = msOf("repeat", "every");
+      if (every !== undefined) {
+        fire("repeat", { ...at });
+        beat = setInterval(() => fire("repeat", pointer(el, last, on)), Math.max(every, QUICKEST));
+      }
+    };
+    // a finger that landed on what may yet scroll, here or in a frame this holds, begins its
+    // press once it stays a moment, so a scroll presses nothing
+    const waits = e.pointerType === "touch" && !drags && !!(e.target as globalThis.Element).closest(".el.scroller, .el.scrolls");
+    const wait = waits ? setTimeout(begin, SCROLL_WAIT) : undefined;
+    if (!waits) begin();
     // a drag goes out at most once a frame, with the latest place and the move since the last
     let sent: Spot = e;
     let next: PointerEvent | null = null;
@@ -268,12 +290,18 @@ function usePress(p: ElementProps & { at?: At }) {
     };
     const move = (m: PointerEvent) => {
       last = m;
+      if (!begun) return;
       if (!next) requestAnimationFrame(flush);
       next = m;
     };
     // a release missed ends the press where the pointer was last, and taps nothing. The move
-    // since the last drag goes first, so the drags add up to the whole
+    // since the last drag goes first, so the drags add up to the whole. One let go while its
+    // press waited begins it first, and one missed then never began
     const end = (u?: PointerEvent) => {
+      clearTimeout(wait);
+      pressing = false;
+      if (!begun && u?.type !== "pointerup") return;
+      if (!begun) begin();
       flush();
       clearTimeout(held);
       clearInterval(beat);
@@ -282,7 +310,6 @@ function usePress(p: ElementProps & { at?: At }) {
       fire("release", at);
       if (u?.type === "pointerup" && at.inside) fire("tap", at);
     };
-    const drags = p.element.handlers.some((h) => h.event === "drag" && p.act?.hears(p.element, h, p.at));
     follow(e, { move, end, yields: true, keeps: drags });
   };
   // a press anywhere else is this element's outside, as closes what it opened, while its page
@@ -311,7 +338,9 @@ function usePress(p: ElementProps & { at?: At }) {
   useKeys(p, () => self);
   useGamepads(p, () => self);
   const scrolls = useScroll(p, () => self);
-  return { pressed, live, scrolls, down, ref };
+  // what drags keeps its finger, even in what scrolls
+  const drags = () => !!p.act && p.element.handlers.some((h) => h.event === "drag");
+  return { pressed, live, scrolls, drags, down, ref };
 }
 
 /** One element. `inside` marks one drawn as part of an instance: it is the component's, not
@@ -414,7 +443,9 @@ function ElementView(p: ElementProps & { at?: At }) {
     const canvas = p.element.tag === "canvas" ? contextOf(take("context"), faults) : undefined;
     const media = p.element.tag === "media" ? { src: take("src", p.element.props.src, resolveSource), fit: String(take("fit") ?? "meet") } : undefined;
     const first = p.element.tag === "div" && take("stack") === "first" ? p.element.children.length * COPIES : undefined;
-    return { style, unknown, faults, text, value, diagram, markup, canvas, media, holder: { ox, oy, flow, first } as Holder };
+    // a frame whose overflow scrolls, which a finger on what it holds may scroll
+    const scroller = ["overflow", "overflow-x", "overflow-y"].some((k) => /auto|scroll/.test(style[k] ?? ""));
+    return { style, unknown, faults, text, value, diagram, markup, canvas, media, scroller, holder: { ox, oy, flow, first } as Holder };
   });
   // what its own drawing found last, known only once it draws
   const [drawn, setDrawn] = createSignal<Drawn>(CLEAN);
@@ -427,7 +458,7 @@ function ElementView(p: ElementProps & { at?: At }) {
       data-id={p.inside ? undefined : p.element.id}
       data-name={p.element.props.name}
       class="el"
-      classList={{ text: p.element.tag === "span", unknown: look().unknown || drawn().unknown, faulty: p.design && faults().length > 0, live: press.live(), scrolls: press.scrolls(), pressed: press.pressed() }}
+      classList={{ text: p.element.tag === "span", unknown: look().unknown || drawn().unknown, faulty: p.design && faults().length > 0, live: press.live(), scrolls: press.scrolls(), scroller: look().scroller, drags: press.drags(), pressed: press.pressed() }}
       style={{ ...look().style, "z-index": raised() === p.element ? String((p.room.first ?? 0) + 1) : look().style["z-index"] }}
       title={p.design && faults().length > 0 ? faults().join("\n") : undefined}
       ref={(el) => {

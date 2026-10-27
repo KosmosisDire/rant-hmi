@@ -69,6 +69,19 @@
   touch-action: none;
 }
 
+/* A frame whose overflow scrolls keeps its scrolling to itself, under a thin bar. */
+.el.scroller {
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--t-faint, #646464) transparent;
+}
+
+/* In it, a finger on what is pressed may scroll it, unless that drags or scrolls itself. */
+.el.scroller.live:not(.drags, .scrolls),
+.el.scroller .el.live:not(.drags, .scrolls) {
+  touch-action: pan-x pan-y;
+}
+
 /* only under a mouse: a finger leaves what it touched hovered */
 :root:not([data-pointer="touch"]) .el.live:hover {
   filter: brightness(1.08);
