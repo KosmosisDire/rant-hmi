@@ -948,6 +948,42 @@ Built:
   slow to one a second, so a hold never outlives a tab the operator left (`run-hidden-tab`,
   which held the opposite until now at the user's earlier choice).
 
+Then the point cloud read as behind and uneven on the LAN, and the user recorded the page in
+Chrome's Performance panel: 23 s of the overview, focused (`Trace-20261027T171514.json.gz` in
+the HMI root, read with a script over its events). Found:
+
+- No task over 50 ms, but the main thread ran JS 70% of the time: 10.9 s in the function that
+  works out what the page reads (`watched`, `pathsOf` over every shown page) and tells the
+  backend and the worker, run 1704 times, 73 a second, 6.4 ms each. Every value drawn counts
+  its reads (`countRead`), and a part drawn again counts out and in, which asked for the whole
+  scan each time. 3.1 s went to the link channel's 5793 messages and 2.2 s to the small
+  channel's 4558, half a ms each.
+- Measured on a page here meanwhile: with the main thread that busy, clouds came 8.4 a second
+  with gaps of 36 to 452 ms. The link channel is read on the main thread, so each stall of it
+  held a cloud, and the gate then dropped the next and sent the one after early. With the
+  window unfocused, 2.6 a second in bursts half a second apart. The backend saw the user's
+  screen take 13.4 big values a second at 14.7 Mbit/s, cloud trips p50 42 ms, p90 87 ms, worst
+  228 ms, none lapsing.
+- The three camera previews went to the page twice: over WebRTC, and as big values of their
+  imports, 23 KB H264 frames one at a time on their own lanes beside the cloud, never taken
+  (41 lapses in an hour). The page's scan left a media source out only for an import with the
+  transcoder's Video child, and these imports are that child.
+- The cloud itself: about 38k points, 460 KB raw, about 130 KB compressed, 10 a second. Any
+  screen not on the HMI's host gets it compressed, the LAN too, and whole, as a camera's cloud
+  changes everywhere.
+
+Built:
+
+- The shown pages' reads are a memo (`watch.ts`), worked out again only as a page or a read
+  changes, so a value drawn costs the tell a comparison.
+- A media source whose import has H264 frames of its own is left out of the scan too, by the
+  codec of its last value, kept in a memo per import so a frame never runs the scan.
+- Two big values of an import may be on their way to a screen (`IN_FLIGHT` in `app.rs`), the
+  second once the first began on its lane, as a newer one would replace one still waiting
+  there, and as the change from the first, which the screen holds by the time it reads it.
+  Word of a later one passes over an earlier one still on its way. The user's choice: two,
+  never more, so a screen that falls behind is never sent what is old by the time it reads it.
+
 ## Recommendations
 
 For the user to decide. Each rests on the stages above.
