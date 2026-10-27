@@ -10,8 +10,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(!(await right.locator(".choice").isVisible()), "a task offers an intent");
   await right.locator("button", { hasText: /^Import$/ }).click();
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Fill" && i.kind === "task" && i.intent === "write"), "the import, to call");
-  await eventually(async () => (await right.locator(".head-title").textContent()).includes("Fill"), "the inspector to show the import");
-  check((await right.locator(".tag").first().textContent()) === "call", "the import is not tagged call");
+  // the entity's pane is titled Fill too, so the import's shows by its tag
+  await eventually(async () => (await right.locator(".tag").first().textContent()) === "call", "the inspector to show the import, tagged call");
 
   for (const [name, start] of [["filled", 0], ["parts", 0], ["shares", 0], ["ended", ""]]) {
     hmi.send({ type: "set_variable", name, variable: { name, start, per: "hmi" } });
