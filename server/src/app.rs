@@ -360,7 +360,7 @@ impl Session {
             }
             return;
         };
-        let (went, sent) = gate.out.drain(..=i).last().expect("found on its way");
+        let (went, sent) = gate.out.drain(..=i).next_back().expect("found on its way");
         match fate {
             Fate::Took => self.trips.big(went.elapsed()),
             Fate::Lapsed => {
