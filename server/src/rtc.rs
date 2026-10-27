@@ -2,11 +2,14 @@
 //! once it plays a video, which carries the video of each import it plays and works on a plain
 //! http page where WebCodecs cannot. Once its reliable `link` channel opens, the screen's
 //! lanes go there in place of its socket (`Lanes`, as a socket sends them), since that way is
-//! direct where the socket may come through a proxy. Each H264 frame of an import's source goes out
+//! direct where the socket may come through a proxy. Pongs and small values go whole on its
+//! reliable unordered `small` channel: SCTP sends a message of that before any ordered one
+//! waiting, so none waits behind the pieces of a picture, and a packet of the `link` channel
+//! lost on the way never holds it. Each H264 frame of an import's source goes out
 //! to the screens playing it here as it comes. A screen without WebRTC decodes its video itself
 //! from frames on its socket (`Lanes::video`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr};
 use std::ops::RangeInclusive;
@@ -26,7 +29,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::{debug, info, warn};
 
 use crate::flight::Flight;
-use crate::lanes::Lanes;
+use crate::lanes::{Lanes, VALUES};
 use crate::project::IceServer;
 use crate::protocol::{ClientMsg, Played};
 use crate::stun;
@@ -36,8 +39,10 @@ use crate::stun;
 /// what screens send and get.
 pub const FRAME_LATE: Duration = Duration::from_millis(200);
 
-/// The label of the channel a screen's lanes go on.
+/// The labels of the channel a screen's lanes go on, and of the unordered one its pongs and
+/// small values go on whole.
 pub const LINK: &str = "link";
+pub const SMALL: &str = "small";
 
 /// The most the link channel holds unacknowledged, sent or not, as SCTP counts it. The marks'
 /// flight keeps what is on the way to the link's round trip, so this only bounds a link the
@@ -101,6 +106,8 @@ struct Link {
     /// A piece the channel would not take yet, which goes before any other, as a message
     /// missing one never joins.
     held: Option<Bytes>,
+    /// The lanes whose message is part way through its pieces, which all go ordered.
+    mid: HashSet<u16>,
 }
 
 impl Link {
@@ -117,6 +124,8 @@ struct Peer {
     connected: bool,
     videos: Vec<Video>,
     link: Option<Link>,
+    /// Its unordered channel for pongs and small values, while open.
+    small: Option<ChannelId>,
     /// The channels the page's probe times this way on (`probe.rs`), each echoed.
     probes: Vec<ChannelId>,
 }
@@ -228,7 +237,7 @@ async fn run(mut requests: UnboundedReceiver<ToRtc>, mut frames: UnboundedReceiv
                             let config = RtcConfig::new().clear_codecs().enable_h264(true).set_sctp_max_buffered_amount(LINK_BUFFERED + (256 << 10));
                             answer(&ports, &ips, config, &sdp).map(|(rtc, sdp)| {
                                 info!("screen {session} opens its WebRTC connection");
-                                let mut p = Peer { session, rtc, wake: Instant::now(), connected: false, videos: Vec::new(), link: None, probes: Vec::new() };
+                                let mut p = Peer { session, rtc, wake: Instant::now(), connected: false, videos: Vec::new(), link: None, small: None, probes: Vec::new() };
                                 p.take(videos);
                                 peers.push(p);
                                 sdp
@@ -476,10 +485,11 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
                 Event::ChannelOpen(id, label) if label == LINK => {
                     let lanes = Arc::new(Lanes::default());
                     tokio::spawn(wake_on(lanes.clone(), kick.clone()));
-                    p.link = Some(Link { id, lanes: lanes.clone(), flight: Flight::default(), born: Instant::now(), held: None });
+                    p.link = Some(Link { id, lanes: lanes.clone(), flight: Flight::default(), born: Instant::now(), held: None, mid: HashSet::new() });
                     info!("screen {} opened its link channel", p.session);
                     let _ = said.send(FromRtc::Channel { session: p.session, lanes });
                 }
+                Event::ChannelOpen(id, label) if label == SMALL => p.small = Some(id),
                 Event::ChannelOpen(id, label) if label.starts_with("probe") => p.probes.push(id),
                 Event::ChannelData(d) if d.data.first() == Some(&MARK_BACK) && p.link.as_ref().is_some_and(|l| l.id == d.id) => {
                     if let Some(link) = &mut p.link {
@@ -504,6 +514,8 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
                     info!("screen {} closed its link channel", p.session);
                     let _ = said.send(FromRtc::ChannelClosed { session: p.session });
                 }
+                // the link channel carries them until it opens again
+                Event::ChannelClose(id) if p.small == Some(id) => p.small = None,
                 _ => {}
             },
             Err(e) => {
@@ -516,7 +528,8 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
 }
 
 /// Writes what the link's lanes have while the channel holds less than LINK_BUFFERED unsent,
-/// true when it wrote any. Lanes the loop closed close the channel.
+/// a whole message of pongs or small values on the unordered channel while that is open, true
+/// when it wrote any. Lanes the loop closed close the channel.
 fn send_link(p: &mut Peer) -> bool {
     let Some(link) = &p.link else { return false };
     if link.lanes.closed() {
@@ -526,9 +539,8 @@ fn send_link(p: &mut Peer) -> bool {
         return true;
     }
     let Some(link) = &mut p.link else { return false };
-    let Some(mut ch) = p.rtc.channel(link.id) else { return false };
     let mut wrote = false;
-    while ch.buffered_amount() < LINK_BUFFERED {
+    loop {
         let now = link.now();
         // a piece went since the last mark, so a mark at once, whose echo says it arrived
         let piece = if let Some(piece) = link.held.take() {
@@ -539,13 +551,30 @@ fn send_link(p: &mut Peer) -> bool {
             mark.into()
         } else {
             let Some(piece) = link.lanes.take(link.flight.room()) else { break };
-            link.flight.wrote(piece.len());
             piece
         };
-        if !matches!(ch.write(true, &piece), Ok(true)) {
+        let lane = u16::from_le_bytes([piece[0], piece[1]]);
+        let more = lane != MARK && piece[2] == 1;
+        let whole = lane == VALUES && !more && !link.mid.contains(&lane);
+        let id = match p.small {
+            Some(small) if whole => small,
+            _ => link.id,
+        };
+        // a channel just closed keeps the piece for the next turn, which routes it again
+        let taken = p.rtc.channel(id).is_some_and(|mut ch| ch.buffered_amount() < LINK_BUFFERED && matches!(ch.write(true, &piece), Ok(true)));
+        if !taken {
             debug!("the link channel of screen {} took no piece yet", p.session);
             link.held = Some(piece);
             break;
+        }
+        if id == link.id && lane != MARK {
+            link.flight.wrote(piece.len());
+        }
+        if lane != MARK {
+            match more {
+                true => link.mid.insert(lane),
+                false => link.mid.remove(&lane),
+            };
         }
         wrote = true;
     }

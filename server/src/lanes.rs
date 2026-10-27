@@ -8,12 +8,14 @@
 //! `BIG` set, so the page hands its messages to its data worker unread. A lane that keeps only
 //! the latest holds one message waiting at most, as Rant's KEEP_LAST does, so a camera on a slow
 //! link sends what is newest at the rate the link carries. A video's lane keeps every frame,
-//! since each needs those before it.
+//! since each needs those before it. Small values go only as fast as the page says it applied
+//! them, which its pings tell, so a page that stalls or hides gets what is newest when it goes
+//! on, never all it missed from the link's buffers.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use tokio::sync::Notify;
@@ -33,12 +35,22 @@ pub const BIG: u16 = 0x8000;
 /// at once in place of those waiting, so a link that stalls a while never carries what is no
 /// longer so.
 const BEHIND: usize = 8;
+/// A batch of small values the page has not said it applied this long after it went holds the
+/// batches after it, so the link's buffers never fill with values a stalled page reads late.
+/// A link whose round trip and the page's ping are within this is never held, and a farther
+/// one is allowed its round trip (`allow`).
+pub const LAG: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
 struct Inner {
-    /// Each lane's messages with when each came, its first one sent as far as `at`.
-    lanes: HashMap<u16, VecDeque<(Bytes, Instant)>>,
+    /// Each lane's messages with when each came and, for a batch of small values, its number,
+    /// its first one sent as far as `at`.
+    lanes: HashMap<u16, VecDeque<(Bytes, Instant, Option<u64>)>>,
     at: HashMap<u16, usize>,
+    /// The batches of small values sent that the page has not said it applied, each with when
+    /// it went, oldest first, and how long one may go unsaid, LAG for None.
+    sent: VecDeque<(u64, Instant)>,
+    lag: Option<Duration>,
     /// The lanes with work, in their turn, and what the first has sent in its turn.
     turn: VecDeque<u16>,
     spent: usize,
@@ -66,14 +78,14 @@ impl Inner {
     }
 
     /// Puts a message on a lane. With `latest` it replaces those waiting there, but not one
-    /// that has begun to go.
-    fn push(&mut self, lane: u16, message: Bytes, came: Instant, latest: bool) {
+    /// that has begun to go. `batch` numbers a batch of small values.
+    fn push(&mut self, lane: u16, message: Bytes, came: Instant, latest: bool, batch: Option<u64>) {
         let Inner { lanes, at, turn, spent, .. } = self;
         let queue = lanes.entry(lane).or_default();
         if latest {
             queue.truncate(usize::from(at.contains_key(&lane)));
         }
-        queue.push_back((message, came));
+        queue.push_back((message, came, batch));
         if !turn.contains(&lane) {
             let at = match lane {
                 CONTROL => 0,
@@ -88,8 +100,14 @@ impl Inner {
     }
 
     /// The first message waiting on a lane, not one begun.
-    fn first_waiting(&self, lane: u16) -> Option<&(Bytes, Instant)> {
+    fn first_waiting(&self, lane: u16) -> Option<&(Bytes, Instant, Option<u64>)> {
         self.lanes.get(&lane)?.get(usize::from(self.at.contains_key(&lane)))
+    }
+
+    /// Whether the page is behind on small values: a batch it has not said it applied went
+    /// over LAG ago.
+    fn behind(&self) -> bool {
+        self.sent.front().is_some_and(|(_, went)| went.elapsed() > self.lag.unwrap_or(LAG))
     }
 
     /// Drops the messages waiting on a lane, but not one begun.
@@ -123,13 +141,31 @@ impl Lanes {
         self.put(CONTROL, message, false);
     }
 
-    /// Sends small values, but leaves them out while too many wait.
-    pub fn values(&self, message: Bytes) {
+    /// Sends batch `seq` of small values, but leaves it out while too many wait.
+    pub fn values(&self, seq: u64, message: Bytes) {
         if self.waiting(VALUES) >= BEHIND {
             self.inner.lock().expect("lanes").stale = true;
             return;
         }
-        self.put(VALUES, message, false);
+        self.inner.lock().expect("lanes").push(VALUES, message, Instant::now(), false, Some(seq));
+        self.ready.notify_one();
+    }
+
+    /// The page's word of a batch takes the link's round trip and the ping after it, so a link
+    /// with this round trip is allowed that long, LAG at least, before its batches are held.
+    pub fn allow(&self, rtt: Duration) {
+        self.inner.lock().expect("lanes").lag = Some(LAG.max(rtt * 2 + Duration::from_millis(100)));
+    }
+
+    /// The page said it applied batch `seen` of small values, and so every one before it, which
+    /// lets the batches after go.
+    pub fn confirm(&self, seen: u64) {
+        let mut l = self.inner.lock().expect("lanes");
+        while l.sent.front().is_some_and(|(seq, _)| *seq <= seen) {
+            l.sent.pop_front();
+        }
+        drop(l);
+        self.ready.notify_one();
     }
 
     /// Sends the answer to a ping in the values' lane, so it times what values wait, but never
@@ -158,14 +194,14 @@ impl Lanes {
         let mut l = self.inner.lock().expect("lanes");
         let next = l.new_lane();
         let lane = l.videos.entry(alias.to_owned()).or_insert(Video { lane: next, skipping: true }).lane;
-        let behind = l.first_waiting(lane).is_some_and(|(_, came)| came.elapsed() > FRAME_LATE);
+        let behind = l.first_waiting(lane).is_some_and(|(_, came, _)| came.elapsed() > FRAME_LATE);
         let video = l.videos.get_mut(alias).expect("its lane was just found");
         video.skipping = !keyframe && (video.skipping || behind);
         if video.skipping {
             l.clear(lane);
             return;
         }
-        l.push(lane, message, came, keyframe);
+        l.push(lane, message, came, keyframe, None);
         drop(l);
         self.ready.notify_one();
     }
@@ -194,7 +230,7 @@ impl Lanes {
     /// Puts a message on a lane. With `latest` it replaces those waiting there, but not one
     /// that has begun to go.
     fn put(&self, lane: u16, message: Bytes, latest: bool) {
-        self.inner.lock().expect("lanes").push(lane, message, Instant::now(), latest);
+        self.inner.lock().expect("lanes").push(lane, message, Instant::now(), latest, None);
         self.ready.notify_one();
     }
 
@@ -232,7 +268,8 @@ impl Lanes {
     }
 
     /// The next piece, taken from the lane whose turn it is, and without `room` only a small
-    /// message of control or values. Waits for one, or None once closed and empty.
+    /// message of control or values, values only while the page keeps up. Waits for one, or
+    /// None once closed and empty.
     pub async fn next(&self, room: bool) -> Option<Bytes> {
         loop {
             let ready = self.ready.notified();
@@ -248,10 +285,17 @@ impl Lanes {
 
     pub(crate) fn take(&self, room: bool) -> Option<Bytes> {
         let mut l = self.inner.lock().expect("lanes");
-        let Inner { lanes, at, turn, spent, .. } = &mut *l;
+        // values held take no turn, so the other lanes go on past them
+        let next = l.turn.iter().position(|&lane| lane != VALUES || !l.behind())?;
+        if next > 0 {
+            let lane = l.turn.remove(next).expect("it was just found");
+            l.turn.push_front(lane);
+            l.spent = 0;
+        }
+        let Inner { lanes, at, turn, spent, sent, .. } = &mut *l;
         let lane = *turn.front()?;
         let queue = lanes.get_mut(&lane)?;
-        let message = queue.front()?.0.clone();
+        let (message, _, batch) = queue.front()?.clone();
         if !room && (lane > VALUES || message.len() > PIECE) {
             return None;
         }
@@ -268,6 +312,9 @@ impl Lanes {
         } else {
             queue.pop_front();
             at.remove(&lane);
+            if let Some(seq) = batch {
+                sent.push_back((seq, Instant::now()));
+            }
         }
         // a lane that has sent a piece's worth waits for the others' turns
         *spent += end - from;
@@ -393,7 +440,7 @@ mod tests {
     fn a_screen_behind_misses_small_values_until_all_go_in_their_place() {
         let lanes = Lanes::default();
         for n in 0..BEHIND + 1 {
-            lanes.values(Bytes::from(vec![n as u8]));
+            lanes.values(n as u64, Bytes::from(vec![n as u8]));
         }
         assert_eq!(lanes.waiting(VALUES), BEHIND);
         // a picture and what is not values still go
@@ -401,9 +448,64 @@ mod tests {
         lanes.send(Bytes::from_static(b"page"));
         assert!(lanes.missed());
         assert!(!lanes.missed());
-        lanes.values(Bytes::from_static(b"all"));
+        lanes.values(9, Bytes::from_static(b"all"));
         let all = [Bytes::from_static(b"page"), Bytes::from_static(b"all"), Bytes::from_static(b"picture")];
         assert_eq!(sent(&lanes), all);
+    }
+
+    /// Makes the oldest batch sent and not applied look older than LAG.
+    fn aged(lanes: &Lanes) {
+        lanes.inner.lock().unwrap().sent[0].1 = Instant::now() - LAG - Duration::from_millis(1);
+    }
+
+    #[test]
+    fn small_values_wait_once_the_page_is_behind_by_lag_until_it_says_it_applied_them() {
+        let lanes = Lanes::default();
+        lanes.values(1, Bytes::from_static(b"one"));
+        lanes.values(2, Bytes::from_static(b"two"));
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"one"), Bytes::from_static(b"two")]);
+        // batch 1 went over LAG ago and the page said nothing, so the next waits
+        aged(&lanes);
+        lanes.values(3, Bytes::from_static(b"three"));
+        assert!(lanes.take(true).is_none());
+        // what is not values, and a picture, still go, past the values held
+        lanes.send(Bytes::from_static(b"page"));
+        lanes.alone("Cam", Bytes::from_static(b"picture"));
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"page"), Bytes::from_static(b"picture")]);
+        // it applied batch 1 only, and batch 2 is not old yet, so the next goes
+        lanes.confirm(1);
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"three")]);
+        // once batch 2 is old too, nothing goes until it says it applied that
+        aged(&lanes);
+        lanes.values(4, Bytes::from_static(b"four"));
+        assert!(lanes.take(true).is_none());
+        lanes.confirm(3);
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"four")]);
+        // a pong waits with them, so the round trip shows the page is behind
+        aged(&lanes);
+        lanes.pong(Bytes::from_static(b"pong"));
+        assert!(lanes.take(true).is_none());
+        lanes.confirm(4);
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"pong")]);
+    }
+
+    #[test]
+    fn a_far_link_is_allowed_its_round_trip_before_its_values_are_held() {
+        let lanes = Lanes::default();
+        lanes.allow(Duration::from_secs(1));
+        lanes.values(1, Bytes::from_static(b"one"));
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"one")]);
+        lanes.inner.lock().unwrap().sent[0].1 = Instant::now() - Duration::from_secs(2);
+        lanes.values(2, Bytes::from_static(b"two"));
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"two")]);
+        // past two round trips and the ping the page is behind
+        lanes.inner.lock().unwrap().sent[0].1 = Instant::now() - Duration::from_millis(2200);
+        lanes.values(3, Bytes::from_static(b"three"));
+        assert!(lanes.take(true).is_none());
+        // a near link keeps LAG
+        lanes.allow(Duration::from_millis(5));
+        lanes.inner.lock().unwrap().sent[0].1 = Instant::now() - LAG + Duration::from_millis(50);
+        assert_eq!(sent(&lanes), [Bytes::from_static(b"three")]);
     }
 
     #[test]

@@ -244,8 +244,10 @@ npx electron . http://host:6739
   hears its event only while the condition is true. An end always runs, axes at rest too.
 - A key or button held ends with its keyup or buttonup, and moving sticks come to rest, however
   they end: let go, the window losing focus, the pad gone, the page closed or covered, the while
-  that heard them turning false, or the screen lost. Then `p.lost` is true, as on a release a
-  lost screen leaves.
+  that heard them turning false, or the screen silent for half a second or lost. Then `p.lost`
+  is true, as on a release a lost screen leaves.
+- A screen whose page hides, as a tab behind another, is sent no values until it shows
+  again, when it gets every value anew at once.
 - `repeat="6"` or `repeat="Jobs"` draws an element once per item, reading `index` and `item`.
 - `<svg>` holds shapes, `<markup>` SVG made by code, `<canvas>` what its code draws,
   `<scene>` 3D parts such as `<box>` and `<anchor>`, `<media src="Camera"/>` a camera or a
