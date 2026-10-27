@@ -209,7 +209,7 @@ each an expression.
 | `pose` | every part | where it sits and how it turns from what holds it: a Pose, as `Arm` for a Pose import, or `{ position: vec(0, 0, 1) }`, each half optional |
 | `size` | `box` | its edges, a vector, `vec(1, 1, 1)` |
 | `size` | `axes` | how long its arrows are, `1` |
-| `size` | `points` | how wide each dot is, `0.05` |
+| `size` | `points` | how wide each dot is in metres, `0.05`, or a list of sizes one per point |
 | `size` | `grid` | how wide it is, `10` |
 | `radius` | `sphere`, `cylinder` | `0.5` |
 | `length` | `cylinder` | along its z, `1` |
@@ -219,7 +219,7 @@ each an expression.
 | `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
 | `src` | `model` | a glTF file, `.glb` or `.gltf`: one in the project's `files` folder by its path, as `"files/arm.glb"`, or any URL |
 | `joints` | `model` | its named nodes moved from where the file puts them: `{ Elbow: 0.5 }` turns one by radians about its own z, `{ Slide: { position: vec(0, 0, 0.2) } }` moves one by a pose |
-| `color` | every part but `anchor`, `axes` and `model` | any colour a page takes, `$accent`, or `$border` for a grid |
+| `color` | every part but `anchor`, `axes` and `model` | any colour a page takes, `$accent`, or `$border` for a grid. Points take a list of colours too, one per point, Colors or colour text |
 | `opacity` | `box`, `sphere`, `cylinder` | `1` |
 
 - An `anchor` draws nothing. It places what it holds by its pose, as a frame of a TF tree.
@@ -228,7 +228,8 @@ each an expression.
 - A box, a sphere and a cylinder sit centred on their pose.
 - A model file loads once however many parts show it, and draws in its own materials.
 - A scene draws off the page's main thread, so a big cloud never holds up the page. Points
-  that are a big value from the mesh, as `Scan.points`, draw each new value as it comes.
+  that are a big value from the mesh, as `Scan.points`, draw each new value as it comes, and so
+  do colours and sizes that are its lists, as `Heat.colors` and `Heat.sizes`.
   Points code makes from one, as `Scan.points.filter((p) => p.z > 0)`, bring the value to the
   page first, which costs more.
 - A value that cannot be read gives way to the default, and the editor says why on the
