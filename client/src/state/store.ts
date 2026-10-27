@@ -13,7 +13,6 @@ import type { Import } from "../protocol/Import";
 import type { Page } from "../protocol/Page";
 import type { Level } from "../protocol/Level";
 import type { Value } from "../protocol/Value";
-import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
 import type { Record as History } from "../protocol/Record";
 import type { Reported } from "../protocol/Reported";
@@ -77,7 +76,6 @@ export interface State {
   rules: Rule[];
   tokens: Token[];
   entities: EntityInfo[];
-  peers: PeerInfo[];
   pages: Page[];
   /** What this screen's last edit made, to open or select. `n` counts, so the same id twice
    *  still reads as new. */
@@ -112,7 +110,6 @@ export const [state, setState] = createStore<State>({
   rules: [],
   tokens: [],
   entities: [],
-  peers: [],
   pages: [],
   made: null,
   refused: null,
@@ -211,9 +208,6 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
           if (p && same(p.value, u.value)) settle(u.alias);
         }
       });
-      break;
-    case "health":
-      setState("peers", reconcile(msg.peers, { key: "id" }));
       break;
     case "pages":
       setState("pages", reconcile(msg.pages, { key: "id" }));

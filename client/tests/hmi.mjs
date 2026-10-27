@@ -7,17 +7,18 @@ const encoder = new Encoder({ useRecords: false });
 const decoder = new Decoder({ mapsAsObjects: true, useRecords: false, int64AsNumber: true });
 
 export class Hmi {
-  /** Connects and waits until the backend has sent everything a screen starts from. */
+  /** Connects and waits until the backend has sent everything a screen starts from, of which
+   *  its rules come last. */
   static async connect(url, timeoutMs = 5000) {
     const hmi = new Hmi(new WebSocket(url));
-    await hmi.next((m) => m.type === "health", timeoutMs);
+    await hmi.next((m) => m.type === "rules", timeoutMs);
     return hmi;
   }
 
   constructor(ws) {
     this.ws = ws;
     this.ws.binaryType = "arraybuffer";
-    this.state = { imports: [], variables: [], records: [], computed: [], enums: [], rules: [], pages: [], entities: [], values: {}, peers: [], tokens: [] };
+    this.state = { imports: [], variables: [], records: [], computed: [], enums: [], rules: [], pages: [], entities: [], values: {}, tokens: [] };
     this.waiters = [];
     // each message comes in pieces, `[u16 lane][u8 more]` then its share, joined per lane
     this.parts = new Map();
@@ -50,7 +51,6 @@ export class Hmi {
     if (msg.type === "rules") s.rules = msg.rules;
     if (msg.type === "pages") s.pages = msg.pages;
     if (msg.type === "mesh") s.entities = msg.entities;
-    if (msg.type === "health") s.peers = msg.peers;
     if (msg.type === "theme") s.tokens = msg.tokens;
     if (msg.type === "values") for (const v of msg.values) s.values[v.alias] = v;
     if (msg.type === "page") {
