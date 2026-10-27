@@ -6,7 +6,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { drawing, onDrew } from "../net/connection";
 import type { Pose, Rgba, Shown, Vec3 } from "../net/draw";
-import { column, refOf } from "../net/packed";
+import { column, numbers, refOf } from "../net/packed";
 import type { Element } from "../protocol/Element";
 import type { Value } from "../protocol/Value";
 import { resolve, type Resolved, type Scope } from "../state/bind";
@@ -15,7 +15,7 @@ import { readFar, readWhole } from "../state/store";
 import { onResize } from "../ui/size";
 import { kind } from "../lang/math.js";
 import { CLEAN, type Drawn, oncePerFrame, pixelsOf } from "./drawing";
-import { CAMERA, isPart, type Part, PARTS, POSE } from "./parts";
+import { CAMERA, isPart, type Part, PARTS, POSE, rgbaOf } from "./parts";
 import { Repeated } from "./repeat";
 
 /** What a part or a scene's properties read as, each its default when left out, as the kinds
@@ -27,6 +27,10 @@ interface Read {
   /** Each point's x, y and z after the one before, or the ref of the big value they are. */
   points(key: string): Shown["points"];
   colour(key: string): Rgba | undefined;
+  /** One colour, or a list of them one per point, Colors or colour text. */
+  colours(key: string): Shown["color"];
+  /** One number, or a list of them one per point. */
+  sizes(key: string): Shown["size"];
   pose(key: string): Pose | undefined;
   text(key: string): string | undefined;
   joints(key: string): Record<string, number | Pose> | undefined;
@@ -56,6 +60,32 @@ function positions(v: unknown): Float32Array | undefined {
     out[3 * i + 2] = p.z;
   }
   return out;
+}
+
+/** Colours one per point, a byte each of red, green, blue and alpha, from a list of Colors or
+ *  colour text, or undefined where an item is neither. */
+function rgbaList(v: unknown[]): Uint8Array | undefined {
+  const [r, g, b, a] = ["r", "g", "b", "a"].map((f) => column(v, f));
+  if (r && g && b) return rgbaOf(r, g, b, a);
+  const out = new Uint8Array(v.length * 4);
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i] as { r?: unknown; g?: unknown; b?: unknown; a?: unknown } | string | null;
+    if (typeof c === "string") {
+      const k = colourOf(c);
+      if (!k) return undefined;
+      k.forEach((x, j) => (out[4 * i + j] = Math.round(x * 255)));
+    } else if (typeof c?.r === "number" && typeof c.g === "number" && typeof c.b === "number") {
+      out.set([c.r, c.g, c.b, typeof c.a === "number" ? c.a : 255], 4 * i);
+    } else return undefined;
+  }
+  return out;
+}
+
+/** Sizes one per point, a copy of their numbers, or undefined unless each is one. */
+function sizeList(v: unknown[]): Float32Array | undefined {
+  const packed = numbers(v);
+  if (packed) return Float32Array.from(packed);
+  return v.every((n) => typeof n === "number" && Number.isFinite(n)) ? Float32Array.from(v as number[]) : undefined;
 }
 
 /** Points' code, which may give a list the data worker keeps as it is. Anything else counts the
@@ -99,6 +129,26 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
         true,
       ),
     colour: (key) => as(key, "a colour", colourOf),
+    colours: (key) =>
+      as(
+        key,
+        "a colour, or a list of colours one per point",
+        (v) => {
+          const ref = refOf(v);
+          return ref ? { follow: ref } : Array.isArray(v) ? rgbaList(v) : colourOf(v);
+        },
+        true,
+      ),
+    sizes: (key) =>
+      as(
+        key,
+        "a number, or a list of numbers one per point",
+        (v) => {
+          const ref = refOf(v);
+          return ref ? { follow: ref } : Array.isArray(v) ? sizeList(v) : typeof v === "number" && Number.isFinite(v) ? v : undefined;
+        },
+        true,
+      ),
     pose: (key) => as(key, "a pose, a position and an orientation each optional", poseOf),
     text: (key) => as(key, "text", (v) => (typeof v === "string" ? v : undefined)),
     joints: (key) =>
@@ -159,7 +209,7 @@ const SHOWS: Record<Part, (read: Read) => Omit<Shown, "visible">> = {
   box: (r) => ({ size: r.vector("size"), opacity: r.number("opacity"), color: r.colour("color") }),
   sphere: (r) => ({ radius: r.number("radius"), opacity: r.number("opacity"), color: r.colour("color") }),
   cylinder: (r) => ({ radius: r.number("radius"), length: r.number("length"), opacity: r.number("opacity"), color: r.colour("color") }),
-  points: (r) => ({ joined: r.flag("joined"), points: r.points("points"), size: r.number("size"), color: r.colour("color") }),
+  points: (r) => ({ joined: r.flag("joined"), points: r.points("points"), size: r.sizes("size"), color: r.colours("color") }),
   grid: (r) => ({ size: r.number("size"), step: r.number("step"), color: r.colour("color") }),
   model: (r) => ({ src: r.text("src"), joints: r.joints("joints") }),
 };
@@ -210,12 +260,12 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
     // a value not known yet draws nothing rather than something untrue
     shown.visible = !d.unknown;
     setMine(d);
-    const points = shown.points;
-    const laid = points instanceof Float32Array;
-    const now = JSON.stringify({ ...shown, points: laid ? undefined : points });
-    if (now === said && !laid) return;
+    // lists laid out here go to the worker whole, and are always new
+    const laid = [shown.points, shown.color, shown.size].filter((v) => ArrayBuffer.isView(v)) as (Float32Array | Uint8Array)[];
+    const now = JSON.stringify(shown, (_, v) => (ArrayBuffer.isView(v) ? undefined : v));
+    if (now === said && laid.length === 0) return;
     said = now;
-    drawing({ to: "show", part: id, shown }, laid ? [points.buffer] : []);
+    drawing({ to: "show", part: id, shown }, laid.map((v) => v.buffer as ArrayBuffer));
     p.view.told();
   });
   createEffect(() => {

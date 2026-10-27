@@ -17,25 +17,25 @@ import {
   Group,
   HemisphereLight,
   Line,
-  LineBasicMaterial,
   type Material,
   Mesh,
   MeshLambertMaterial,
   type Object3D,
   PerspectiveCamera,
   Points,
-  PointsMaterial,
   PropertyBinding,
   Quaternion,
   Scene,
+  ShaderMaterial,
   Sphere,
   SphereGeometry,
   SRGBColorSpace,
   Vector3,
+  Vector4,
   WebGLRenderer,
 } from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { CAMERA, type Part } from "../page/parts";
+import { CAMERA, type Part, rgbaOf } from "../page/parts";
 import type { Column } from "./packed";
 
 export type Vec3 = { x: number; y: number; z: number };
@@ -48,9 +48,12 @@ export type Rgba = [number, number, number, number];
 export interface Shown {
   visible: boolean;
   pose?: Pose;
-  color?: Rgba;
+  /** One colour, or for points a byte each of red, green, blue and alpha per point, or the big
+   *  value of Colors they follow. */
+  color?: Rgba | Uint8Array | { follow: string };
   opacity?: number;
-  size?: number | Vec3;
+  /** One size, a box's edges, or for points one per point, or the big value they follow. */
+  size?: number | Vec3 | Float32Array | { follow: string };
   radius?: number;
   length?: number;
   vector?: Vec3;
@@ -95,6 +98,12 @@ export interface Host {
 
 /** The import a ref is under: refs are the import's alias, then the path to the column. */
 export const aliasOf = (ref: string) => ref.split("/")[0];
+
+/** What a part may follow in a big value the worker keeps, rather than be sent. */
+const FOLLOWED = ["points", "color", "size"] as const;
+type Followed = (typeof FOLLOWED)[number];
+const isFollow = (v: unknown): v is { follow: string } => typeof v === "object" && v !== null && "follow" in v;
+const isVec3 = (v: unknown): v is Vec3 => typeof v === "object" && v !== null && "x" in v;
 
 const isList = (c: unknown): c is ArrayLike<number> => ArrayBuffer.isView(c) && !(c instanceof DataView);
 
@@ -147,7 +156,7 @@ type Painted = Material & { color: Color };
 
 /** A material in a part's colour, as see through as the colour's alpha and `opacity` make it. */
 function paint(m: Painted, s: Shown, opacity = 1) {
-  if (!s.color) return;
+  if (!Array.isArray(s.color)) return;
   const [r, g, b, a] = s.color;
   m.color.setRGB(r, g, b, SRGBColorSpace);
   m.opacity = a * opacity;
@@ -169,8 +178,8 @@ interface Held {
   scene: number;
   /** All it was told to show, each property the latest it could be read as. */
   shown: Shown;
-  /** The big value its points follow. */
-  follow?: string;
+  /** The big values its points, colours and sizes follow, by property. */
+  follows: Partial<Record<Followed, string>>;
   /** The faults it told the page last. */
   said: string;
   /** Where its page is, which a model file it names is read from. */
@@ -251,22 +260,113 @@ function bend(model: Object3D, joints: Record<string, number | Pose>, faults: st
   }
 }
 
-/** The page's points, or the newest of the big value they follow, drawn by `drawn`. */
-function setPoints(drawn: Line<BufferGeometry> | Points<BufferGeometry>, h: Held, host: Host, faults: string[]) {
-  const given = h.shown.points;
-  // none yet, as before a big value first comes, draws what it drew
-  const from = given instanceof Float32Array ? given : h.follow ? host.column(h.follow) : undefined;
-  if (!from) return;
-  if (drawn.userData.from === from) {
-    if (drawn.userData.fault) faults.push(drawn.userData.fault);
-    return;
+// Points as round dots as wide as their size in metres, never under a pixel, or a line through
+// them, in one colour or one each. Colours are sRGB and go out as they are, as nothing lights them.
+const DOTS_VERTEX = `
+uniform vec4 uColor;
+uniform float uSize;
+uniform float uHeight;
+#ifdef COLORS
+attribute vec4 pointColor;
+#endif
+#ifdef SIZES
+attribute float pointSize;
+#endif
+varying vec4 vColor;
+varying float vPx;
+void main() {
+  vec4 at = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * at;
+  #ifdef COLORS
+  vColor = pointColor;
+  #else
+  vColor = uColor;
+  #endif
+  #ifdef SIZES
+  float size = pointSize;
+  #else
+  float size = uSize;
+  #endif
+  vPx = max(size * projectionMatrix[1][1] * uHeight * 0.5 / -at.z, 1.0);
+  gl_PointSize = vPx;
+}`;
+const DOTS_FRAGMENT = `
+varying vec4 vColor;
+varying float vPx;
+void main() {
+  float a = vColor.a;
+  #ifdef DOTS
+  // round, its edge eased over a pixel
+  a *= clamp((1.0 - length(gl_PointCoord * 2.0 - 1.0)) * vPx * 0.5 + 0.5, 0.0, 1.0);
+  if (a <= 0.0) discard;
+  #endif
+  gl_FragColor = vec4(vColor.rgb, a);
+}`;
+
+/** The material of a part's dots or line, sized for the canvas whose height in px is `px`. */
+function dots(px: { value: number }) {
+  return new ShaderMaterial({ uniforms: { uColor: { value: new Vector4(1, 1, 1, 1) }, uSize: { value: 0.05 }, uHeight: px }, vertexShader: DOTS_VERTEX, fragmentShader: DOTS_FRAGMENT });
+}
+
+/** What a part's `key` is drawn from: what the page laid out, or the newest of the big value it
+ *  follows, or none yet. */
+function sourceOf(h: Held, key: Followed): Float32Array | Uint8Array | Column | undefined {
+  const given = h.shown[key];
+  if (given instanceof Float32Array || given instanceof Uint8Array) return given;
+  const ref = h.follows[key];
+  return ref ? host.column(ref) : undefined;
+}
+
+/** Colours one per point from what the page laid out, or from a big value's Colors. */
+function coloursOf(c: Float32Array | Uint8Array | Column): Uint8Array | undefined {
+  if (c instanceof Uint8Array) return c;
+  if (ArrayBuffer.isView(c)) return undefined;
+  const [r, g, b, a] = [c.r, c.g, c.b, c.a];
+  return isList(r) && isList(g) && isList(b) ? rgbaOf(r, g, b, isList(a) ? a : undefined) : undefined;
+}
+
+/** Sizes one per point from what the page laid out, or from a big value's numbers. */
+function sizesOf(c: Float32Array | Uint8Array | Column): Float32Array | undefined {
+  if (c instanceof Float32Array) return c;
+  return isList(c) ? Float32Array.from(c) : undefined;
+}
+
+/** Lays out what `drawn` draws: its points, and their colours and sizes when it has one each,
+ *  made again only when one of them is new. None yet, as before a big value first comes, draws
+ *  what it drew. */
+function lay(drawn: Line<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial>, h: Held, faults: string[]) {
+  const from = FOLLOWED.map((k) => sourceOf(h, k));
+  const [xyz, rgba, sizes] = from;
+  const u = drawn.userData;
+  if (!xyz || (u.from && from.every((f, i) => f === u.from[i]))) return void faults.push(...(u.faults ?? []));
+  u.from = from;
+  const found: string[] = (u.faults = []);
+  const laid = xyz instanceof Float32Array ? { xyz, box: boxOf(xyz) } : ArrayBuffer.isView(xyz) ? undefined : laidOut(xyz);
+  if (!laid) {
+    found.push("points: the value is not a list of points, each with numbers x, y and z");
+    return void faults.push(...found);
   }
-  drawn.userData.from = from;
-  drawn.userData.fault = undefined;
-  const laid = from instanceof Float32Array ? { xyz: from, box: boxOf(from) } : laidOut(from);
-  if (!laid) return void faults.push((drawn.userData.fault = "points: the value is not a list of points, each with numbers x, y and z"));
+  const g = geometryOf(laid.xyz, laid.box);
+  const n = laid.xyz.length / 3;
+  const colours = rgba && coloursOf(rgba);
+  if (rgba && !colours) found.push("color: the value is not a list of colours");
+  else if (colours && colours.length !== 4 * n) found.push(`color: ${colours.length / 4} colours for ${n} points`);
+  else if (colours) g.setAttribute("pointColor", new BufferAttribute(colours, 4, true));
+  const each = sizes && sizesOf(sizes);
+  if (sizes && !each) found.push("size: the value is not a list of numbers");
+  else if (each && each.length !== n) found.push(`size: ${each.length} sizes for ${n} points`);
+  else if (each) g.setAttribute("pointSize", new BufferAttribute(each, 1));
   drawn.geometry.dispose();
-  drawn.geometry = geometryOf(laid.xyz, laid.box);
+  drawn.geometry = g;
+  const m = drawn.material;
+  const defines: Record<string, string> = {};
+  if (g.getAttribute("pointColor")) defines.COLORS = "";
+  if (g.getAttribute("pointSize")) defines.SIZES = "";
+  if (drawn instanceof Points) defines.DOTS = "";
+  if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
+  // any colour see through, which then draws over what is behind without hiding it
+  u.seeThrough = !!colours && colours.some((v, i) => i % 4 === 3 && v < 255);
+  faults.push(...found);
 }
 
 const KINDS: Record<Part, Kind> = {
@@ -297,7 +397,7 @@ const KINDS: Record<Part, Kind> = {
     },
   },
   box: solid(BLOCK, (o, s) => {
-    if (typeof s.size === "object") o.scale.set(scale(s.size.x), scale(s.size.y), scale(s.size.z));
+    if (isVec3(s.size)) o.scale.set(scale(s.size.x), scale(s.size.y), scale(s.size.z));
   }),
   sphere: solid(BALL, (o, s) => {
     if (s.radius !== undefined) o.scale.setScalar(scale(s.radius));
@@ -311,14 +411,16 @@ const KINDS: Record<Part, Kind> = {
     make: () => new Group(),
     show: (o, s, faults, h) => {
       const was = o.children[0];
-      if (s.joined !== undefined && (!was || was instanceof Line !== s.joined)) {
-        swap(o, s.joined ? new Line(new BufferGeometry(), new LineBasicMaterial()) : new Points(new BufferGeometry(), new PointsMaterial()));
-      }
-      const drawn = o.children[0] as Line<BufferGeometry, LineBasicMaterial> | Points<BufferGeometry, PointsMaterial> | undefined;
+      const px = scenes.get(h.scene)?.px ?? { value: 1 };
+      if (s.joined !== undefined && (!was || was instanceof Line !== s.joined)) swap(o, s.joined ? new Line(new BufferGeometry(), dots(px)) : new Points(new BufferGeometry(), dots(px)));
+      const drawn = o.children[0] as Line<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial> | undefined;
       if (!drawn) return;
-      setPoints(drawn, h, host, faults);
-      if (drawn instanceof Points && typeof s.size === "number") drawn.material.size = s.size;
-      paint(drawn.material, s);
+      lay(drawn, h, faults);
+      const m = drawn.material;
+      if (Array.isArray(s.color)) m.uniforms.uColor.value.set(...s.color);
+      if (typeof s.size === "number") m.uniforms.uSize.value = s.size;
+      const see = drawn.userData.seeThrough || (Array.isArray(s.color) && s.color[3] < 1);
+      if (m.transparent !== see) Object.assign(m, { transparent: see, depthWrite: !see, needsUpdate: true });
     },
   },
   // three.js lays a grid on its xz plane and makes its lines once, in white its material then
@@ -382,6 +484,8 @@ interface Drawn {
   aim: { target: Vector3; yaw: number; pitch: number; distance: number };
   width: number;
   height: number;
+  /** Its height in px, as its dots read it to size themselves. */
+  px: { value: number };
   base: string;
 }
 
@@ -408,6 +512,7 @@ function drawAll() {
   for (const d of dirty) {
     if (!d.renderer) continue;
     d.renderer.setSize(d.width, d.height, false);
+    d.px.value = d.height;
     d.eye.aspect = d.width / d.height;
     d.eye.updateProjectionMatrix();
     const { target, yaw, pitch, distance } = d.aim;
@@ -485,7 +590,7 @@ export function hear(m: Drawing) {
       scene.add(sky, head, head.target, group);
       // where the camera last could be worked out, kept while a value cannot be read
       const aim = { target: new Vector3(), yaw: Number(CAMERA.yaw), pitch: Number(CAMERA.pitch), distance: Number(CAMERA.distance) };
-      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, base: m.base };
+      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base };
       scenes.set(m.scene, d);
       m.canvas.addEventListener("webglcontextrestored", () => redraw(d));
       return redraw(d);
@@ -517,14 +622,17 @@ export function hear(m: Drawing) {
       const o = KINDS[m.kind].make();
       o.userData.part = true;
       parent?.add(o);
-      parts.set(m.part, { o, kind: m.kind, scene: m.scene, shown: { visible: false }, said: "", base: d?.base ?? "" });
+      parts.set(m.part, { o, kind: m.kind, scene: m.scene, shown: { visible: false }, follows: {}, said: "", base: d?.base ?? "" });
       return;
     }
     case "show": {
       const h = parts.get(m.part);
       if (!h) return;
-      const p = m.shown.points;
-      if (p) h.follow = p instanceof Float32Array ? undefined : p.follow;
+      for (const key of FOLLOWED) {
+        const v = m.shown[key];
+        if (isFollow(v)) h.follows[key] = v.follow;
+        else if (v !== undefined) delete h.follows[key];
+      }
       for (const [k, v] of Object.entries(m.shown)) if (v !== undefined) (h.shown as unknown as Record<string, unknown>)[k] = v;
       return show(m.part, h);
     }
@@ -544,7 +652,7 @@ export function hear(m: Drawing) {
 export function came(alias: string, seq?: number): boolean {
   let follows = false;
   for (const [id, h] of parts) {
-    if (!h.follow || aliasOf(h.follow) !== alias || !scenes.has(h.scene)) continue;
+    if (!Object.values(h.follows).some((f) => aliasOf(f) === alias) || !scenes.has(h.scene)) continue;
     follows = true;
     if (seq !== undefined) owed.set(alias, seq);
     following.add(id);

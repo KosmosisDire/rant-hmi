@@ -263,6 +263,12 @@ export function column(v: unknown, field: string): Numbers | undefined {
   return c && !isNumbers(c) && c[field] && isNumbers(c[field]) ? c[field] : undefined;
 }
 
+/** The numbers a packed list of numbers holds, or undefined for any other value. */
+export function numbers(v: unknown): Numbers | undefined {
+  const c = typeof v === "object" && v !== null ? behind.get(v) : undefined;
+  return c && isNumbers(c) ? c : undefined;
+}
+
 /** Whether packed lists `a` and `b` hold the same numbers, byte for byte. */
 export function samePacked(a: unknown, b: unknown): boolean {
   const [x, y] = [a, b].map((v) => (typeof v === "object" && v !== null ? behind.get(v) : undefined));
