@@ -100,7 +100,8 @@ fn import_watch_and_set() {
     // it decodes only the fields read, and the last value again at once when more are read
     assert!(mesh.keep("Conveyor", reading(&mesh, "Conveyor", &["speed"])).is_none());
     let later = Conveyor { speed: 0.8, ..sent.clone() };
-    let narrow = inbox.until("Conveyor", || conveyor.send(&later).unwrap(), |v| v.get("running").is_none());
+    // the first value's pump may leave copies of it on the way, which come narrow too
+    let narrow = inbox.until("Conveyor", || conveyor.send(&later).unwrap(), |v| v.get("speed") == Some(&Value::from(0.8)));
     assert_eq!(narrow.value, Value::map([("speed", 0.8.into())]));
     let again = mesh.keep("Conveyor", reading(&mesh, "Conveyor", &["speed", "part"])).unwrap();
     assert_eq!(again.value, Value::map([("speed", 0.8.into()), ("part", "A7".into())]));
