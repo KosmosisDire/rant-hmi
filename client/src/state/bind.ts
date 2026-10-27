@@ -13,9 +13,10 @@ import { MISSING, TOKEN_FIXED, WHOLE } from "../protocol/rules";
 import type { Token } from "../protocol/Token";
 import type { Value } from "../protocol/Value";
 import { held, pads } from "./input";
+import { bare } from "./kept";
 import { mode } from "./mode";
 import { named, say } from "./names";
-import { live, notify, promise, state } from "./store";
+import { entity, live, notify, promise, state } from "./store";
 
 /** One unit of every length, in CSS pixels: placement, sizes, diagrams, spacing, radii, borders
  *  and type all count in units, a tenth being one pixel. */
@@ -207,6 +208,51 @@ function onScreen(s: Scope): Scope {
   };
 }
 
+/** Whether what is worked out now is a media source, in which an import stands for itself. */
+let sourcing = false;
+
+const ALIAS = Symbol("alias");
+const itselves = new Map<string, object>();
+
+/** Whether an import's values are structs, as a camera's frames are, once its type is known. */
+function structs(alias: string): boolean {
+  const imp = state.imports.find((i) => i.alias === alias);
+  const fields = imp && entity(imp.entity)?.schema?.fields;
+  return !!fields && !bare(fields);
+}
+
+/** An import as itself: reading a field of it reads its value now, so `Camera.width` reads as
+ *  anywhere else, but passing it on reads nothing. */
+function itself(alias: string): object {
+  let it = itselves.get(alias);
+  if (!it) {
+    const now = (): object => {
+      const v = live(alias);
+      if (!v.known) throw new Unknown(alias);
+      return Object(v.value);
+    };
+    it = new Proxy(
+      {},
+      {
+        get: (_, key) => (key === ALIAS ? alias : Reflect.get(now(), key)),
+        has: (_, key) => key === ALIAS || Reflect.has(now(), key),
+        ownKeys: () => Reflect.ownKeys(now()),
+        getOwnPropertyDescriptor: (_, key) => {
+          const d = Reflect.getOwnPropertyDescriptor(now(), key);
+          return d && { ...d, configurable: true };
+        },
+      },
+    );
+    itselves.set(alias, it);
+  }
+  return it;
+}
+
+/** The import a media source gave as itself, else null. */
+export function sourceOf(v: unknown): string | null {
+  return typeof v === "object" && v !== null ? ((v as { [ALIAS]?: string })[ALIAS] ?? null) : null;
+}
+
 /** What the system's own expressions read: the mesh imports, variables, records and computed
  *  values, live, and the mesh's enums. It writes those it may on the backend. */
 export const systemScope: Scope = {
@@ -214,6 +260,7 @@ export const systemScope: Scope = {
   get: (name) => {
     // its options a fresh list at each read, as a value's are
     if (named(name)?.of === "enum") return { options: [...(state.enums.find((e) => e.name === name)?.options ?? [])] };
+    if (sourcing && structs(name)) return itself(name);
     const v = live(name);
     if (!v.known) throw new Unknown(name);
     return v.value;
@@ -551,6 +598,18 @@ export function resolve(value: string | undefined, scope: Scope = pageScope): Re
     return { ok: true, value: fn(proxy(scope), ...MATH) };
   } catch (e) {
     return failed(e, scope);
+  }
+}
+
+/** A media source's value now, as `resolve` gives it, but an import whose values are structs is
+ *  the import itself, bare or passed on, so its video plays and its pictures come only if shown. */
+export function resolveSource(value: string | undefined, scope: Scope = pageScope): Resolved {
+  const was = sourcing;
+  sourcing = true;
+  try {
+    return resolve(value, scope);
+  } finally {
+    sourcing = was;
   }
 }
 

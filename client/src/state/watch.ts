@@ -1,9 +1,9 @@
 // The imports and computed values this screen shows, which the backend sends it the values of:
 // those the pages it shows name in their properties and the conditions their handlers carry,
 // and any other something drawn reads now, as an expression may make a name its text does not
-// spell. A media element's source is left to what it reads, as one that plays an import's video
-// never reads its pictures. Every one while the editor's Data tab previews them, none on its
-// Logic tab. A handler's code runs on the system, so what it reads never comes here for it.
+// spell. An import with video is left to what reads it, wherever a page names it, as one that
+// plays its video never needs its frames. Every one while the editor's Data tab previews them,
+// none on its Logic tab. A handler's code runs on the system, so what it reads never comes here.
 // Reads whole are counted apart, as only they need a big value's lists on the main thread.
 
 import { getOwner, onCleanup } from "solid-js";
@@ -11,7 +11,7 @@ import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import { operator } from "./mode";
 import { stack } from "./stack";
-import { page, state } from "./store";
+import { entity, page, state, transcoded } from "./store";
 import { currentPage, currentTab } from "./view";
 
 /** How many of what is drawn now read each name, and how many of those read it whole: each read
@@ -67,15 +67,17 @@ export function watched(): string[] | null {
   const pages = shownPages();
   if (pages === null) return null;
   const names = [...state.imports.map((i) => i.alias), ...state.computed.map((c) => c.name)];
-  if (names.length === 0) return [];
-  const said = new RegExp(`(?<![\\w$.])(${names.map((n) => n.replace(/[$]/g, "\\$")).join("|")})(?![\\w$])`, "g");
   const read = new Set<string>(names.filter((n) => readers.has(n)));
+  const video = new Set(state.imports.filter((i) => transcoded(i) || entity(i.entity)?.schema?.name === "VideoFrame").map((i) => i.alias));
+  const spelled = names.filter((n) => !video.has(n));
+  if (spelled.length === 0) return [...read].sort();
+  const said = new RegExp(`(?<![\\w$.])(${spelled.map((n) => n.replace(/[$]/g, "\\$")).join("|")})(?![\\w$])`, "g");
   const scan = (text: string | null | undefined) => {
     if (text) for (const m of text.matchAll(said)) read.add(m[1]);
   };
   const walk = (elements: Element[]) => {
     for (const e of elements) {
-      for (const [key, value] of Object.entries(e.props)) if (key !== "name" && !(e.tag === "media" && key === "src")) scan(value);
+      for (const [key, value] of Object.entries(e.props)) if (key !== "name") scan(value);
       for (const h of e.handlers) Object.values(h.attrs).forEach(scan);
       walk(e.children);
     }
