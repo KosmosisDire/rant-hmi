@@ -1,14 +1,15 @@
 //! A small line to try the HMI on: a conveyor, a jog topic, a reset function, a fill task that
 //! reports its progress, a moving robot, a camera with the boxes a detector finds in its frames
 //! and a home it counts, the same view as MJPEG video, a label camera showing a real conveyor
-//! shot with a parcel and its labels, and a 3D scan of the cell's floor with that part on it.
+//! shot with a parcel and its labels, a 3D scan of the cell's floor with that part on it, and
+//! the floor's heat as points each with a colour and a size.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use rant::types::{AlignedBox2D, Double2, Double3, Empty, Float3, Image, ImageFormat, JointState, Pose, Quaternion, Timestamp, VideoCodec, VideoFrame};
+use rant::types::{AlignedBox2D, Color, Double2, Double3, Empty, Float3, Image, ImageFormat, JointState, Pose, Quaternion, Timestamp, VideoCodec, VideoFrame};
 use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, Request, TaskOptions, TaskRequest, VariableOptions};
 
 #[derive(rant::Message, Clone)]
@@ -34,6 +35,15 @@ struct Detections {
 #[derive(rant::Message, Clone)]
 struct Scan {
     points: Vec<Float3>,
+}
+
+/// How warm the cell's floor is, as a thermal camera's cloud comes: its points, and beside them
+/// a colour and a size for each, in metres.
+#[derive(rant::Message, Clone)]
+struct Heat {
+    points: Vec<Float3>,
+    colors: Vec<Color>,
+    sizes: Vec<f32>,
 }
 
 #[derive(rant::Enum, Clone, Copy, Debug, PartialEq)]
@@ -70,6 +80,7 @@ fn main() -> Result<(), rant::Error> {
     let label_cam = node.publisher::<VideoFrame>("Line1/LabelCam", Qos::new())?;
     let labels = node.publisher::<Detections>("Line1/LabelCam/Detections", Qos::new())?;
     let scan = node.publisher::<Scan>("Cell/Scan", Qos::new())?;
+    let heat = node.publisher::<Heat>("Cell/Heat", Qos::new())?;
     let jog = Arc::new(Mutex::new(None::<f64>));
     let heard = jog.clone();
     let _jog = node.subscriber::<f64>("Line1/Jog", Qos::new(), move |m| *heard.lock().unwrap() = Some(m.into_inner()))?;
@@ -146,6 +157,7 @@ fn main() -> Result<(), rant::Error> {
             label_cam.send(&VideoFrame { codec: VideoCodec::Mjpeg, width: 960, height: 540, keyframe: true, pts: Timestamp::now(), data: SHOT.to_vec() })?;
             labels.send(&Detections { boxes: SHOT_FINDS.iter().map(|&[x0, y0, x1, y1]| AlignedBox2D { min: Double2 { x: x0, y: y0 }, max: Double2 { x: x1, y: y1 } }).collect() })?;
             scan.send(&scan_of(t))?;
+            heat.send(&heat_of(t))?;
         }
         next += Duration::from_millis(50);
         match next.checked_duration_since(Instant::now()) {
@@ -167,6 +179,21 @@ fn scan_of(t: f64) -> Scan {
         })
         .collect();
     Scan { points }
+}
+
+/// The floor in 50 by 50 points, a warm spot circling on it: red and large where warm, blue
+/// and small where cold.
+fn heat_of(t: f64) -> Heat {
+    let (cx, cy) = ((t * 0.3).cos() as f32, (t * 0.3).sin() as f32 * 0.5);
+    let mut heat = Heat { points: Vec::new(), colors: Vec::new(), sizes: Vec::new() };
+    for i in 0..2500 {
+        let (x, y) = ((i % 50) as f32 * 0.08 - 2.0, (i / 50) as f32 * 0.04 - 1.0);
+        let warm = (-((x - cx).powi(2) + (y - cy).powi(2)) * 4.0).exp();
+        heat.points.push(Float3 { x, y, z: 0.0 });
+        heat.colors.push(Color { r: (255.0 * warm) as u8, g: 40, b: (255.0 * (1.0 - warm)) as u8, a: 255 });
+        heat.sizes.push(0.02 + 0.04 * warm);
+    }
+    heat
 }
 
 /// A real conveyor shot for the label camera, 960 by 540, and what a detector finds in it, in
