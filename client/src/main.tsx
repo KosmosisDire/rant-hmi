@@ -16,9 +16,12 @@ import { connect, send } from "./net/connection";
 import "./net/probe";
 import { App } from "./shell/App";
 import { Operator } from "./shell/Operator";
+import { catchFaults } from "./state/caught";
 import { operator } from "./state/mode";
+import { report } from "./state/problems";
 import { onAnswer } from "./state/stack";
 
+catchFaults(report);
 connect();
 onAnswer((ask, value) => send({ type: "answer", ask, value }));
 render(() => (operator ? <Operator /> : <App />), document.getElementById("root")!);

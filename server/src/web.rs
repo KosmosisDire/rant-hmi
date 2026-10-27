@@ -8,13 +8,14 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::Router;
+use axum::{Json, Router};
 use axum::body::Bytes;
 use axum::extract::connect_info::Connected;
 use axum::extract::{ConnectInfo, Query, State};
 use axum::serve::{IncomingStream, Listener};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::response::Response;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
@@ -55,7 +56,7 @@ pub fn files(client: &Path) -> Files {
 /// answers one.
 pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: &Path, door: Door, apps: Apps) {
     let port = listener.local_addr().map_or(0, |a| a.port());
-    let app = Router::new().route("/ws", get(upgrade)).route("/bulk", get(upgrade_bulk)).with_state(door).merge(apps::router(apps)).merge(crate::probe::router(port)).fallback_service(files(client));
+    let app = Router::new().route("/ws", get(upgrade)).route("/bulk", get(upgrade_bulk)).route("/problems", get(problems)).with_state(door).merge(apps::router(apps)).merge(crate::probe::router(port)).fallback_service(files(client));
     let front = Front::open(listener, tls);
     if let Err(e) = axum::serve(front, app.into_make_service_with_connect_info::<Reached>()).await {
         error!("the web server stopped: {e}");
@@ -146,6 +147,15 @@ impl Connected<IncomingStream<'_, Front>> for Reached {
         };
         let local = tcp.local_addr().map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |a| a.ip().to_canonical());
         Reached { local, remote: stream.remote_addr().ip().to_canonical() }
+    }
+}
+
+/// Every screen's problems and those runs on the system met, as JSON, for a person or an agent
+/// to read.
+async fn problems(State(door): State<Door>) -> Response {
+    match door.problems().await {
+        Some(list) => Json(list).into_response(),
+        None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
 

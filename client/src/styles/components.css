@@ -630,6 +630,19 @@
   word-break: break-word;
 }
 
+/* What broke in place of a part of the HMI, with a way to draw it again. */
+.broken {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 18px;
+}
+
+.broken .error-line {
+  margin-top: 0;
+}
+
 /* ------------------------------------------------------------------ lists */
 
 .list-group {

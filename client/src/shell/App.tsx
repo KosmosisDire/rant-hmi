@@ -6,8 +6,10 @@ import { LogicScreen } from "../screens/logic/LogicScreen";
 import { RunScreen } from "../screens/run/RunScreen";
 import { currentTab, followHistory, openPage, openTab } from "../state/view";
 import { putAway, sidebarsClosed, sidebarWidths } from "../ui/Sidebars";
+import { Guard } from "../ui/Guard";
 import { MenuHost } from "../ui/Menu";
 import { Notices } from "../ui/Notices";
+import { ProblemsPanel } from "./Problems";
 import { StatusBar } from "./StatusBar";
 import { TopBar } from "./TopBar";
 
@@ -33,14 +35,23 @@ export function App() {
     <div class="app" classList={sidebarsClosed()} style={sidebarWidths()}>
       <TopBar tab={tab()} onTab={openTab} />
       <main class="content">
-        <div class="screen" hidden={tab() !== "data"}>
-          <DataScreen onOpen={openInDesign} />
-        </div>
-        <DesignScreen shown={tab() === "design"} />
-        <LogicScreen shown={tab() === "logic"} />
-        <RunScreen shown={tab() === "run"} />
+        <Guard hidden={tab() !== "data"}>
+          <div class="screen" hidden={tab() !== "data"}>
+            <DataScreen onOpen={openInDesign} />
+          </div>
+        </Guard>
+        <Guard hidden={tab() !== "design"}>
+          <DesignScreen shown={tab() === "design"} />
+        </Guard>
+        <Guard hidden={tab() !== "logic"}>
+          <LogicScreen shown={tab() === "logic"} />
+        </Guard>
+        <Guard hidden={tab() !== "run"}>
+          <RunScreen shown={tab() === "run"} />
+        </Guard>
       </main>
       <StatusBar />
+      <ProblemsPanel />
       <Notices />
       <MenuHost />
     </div>

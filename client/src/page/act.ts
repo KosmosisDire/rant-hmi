@@ -78,7 +78,7 @@ export function pageAct(page: string): Act {
     fire: (e, event, payload, at, only) => {
       const scope = within(pageScope, at);
       const heard = hearing(e, event, payload, scope, only);
-      for (const h of heard.filter(runsHere)) runHandler(h.code, scope, undefined, payload ?? null, `${e.props.name ?? e.id} ${event}`);
+      for (const h of heard.filter(runsHere)) runHandler(h.code, scope, undefined, payload ?? null, { label: `${e.props.name ?? e.id} ${event}`, page, element: e.id });
       const there = heard.filter((h) => !runsHere(h));
       const end = eventInfo(event)?.ends_with === event ? undefined : endOf(event);
       if (there.length > 0 || (end && e.handlers.some((h) => takes(h, end, payload) && (end === event || !runsHere(h))))) {
@@ -96,7 +96,7 @@ export function componentAct(c: Page, scope: Scope, instance: Element, outer: Ac
     fire: (e, event, payload, at, only) => {
       const here = within(scope, at);
       const emit = (name: string, sent?: unknown) => outer.fire(instance, String(name), sent, copy);
-      for (const h of hearing(e, event, payload, here, only)) runHandler(h.code, here, emit, payload ?? null, `${c.name} ${e.props.name ?? e.id} ${event}`);
+      for (const h of hearing(e, event, payload, here, only)) runHandler(h.code, here, emit, payload ?? null, { label: `${c.name} ${e.props.name ?? e.id} ${event}`, page: c.id, element: e.id });
     },
     hears: (_, h, at) => heard(h, within(scope, at)),
   };

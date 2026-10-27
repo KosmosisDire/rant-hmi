@@ -1,7 +1,7 @@
 // A page drawn as HTML: each element an absolutely placed div, its properties resolved
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
-import { createEffect, createMemo, createReaction, createRoot, createSignal, For, lazy, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import { createContext, createEffect, createMemo, createReaction, createRoot, createSignal, For, lazy, mapArray, Match, onCleanup, onMount, Show, Switch, useContext } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
@@ -10,7 +10,10 @@ import type { Value } from "../protocol/Value";
 import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originCss, pageScope, percentOf, resolve, resolveSource, runDraw, type Scope, sizeWord, sourceOf, tokenValue, UNIT } from "../state/bind";
 import { fields, short } from "../state/format";
 import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
-import { component, live, notify, state, transcoded } from "../state/store";
+import type { Level } from "../protocol/Level";
+import { hold, ranInto } from "../state/problems";
+import { component, live, state, transcoded } from "../state/store";
+import { Guard } from "../ui/Guard";
 import { createSize, onResize } from "../ui/size";
 import { ImagePlay, VideoOff } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
@@ -149,9 +152,26 @@ export function PageView(p: { page: Page; overrides?: Overrides; grows?: boolean
   const height = () => `${p.page.height * UNIT}px`;
   return (
     <div class="page" classList={{ design: p.design }} style={{ ...themeVars(), width: `${p.page.width * UNIT}px`, height: p.grows ? undefined : height(), "min-height": p.grows ? height() : undefined, "--page-ground": pageGround(p.page) }}>
-      <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} />}</For>
+      <Guard>
+        <Doc.Provider value={() => p.page.id}>
+          <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} />}</For>
+        </Doc.Provider>
+      </Guard>
     </div>
   );
+}
+
+/** The page or component the elements inside belong to, which their problems name. */
+const Doc = createContext<() => string>(() => "");
+
+/** Lists what an element finds wrong among the screen's problems, while it shows it. Each fault
+ *  holds on its own, so one that stays keeps its row while others come and go. */
+function useFaults(element: () => string, faults: () => string[], level: Level = "fault") {
+  const doc = useContext(Doc);
+  createEffect(() => {
+    const [page, id] = [doc(), element()];
+    createMemo(mapArray(faults, (text) => onCleanup(hold({ source: "page", level, text, detail: null, page, element: id }))));
+  });
 }
 
 function css(key: string, v: unknown): string {
@@ -324,6 +344,7 @@ function ElementView(p: ElementProps & { at?: At }) {
     // an instance's inputs are never CSS, the rest is CSS on its box, as without its component
     // all are inputs. Design draws no motion, so a drag and the outlines follow the pointer.
     const made = p.element.tag === "use" ? component(p.element.component ?? "") : undefined;
+    if (p.element.tag === "use" && !made) faults.push(`component: ${p.element.component} is missing`);
     const input = (key: string) => p.element.tag === "use" && (!made || !!made.interface?.inputs.some((i) => i.name === key));
     for (const key of Object.keys(p.element.props)) {
       if (OWN.has(key) || input(key) || (key === "gap" && spread)) continue;
@@ -398,6 +419,7 @@ function ElementView(p: ElementProps & { at?: At }) {
   // what its own drawing found last, known only once it draws
   const [drawn, setDrawn] = createSignal<Drawn>(CLEAN);
   const faults = () => [...look().faults, ...drawn().faults];
+  useFaults(() => p.element.id, faults);
   const press = usePress(p);
   const inner = (c: Element, i: () => number) => <Placed element={c} scope={p.scope} room={look().holder} order={i()} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
   return (
@@ -445,7 +467,7 @@ function ElementView(p: ElementProps & { at?: At }) {
         <Match when={p.element.tag === "scene"}>
           <SceneView element={p.element} scope={p.scope} design={p.design} report={setDrawn} />
         </Match>
-        <Match when={look().media}>{(m) => <MediaView src={m().src} fit={m().fit} />}</Match>
+        <Match when={look().media}>{(m) => <MediaView src={m().src} fit={m().fit} element={p.element.id} />}</Match>
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} design={p.design} act={p.act} at={p.at} />
         </Match>
@@ -575,6 +597,7 @@ function ShapeView(p: ElementProps & { at?: At }) {
     if (Object.keys(style).length > 0) Object.assign(style, { "transform-box": "fill-box", "transform-origin": style["transform-origin"] ?? "50% 50%" });
     return { attrs, style, faults, unknown, text };
   });
+  useFaults(() => p.element.id, () => look().faults);
   const press = usePress(p);
   return (
     <Dynamic
@@ -601,7 +624,7 @@ function ShapeView(p: ElementProps & { at?: At }) {
 /** What media shows: the import its source gives, as H264 when it has some, else its pictures as
  *  they come, or a picture its source gives, or a URL. One with nothing to show yet says so, as a
  *  camera that is missing or not up yet, and in the editor can still be picked and placed. */
-function MediaView(p: { src: unknown; fit: string }) {
+function MediaView(p: { src: unknown; fit: string; element: string }) {
   const alias = () => sourceOf(p.src);
   const pic = () => {
     const a = alias();
@@ -610,7 +633,7 @@ function MediaView(p: { src: unknown; fit: string }) {
   const url = () => (typeof p.src === "string" && p.src.trim() !== "" ? p.src : null);
   return (
     <Switch fallback={<div class="el-picture-none">{<ImagePlay size={20} />}</div>}>
-      <Match when={alias() && plays(alias()!) && alias()}>{(a) => <VideoView alias={a()} fit={p.fit} />}</Match>
+      <Match when={alias() && plays(alias()!) && alias()}>{(a) => <VideoView alias={a()} fit={p.fit} element={p.element} />}</Match>
       <Match when={pic()}>{(x) => <PictureView picture={x()} fit={p.fit} />}</Match>
       <Match when={url()}>{(u) => <img class="el-picture" src={u()} alt="" draggable={false} style={{ "object-fit": FIT[p.fit] ?? "contain" }} />}</Match>
     </Switch>
@@ -627,7 +650,7 @@ function plays(alias: string): boolean {
 /** A video: an import's stream over WebRTC, or until that shows its frames from the socket
  *  decoded here, fitted as a picture is. Marked until a frame shows, and again while neither
  *  comes, with why when the screen cannot play it. */
-function VideoView(p: { alias: string | null; fit: string }) {
+function VideoView(p: { alias: string | null; fit: string; element: string }) {
   const [shows, setShows] = createSignal(false);
   const [drawn, setDrawn] = createSignal(false);
   const [playing, setPlaying] = createSignal<Playing | null>(null);
@@ -660,6 +683,7 @@ function VideoView(p: { alias: string | null; fit: string }) {
   });
   const fit = () => FIT[p.fit] ?? "contain";
   const why = () => playing()?.decoded()?.fault() ?? unplayable();
+  useFaults(() => p.element, () => (why() ? [`src: ${why()}`] : []), "warn");
   return (
     <>
       <canvas ref={canvas} class="el-picture over" hidden={shows() || !drawn()} style={{ "object-fit": fit() }} />
@@ -685,6 +709,7 @@ function VideoView(p: { alias: string | null; fit: string }) {
 function InputBox(p: { element: Element; scope: Scope; value: unknown; act?: Act }) {
   const [draft, setDraft] = createSignal<string | null>(null);
   const [bad, setBad] = createSignal(false);
+  const doc = useContext(Doc);
   const ref = () => bareRef(p.element.props.value);
   const open = () => !!p.act && !!ref() && p.scope.writes(ref()!.name);
   const read = (t: string): unknown => {
@@ -705,7 +730,7 @@ function InputBox(p: { element: Element; scope: Scope; value: unknown; act?: Act
     try {
       p.scope.set(ref()!.name, ref()!.fields, value);
     } catch (e) {
-      notify(`${p.element.props.name ?? p.element.id}: ${(e as Error).message}`, "fault");
+      ranInto({ label: p.element.props.name ?? p.element.id, page: doc(), element: p.element.id }, (e as Error).message, "fault");
     }
     p.act?.fire(p.element, "change", { value });
     return true;
@@ -787,7 +812,9 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
             onPointerOver={(e) => p.act && !display() && kept.over(e)}
             onPointerLeave={() => kept.leave()}
           >
-            <For each={c().children}>{(e) => <Placed element={e} scope={scope} room={CORNER} design={p.design} act={display() ? undefined : act} inside />}</For>
+            <Doc.Provider value={() => c().id}>
+              <For each={c().children}>{(e) => <Placed element={e} scope={scope} room={CORNER} design={p.design} act={display() ? undefined : act} inside />}</For>
+            </Doc.Provider>
           </div>
         );
       }}

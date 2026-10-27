@@ -8,6 +8,7 @@
 // page over https, else a socket, or the socket where WebTransport fails.
 
 import { Decoder, Encoder } from "cbor-x";
+import { catchFaults, type Found } from "../state/caught";
 import type { Drawing, Drew, Host } from "./draw";
 import { buffers, Change, changed, type Column, readPackedPlain } from "./packed";
 import { joiner, streams } from "./pieces";
@@ -29,9 +30,9 @@ export type ToData = { second: Second | null; session: number | null } | { messa
 
 /** What the worker tells the main thread: a big value read with the imports that came far and
  *  those the main thread says it took, which second way is open, a value taken, or missed, to
- *  say so on the link, or what a scene found. Each names the session it was read in, as one
- *  read before the link came again belongs to the last. */
-type Said = { msg: unknown; far: string[]; took: string[] } | { open: Way | null } | { took: string; seq: number; missed?: boolean } | { drew: Drew };
+ *  say so on the link, what a scene found, or a fault in the worker's own code. Each names the
+ *  session it was read in, as one read before the link came again belongs to the last. */
+type Said = { msg: unknown; far: string[]; took: string[] } | { open: Way | null } | { took: string; seq: number; missed?: boolean } | { drew: Drew } | { problem: Found };
 export type FromData = Said & { session: number | null };
 
 /** A value, and for one sent as the change from one held, that one's batch. */
@@ -44,6 +45,10 @@ const encoder = new Encoder({ useRecords: false });
 /** The link's session the worker reads for now. */
 let session: number | null = null;
 const post = (m: Said, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage({ ...m, session }, transfer);
+
+catchFaults((problem) => post({ problem }));
+// told once, from here: an error left alone would reach the main thread a second time
+addEventListener("error", (e) => e.preventDefault());
 
 /** How long WebTransport may take to open before the socket is tried. */
 const WT_WAIT_MS = 5000;

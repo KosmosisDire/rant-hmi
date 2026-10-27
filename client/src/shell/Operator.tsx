@@ -2,6 +2,7 @@ import { createEffect, createSignal, Show } from "solid-js";
 import { RunView } from "../page/RunView";
 import { stack, startStack } from "../state/stack";
 import { startPage, state, type WebrtcProblem } from "../state/store";
+import { Guard } from "../ui/Guard";
 import { MenuHost } from "../ui/Menu";
 import { Notices } from "../ui/Notices";
 
@@ -44,7 +45,9 @@ export function Operator() {
   });
   return (
     <div class="operator">
-      <RunView active />
+      <Guard>
+        <RunView active />
+      </Guard>
       <Banner />
       <Notices />
       <MenuHost />
