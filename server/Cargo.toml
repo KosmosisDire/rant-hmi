@@ -40,10 +40,12 @@ sha2 = "0.10"
 # pure Rust crypto, so no OpenSSL to find on Windows or a target
 str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"] }
 # 1.54.0 races resetting an interval's timer against the driver firing it (tokio PR 8458)
-tokio = { version = ">=1.51, <1.54", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
+tokio = { version = ">=1.51, <1.54", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "fs"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
 tokio-util = { version = "0.7", features = ["io"] }
 toml = "0.8"
+# a project file is served by the file service once its path is checked
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "set-header"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -55,8 +57,6 @@ quinn-proto = { version = "=0.11.19", default-features = false }
 x509-cert = { version = "0.2", default-features = false }
 
 [dev-dependencies]
-# the link's tests call its routes as the app's window does
-tower = { version = "0.5", features = ["util"] }
 # tests write values as JSON literals, which the value! macro makes ours
 serde_json = { version = "1", features = ["preserve_order"] }
 # the demo line's MJPEG camera

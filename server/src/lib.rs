@@ -107,7 +107,7 @@ impl Hmi {
             let runtimes = kept().map(|kept| kept.join("runtimes").join(env!("CARGO_PKG_VERSION"))).unwrap_or_default();
             let from = web.runtimes_from.clone().unwrap_or_else(apps::release);
             let apps = Apps { project: o.project.clone(), runtimes, from, domain: o.domain, loopback: o.loopback, trust: None, getting: Default::default() };
-            serve(web, &project.info.name, o.client, door.clone(), apps, hashes).await?;
+            serve(web, &project.info.name, o.client, o.project.clone(), door.clone(), apps, hashes).await?;
         }
         let (said, script) = unbounded_channel();
         let runner = script::Script::start(said);
@@ -137,7 +137,7 @@ impl Hmi {
 
 /// Listens on the network for screens, the editor's included, and the apps it builds, and with
 /// https for WebTransport on the same port over UDP, whose certificates' hashes go to `hashes`.
-async fn serve(web: Web, name: &str, client: PathBuf, door: Door, mut apps: Apps, hashes: UnboundedSender<String>) -> Result<()> {
+async fn serve(web: Web, name: &str, client: PathBuf, project: PathBuf, door: Door, mut apps: Apps, hashes: UnboundedSender<String>) -> Result<()> {
     let listener = TcpListener::bind((web.bind.as_str(), web.port))
         .await
         .with_context(|| format!("could not listen on {}:{}", web.bind, web.port))?;
@@ -164,6 +164,6 @@ async fn serve(web: Web, name: &str, client: PathBuf, door: Door, mut apps: Apps
         }
         None => info!("{name} on http://{at}"),
     }
-    tokio::spawn(async move { web::serve(listener, tls, &client, door, apps).await });
+    tokio::spawn(async move { web::serve(listener, tls, &client, &project, door, apps).await });
     Ok(())
 }

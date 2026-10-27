@@ -1,5 +1,9 @@
-// A designer shows a glTF model in a scene, stood z up as its y up file means, and turns one of
-// its named nodes by joints. A node it lacks or a file that cannot load says why on the scene.
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+// A designer shows a glTF model from the project's files in a scene, stood z up as its y up file
+// means, and turns one of its named nodes by joints. A node it lacks or a file that cannot load
+// says why on the scene.
 
 // a file holding a red square on its floor, from x 0.5 to 1.5, in the node Arm
 function square() {
@@ -24,14 +28,16 @@ function square() {
       { bufferView: 1, componentType: 5123, count: 6, type: "SCALAR" },
     ],
   };
-  return `data:model/gltf+json;base64,${Buffer.from(JSON.stringify(gltf)).toString("base64")}`;
+  return JSON.stringify(gltf);
 }
 
-export default async function ({ hmi, d, eventually }) {
+export default async function ({ hmi, sys, d, eventually }) {
+  mkdirSync(join(sys.project, "files", "cell"), { recursive: true });
+  writeFileSync(join(sys.project, "files", "cell", "square.gltf"), square());
   await d.addPage("Model");
   // seen from above, x to the right
   const scene = await d.add("scene", { Name: "cell", x: "4", y: "4", w: "40", h: "30", Yaw: "-PI / 2", Pitch: "1.5", Distance: "6" });
-  await d.addPart("model", { Source: JSON.stringify(square()) });
+  await d.addPart("model", { Source: '"files/cell/square.gltf"' });
   const red = ([r, g, b]) => r > 120 && g < 60 && b < 60;
   await d.shows(d.el(scene), 0.65, 0.5, red, "the square right of the middle, lying on the floor");
   await d.shows(d.el(scene), 0.35, 0.5, (c) => !red(c), "nothing left of the middle");
@@ -45,6 +51,9 @@ export default async function ({ hmi, d, eventually }) {
   const says = (words) => eventually(async () => (await d.el(scene).getAttribute("title"))?.includes(words), `the scene to say ${words}`);
   await d.setField("Joints", "{ Wrist: 1 }");
   await says("Model: joints: the model has no node Wrist");
-  await d.setField("Source", '"missing.glb"');
-  await says("Model: src: missing.glb cannot be loaded");
+  await d.setField("Source", '"files/missing.glb"');
+  await says("Model: src: files/missing.glb cannot be loaded");
+  // the project's own files are not the page's to load
+  await d.setField("Source", '"files/../hmi.toml"');
+  await says("Model: src: files/../hmi.toml cannot be loaded");
 }
