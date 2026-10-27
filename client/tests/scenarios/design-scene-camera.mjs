@@ -7,11 +7,14 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   const scene = await d.add("scene", { x: "4", y: "4", w: "40", h: "30" });
   const pageId = hmi.state.pages.find((p) => p.name === "Scene Camera").id;
   const made = () => hmi.page(pageId).children.find((e) => e.id === scene);
-  await eventually(() => hmi.state.variables.some((v) => v.name === "sceneView" && v.per === "screen"), "the scene's view, kept for each screen");
-  check(made().props.yaw === "sceneView.yaw" && made().props.target === "sceneView.target", `the scene to look by its view, not ${JSON.stringify(made().props)}`);
+  // sceneView, or with a number where another scene took that
+  await eventually(() => made()?.props.yaw, "the scene to reach the test client");
+  const viewed = made().props.yaw.split(".")[0];
+  check(/^sceneView\d*$/.test(viewed) && made().props.target === `${viewed}.target`, `the scene to look by its view, not ${JSON.stringify(made().props)}`);
+  await eventually(() => hmi.state.variables.some((v) => v.name === viewed && v.per === "screen"), "the scene's view, kept for each screen");
   const handlers = made().handlers.map((h) => `${h.event} ${JSON.stringify(h.filter)}`).join(", ");
   check(handlers === 'drag {"button":"any"}, scroll {"from":"fingers"}, zoom {}', `the scene's handlers are ${handlers}`);
-  const text = await hmi.addElement(pageId, "span", { name: "Shown", x: "50", y: "4", w: "60", h: "4", text: "JSON.stringify(sceneView)" });
+  const text = await hmi.addElement(pageId, "span", { name: "Shown", x: "50", y: "4", w: "60", h: "4", text: `JSON.stringify(${viewed})` });
 
   await d.tab("Run");
   const el = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
