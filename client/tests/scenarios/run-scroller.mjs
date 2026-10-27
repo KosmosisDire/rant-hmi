@@ -54,13 +54,17 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   check(value("scrPress") === 0 && value("scrRelease") === 0 && value("scrTaps") === 0, `a scroll to press no row, not ${presses()}`);
   check(value("scrCardPress") === cardWas, `a scroll to press no card, pressed ${value("scrCardPress") - cardWas} times`);
 
-  // a finger that stays presses once it has stayed a moment, then taps the row it let go on
-  const shown = await rows.nth(6).boundingBox();
+  // a finger that stays presses once it has stayed a moment, then taps the row it let go on,
+  // the first wholly in view however far the list went on scrolling
+  const view = await el(list).boundingBox();
+  const boxes = await rows.evaluateAll((es) => es.map((e) => e.getBoundingClientRect()).map((r) => ({ y: r.y, height: r.height })));
+  const n = boxes.findIndex((r) => r.y >= view.y && r.y + r.height <= view.y + view.height);
+  const shown = await rows.nth(n).boundingBox();
   const [x, y] = [shown.x + shown.width / 2, shown.y + shown.height / 2];
   await fingers("touchStart", [x, y]);
-  await eventually(() => value("scrPress") === 1, "a finger that stays to press");
+  await eventually(() => value("scrPress") === 1, () => `a finger that stays to press, not ${presses()}`);
   await fingers("touchEnd");
-  await eventually(() => value("scrTaps") === 1 && value("scrTapped") === 6, () => `a tap on row 6, not ${presses()} on ${value("scrTapped")}`);
+  await eventually(() => value("scrTaps") === 1 && value("scrTapped") === n, () => `a tap on row ${n}, not ${presses()} on ${value("scrTapped")}`);
   // a quick tap presses, lets go and taps at once
   await fingers("touchStart", [x, y]);
   await fingers("touchEnd");
