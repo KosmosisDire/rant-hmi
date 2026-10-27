@@ -1,8 +1,9 @@
 # Status
 
-The HMI publishes two read only variables about itself. Other nodes read them, and pages
+The HMI publishes three read only variables about itself. Other nodes read them, and pages
 import them like any entity. Each is set only when it changed: the clients as each screen's
-round trip is measured, 20 times a second, and the status once a second.
+round trip is measured, 20 times a second, the problems at most 4 times a second, and the
+status once a second.
 
 ## Hmi/Clients
 
@@ -42,6 +43,24 @@ The screens connected, a list. Each holds:
 
 ```js
 `${Screens.length} screens, ${HmiStatus.missing.length} imports missing`
+```
+
+## Hmi/Problems
+
+What is wrong now, the newest 100, as the editor's problems list shows them
+([files.md](files.md#problems)). Each holds:
+
+- `screen`: the screen that found it, 0 for a handler or logic run on the system
+- `source`: `page` (an expression or drawing that fails), `run` (a handler or logic that
+  stopped) or `hmi` (a fault in the HMI's own code)
+- `level`: `warn` or `fault`
+- `text`: what went wrong, cut to 240 bytes
+- `page`, `element`: the page or component and the element it is on, empty for none
+- `count`: how many times it came
+- `at`: when it came last, a Timestamp
+
+```js
+HmiProblems.filter((p) => p.level === "fault").length
 ```
 
 ## The node's status
