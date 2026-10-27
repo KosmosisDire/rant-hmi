@@ -63,6 +63,8 @@ pub enum ToScript {
     Run { run: u64, session: Option<u32>, code: String, p: Value, at: Option<(u32, Value)> },
     /// How a call ended: its answer, or why it failed.
     Answer { call: u64, outcome: Result<Value, CallFailure> },
+    /// One of a task call's progress updates, for the function the call was given.
+    Progress { call: u64, value: Value },
 }
 
 /// A message's type by name and its fields, none for a bare type, so code may pass the fields
@@ -83,9 +85,13 @@ pub enum FromScript {
     /// A variable's whole new value.
     Write { run: u64, alias: String, value: Value },
     Call { run: u64, call: u64, alias: String, request: Value },
+    /// Stops task `alias`'s call `call`, or with None each of its calls in flight.
+    Cancel { run: u64, alias: String, call: Option<u64> },
     /// A message to send on a topic.
     Send { run: u64, alias: String, value: Value },
     Notify { run: u64, text: String },
+    /// A fault that leaves the run going, as a throw in a task's progress function.
+    Fault { run: u64, text: String },
     Log { run: u64, text: String },
     /// Opens a page on the screen that started the run, in place of the top one when `replace`.
     /// `call` answers with what the page closes with.
@@ -242,6 +248,8 @@ impl Script {
 struct Waiter {
     resolve: Persistent<Function<'static>>,
     reject: Persistent<Function<'static>>,
+    /// What takes a task call's progress.
+    progress: Option<Persistent<Function<'static>>>,
 }
 
 struct Shared {
@@ -338,9 +346,10 @@ impl Shared {
         self.pending.retain(|run, _| live.contains(run));
     }
 
-    fn wait<'js>(&mut self, ctx: &Ctx<'js>, resolve: Function<'js>, reject: Function<'js>) -> u64 {
+    fn wait<'js>(&mut self, ctx: &Ctx<'js>, resolve: Function<'js>, reject: Function<'js>, progress: Option<Function<'js>>) -> u64 {
         self.next += 1;
-        self.waiters.insert(self.next, Waiter { resolve: Persistent::save(ctx, resolve), reject: Persistent::save(ctx, reject) });
+        let progress = progress.map(|f| Persistent::save(ctx, f));
+        self.waiters.insert(self.next, Waiter { resolve: Persistent::save(ctx, resolve), reject: Persistent::save(ctx, reject), progress });
         self.next
     }
 }
@@ -615,8 +624,8 @@ fn same(a: &Value, b: &Value) -> bool {
 }
 
 /// A reader of each `source`, a function's text, by name, in a context of its own that reads
-/// every name, as `run` when it is one, and refuses writes, calls and sends. One that does not
-/// compile is left out.
+/// every name, as `run` when it is one, and refuses writes, calls, cancels and sends. One that
+/// does not compile is left out.
 fn make_reader(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, sources: &[(String, String)], run: u64) -> Reader {
     let sources: Vec<(&String, String)> = sources.iter().filter_map(|(id, source)| rw.rewrite(source, None).ok().map(|s| (id, s))).collect();
     let ctx = Context::full(rt).expect("QuickJS makes a context");
@@ -625,7 +634,7 @@ fn make_reader(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, source
             ctx.catch();
             return Vec::new();
         }
-        for name in ["__write", "__call", "__send"] {
+        for name in ["__write", "__call", "__cancel", "__send"] {
             let refuse = Function::new(ctx.clone(), |ctx: Ctx<'_>| -> rquickjs::Result<()> { Err(Exception::throw_type(&ctx, "this only reads")) });
             if let Ok(f) = refuse {
                 let _ = ctx.globals().set(name, f);
@@ -712,6 +721,16 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
                 settle(home, w, outcome);
             }
         }
+        ToScript::Progress { call, value } => {
+            let progress = shared.borrow().waiters.get(&call).and_then(|w| w.progress.clone());
+            if let Some(f) = progress {
+                home.with(|ctx| {
+                    if to_js(&ctx, &value).and_then(|v| f.restore(&ctx)?.call::<_, ()>((v,))).is_err() {
+                        ctx.catch();
+                    }
+                });
+            }
+        }
     }
 }
 
@@ -795,20 +814,26 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     g.set("__drop", Function::new(ctx.clone(), thrown)?)?;
 
     let s = shared.clone();
-    let call = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<Promise<'js>> {
-        if !s.borrow().imports.get(&alias).is_some_and(|i| i.kind == Kind::Function) {
-            return Err(Exception::throw_type(&ctx, &format!("{alias} is not a function on the mesh")));
-        }
+    let call = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>, progress: Option<Function<'js>>| -> rquickjs::Result<Promise<'js>> {
+        let kind = s.borrow().imports.get(&alias).map(|i| i.kind).filter(|k| matches!(k, Kind::Function | Kind::Task));
+        let kind = kind.ok_or_else(|| Exception::throw_type(&ctx, &format!("{alias} is not a function or a task on the mesh")))?;
         let request = from_js(given)?;
         let (promise, resolve, reject) = ctx.promise()?;
         let mut st = s.borrow_mut();
         // what the run wrote before the call goes out before it
         st.flush(run);
-        let call = st.wait(&ctx, resolve, reject);
+        let call = st.wait(&ctx, resolve, reject, progress);
+        if kind == Kind::Task {
+            let (s, alias) = (s.clone(), alias.clone());
+            let cancel = move || s.borrow().send(FromScript::Cancel { run, alias: alias.clone(), call: Some(call) });
+            promise.set("cancel", Function::new(ctx.clone(), cancel)?)?;
+        }
         st.send(FromScript::Call { run, call, alias, request });
         Ok(promise)
     };
     g.set("__call", Function::new(ctx.clone(), call)?)?;
+    let s = shared.clone();
+    g.set("__cancel", Function::new(ctx.clone(), move |alias: String| s.borrow().send(FromScript::Cancel { run, alias, call: None }))?)?;
 
     let s = shared.clone();
     let send = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
@@ -837,7 +862,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let sleep = move |ctx: Ctx<'js>, ms: f64| -> rquickjs::Result<Promise<'js>> {
         let (promise, resolve, reject) = ctx.promise()?;
         let mut st = s.borrow_mut();
-        let id = st.wait(&ctx, resolve, reject);
+        let id = st.wait(&ctx, resolve, reject, None);
         st.timers.push(Reverse((Instant::now() + Duration::from_secs_f64(ms.max(0.0) / 1000.0), id)));
         Ok(promise)
     };
@@ -848,10 +873,12 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let s = shared.clone();
     g.set("__log", Function::new(ctx.clone(), move |text: String| s.borrow().send(FromScript::Log { run, text }))?)?;
     let s = shared.clone();
+    g.set("__fault", Function::new(ctx.clone(), move |text: String| s.borrow().send(FromScript::Fault { run, text }))?)?;
+    let s = shared.clone();
     let open = move |ctx: Ctx<'js>, page: String, replace: bool| -> rquickjs::Result<Promise<'js>> {
         let (promise, resolve, reject) = ctx.promise()?;
         let mut st = s.borrow_mut();
-        let call = st.wait(&ctx, resolve, reject);
+        let call = st.wait(&ctx, resolve, reject, None);
         st.send(FromScript::Open { run, page, replace, call });
         Ok(promise)
     };

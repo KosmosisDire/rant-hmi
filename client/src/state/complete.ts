@@ -203,14 +203,14 @@ export interface Signature {
   at: number;
   /** The type its values make up, which may go as one value instead. */
   whole?: string;
-  /** What a function answers. */
+  /** What a function or task answers. */
   gives?: string;
   /** Why the values are not known. */
   unknown?: string;
 }
 
 /** The call the caret is inside: one of the language's own functions, or in a handler that
- *  reaches the mesh a send or a function import. */
+ *  reaches the mesh a send or a function or task import. */
 export function signature(text: string, caret: number, place: Place): Signature | null {
   const open = opened(text.slice(0, caret));
   if (!open) return null;
@@ -227,10 +227,19 @@ export function signature(text: string, caret: number, place: Place): Signature 
   if (place !== "handler") return null;
   const imp = state.imports.find((i) => i.alias === path[0]);
   const sends = imp?.kind === "topic" && path.length === 2 && path[1] === "send";
-  if (!imp || !(sends || (imp.kind === "function" && path.length === 1))) return null;
+  const calls = (imp?.kind === "function" || imp?.kind === "task") && path.length === 1;
+  if (!imp || !(sends || calls)) return null;
   const e = entity(imp.entity);
-  if (!e?.schema) return { from, call, params: [], at: open.commas, unknown: `its type is not known while ${imp.entity} is off the mesh` };
-  return { from, call, ...takes(e.schema), at: open.commas, gives: sends ? undefined : e.response?.name || (e.response ? typeLabel(e.response.fields[0]) : undefined) };
+  if (!e || (sends && !e.schema)) return { from, call, params: [], at: open.commas, unknown: `its type is not known while ${imp.entity} is off the mesh` };
+  // an untyped call takes nothing, and a task's last value takes each progress update
+  const { params, whole } = e.schema ? takes(e.schema) : { params: [], whole: undefined };
+  const progress = imp.kind === "task" ? [{ name: "progress", type: `(${e.progress ? `p: ${typeName(e.progress)}` : ""}) => ...` }] : [];
+  return { from, call, params: [...params, ...progress], whole, at: open.commas, gives: sends || !e.response ? undefined : typeName(e.response) };
+}
+
+/** A type by its name, or a bare type by its one field's. */
+function typeName(t: TypeInfo): string {
+  return t.name || typeLabel(t.fields[0]);
 }
 
 /** A type as values passed one by one: a bare type is one value, a struct its fields. */
@@ -301,7 +310,7 @@ function top(place: Place): Suggestion[] {
         // only a handler calls, so nothing it could call is offered elsewhere
         if (place !== "handler" && (n.kind === "function" || n.kind === "task")) return [];
         const t = entity(state.imports.find((i) => i.alias === n.name)?.entity ?? "")?.schema;
-        const insert = n.kind === "function" ? `await ${n.name}(` : n.name;
+        const insert = n.kind === "function" || n.kind === "task" ? `await ${n.name}(` : n.name;
         return [{ label: n.name, insert, icon: n.kind!, type: t?.name || bareType(t?.fields) || n.kind, value: v.value, known: v.known }];
       }
       case "record": {
@@ -355,10 +364,11 @@ function chain(before: string): string[] {
 }
 
 const SEND: Suggestion = { label: "send", insert: "send(", icon: "api", type: "publish a message" };
+const CANCEL: Suggestion = { label: "cancel", insert: "cancel()", icon: "api", type: "stop every call of it" };
 
 /** A value's fields, from its schema where the root is an import, else from the value. A
- *  handler's topic imported to write offers send first, and one of JavaScript's own, such as
- *  Math, what it holds. */
+ *  handler's topic imported to write offers send first, a task its cancel, and one of
+ *  JavaScript's own, such as Math, what it holds. */
 function members(path: string[], place: Place): Suggestion[] {
   if (path.length === 0) return [];
   const [root, ...rest] = path;
@@ -366,6 +376,7 @@ function members(path: string[], place: Place): Suggestion[] {
   if (kind) return rest.length === 0 ? [options(kind.options)] : rest.join() === "options" ? methods([...kind.options], true) : [];
   const imp = state.imports.find((i) => i.alias === root);
   if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && rest.length === 0) return [SEND, ...members(path, "expression")];
+  if (imp?.kind === "task") return place === "handler" && rest.length === 0 ? [CANCEL] : [];
   let value: Value | null = live(root).value;
   const known = live(root).known;
   for (const step of rest) value = at(value, step);

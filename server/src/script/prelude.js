@@ -68,9 +68,14 @@
   for (const { alias, kind } of imports) {
     if (kind === "topic") {
       Object.defineProperty(globalThis, alias, { get: () => topic(alias), set: (v) => write(alias, v), enumerable: true });
-    } else if (kind === "function") {
-      // none is an empty request
-      const call = (...args) => __call(alias, args.length === 0 ? {} : shape(alias, alias, args));
+    } else if (kind === "function" || kind === "task") {
+      // none is an empty request. A task's last function takes each progress update, and
+      // its own cancel stops every call of it, as what a call gives stops that one.
+      const call = (...args) => {
+        const progress = kind === "task" && typeof args.at(-1) === "function" ? watched(args.pop()) : undefined;
+        return __call(alias, args.length === 0 ? {} : shape(alias, alias, args), progress);
+      };
+      if (kind === "task") call.cancel = () => __cancel(alias);
       Object.defineProperty(globalThis, alias, { value: call, enumerable: true });
     } else {
       Object.defineProperty(globalThis, alias, {
@@ -108,5 +113,7 @@
     return line ? `${message} (line ${Number(line[1]) - 1})` : message;
   };
   globalThis.__finish = (e) => (e instanceof Unknown ? __end("unknown", e.alias) : __end("fault", describe(e)));
+  // each progress update runs as a job of its own, so one that throws is told and the call goes on
+  const watched = (f) => (v) => void Promise.resolve(v).then(f).catch((e) => __fault(describe(e)));
   globalThis.__describe = describe;
 };

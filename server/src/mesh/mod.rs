@@ -4,10 +4,12 @@ pub mod codec;
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use rant::types::{VideoCodec, VideoFrame};
-use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteVariable, Schema, Subscriber, VariableDefinition, VariableOptions};
+use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteTask, RemoteVariable, Response, Schema, SendError, Subscriber, TaskOptions, VariableDefinition, VariableOptions};
 use crate::value::Value;
 use crate::rtc::Frame;
 use tokio::sync::mpsc::UnboundedSender;
@@ -55,7 +57,7 @@ struct Attached {
     /// The import as it was attached, so a new intent remakes the handle.
     import: Import,
     generation: u64,
-    /// None for a function whose request is untyped, which the HMI sends empty.
+    /// None for a function or task whose request is untyped, which the HMI sends empty.
     schema: Option<Schema>,
     shapes: Vec<Shape>,
     /// What it reads, only the fields it keeps.
@@ -76,6 +78,15 @@ impl Attached {
             }
         }
     }
+
+    /// A call's request as it goes out. An untyped one goes empty, so the call takes nothing.
+    fn request(&self, request: &Value) -> Result<Vec<u8>, String> {
+        match &self.schema {
+            Some(schema) => codec::encode(schema, &self.shapes, request),
+            None if matches!(request, Value::Null) || matches!(request, Value::Map(m) if m.is_empty()) => Ok(Vec::new()),
+            None => Err(format!("{} takes nothing", self.import.alias)),
+        }
+    }
 }
 
 enum Handle {
@@ -83,9 +94,10 @@ enum Handle {
     Topic { _subscription: Subscriber<Bytes>, publisher: Option<Publisher<Bytes>> },
     Variable(RemoteVariable<Bytes>),
     /// A function: its request goes by the import's schema, its answer by `answer`'s.
-    Function { remote: RemoteFunction<Bytes, Bytes>, answer: Option<(Schema, Vec<Shape>)> },
-    /// A task. Handlers will start it, nothing watches it.
-    Task,
+    Function { remote: RemoteFunction<Bytes, Bytes>, answer: Option<Reading> },
+    /// A task, a function that reports progress. `running` holds Rant's id of each call in
+    /// flight by the handler's call, which a cancel names.
+    Task { remote: RemoteTask<Bytes, Bytes, Bytes>, progress: Option<Reading>, answer: Option<Reading>, running: Arc<Mutex<HashMap<u64, u32>>> },
     /// One of the HMI's own, read from what it last published.
     Own,
 }
@@ -155,7 +167,7 @@ impl Mesh {
         }
         // the old handle goes first, so its name is free for the new one
         self.attached.remove(&import.alias);
-        if entity.schema.is_none() && import.kind != Kind::Function {
+        if entity.schema.is_none() && !matches!(import.kind, Kind::Function | Kind::Task) {
             return false;
         }
         match self.handle(import, &entity, entity.schema.clone()) {
@@ -218,17 +230,17 @@ impl Mesh {
         self.own.values.insert(entity, value);
     }
 
-    /// What each attached topic's message and function's request is made of.
+    /// What each attached topic's message and function's or task's request is made of.
     pub fn forms(&self) -> HashMap<String, Form> {
         self.attached
             .iter()
-            .filter(|(_, a)| matches!(a.handle, Handle::Topic { .. } | Handle::Function { .. }))
+            .filter(|(_, a)| matches!(a.handle, Handle::Topic { .. } | Handle::Function { .. } | Handle::Task { .. }))
             .filter_map(|(alias, a)| Some((alias.clone(), Form { name: a.schema.as_ref()?.name(), fields: codec::top_fields(&a.shapes) })))
             .collect()
     }
 
-    /// Each enum the attached imports' messages and answers hold, by its type's name or an
-    /// anonymous one's field's, the first import's by alias where two share a name.
+    /// Each enum the attached imports' messages, answers and progress hold, by its type's name
+    /// or an anonymous one's field's, the first import's by alias where two share a name.
     pub fn enums(&self) -> Vec<EnumInfo> {
         let mut attached: Vec<(&String, &Attached)> = self.attached.iter().collect();
         attached.sort_by_key(|(alias, _)| *alias);
@@ -236,7 +248,12 @@ impl Mesh {
         for anonymous in [false, true] {
             for (_, a) in &attached {
                 codec::enums(&a.shapes, anonymous, &mut out);
-                if let Handle::Function { answer: Some((_, shapes)), .. } = &a.handle {
+                let others = match &a.handle {
+                    Handle::Function { answer, .. } => [answer.as_ref(), None],
+                    Handle::Task { progress, answer, .. } => [progress.as_ref(), answer.as_ref()],
+                    _ => [None, None],
+                };
+                for (_, shapes) in others.into_iter().flatten() {
                     codec::enums(shapes, anonymous, &mut out);
                 }
             }
@@ -293,13 +310,22 @@ impl Mesh {
                     o = o.response_schema(answer);
                 }
                 let remote = self.node.remote_function::<Bytes, Bytes>(&import.entity, o).map_err(|e| e.to_string())?;
-                let answer = entity.response_schema.clone().map(|s| {
-                    let shapes = codec::shapes(&s);
-                    (s, shapes)
-                });
-                Handle::Function { remote, answer }
+                Handle::Function { remote, answer: reading(&entity.response_schema) }
             }
-            Kind::Task => Handle::Task,
+            Kind::Task => {
+                let mut o = TaskOptions::new();
+                if let Some(request) = &schema {
+                    o = o.request_schema(request);
+                }
+                if let Some(progress) = &entity.progress_schema {
+                    o = o.progress_schema(progress);
+                }
+                if let Some(answer) = &entity.response_schema {
+                    o = o.response_schema(answer);
+                }
+                let remote = self.node.remote_task::<Bytes, Bytes, Bytes>(&import.entity, o).map_err(|e| e.to_string())?;
+                Handle::Task { remote, progress: reading(&entity.progress_schema), answer: reading(&entity.response_schema), running: Arc::default() }
+            }
         };
         Ok(Attached { import: import.clone(), generation: entity.generation, schema, shapes, read, handle })
     }
@@ -375,20 +401,34 @@ impl Mesh {
         publisher.send(&bytes).map_err(|e| format!("{alias} could not send: {e}"))
     }
 
-    /// Calls a function import. The call leaves at once, the answer comes when awaited.
-    pub fn call(&self, alias: &str, request: &Value) -> Result<impl Future<Output = Result<Value, CallFailure>> + Send + 'static, String> {
+    /// Calls a function or task import. The call leaves at once, the answer comes when awaited.
+    /// A task gives `progress` each update, and `call` names it for a cancel.
+    pub fn call(&self, alias: &str, request: &Value, call: u64, mut progress: impl FnMut(Value) + Send + 'static) -> Result<impl Future<Output = Result<Value, CallFailure>> + Send + 'static, String> {
         let a = self.attached(alias)?;
-        let Handle::Function { remote, answer } = &a.handle else {
-            return Err(format!("{alias} is not a function, so it cannot be called"));
+        let failed = |e: SendError| format!("{alias} could not be called: {e}");
+        let (pending, answer): (Pin<Box<dyn Future<Output = Response<Bytes>> + Send>>, _) = match &a.handle {
+            Handle::Function { remote, answer } => (Box::pin(remote.call_async(&a.request(request)?, CallOptions::new()).map_err(failed)?), answer.clone()),
+            Handle::Task { remote, progress: reads, answer, running } => {
+                let reads = reads.clone();
+                let task = remote
+                    .call_async(&a.request(request)?, CallOptions::new(), move |p| match (p.value(), &reads) {
+                        (Some(view), Some((_, shapes))) => progress(codec::decode(view, shapes)),
+                        (Some(_), None) => progress(Value::Null),
+                        // the start of the work, which carries no update
+                        (None, _) => {}
+                    })
+                    .map_err(failed)?;
+                running.lock().expect("no holder panics").insert(call, task.id());
+                let running = running.clone();
+                let ended = async move {
+                    let r = task.await;
+                    running.lock().expect("no holder panics").remove(&call);
+                    r
+                };
+                (Box::pin(ended), answer.clone())
+            }
+            _ => return Err(format!("{alias} is not a function or a task, so it cannot be called")),
         };
-        let bytes = match &a.schema {
-            Some(schema) => codec::encode(schema, &a.shapes, request)?,
-            // an untyped request goes empty, so the call takes nothing
-            None if matches!(request, Value::Null) || matches!(request, Value::Map(m) if m.is_empty()) => Vec::new(),
-            None => return Err(format!("{alias} takes nothing")),
-        };
-        let pending = remote.call_async(&bytes, CallOptions::new()).map_err(|e| format!("{alias} could not be called: {e}"))?;
-        let answer = answer.clone();
         Ok(async move {
             let r = pending.await;
             if !r.is_ok() {
@@ -400,6 +440,41 @@ impl Mesh {
             })
         })
     }
+
+    /// Asks a task's provider to stop the handler's call `call`, or with None each of its calls
+    /// in flight. How each one ends comes as its answer.
+    pub fn cancel(&self, alias: &str, call: Option<u64>) -> Result<(), String> {
+        let a = self.attached(alias)?;
+        let Handle::Task { remote, running, .. } = &a.handle else {
+            return Err(format!("{alias} is not a task, so it cannot be cancelled"));
+        };
+        let ids: Vec<u32> = {
+            let running = running.lock().expect("no holder panics");
+            match call {
+                Some(call) => running.get(&call).copied().into_iter().collect(),
+                None => running.values().copied().collect(),
+            }
+        };
+        for id in ids {
+            match remote.cancel(id) {
+                // State is a call that ended on the way
+                Ok(()) | Err(SendError::State) => {}
+                Err(SendError::BadRole) => return Err(format!("{alias} cannot be cancelled, as its provider does not allow it")),
+                Err(e) => return Err(format!("{alias} could not be cancelled: {e}")),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A schema and the shapes of what it reads, for an answer or a task's progress.
+type Reading = (Schema, Vec<Shape>);
+
+fn reading(schema: &Option<Schema>) -> Option<Reading> {
+    schema.clone().map(|s| {
+        let shapes = codec::shapes(&s);
+        (s, shapes)
+    })
 }
 
 fn status_word(s: CallStatus) -> &'static str {
@@ -444,5 +519,6 @@ fn entity_info(e: &Entity) -> Option<EntityInfo> {
         providers: e.providers,
         schema: e.schema.as_ref().map(codec::type_info),
         response: e.response_schema.as_ref().map(codec::type_info),
+        progress: e.progress_schema.as_ref().map(codec::type_info),
     })
 }

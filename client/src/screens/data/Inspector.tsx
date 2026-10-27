@@ -180,13 +180,20 @@ function ImportView(p: { imp: Import; picking: Picking }) {
   );
 }
 
-/** What a function or a task takes and gives back. An untyped one takes and gives nothing. */
+/** What a function or a task takes and gives back, and what a task reports as it goes. An
+ *  untyped one takes, reports and gives nothing. */
 function Calls(p: { entity: EntityInfo }) {
   return (
     <>
       <div class="section">Request</div>
       <Show when={p.entity.schema} fallback={<div class="placeholder">Takes nothing.</div>}>
         {(t) => <Fields fields={t().fields} depth={0} />}
+      </Show>
+      <Show when={p.entity.kind === "task"}>
+        <div class="section">Progress</div>
+        <Show when={p.entity.progress} fallback={<div class="placeholder">Reports nothing as it goes.</div>}>
+          {(t) => <Fields fields={t().fields} depth={0} />}
+        </Show>
       </Show>
       <div class="section">Answer</div>
       <Show when={p.entity.response} fallback={<div class="placeholder">Gives nothing back.</div>}>

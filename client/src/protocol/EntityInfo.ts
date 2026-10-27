@@ -25,4 +25,8 @@ schema: TypeInfo | null,
 /**
  * A function's or task's answer.
  */
-response: TypeInfo | null, };
+response: TypeInfo | null, 
+/**
+ * What each of a task's progress updates holds.
+ */
+progress: TypeInfo | null, };

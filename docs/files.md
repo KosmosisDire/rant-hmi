@@ -70,7 +70,9 @@ light = "#0088ff"            # left out, worked out from dark
 ```
 
 Code sets a variable by assignment (`Speed = 0.5`), calls a function with `await Reset()` and
-publishes on a topic with `Jog.send({ x: 1, y: 0 })`.
+publishes on a topic with `Jog.send({ x: 1, y: 0 })`. A task is called as a function is, with a
+last function for each progress update: `await Fill(5, (p) => { filled = p })`.
+`Fill.cancel()` stops it.
 
 ## How screens get their values
 

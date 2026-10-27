@@ -1,12 +1,12 @@
 // What handler code reads and writes, found from its names without running it: what it sets,
-// calls, sends, opens and emits, and the mesh imports it only reads. The Logic tab lists these
-// and a handler's box sums them up.
+// calls, cancels, sends, opens and emits, and the mesh imports it only reads. The Logic tab
+// lists these and a handler's box sums them up.
 
 import { paint } from "../ui/highlight";
 import type { Suggestion } from "./complete";
 import { named } from "./names";
 
-export type Verb = "sets" | "calls" | "sends" | "opens" | "emits";
+export type Verb = "sets" | "calls" | "cancels" | "sends" | "opens" | "emits";
 
 export interface Use {
   name: string;
@@ -47,6 +47,7 @@ export function uses(code: string, names?: Suggestion[]): Uses {
     const what = reading(root, names);
     if (!what) continue;
     if (fields === ".send" && /^\s*\(/.test(after)) writes.set(root, "sends");
+    else if (fields === ".cancel" && /^\s*\(/.test(after) && what.startsWith("task")) writes.set(root, "cancels");
     else if (!fields && /^\s*\(/.test(after) && /^(function|task)/.test(what)) writes.set(root, "calls");
     else if (/^\s*(?:[-+*/%]?=(?!=)|\+\+|--)/.test(after) || /(?:\+\+|--)\s*$/.test(src.slice(0, m.index))) writes.set(root + fields, "sets");
     else reads.set(root, what);

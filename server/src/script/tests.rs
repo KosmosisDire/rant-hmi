@@ -23,6 +23,7 @@ fn engine() -> (Script, UnboundedReceiver<FromScript>) {
         import("Target", Kind::Variable, Intent::Read),
         import("Peek", Kind::Function, Intent::Read),
         import("Reset", Kind::Function, Intent::Write),
+        import("Fill", Kind::Task, Intent::Write),
     ]));
     script.send(ToScript::Variables(vec![
         Variable { name: "jogMode".into(), start: value!("Joint"), per: Per::Screen },
@@ -166,6 +167,49 @@ fn a_call_goes_out_after_the_writes_before_it_and_its_answer_comes_back() {
     script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "app_error".into(), message: "the belt is jammed".into() }) });
     let said = until_done(&mut rx, 3);
     assert_eq!(end(&said), &End::Fault("the belt is jammed (app error)".into()));
+}
+
+#[test]
+fn a_task_call_hands_each_update_to_its_function_and_cancels() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "const n = await Fill(4, (p) => { count = p; });\nlog(\"filled\", n);".into(), p: Value::Null, at: None });
+    let FromScript::Call { call, alias, request, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
+    assert_eq!((alias.as_str(), request), ("Fill", value!(4)));
+    for share in [0.25, 0.5] {
+        script.send(ToScript::Progress { call, value: value!(share) });
+        let FromScript::Write { alias, value, .. } = rx.blocking_recv().unwrap() else { panic!("no write") };
+        assert_eq!((alias.as_str(), value), ("count", value!(share)), "each update runs the function, whose writes go out");
+    }
+    script.send(ToScript::Answer { call, outcome: Ok(value!(4)) });
+    let said = until_done(&mut rx, 1);
+    assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "filled 4")));
+
+    // what a call gives cancels that call, and the task's own cancel every call of it
+    let code = "const job = Fill(9);\njob.cancel();\nFill.cancel();\ntry { await job; } catch (e) { log(e.status); }";
+    script.send(ToScript::Run { run: 2, session: Some(7), code: code.into(), p: Value::Null, at: None });
+    let FromScript::Call { call, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
+    assert!(matches!(rx.blocking_recv().unwrap(), FromScript::Cancel { alias, call: Some(c), .. } if alias == "Fill" && c == call));
+    assert!(matches!(rx.blocking_recv().unwrap(), FromScript::Cancel { alias, call: None, .. } if alias == "Fill"));
+    script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "cancelled".into(), message: "stopped".into() }) });
+    let said = until_done(&mut rx, 2);
+    assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "cancelled")));
+
+    // a function that throws is told, and the call goes on
+    script.send(ToScript::Run { run: 3, session: Some(7), code: "await Fill(2, () => { throw new Error(\"no bar\"); });\nlog(\"done\");".into(), p: Value::Null, at: None });
+    let FromScript::Call { call, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
+    script.send(ToScript::Progress { call, value: value!(0.5) });
+    assert!(matches!(rx.blocking_recv().unwrap(), FromScript::Fault { text, .. } if text.starts_with("no bar")));
+    script.send(ToScript::Answer { call, outcome: Ok(value!(2)) });
+    let said = until_done(&mut rx, 3);
+    assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "done")));
+    assert_eq!(end(&said), &End::Ok);
+
+    // only a task takes a function and cancels
+    for (run, code, want) in [(4, "await Reset(() => 1);", "a function cannot be a value"), (5, "Reset.cancel();", "not a function")] {
+        script.send(ToScript::Run { run, session: Some(7), code: code.into(), p: Value::Null, at: None });
+        let said = until_done(&mut rx, run);
+        assert!(matches!(end(&said), End::Fault(text) if text.contains(want)), "{code}: {:?}", end(&said));
+    }
 }
 
 #[test]
@@ -473,7 +517,7 @@ fn a_handler_reads_what_the_api_lists_and_nothing_more() {
     script.send(ToScript::Run { run: 1, session: Some(7), code: "log(Object.getOwnPropertyNames(globalThis).join(\" \"));".into(), p: Value::Null, at: None });
     let said = until_done(&mut rx, 1);
     let all = said.iter().find_map(|m| if let FromScript::Log { text, .. } = m { Some(text.clone()) } else { None }).unwrap();
-    let project = ["p", "Speed", "Running", "Settings", "Joints", "Jog", "Target", "Peek", "Reset", "jogMode", "count"];
+    let project = ["p", "Speed", "Running", "Settings", "Joints", "Jog", "Target", "Peek", "Reset", "Fill", "jogMode", "count"];
     let mut own: Vec<&str> = all.split(' ').filter(|n| !n.starts_with("__") && !project.contains(n) && !standard.iter().any(|s| s == n)).collect();
     own.sort();
     let mut listed: Vec<&str> = listed.iter().map(String::as_str).collect();
