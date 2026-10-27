@@ -439,9 +439,9 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                         .filter(|(name, _)| names.contains(name))
                         .map(|(name, f)| {
                             deadline.set(Some(Instant::now() + BUDGET));
-                            let got = f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(()));
+                            let got = f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).and_then(from_js);
                             let value = match got {
-                                Ok(v) => from_js(v).ok(),
+                                Ok(v) => Some(v),
                                 Err(_) => {
                                     ctx.catch();
                                     None
@@ -472,8 +472,8 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                         fns.iter()
                             .map(|(name, f)| {
                                 deadline.set(Some(Instant::now() + BUDGET));
-                                let value = match f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())) {
-                                    Ok(v) => from_js(v).ok(),
+                                let value = match f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).and_then(from_js) {
+                                    Ok(v) => Some(v),
                                     Err(_) => {
                                         ctx.catch();
                                         None
@@ -505,14 +505,11 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 let value = match (&target, f) {
                     (Some(_), Some(f)) => ctx.with(|ctx| {
                         deadline.set(Some(Instant::now() + BUDGET));
-                        let got = to_js(&ctx, &v).and_then(|v| f.restore(&ctx)?.call::<_, rquickjs::Value>((v,)));
-                        match got {
-                            Ok(x) => from_js(x),
-                            Err(_) => {
-                                let why = ctx.catch().as_exception().and_then(|e| e.message()).unwrap_or_default();
-                                Err(format!("{name}'s setter failed: {why}"))
-                            }
-                        }
+                        let got = to_js(&ctx, &v).and_then(|v| f.restore(&ctx)?.call::<_, rquickjs::Value>((v,))).and_then(from_js);
+                        got.map_err(|_| {
+                            let why = ctx.catch().as_exception().and_then(|e| e.message()).unwrap_or_default();
+                            format!("{name}'s setter failed: {why}")
+                        })
                     }),
                     _ => Err(format!("{name}'s setter does not read")),
                 };
@@ -582,13 +579,13 @@ fn try_setter(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, deadlin
     let wrong = ctx.with(|ctx| {
         samples.into_iter().find_map(|v| {
             deadline.set(Some(Instant::now() + BUDGET));
-            let t = to_js(&ctx, &v).and_then(|x| put.clone().restore(&ctx)?.call::<_, rquickjs::Value>((x,))).ok().and_then(|t| from_js(t).ok());
+            let t = to_js(&ctx, &v).and_then(|x| put.clone().restore(&ctx)?.call::<_, rquickjs::Value>((x,))).and_then(from_js).ok();
             let Some(t) = t else {
                 ctx.catch();
                 return Some(format!("{name}'s setter fails for {v}"));
             };
             shared.borrow_mut().pending.insert(TRIAL, vec![(set.target.clone(), t)]);
-            let back = get.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).ok().and_then(|b| from_js(b).ok());
+            let back = get.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).and_then(from_js).ok();
             match back {
                 Some(b) if same(&b, &v) => None,
                 Some(b) => Some(format!("{name}'s setter does not undo it: writing {v} reads back as {b}")),
@@ -771,13 +768,15 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
 
     let s = shared.clone();
     let write = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
-        let mut st = s.borrow_mut();
+        let st = s.borrow();
         let screen = st.sessions.get(&run).copied().flatten().is_some();
         if let Err(u) = st.look_up(&alias).target(&alias, "", screen) {
             return Err(if u.unknown { Exception::throw_reference(&ctx, &u.text) } else { Exception::throw_type(&ctx, &u.text) });
         }
-        let value = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
-        st.stage(run, alias, value);
+        // read with nothing borrowed, since reading a proxy or a getter runs code that reads too
+        drop(st);
+        let value = from_js(given)?;
+        s.borrow_mut().stage(run, alias, value);
         Ok(())
     };
     g.set("__write", Function::new(ctx.clone(), write)?)?;
@@ -797,11 +796,12 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
 
     let s = shared.clone();
     let call = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<Promise<'js>> {
-        let mut st = s.borrow_mut();
-        let import = st.imports.get(&alias).filter(|i| i.kind == Kind::Function);
-        import.ok_or_else(|| Exception::throw_type(&ctx, &format!("{alias} is not a function on the mesh")))?;
-        let request = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
+        if !s.borrow().imports.get(&alias).is_some_and(|i| i.kind == Kind::Function) {
+            return Err(Exception::throw_type(&ctx, &format!("{alias} is not a function on the mesh")));
+        }
+        let request = from_js(given)?;
         let (promise, resolve, reject) = ctx.promise()?;
+        let mut st = s.borrow_mut();
         // what the run wrote before the call goes out before it
         st.flush(run);
         let call = st.wait(&ctx, resolve, reject);
@@ -812,13 +812,13 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
 
     let s = shared.clone();
     let send = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
-        let mut st = s.borrow_mut();
-        let import = st.imports.get(&alias).filter(|i| i.kind == Kind::Topic);
-        let import = import.ok_or_else(|| Exception::throw_type(&ctx, &format!("{alias} is not a topic, so it cannot send")))?;
-        if import.intent != Intent::Write {
+        let intent = s.borrow().imports.get(&alias).filter(|i| i.kind == Kind::Topic).map(|i| i.intent);
+        let intent = intent.ok_or_else(|| Exception::throw_type(&ctx, &format!("{alias} is not a topic, so it cannot send")))?;
+        if intent != Intent::Write {
             return Err(Exception::throw_type(&ctx, &format!("{alias} is imported to read. Import it to write to send on it.")));
         }
-        let value = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
+        let value = from_js(given)?;
+        let mut st = s.borrow_mut();
         // what the run wrote before goes out before the message
         st.flush(run);
         st.send(FromScript::Send { run, alias, value });
@@ -857,8 +857,8 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     };
     g.set("__open", Function::new(ctx.clone(), open)?)?;
     let s = shared.clone();
-    let close = move |ctx: Ctx<'js>, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
-        let answer = from_js(given).map_err(|e| Exception::throw_type(&ctx, &e))?;
+    let close = move |given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
+        let answer = from_js(given)?;
         s.borrow().send(FromScript::Close { run, answer });
         Ok(())
     };
@@ -928,53 +928,63 @@ fn to_js<'js>(ctx: &Ctx<'js>, v: &Value) -> rquickjs::Result<rquickjs::Value<'js
 /// How deep a value JS gives may nest, which also stops one that holds itself.
 const DEPTH: usize = 64;
 
-/// A value JS gave. A field that is undefined is left out, as it is absent in JS.
-fn from_js(v: rquickjs::Value) -> Result<Value, String> {
+/// A value JS gave. A field that is undefined is left out, as it is absent in JS. What is not a
+/// value throws a TypeError, and what reading it throws, as an unknown import, is thrown on.
+fn from_js(v: rquickjs::Value) -> rquickjs::Result<Value> {
     read_js(v, 0)
 }
 
-fn read_js(v: rquickjs::Value, depth: usize) -> Result<Value, String> {
-    use rquickjs::{Array, Object, Type};
+fn read_js(v: rquickjs::Value, depth: usize) -> rquickjs::Result<Value> {
+    use rquickjs::{Object, Type};
+    let ctx = v.ctx().clone();
+    let not = |why: &str| Exception::throw_type(&ctx, why);
     if depth > DEPTH {
-        return Err("a value nests too deep, or holds itself".into());
+        return Err(not("a value nests too deep, or holds itself"));
     }
     Ok(match v.type_of() {
         Type::Uninitialized | Type::Undefined | Type::Null => Value::Null,
         Type::Bool => Value::Bool(v.as_bool().unwrap_or(false)),
         Type::Int => Value::Int(v.as_int().unwrap_or(0).into()),
         Type::Float => Value::Float(v.as_float().unwrap_or(f64::NAN)),
-        Type::String => Value::Text(v.get::<String>().map_err(|e| e.to_string())?),
+        Type::String => Value::Text(v.get::<String>()?),
         // read by its digits, since a BigInt's own to_i64 wraps past i64 without a word
         Type::BigInt => {
-            let digits = v.get::<rquickjs::Coerced<String>>().map_err(|e| e.to_string())?.0;
+            let digits = v.get::<rquickjs::Coerced<String>>()?.0;
             let n = digits.parse::<i128>().ok().filter(|n| (i128::from(i64::MIN)..=i128::from(u64::MAX)).contains(n));
-            Value::Int(n.ok_or_else(|| format!("{digits} is past what a whole number holds, i64's least to u64's most"))?)
+            Value::Int(n.ok_or_else(|| not(&format!("{digits} is past what a whole number holds, i64's least to u64's most")))?)
         }
-        Type::Array => {
-            let list = Array::from_value(v).map_err(|e| e.to_string())?;
-            let mut items = Vec::with_capacity(list.len());
-            for item in list.iter::<rquickjs::Value>() {
-                items.push(read_js(item.map_err(|e| e.to_string())?, depth + 1)?);
-            }
-            Value::List(items)
+        // a proxy, as code reads an import's objects and lists through, is read through its traps
+        Type::Array | Type::Proxy if lists(&v)? => {
+            let list = Object::from_value(v)?;
+            let len: u32 = list.get("length")?;
+            let items = (0..len).map(|i| read_js(list.get(i)?, depth + 1));
+            Value::List(items.collect::<rquickjs::Result<_>>()?)
         }
-        Type::Object => {
-            let map = Object::from_value(v).map_err(|e| e.to_string())?;
+        Type::Object | Type::Proxy => {
+            let map = Object::from_value(v)?;
             if let Some(bytes) = map.as_typed_array::<u8>() {
                 // SAFETY: the bytes are copied at once, and no JS runs while they are borrowed
                 return Ok(Value::Bytes(unsafe { bytes.as_bytes() }.map(<[u8]>::to_vec).unwrap_or_default()));
             }
             let mut fields = Vec::new();
             for prop in map.props::<String, rquickjs::Value>() {
-                let (k, field) = prop.map_err(|e| e.to_string())?;
+                let (k, field) = prop?;
                 if !field.is_undefined() {
                     fields.push((k, read_js(field, depth + 1)?));
                 }
             }
             Value::Map(fields)
         }
-        other => return Err(format!("a {} cannot be a value", other.as_str())),
+        other => return Err(not(&format!("a {} cannot be a value", other.as_str()))),
     })
+}
+
+/// Whether `v` is a list, as Array.isArray says: a proxy is one when what it stands for is.
+fn lists(v: &rquickjs::Value) -> rquickjs::Result<bool> {
+    match v.as_proxy() {
+        Some(p) => lists(p.target()?.as_value()),
+        None => Ok(v.is_array()),
+    }
 }
 
 #[cfg(test)]

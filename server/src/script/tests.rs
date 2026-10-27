@@ -389,6 +389,44 @@ fn computed_values_are_worked_out_in_any_order_and_unknown_while_what_they_read_
 }
 
 #[test]
+fn an_imports_own_objects_and_lists_are_values_whole_filtered_or_picked() {
+    let (script, mut rx) = engine();
+    let groups = value!([{ "name": "a", "on": true }, { "name": "b", "on": false }]);
+    script.send(ToScript::Values(vec![("Target".into(), Some(groups.clone()))]));
+    script.send(ToScript::Computed(vec![
+        computed("all", "Target", None),
+        computed("on", "Target.filter((g) => g.on)", None),
+        computed("first", "Target[0]", None),
+        computed("joints", "Joints", None),
+        computed("jog", "Jog", None),
+        computed("after", "Speed + 1", None),
+    ]));
+    script.send(ToScript::Compute);
+    let got = next(&mut rx, |m| if let FromScript::Computed(list) = m { Some(list) } else { None });
+    let want = [
+        ("all", Some(groups)),
+        ("on", Some(value!([{ "name": "a", "on": true }]))),
+        ("first", Some(value!({ "name": "a", "on": true }))),
+        ("joints", Some(value!({ "position": [0.5, 1.5] }))),
+        ("jog", None),
+        ("after", Some(value!(2))),
+    ];
+    assert_eq!(got, want.map(|(name, v)| (name.to_string(), v)));
+
+    // handlers write and send them too, and one read while unknown stops the run
+    let code = "count = Target.filter((g) => !g.on);\nSettings = Joints;\nJog.send(Target[1]);";
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 1);
+    assert_eq!(end(&said), &End::Ok);
+    assert_eq!(writes(&said), [("count".to_string(), value!([{ "name": "b", "on": false }])), ("Settings".to_string(), value!({ "position": [0.5, 1.5] }))]);
+    assert!(said.iter().any(|m| matches!(m, FromScript::Send { value, .. } if *value == value!({ "name": "b", "on": false }))));
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "count = Jog;".into(), p: Value::Null, at: None });
+    let said = until_done(&mut rx, 2);
+    assert!(writes(&said).is_empty());
+    assert_eq!(end(&said), &End::Unknown("Jog".into()));
+}
+
+#[test]
 fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
     let (script, mut rx) = engine();
     script.send(ToScript::Computed(vec![computed("sneaky", "(Speed = 5, 1)", None), computed("plain", "Speed + 1", None)]));
