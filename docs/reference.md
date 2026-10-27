@@ -149,6 +149,11 @@ Each element has an `id` of its own in its file. `name`, `repeat`, `x`, `y`, `w`
 In a frame with a layout, a part with `position: "absolute"` keeps the place its `x` and `y`
 give.
 
+A frame whose `overflow`, `overflow-x` or `overflow-y` is `"auto"` or `"scroll"` scrolls what
+spills past it, by wheel and by finger. A finger on a part with a handler scrolls it too,
+unless that part drags. Its press begins once the finger stays a moment, so a scroll presses
+nothing.
+
 ### Texts, fields, pictures and diagrams
 
 | Property | Of | Takes |

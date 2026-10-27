@@ -1,8 +1,8 @@
 // Fingers on a running page's touch screen. Two fingers on what scrolls and zooms end the press
 // the first began, a release with no tap and no more drag, and scroll by their middle and zoom
-// by their spread. One finger scrolls a list once it moves a little, ending the press of a row
-// it began on with no tap, but drags what drags. Safari's trackpad pinch zooms, and the browser
-// pans nothing under what scrolls.
+// by their spread. One finger scrolls a list once it moves a little, pressing no row it began
+// on, but drags what drags. Safari's trackpad pinch zooms, and the browser pans nothing under
+// what scrolls.
 
 export default async function ({ page, hmi, sys, check, eventually }) {
   const vars = { pinPress: 0, pinRelease: 0, pinTaps: 0, pinPanX: 0, pinScrollX: 0, pinScrollY: 0, pinZoom: 1, pinListY: 0, pinRowPress: 0, pinRowRelease: 0, pinRowTaps: 0, pinKnobX: 0 };
@@ -68,8 +68,8 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   const r = await el(row).boundingBox();
   await step(r.x + r.width / 2, r.y + r.height / 2, 0, -30);
   await eventually(() => near(value("pinListY"), units(-90)), () => `a finger from the row to scroll the list too, not ${value("pinListY")}`);
-  await eventually(() => value("pinRowRelease") === 1, "the row's press to end");
-  check(value("pinRowPress") === 1 && value("pinRowTaps") === 0, `the row pressed once with no tap, not ${value("pinRowPress")} presses, ${value("pinRowTaps")} taps`);
+  await touch.waitForTimeout(300);
+  check(value("pinRowPress") === 0 && value("pinRowRelease") === 0 && value("pinRowTaps") === 0, `the row never pressed, not ${value("pinRowPress")} presses, ${value("pinRowRelease")} releases, ${value("pinRowTaps")} taps`);
   const k = await el(knob).boundingBox();
   await step(k.x + k.width / 2, k.y + k.height / 2, 30, -30);
   await eventually(() => near(value("pinKnobX"), units(30)), () => `the knob to drag ${units(30)}, not ${value("pinKnobX")}`);
