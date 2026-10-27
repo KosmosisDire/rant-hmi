@@ -61,15 +61,16 @@ function testProject(into) {
 }
 
 /** With `empty` named, the backend starts a new project in a folder of that name, as it would
- *  anywhere, in place of the demo's copy. Systems in different slots run side by side. */
-export async function startSystem({ empty, slot = 0 } = {}) {
+ *  anywhere, in place of the demo's copy. Systems in different slots run side by side. With
+ *  `video` false no transcoder runs. */
+export async function startSystem({ empty, slot = 0, video: transcodes = true } = {}) {
   const temp = mkdtempSync(join(tmpdir(), "rant-hmi-test-"));
   const project = empty ? join(temp, basename(empty)) : temp;
   if (!empty) testProject(project);
   const domain = String(domainOf(slot));
   const line = run(join(BUILD, "examples", `demo${exe}`), ["--loopback", "--domain", domain]);
   const cage = run(join(BUILD, "examples", `cage${exe}`), ["--loopback", "--domain", domain]);
-  const transcoding = transcoder();
+  const transcoding = transcodes && transcoder();
   const video = transcoding && run(transcoding, ["--domain", domain, "--interface", "127.0.0.1"]);
   await new Promise((r) => setTimeout(r, 300));
   // a home of its own, where the backend keeps its certificate, never the user's

@@ -59,16 +59,17 @@ let kept = null;
 
 /** Runs scenarios from the queue until it is empty, on a system and browser of its own. A
  *  scenario that exports `fresh` gets a system of its own too, started on a new project as a
- *  new HMI starts, with the standard components. */
+ *  new HMI starts, with the standard components, and one that exports `video` as false gets one
+ *  with no transcoder, so no camera has video of its own. */
 async function worker() {
   const browser = await startBrowser();
   let shared = null;
   while (queue.length > 0) {
     const file = queue.shift();
     const name = file.replace(/\.mjs$/, "");
-    const { default: run, fresh } = await import(pathToFileURL(join(here, "scenarios", file)).href);
-    const own = fresh && !into;
-    const sys = own ? await startSystem({ empty: name, slot: slots++ }) : (shared ??= await startSystem({ empty: into, slot: slots++ }));
+    const { default: run, fresh, video } = await import(pathToFileURL(join(here, "scenarios", file)).href);
+    const own = (fresh && !into) || video === false;
+    const sys = own ? await startSystem({ empty: name, slot: slots++, video }) : (shared ??= await startSystem({ empty: into, slot: slots++ }));
     const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
     const page = await context.newPage();
     const errors = [];

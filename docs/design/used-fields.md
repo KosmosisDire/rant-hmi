@@ -65,6 +65,10 @@ seldom changes would wait for its next change.
 - An item a list's function or a loop takes is followed, as are the list itself and a reduce's
   first item, since the big lists are read there. A let or a const reads all it is given:
   following one paid only where code names a small part first, and was the subtlest logic.
+- An expression's value may be either branch of a choice, as `wide ? Camera : LabelCam`, so a
+  component's input or a media source given one reads each branch as it is used there.
+- Media reads none of an import whose Video child it plays, and all of any other it shows, as
+  its pictures take every field. Its condition is read as anywhere.
 - The screen sends the paths its shown pages read in `watch`, and gets values with only those
   fields. A name read at runtime that its pages' text does not show comes whole.
 - The backend settles which paths are fields against each import's type. A path that goes on

@@ -5,7 +5,8 @@ export type Path = string[];
 
 export interface Reads {
   paths: Path[];
-  value: Path | null;
+  /** The paths an expression's value may be, which its reader counts as read or follows. */
+  values: Path[];
   all: boolean;
 }
 

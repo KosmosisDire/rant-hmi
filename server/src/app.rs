@@ -749,7 +749,7 @@ impl App {
             if found.all {
                 return None;
             }
-            for path in found.paths.iter().chain(&found.value) {
+            for path in found.paths.iter().chain(&found.values) {
                 let (name, steps) = match (changes, path.as_slice()) {
                     // a rule's `p.value` and `p.previous` are the value it waits on
                     (Some(name), [p, rest @ ..]) if p == "p" => match rest {
