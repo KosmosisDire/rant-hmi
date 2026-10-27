@@ -80,6 +80,9 @@ pub enum ServerMsg {
     /// Every screen's problems and those runs on the system met, whole, after a change, to each
     /// screen that asked for them.
     Problems { problems: Vec<Reported> },
+    /// What the HMI brings of each import on the mesh and what its own code reads of it, whole,
+    /// after a change, to each screen that previews values.
+    Brings { imports: Vec<Brought> },
     /// A handler started from this screen opens a page, in place of the top one when `replace`.
     /// `ask` names the handler's wait for what the page closes with.
     Open {
@@ -188,7 +191,8 @@ pub enum ClientMsg {
     /// import's on the transceiver named by its mid. A video left out stops.
     Play { offer: String, videos: Vec<Played> },
     /// The paths the screen reads, as `Scan.points.[].x` split at its dots, or None for all, and
-    /// only that comes. `previews` while it only previews, as the Data tab does, slows big values.
+    /// only that comes. `previews` while it previews every value, as the Data tab does: each comes
+    /// as the HMI brings it, `reads` adds only the fields it peeks at, and big ones come slower.
     Watch {
         reads: Option<Vec<Vec<String>>>,
         #[serde(default)]
@@ -399,6 +403,25 @@ pub struct Sample {
 pub struct Played {
     pub mid: String,
     pub alias: String,
+}
+
+/// What the HMI brings of an import: the paths that read what it decodes, and the pieces of its
+/// own code that read it. Each path is the steps after the import's name.
+#[derive(Serialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Brought {
+    pub alias: String,
+    pub fields: Vec<Vec<String>>,
+    pub readers: Vec<Reader>,
+}
+
+/// A piece of the HMI's own code and the paths it reads of an import.
+#[derive(Serialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Reader {
+    /// What it is, as `the Alarm rule`.
+    pub who: String,
+    pub paths: Vec<Vec<String>>,
 }
 
 #[derive(Serialize, TS, Clone, Debug)]

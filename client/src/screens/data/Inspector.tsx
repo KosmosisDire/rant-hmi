@@ -1,4 +1,5 @@
-import { createEffect, createMemo, For, Match, Show, Switch } from "solid-js";
+import { createEffect, createMemo, For, Match, on, onCleanup, Show, Switch } from "solid-js";
+import type { Path } from "../../lang/reads.js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { FieldInfo } from "../../protocol/FieldInfo";
@@ -7,8 +8,10 @@ import { ALIAS } from "../../protocol/rules";
 import type { Value } from "../../protocol/Value";
 import { change } from "../../state/change";
 import { choosesIntent, intents, intentWords, typeLabel } from "../../state/format";
+import { pagesReading, touches } from "../../state/paths";
 import { preview } from "../../state/preview";
 import { entity, importOf, setState, state } from "../../state/store";
+import { peek, peeked } from "../../state/watch";
 import { KindIcon } from "../../ui/marks";
 import { Choice } from "../../ui/Choice";
 import { DraftInput } from "../../ui/DraftInput";
@@ -113,6 +116,20 @@ function ImportView(p: { imp: Import; picking: Picking }) {
     send({ type: "set", alias: p.imp.alias, path, value });
   };
   const change = changing(IMPORTS, () => p.imp, p.picking);
+  // what comes of it, and its pages' and the HMI's own code that read each field
+  const brought = () => state.brings.find((b) => b.alias === p.imp.alias);
+  const pages = createMemo(() => pagesReading(p.imp.alias));
+  const readers = (field: Path) => [
+    ...pages().flatMap((r) => (r.paths.some((q) => touches(q, field)) ? [`the ${r.page.name} page`] : [])),
+    ...(brought()?.readers ?? []).flatMap((r) => (r.paths.some((q) => touches(q, field)) ? [r.who] : [])),
+  ];
+  // a field picked comes while this import shows
+  const picked = () => {
+    const k = peeked();
+    return k?.[0] === p.imp.alias ? k.slice(1) : null;
+  };
+  createEffect(on(() => p.imp.alias, () => peek(null), { defer: true }));
+  onCleanup(() => peek(null));
   return (
     <ItemPane mark={<KindIcon kind={p.imp.kind} />} name={p.imp.alias} tag={intentWords(p.imp.kind, p.imp.intent)} write={p.imp.intent === "write"}>
       <div class="section">Import</div>
@@ -152,7 +169,16 @@ function ImportView(p: { imp: Import; picking: Picking }) {
           {(t) => (
             <>
               <div class="section">Value</div>
-              <ValueTree fields={t().fields} value={v().value} known={v().known} onSet={writable() ? set : undefined} />
+              <ValueTree
+                fields={t().fields}
+                value={v().value}
+                known={v().known}
+                onSet={writable() ? set : undefined}
+                comes={brought()?.fields}
+                picked={picked()}
+                onPick={(f) => peek(f && [p.imp.alias, ...f])}
+                readers={readers}
+              />
             </>
           )}
         </Match>

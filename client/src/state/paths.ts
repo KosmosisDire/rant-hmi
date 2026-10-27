@@ -115,6 +115,22 @@ class Collect {
   }
 }
 
+/** What each page reads of `name`, the steps after it of each path, for those that read it. */
+export function pagesReading(name: string): { page: Page; paths: Path[] }[] {
+  return state.pages.flatMap((page) => {
+    const { paths, all } = pathsOf([page]);
+    const of = all ? [[]] : paths.filter((p) => p[0] === name).map((p) => p.slice(1));
+    return of.length > 0 ? [{ page, paths: of }] : [];
+  });
+}
+
+/** Whether reading `path` reads some of the field at `field`, both the steps after a name: one
+ *  holds the other. */
+export function touches(path: Path, field: Path): boolean {
+  for (let i = 0; i < Math.min(path.length, field.length); i++) if (path[i] !== field[i]) return false;
+  return true;
+}
+
 /** The paths `pages` read, each a name and the fields after it, and `all` when one may read any
  *  name. A component on its own reads only its defaults, so nothing. */
 export function pathsOf(pages: Page[]): { paths: Path[]; all: boolean } {

@@ -1,7 +1,9 @@
 import { For, Match, Show, Switch } from "solid-js";
+import { ITEM, type Path } from "../../lang/reads.js";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Value } from "../../protocol/Value";
 import { fields, INTEGERS, SCALARS, typeLabel } from "../../state/format";
+import { touches } from "../../state/paths";
 import { DraftInput } from "../../ui/DraftInput";
 import { Preview } from "../../ui/Preview";
 
@@ -13,11 +15,19 @@ interface Props {
   known: boolean;
   /** Set when the import may be written: scalar fields become editors. */
   onSet?: Commit;
+  /** What of the value comes, each a path that reads it, or undefined for all. */
+  comes?: Path[];
+  /** The field picked, which shows what reads it. */
+  picked: Path | null;
+  onPick: (field: Path | null) => void;
+  /** What reads the field at a path. */
+  readers: (field: Path) => string[];
 }
 
-/** A value's fields with their live values, as the explorer's value tree shows them. */
+/** A value's fields with their live values, as the explorer's value tree shows them. A list of
+ *  records shows its items' fields under it. A field that does not come says so. */
 export function ValueTree(p: Props) {
-  return <Rows {...p} prefix="" depth={0} />;
+  return <Rows {...p} steps={[]} depth={0} item={false} />;
 }
 
 function member(v: Value | null, name: string): Value | null {
@@ -25,27 +35,53 @@ function member(v: Value | null, name: string): Value | null {
   return fields(v)?.[name] ?? null;
 }
 
-/** Rows of `fields` under `prefix`. */
-function Rows(p: Props & { prefix: string; depth: number }) {
+const same = (a: Path | null, b: Path) => !!a && a.length === b.length && touches(a, b);
+
+/** Rows of `fields` under `steps`, the fields of a list's items when `item`. */
+function Rows(p: Props & { steps: Path; depth: number; item: boolean }) {
   return (
     <For each={p.fields}>
       {(f) => {
-        const path = f.name === "" ? p.prefix : p.prefix ? `${p.prefix}.${f.name}` : f.name;
+        const steps = f.name === "" ? p.steps : [...p.steps, f.name];
         const v = () => member(p.value, f.name);
         const branch = f.kind === "struct";
+        const items = f.kind === "array" && f.members.length > 0;
+        const comes = () => !p.comes || p.comes.some((k) => touches(k, steps));
+        const picked = () => same(p.picked, steps);
+        const readers = () => p.readers(steps);
         return (
           <>
-            <div class="vrow" classList={{ branch }} style={{ "padding-left": `${p.depth * 14}px` }}>
+            <div
+              class="vrow"
+              classList={{ branch: branch || items, picked: picked() }}
+              style={{ "padding-left": `${p.depth * 14}px` }}
+              onClick={(e) => (e.target as HTMLElement).closest("input, select, button") || p.onPick(picked() ? null : steps)}
+            >
               <span class="vname mono">{f.name === "" ? "value" : f.name}</span>
               <span class="tag">{typeLabel(f)}</span>
               <span class="vval">
-                <Show when={!branch}>
-                  <Cell field={f} value={v()} known={p.known} path={path} onSet={p.onSet} />
-                </Show>
+                <Switch>
+                  <Match when={!comes()}>
+                    <span class="faint" title="Nothing shown or running reads it now, so it does not come. Pick it to see it.">
+                      not read
+                    </span>
+                  </Match>
+                  <Match when={!branch && !p.item}>
+                    <Cell field={f} value={v()} known={p.known} path={steps.join(".")} onSet={p.onSet} />
+                  </Match>
+                </Switch>
               </span>
             </div>
+            <Show when={picked()}>
+              <div class="vhint" style={{ "padding-left": `${p.depth * 14}px` }}>
+                {readers().length > 0 ? `Read by ${readers().join(", ")}.` : "Nothing reads it."}
+              </div>
+            </Show>
             <Show when={branch}>
-              <Rows {...p} fields={f.members} value={v()} prefix={path} depth={p.depth + 1} />
+              <Rows {...p} fields={f.members} value={v()} steps={steps} depth={p.depth + 1} />
+            </Show>
+            <Show when={items}>
+              <Rows {...p} fields={f.members} value={null} steps={[...steps, ITEM]} depth={p.depth + 1} item />
             </Show>
           </>
         );

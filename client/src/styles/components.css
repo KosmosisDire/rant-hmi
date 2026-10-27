@@ -789,6 +789,8 @@
   gap: var(--gap);
   min-height: var(--row);
   padding-right: 2px;
+  border-radius: var(--radius);
+  cursor: pointer;
 }
 
 .vrow .vname {
@@ -807,6 +809,26 @@
   min-width: 0;
   display: flex;
   justify-content: flex-end;
+}
+
+:root:not([data-pointer="touch"]) .vrow:not(.picked):hover {
+  background: var(--panel2);
+}
+
+.vrow.picked {
+  background: var(--accent-bg);
+}
+
+.vrow.picked .vname {
+  font-weight: 600;
+}
+
+/* what reads the picked field, under its row */
+.vhint {
+  padding-top: 2px;
+  padding-bottom: 4px;
+  font-size: 11px;
+  color: var(--faint);
 }
 
 /* ------------------------------------------------------------------ table */

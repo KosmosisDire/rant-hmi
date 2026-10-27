@@ -1,7 +1,8 @@
+import { Show } from "solid-js";
 import type { Import } from "../../protocol/Import";
 import type { Intent } from "../../protocol/Intent";
 import { capital, choosesIntent, intentWords } from "../../state/format";
-import { preview } from "../../state/preview";
+import { preview, unread } from "../../state/preview";
 import { KindIcon } from "../../ui/marks";
 import { Preview } from "../../ui/Preview";
 import type { Picking } from "./DataScreen";
@@ -35,7 +36,9 @@ export function MeshImports(p: Picking) {
             </span>
           </td>
           <td class="cell-value">
-            <Preview value={preview(i.alias).value} known={preview(i.alias).known} />
+            <Show when={!unread(i.alias)} fallback={<span class="faint">not read</span>}>
+              <Preview value={preview(i.alias).value} known={preview(i.alias).known} />
+            </Show>
           </td>
         </>
       )}
