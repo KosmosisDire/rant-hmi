@@ -2,7 +2,7 @@
 // paths its shown pages read, or while the editor's Data tab previews them, each as the HMI
 // brings it and the field the tab peeks at.
 
-import { createSignal, getOwner, onCleanup } from "solid-js";
+import { createMemo, createRoot, createSignal, getOwner, onCleanup } from "solid-js";
 import type { Path } from "../lang/reads.js";
 import type { Page } from "../protocol/Page";
 import { operator } from "./mode";
@@ -62,6 +62,10 @@ function shownPages(): (Page | undefined)[] {
   }
 }
 
+/** What the shown pages read, worked out again only as they or their reads change, since every
+ *  value drawn asks for it. */
+const shownPaths = createRoot(() => createMemo(() => pathsOf(shownPages().filter((p) => p !== undefined))));
+
 /** The paths this screen reads, sorted, or null for all of every name. A name read as the screen
  *  draws that its pages' text does not show comes whole. */
 export function watched(): Path[] | null {
@@ -69,9 +73,8 @@ export function watched(): Path[] | null {
     const p = peeked();
     return p ? [p] : [];
   }
-  const pages = shownPages();
   const names = new Set([...state.imports.map((i) => i.alias), ...state.computed.map((c) => c.name)]);
-  const { paths, all } = pathsOf(pages.filter((p) => p !== undefined));
+  const { paths, all } = shownPaths();
   if (all) return null;
   const out = paths.filter((p) => names.has(p[0]));
   const seen = new Set(out.map((p) => p[0]));
