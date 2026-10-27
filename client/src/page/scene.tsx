@@ -83,7 +83,7 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
     }
     return undefined;
   };
-  const vector = (v: unknown) => (kind(v) === "vec3" ? (v as Vec3) : undefined);
+  const vector = (v: unknown) => (kind(v) === "vec3" ? vec3(v as Vec3) : undefined);
   return {
     number: (key) => as(key, "a number", (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)),
     flag: (key) => as(key, "true or false", (v) => (typeof v === "boolean" ? v : undefined)),
@@ -104,14 +104,23 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
     joints: (key) =>
       as(key, "names each with an angle or a pose", (v) => {
         if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
-        const each = Object.values(v).every((j) => (typeof j === "number" && Number.isFinite(j)) || (typeof j === "object" && j !== null && poseOf(j)));
-        return each ? (v as Record<string, number | Pose>) : undefined;
+        const joints: Record<string, number | Pose> = {};
+        for (const [name, j] of Object.entries(v)) {
+          const turn = typeof j === "number" && Number.isFinite(j) ? j : typeof j === "object" && j !== null ? poseOf(j) : undefined;
+          if (turn === undefined) return undefined;
+          joints[name] = turn;
+        }
+        return joints;
       }),
     get drawn() {
       return { faults, unknown };
     },
   };
 }
+
+// What the page reads may be the store's own, which the worker cannot be sent, so what goes is
+// made here of plain numbers.
+const vec3 = ({ x, y, z }: Vec3): Vec3 => ({ x, y, z });
 
 /** A pose as code gives it, none being where what holds it is. */
 function poseOf(v: unknown): Pose | undefined {
@@ -120,7 +129,8 @@ function poseOf(v: unknown): Pose | undefined {
   const { position, orientation } = v as Record<string, unknown>;
   if (position !== undefined && kind(position) !== "vec3") return undefined;
   if (orientation !== undefined && kind(orientation) !== "quat") return undefined;
-  return v as Pose;
+  const turn = orientation as Pose["orientation"];
+  return { position: position === undefined ? undefined : vec3(position as Vec3), orientation: turn && { ...vec3(turn), w: turn.w } };
 }
 
 // any colour the page takes, read back as the browser draws it, the last few kept
