@@ -408,7 +408,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         </Show>
         <Show when={p.element.tag === "media"}>
           <div class="section">Media</div>
-          <Field {...prop("src")} label="Source" placeholder="Camera" />
+          <Field {...prop("src")} label="Source" placeholder="Camera" source />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
         </Show>
         <Show when={diagram()}>

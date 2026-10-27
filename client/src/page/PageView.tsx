@@ -7,10 +7,10 @@ import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originCss, pageScope, percentOf, resolve, runDraw, type Scope, sizeWord, tokenValue, UNIT } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originCss, pageScope, percentOf, resolve, resolveSource, runDraw, type Scope, sizeWord, sourceOf, tokenValue, UNIT } from "../state/bind";
 import { fields, short } from "../state/format";
 import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
-import { component, entity, live, notify, state } from "../state/store";
+import { component, live, notify, state, transcoded } from "../state/store";
 import { createSize, onResize } from "../ui/size";
 import { ImagePlay, VideoOff } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
@@ -303,8 +303,8 @@ function ElementView(p: ElementProps & { at?: At }) {
     const style: Record<string, string> = {};
     const faults: string[] = [];
     let unknown = false;
-    const take = (key: string, text = p.element.props[key]): unknown => {
-      const r = resolve(text, p.scope);
+    const take = (key: string, text = p.element.props[key], how = resolve): unknown => {
+      const r = how(text, p.scope);
       if (r.ok) return r.value;
       if (r.unknown) unknown = true;
       else faults.push(`${key}: ${r.error}`);
@@ -391,9 +391,7 @@ function ElementView(p: ElementProps & { at?: At }) {
     const diagram = p.element.tag === "svg" ? { box: diagramBox(), fit: take("fit") } : undefined;
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
     const canvas = p.element.tag === "canvas" ? contextOf(take("context"), faults) : undefined;
-    // an import's media reads its value only when it shows its pictures, not its video
-    const playsFrom = p.element.tag === "media" ? playable(p.element.props.src, () => take("src")) : null;
-    const media = p.element.tag === "media" ? { alias: playsFrom, src: playsFrom ? null : take("src"), fit: String(take("fit") ?? "meet") } : undefined;
+    const media = p.element.tag === "media" ? { src: take("src", p.element.props.src, resolveSource), fit: String(take("fit") ?? "meet") } : undefined;
     const first = p.element.tag === "div" && take("stack") === "first" ? p.element.children.length * COPIES : undefined;
     return { style, unknown, faults, text, value, diagram, markup, canvas, media, holder: { ox, oy, flow, first } as Holder };
   });
@@ -447,7 +445,7 @@ function ElementView(p: ElementProps & { at?: At }) {
         <Match when={p.element.tag === "scene"}>
           <SceneView element={p.element} scope={p.scope} design={p.design} report={setDrawn} />
         </Match>
-        <Match when={look().media}>{(m) => <MediaView alias={m().alias} src={m().src} fit={m().fit} />}</Match>
+        <Match when={look().media}>{(m) => <MediaView src={m().src} fit={m().fit} />}</Match>
         <Match when={p.element.tag === "use"}>
           <Instance element={p.element} scope={p.scope} design={p.design} act={p.act} at={p.at} />
         </Match>
@@ -600,15 +598,19 @@ function ShapeView(p: ElementProps & { at?: At }) {
   );
 }
 
-/** What media shows: an import's H264 over WebRTC when it has some, else its pictures as they
- *  come, a picture an expression gives, or a URL. One with nothing to show yet says so, as a
+/** What media shows: the import its source gives, as H264 when it has some, else its pictures as
+ *  they come, or a picture its source gives, or a URL. One with nothing to show yet says so, as a
  *  camera that is missing or not up yet, and in the editor can still be picked and placed. */
-function MediaView(p: { alias: string | null; src: unknown; fit: string }) {
-  const pic = () => picture((p.alias ? live(p.alias).value : p.src) as Value);
-  const url = () => (!p.alias && typeof p.src === "string" && p.src.trim() !== "" ? p.src : null);
+function MediaView(p: { src: unknown; fit: string }) {
+  const alias = () => sourceOf(p.src);
+  const pic = () => {
+    const a = alias();
+    return picture((a ? live(a).value : p.src) as Value);
+  };
+  const url = () => (typeof p.src === "string" && p.src.trim() !== "" ? p.src : null);
   return (
     <Switch fallback={<div class="el-picture-none">{<ImagePlay size={20} />}</div>}>
-      <Match when={p.alias && plays(p.alias) && p.alias}>{(a) => <VideoView alias={a()} fit={p.fit} />}</Match>
+      <Match when={alias() && plays(alias()!) && alias()}>{(a) => <VideoView alias={a()} fit={p.fit} />}</Match>
       <Match when={pic()}>{(x) => <PictureView picture={x()} fit={p.fit} />}</Match>
       <Match when={url()}>{(u) => <img class="el-picture" src={u()} alt="" draggable={false} style={{ "object-fit": FIT[p.fit] ?? "contain" }} />}</Match>
     </Switch>
@@ -618,18 +620,8 @@ function MediaView(p: { alias: string | null; src: unknown; fit: string }) {
 /** Whether an import has H264 to play: the Video child rant-transcoder makes, or its own frames. */
 function plays(alias: string): boolean {
   const imp = state.imports.find((i) => i.alias === alias);
-  if (imp && entity(`${imp.entity}/Video`)?.schema?.name === "VideoFrame") return true;
+  if (imp && transcoded(imp)) return true;
   return fields(live(alias).value)?.codec === "H264";
-}
-
-/** The import media shows: its source as a bare import name, or the name its expression gives
- *  as text, as a component's input passes it on. */
-function playable(src: string | undefined, value: () => unknown): string | null {
-  const imported = (name: unknown): name is string => typeof name === "string" && state.imports.some((i) => i.alias === name);
-  const raw = (src ?? "").trim();
-  if (imported(raw)) return raw;
-  const v = value();
-  return imported(v) ? v : null;
 }
 
 /** A video: an import's stream over WebRTC, or until that shows its frames from the socket

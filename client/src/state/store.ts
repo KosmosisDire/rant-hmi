@@ -378,6 +378,11 @@ export function entity(name: string): EntityInfo | undefined {
   return state.entities.find((e) => e.name === name);
 }
 
+/** Whether an import has the Video child rant-transcoder makes, which plays as H264. */
+export function transcoded(imp: Import): boolean {
+  return entity(`${imp.entity}/Video`)?.schema?.name === "VideoFrame";
+}
+
 export function importOf(entityName: string): Import | undefined {
   return state.imports.find((i) => i.entity === entityName);
 }

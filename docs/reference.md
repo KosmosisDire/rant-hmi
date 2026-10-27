@@ -155,7 +155,7 @@ give.
 | --- | --- | --- |
 | `text` | `span`, the shape `text` | its words, written as the tag's body: `<span ...>Speed.toFixed(1) + " m/s"</span>` |
 | `value` | `input` | what it shows. A name there, as `value="Speed"`, is set to what is typed: a number while it holds one, true or false while it holds those |
-| `src` | `media` | an import's name to show its video or pictures, or an expression giving a picture or a URL |
+| `src` | `media` | what it shows. An import plays its video, or shows its pictures while it has none, named bare as `Camera` or given by an expression, as `wide ? Camera : LabelCam` or a component's input. A picture, as `{ ...Camera }`, shows as it is, and text as a URL |
 | `fit` | `media`, `svg` | how it fits its box: `"meet"` whole, the default, `"slice"` filling it cut to size, or `"stretch"` |
 | `viewbox` | `svg` | the box its shapes draw in, `"x y width height"`. Left out, they draw in units from its corner |
 | `markup` | `markup` | SVG as text, or a list of texts, written as the tag's body |

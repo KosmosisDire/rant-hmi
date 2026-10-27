@@ -4,7 +4,7 @@
 // is asked for and replaces it.
 
 import { createContext, createMemo, createSignal, For, type JSX, Match, Show, Switch, useContext } from "solid-js";
-import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
+import { isConstant, isNumber, isPercent, pageScope, percentOf, resolve, resolveSource, type Scope, sizeWord, tokenValue } from "../../state/bind";
 import type { Place } from "../../lang/api.js";
 import { complete, signature, type Suggestion } from "../../state/complete";
 import { capital } from "../../state/format";
@@ -80,6 +80,8 @@ export interface FieldProps {
   placeholder?: string;
   /** Plain text, never an expression. */
   plain?: boolean;
+  /** A media source, in which an import stands for itself. */
+  source?: boolean;
   /** The label sits in the box as its lead, as placement's x and y do. */
   inside?: boolean;
   /** Placement: a trailing % is a share of what holds the element. */
@@ -103,7 +105,7 @@ export function Field(p: FieldProps) {
   const word = () => !!p.percent && (isPercent(p.value) || !!sizeWord(p.value));
   const status = createMemo(() => {
     if (p.plain || (p.percent && sizeWord(p.value))) return undefined;
-    const r = resolve(p.percent ? percentOf(p.value).expr : p.value, where().scope);
+    const r = (p.source ? resolveSource : resolve)(p.percent ? percentOf(p.value).expr : p.value, where().scope);
     if (r.ok) {
       const bad = r.value !== undefined && r.value !== null && r.value !== "" ? p.check?.(r.value) : undefined;
       return bad ? { text: bad } : undefined;
