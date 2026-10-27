@@ -18,6 +18,7 @@ use tracing::{debug, info, warn};
 
 use crate::authorize::{Who, authorize};
 use crate::events;
+use crate::fields::Keep;
 use crate::lanes::{Lanes, PIECE};
 use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
@@ -178,8 +179,9 @@ struct Session {
     warned: Option<String>,
     /// Whether it shows every screen's problems, as the editor does.
     shows_problems: bool,
-    /// The imports and computed values it shows, None for all.
-    watch: Option<HashSet<String>>,
+    /// What it reads of each import and computed value it shows, the steps after the name of
+    /// each path, None for all of every one.
+    watch: Option<HashMap<String, Vec<Vec<String>>>>,
     /// While it only previews them, when its next big value may go, as its previews keep to
     /// PREVIEW_BYTES a second.
     previews: Option<Instant>,
@@ -820,23 +822,31 @@ impl App {
                 self.watch(session);
                 self.rtc.send(ToRtc::Play { session, sdp: offer, videos, local, ice: self.project.info.ice.clone() });
             }
-            ClientMsg::Watch { names, previews } => {
-                let names: Option<HashSet<String>> = names.map(|n| n.into_iter().collect());
-                let all: Vec<String> = self.watched().cloned().collect();
+            ClientMsg::Watch { reads, previews } => {
+                let reads = reads.map(|paths| {
+                    let mut by_name: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+                    for p in paths {
+                        if let Some((name, steps)) = p.split_first() {
+                            by_name.entry(name.clone()).or_default().push(steps.to_vec());
+                        }
+                    }
+                    by_name
+                });
+                let names: Vec<String> = self.watched().cloned().collect();
                 let Some(s) = self.sessions.get_mut(&session) else { return };
-                // what it shows from now and did not before comes at once
-                let new: Vec<String> = match (&s.watch, &names) {
-                    (None, _) => Vec::new(),
-                    (Some(old), None) => all.into_iter().filter(|n| !old.contains(n)).collect(),
-                    (Some(old), Some(now)) => now.difference(old).cloned().collect(),
-                };
-                s.watch = names;
+                // what it reads differently from now comes at once where it still shows it
+                let changed: Vec<String> = names.into_iter().filter(|n| read_of(&s.watch, n) != read_of(&reads, n)).collect();
+                s.watch = reads;
                 s.previews = previews.then(|| s.previews.unwrap_or_else(Instant::now));
-                // the screen lets go of what it no longer shows, so that comes whole again
-                if let Some(names) = &s.watch {
-                    s.gates.retain(|alias, _| names.contains(alias));
+                // the screen lets go of what it no longer shows or reads otherwise, so that comes whole
+                if let Some(w) = &s.watch {
+                    s.gates.retain(|alias, _| w.contains_key(alias));
                 }
-                let values = new.iter().filter(|n| self.values.contains_key(*n)).map(|n| self.update(n)).collect();
+                for n in &changed {
+                    s.gates.remove(n);
+                }
+                let shown: Vec<&String> = changed.iter().filter(|n| read_of(&s.watch, n).is_some()).collect();
+                let values = shown.into_iter().filter(|n| self.values.contains_key(*n)).map(|n| self.update(n)).collect();
                 self.put_values(Some(session), values);
             }
             ClientMsg::Took { alias, seq, missed } => {
@@ -1992,7 +2002,8 @@ impl App {
     /// small ones share a message and each big one goes alone in its import's lane, on the
     /// second way once it opened, one at a time until the screen took the last, and as the
     /// change from that. A screen that previews takes big ones at PREVIEW_BYTES a second. A
-    /// screen on this host gets them whole and as they are, any other compressed.
+    /// screen on this host gets them whole and as they are, any other compressed. An import's
+    /// value keeps only the fields the screen reads, written once for screens that read the same.
     fn put_values(&mut self, to: Option<u32>, values: Vec<ValueUpdate>) {
         if values.is_empty() {
             return;
@@ -2004,18 +2015,25 @@ impl App {
             None => self.sessions.keys().copied().collect(),
         };
         let leaves: HashSet<String> = self.watched().cloned().collect();
-        let (mut packed, mut plain) = (None, None);
+        let mut each: HashMap<(bool, &str, Keep), Written> = HashMap::new();
         for id in ids {
             let Some(s) = self.sessions.get_mut(&id) else { continue };
             let here = s.here();
-            let each: &Vec<Written> = match here {
-                true => plain.get_or_insert_with(|| written(&values, seq, true)),
-                false => packed.get_or_insert_with(|| written(&values, seq, false)),
-            };
-            let shown = |w: &&Written| !leaves.contains(w.alias()) || s.watch.as_ref().is_none_or(|n| n.contains(w.alias()));
             let mut small = Vec::new();
             let mut big = Vec::new();
-            for w in each.iter().filter(shown) {
+            for v in &values {
+                let read = read_of(&s.watch, &v.alias);
+                if leaves.contains(&v.alias) && read.is_none() {
+                    continue;
+                }
+                let keep = match (read, self.mesh.shapes(&v.alias)) {
+                    (Some(paths), Some(shapes)) => Keep::typed(shapes, paths),
+                    _ => Keep::All,
+                };
+                let w = each.entry((here, &v.alias, keep)).or_insert_with_key(|(_, _, keep)| {
+                    let update = ValueUpdate { value: v.value.as_ref().map(|x| keep.cut(x)), ..v.clone() };
+                    written(update, seq, here)
+                });
                 match w {
                     Written::Small(u) => small.push(u.clone()),
                     Written::Big(b) => big.push(b.clone()),
@@ -2042,29 +2060,24 @@ enum Written {
     Big(Rc<Big>),
 }
 
-impl Written {
-    fn alias(&self) -> &str {
-        match self {
-            Written::Small(u) => &u.alias,
-            Written::Big(b) => &b.update.alias,
-        }
+/// A value as a message of its own, which says how big it is, `plain` for a screen on this host.
+fn written(v: ValueUpdate, seq: u64, plain: bool) -> Written {
+    let msg = ServerMsg::Values { values: vec![v.clone()], seq };
+    let whole = if plain { encode_plain(&msg) } else { encode(&msg) };
+    match whole.len() <= PIECE {
+        true => Written::Small(v),
+        false => Written::Big(Rc::new(Big { seq, update: v, plain, whole, changes: RefCell::default() })),
     }
 }
 
-/// Each value as a message of its own, which says how big it is, `plain` for a screen on this
-/// host.
-fn written(values: &[ValueUpdate], seq: u64, plain: bool) -> Vec<Written> {
-    values
-        .iter()
-        .map(|v| {
-            let msg = ServerMsg::Values { values: vec![v.clone()], seq };
-            let whole = if plain { encode_plain(&msg) } else { encode(&msg) };
-            match whole.len() <= PIECE {
-                true => Written::Small(v.clone()),
-                false => Written::Big(Rc::new(Big { seq, update: v.clone(), plain, whole, changes: RefCell::default() })),
-            }
-        })
-        .collect()
+/// What a screen's watch reads of `name`: the steps after it of each path, all of it with no
+/// watch, or None while the screen does not show it.
+fn read_of<'a>(watch: &'a Option<HashMap<String, Vec<Vec<String>>>>, name: &str) -> Option<&'a [Vec<String>]> {
+    const WHOLE: &[Vec<String>] = &[Vec::new()];
+    match watch {
+        None => Some(WHOLE),
+        Some(w) => w.get(name).map(Vec::as_slice),
+    }
 }
 
 /// Small values together in one message.
@@ -2225,7 +2238,7 @@ mod tests {
 
     #[test]
     fn a_big_value_goes_as_the_change_from_the_one_the_screen_took_and_whole_after_a_miss() {
-        let each = |seq, v| match written(&[update("Scan", v)], seq, false).remove(0) {
+        let each = |seq, v| match written(update("Scan", v), seq, false) {
             Written::Big(b) => b,
             Written::Small(_) => panic!("a cloud too small to go alone"),
         };
@@ -2250,7 +2263,7 @@ mod tests {
         other.gates.insert("Scan".into(), Gate { held: s.gates["Scan"].held.clone(), ..Gate::default() });
         other.big(three.clone());
         assert_eq!(three.changes.borrow().len(), 1);
-        let here = match written(&[update("Scan", cloud(200..4200))], 3, true).remove(0) {
+        let here = match written(update("Scan", cloud(200..4200)), 3, true) {
             Written::Big(b) => b,
             Written::Small(_) => panic!("a cloud too small to go alone"),
         };
@@ -2265,8 +2278,7 @@ mod tests {
 
     #[test]
     fn a_value_too_big_to_share_goes_alone() {
-        let each = written(&[update("Speed", Value::Float(1.5)), update("Cam", Value::Bytes(vec![0; PIECE]))], 1, false);
-        assert!(matches!(each[0], Written::Small(_)));
-        assert!(matches!(each[1], Written::Big(_)));
+        assert!(matches!(written(update("Speed", Value::Float(1.5)), 1, false), Written::Small(_)));
+        assert!(matches!(written(update("Cam", Value::Bytes(vec![0; PIECE])), 1, false), Written::Big(_)));
     }
 }

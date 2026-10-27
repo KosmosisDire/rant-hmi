@@ -6,6 +6,7 @@ pub mod apps;
 pub mod authorize;
 pub mod delta;
 pub mod events;
+pub mod fields;
 pub mod lanes;
 pub mod files;
 pub mod flight;

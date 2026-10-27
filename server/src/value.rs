@@ -303,6 +303,19 @@ impl Records {
         (!fields.is_empty() && fields.iter().all(|(_, v)| fits(v))).then(|| Records { len, fields: fields.into() })
     }
 
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Its columns, a field each.
+    pub fn columns(&self) -> &[(String, Value)] {
+        &self.fields
+    }
+
     /// Record `i`, which must be there.
     fn get(&self, i: usize) -> Value {
         Value::Map(self.fields.iter().map(|(k, column)| (k.clone(), cell(column, i))).collect())

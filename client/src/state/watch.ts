@@ -1,17 +1,13 @@
-// The imports and computed values this screen shows, which the backend sends it the values of:
-// those the pages it shows name in their properties and the conditions their handlers carry,
-// and any other something drawn reads now, as an expression may make a name its text does not
-// spell. An import with video is left to what reads it, wherever a page names it, as one that
-// plays its video never needs its frames. Every one while the editor's Data tab previews them,
-// none on its Logic tab. A handler's code runs on the system, so what it reads never comes here.
-// Reads whole are counted apart, as only they need a big value's lists on the main thread.
+// What this screen reads of the imports and computed values, which the backend sends it: the
+// paths its shown pages read, all of each while the editor's Data tab previews them.
 
 import { getOwner, onCleanup } from "solid-js";
-import type { Element } from "../protocol/Element";
+import type { Path } from "../lang/reads.js";
 import type { Page } from "../protocol/Page";
 import { operator } from "./mode";
+import { pathsOf } from "./paths";
 import { stack } from "./stack";
-import { entity, page, state, transcoded } from "./store";
+import { page, state } from "./store";
 import { currentPage, currentTab } from "./view";
 
 /** How many of what is drawn now read each name, and how many of those read it whole: each read
@@ -62,30 +58,22 @@ function shownPages(): (Page | undefined)[] | null {
   }
 }
 
-/** The names this screen shows, sorted, or null for every one. */
-export function watched(): string[] | null {
+/** The paths this screen reads, sorted, or null for all of every name. A name read as the screen
+ *  draws that its pages' text does not show comes whole. */
+export function watched(): Path[] | null {
   const pages = shownPages();
   if (pages === null) return null;
-  const names = [...state.imports.map((i) => i.alias), ...state.computed.map((c) => c.name)];
-  const read = new Set<string>(names.filter((n) => readers.has(n)));
-  const video = new Set(state.imports.filter((i) => transcoded(i) || entity(i.entity)?.schema?.name === "VideoFrame").map((i) => i.alias));
-  const spelled = names.filter((n) => !video.has(n));
-  if (spelled.length === 0) return [...read].sort();
-  const said = new RegExp(`(?<![\\w$.])(${spelled.map((n) => n.replace(/[$]/g, "\\$")).join("|")})(?![\\w$])`, "g");
-  const scan = (text: string | null | undefined) => {
-    if (text) for (const m of text.matchAll(said)) read.add(m[1]);
-  };
-  const walk = (elements: Element[]) => {
-    for (const e of elements) {
-      for (const [key, value] of Object.entries(e.props)) if (key !== "name") scan(value);
-      for (const h of e.handlers) Object.values(h.attrs).forEach(scan);
-      walk(e.children);
-    }
-  };
-  for (const p of pages) {
-    if (!p) continue;
-    scan(p.fill);
-    walk(p.children);
-  }
-  return [...read].sort();
+  const names = new Set([...state.imports.map((i) => i.alias), ...state.computed.map((c) => c.name)]);
+  const { paths, all } = pathsOf(pages.filter((p) => p !== undefined));
+  if (all) return null;
+  const out = paths.filter((p) => names.has(p[0]));
+  const seen = new Set(out.map((p) => p[0]));
+  for (const n of readers.keys()) if (names.has(n) && !seen.has(n)) out.push([n]);
+  return out.sort((a, b) => (a.join(".") < b.join(".") ? -1 : 1));
+}
+
+/** The names this screen shows, sorted, or null for every one. */
+export function watchedNames(): string[] | null {
+  const paths = watched();
+  return paths && [...new Set(paths.map((p) => p[0]))].sort();
 }

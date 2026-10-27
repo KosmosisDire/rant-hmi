@@ -569,7 +569,7 @@ function failed(e: unknown, scope: Scope): Resolved {
 }
 
 /** The source with each #hex outside strings and comments made a string. */
-function colours(src: string): string {
+export function colours(src: string): string {
   let [out, at] = ["", 0];
   for (const t of tokens(src).filter((t) => t.kind === "literal" && isHex(src.slice(t.start, t.end)))) {
     out += `${src.slice(at, t.start)}"${src.slice(t.start, t.end)}"`;

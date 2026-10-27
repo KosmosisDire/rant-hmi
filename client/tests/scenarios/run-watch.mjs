@@ -1,8 +1,9 @@
-// A screen gets the values of only the imports its pages show. A screen on a page that shows no
-// camera gets none of its pictures, one whose page reads the camera gets them, and one whose
+// A screen gets the values of only the imports its pages show, with only the fields they read.
+// A screen on a page that shows no camera gets none of its pictures, one whose page reads the
+// camera's width gets the width alone, one whose page reads its picture gets them, and one whose
 // page plays the camera's video gets none, as the video never needs them. The editor gets them
 // while its Data tab previews every import, and in its Run tab only while the page there reads
-// the camera.
+// the picture.
 
 import { countBig } from "../links.mjs";
 
@@ -11,8 +12,10 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await hmi.import("WatchCam", "Line1/LabelCam");
   const none = await hmi.addPage("Watch none");
   await hmi.addElement(none, "span", { name: "sum", x: "2", y: "2", w: "20", h: "4", text: "1 + 1" });
+  const width = await hmi.addPage("Watch width");
+  const shown = await hmi.addElement(width, "span", { name: "width", x: "2", y: "2", w: "20", h: "4", text: "String(WatchCam.width)" });
   const read = await hmi.addPage("Watch read");
-  await hmi.addElement(read, "span", { name: "width", x: "2", y: "2", w: "20", h: "4", text: "String(WatchCam.width)" });
+  await hmi.addElement(read, "span", { name: "bytes", x: "2", y: "2", w: "20", h: "4", text: "String(WatchCam.data.length)" });
   const video = await hmi.addPage("Watch video");
   await hmi.addElement(video, "media", { name: "label", x: "2", y: "2", w: "40", h: "30", src: "WatchCam" });
 
@@ -39,6 +42,9 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   try {
     const bare = await operator(none);
     check((await comes(bare)) === 0, "a screen whose page shows no camera got its pictures");
+    const narrow = await operator(width);
+    await eventually(async () => /^\d+$/.test(((await narrow.locator(`.run-layer .el[data-id="${shown}"]`).textContent()) ?? "").trim()), "the camera's width shown");
+    check((await comes(narrow)) === 0, "a screen whose page reads only the camera's width got its pictures");
     const reads = await operator(read);
     check((await comes(reads)) >= 3, "a screen whose page reads the camera got too few of its pictures");
     const plays = await operator(video);

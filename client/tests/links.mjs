@@ -4,6 +4,8 @@
 
 import net from "node:net";
 
+import { Decoder } from "cbor-x";
+
 /** An init script that counts in `window.__big` the big values the data worker hands the page,
  *  and keeps when each came in `window.__bigAt`. */
 export function countBig() {
@@ -20,6 +22,34 @@ export function countBig() {
       });
     },
   });
+}
+
+/** An init script that keeps in `window.__sent` what the page sent on its sockets and its link
+ *  channel, the newest last. */
+export function keepSent() {
+  for (const kind of [WebSocket, RTCDataChannel]) {
+    const own = kind.prototype.send;
+    kind.prototype.send = function (data) {
+      if (typeof data !== "string") (window.__sent ??= []).push(Array.from(new Uint8Array(ArrayBuffer.isView(data) ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) : data)));
+      if (window.__sent?.length > 200) window.__sent.shift();
+      return own.call(this, data);
+    };
+  }
+}
+
+const decoder = new Decoder({ mapsAsObjects: true, useRecords: false });
+
+/** The paths page `p` last told the backend it reads, each written with dots, as `keepSent` kept. */
+export async function told(p) {
+  const decoded = (b) => {
+    try {
+      return [decoder.decode(Uint8Array.from(b))];
+    } catch {
+      return [];
+    }
+  };
+  const watch = (await p.evaluate(() => window.__sent ?? [])).flatMap(decoded).filter((m) => m?.type === "watch").at(-1);
+  return watch?.reads?.map((path) => path.join(".")) ?? null;
 }
 
 /** The big values of `alias` page `p` got in 1.5 s, and those the HMI sent meanwhile, as test
