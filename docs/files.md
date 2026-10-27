@@ -14,6 +14,7 @@ data/theme.toml          design tokens, read as $name
 pages/<name>.html        a page
 components/<name>.html   a component
 logic/handlers.html      handlers that belong to no screen
+files/                   models, pictures and anything else a page loads
 ```
 
 ## Data
@@ -72,6 +73,14 @@ Code sets a variable by assignment (`Speed = 0.5`), calls a function with `await
 publishes on a topic with `Jog.send({ x: 1, y: 0 })`. A task is called as a function is, with a
 last function for each progress update: `await Fill(5, (p) => { filled = p })`.
 `Fill.cancel()` stops it.
+
+## Files a page loads
+
+A model, a picture or a font goes in `files`, and a page names it by its path from the
+project: `src="files/cell/arm.glb"` on a model, `src="files/logo.png"` on media,
+`background: "url(files/plan.png)"`. Screens load nothing else of the project. A path that
+steps out of `files`, a name that starts with a dot and a link that leads out are refused. A
+screen shows a changed file once it loads the page again.
 
 ## How screens get their values
 

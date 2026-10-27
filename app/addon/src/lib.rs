@@ -67,7 +67,8 @@ pub async fn start(p: Project) -> Result<String> {
     }
     let domain = u16::try_from(p.domain).map_err(|_| Error::from_reason(format!("there is no Rant domain {}", p.domain)))?;
     let client = PathBuf::from(p.client);
-    let options = Options { project: p.folder.into(), client: client.clone(), domain, loopback: p.loopback, rtc_ports: None, web: None };
+    let project = PathBuf::from(p.folder);
+    let options = Options { project: project.clone(), client: client.clone(), domain, loopback: p.loopback, rtc_ports: None, web: None };
     let (ready, started) = oneshot::channel();
     let (stop, stopped) = oneshot::channel::<()>();
     let backend = thread::spawn(move || {
@@ -80,7 +81,7 @@ pub async fn start(p: Project) -> Result<String> {
                 Ok(hmi) => hmi,
                 Err(e) => return drop(ready.send(Err(format!("{e:#}")))),
             };
-            let router = link::router(&client, hmi.door());
+            let router = link::router(&client, &project, hmi.door());
             let _ = ready.send(Ok((hmi.name().to_owned(), router, Handle::current())));
             hmi.run(async {
                 let _ = stopped.await;

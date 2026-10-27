@@ -4,14 +4,14 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::{Json, Router};
 use axum::body::Bytes;
 use axum::extract::connect_info::Connected;
-use axum::extract::{ConnectInfo, Query, State};
+use axum::extract::{self, ConnectInfo, Query, Request, State};
 use axum::serve::{IncomingStream, Listener};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::StatusCode;
@@ -29,7 +29,8 @@ use tokio_rustls::server::TlsStream;
 use tokio_util::either::Either;
 use axum::http::{HeaderMap, HeaderValue, header};
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::set_header::SetResponseHeader;
+use tower::ServiceExt;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{debug, error, warn};
 
 use crate::app::{Door, Inbound, Outbox};
@@ -43,20 +44,43 @@ use crate::protocol::ClientMsg;
 /// only when its link is, while what it holds goes by its page's own pings (app.rs SILENCE).
 pub const PING_EVERY: Duration = Duration::from_millis(50);
 
-/// The built client's files, index.html for any path that names none.
-pub type Files = SetResponseHeader<ServeDir<ServeFile>, HeaderValue>;
+/// The project's folder of files a page may load, as a model or a picture, at `/files`.
+pub const SHARED: &str = "files";
 
-pub fn files(client: &Path) -> Files {
+/// What a screen loads as files: the project's shared files, and the built client's for any
+/// other path, index.html for one that names none.
+pub fn files(client: &Path, project: &Path) -> Router {
+    let shared = project.join(SHARED);
     let pages = ServeDir::new(client).fallback(ServeFile::new(client.join("index.html")));
-    // a screen asks again each time, so after an update it loads the new client
-    SetResponseHeader::overriding(pages, header::CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+    Router::new()
+        .route("/files/{*path}", get(move |extract::Path(path): extract::Path<String>, request: Request| shared_file(shared.clone(), path, request)))
+        .fallback_service(pages)
+        // a screen asks again each time, so after an update it loads the new client or file
+        .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-cache")))
+}
+
+/// A file in the shared folder, never one outside it: a path that steps out or names a dot
+/// file is refused, and so is a link that leads out.
+async fn shared_file(folder: PathBuf, path: String, request: Request) -> Response {
+    let named = Path::new(&path);
+    let plain = named.components().all(|c| matches!(c, Component::Normal(n) if !n.to_string_lossy().starts_with('.')));
+    let (Ok(root), Ok(file)) = (tokio::fs::canonicalize(&folder).await, tokio::fs::canonicalize(folder.join(named)).await) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !plain || !file.starts_with(&root) || !tokio::fs::metadata(&file).await.is_ok_and(|m| m.is_file()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match ServeFile::new(file).oneshot(request).await {
+        Ok(served) => served.into_response(),
+        Err(never) => match never {},
+    }
 }
 
 /// Serves on `listener`, https too for a connection that opens with a TLS hello when `tls`
 /// answers one.
-pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: &Path, door: Door, apps: Apps) {
+pub async fn serve(listener: TcpListener, tls: Option<TlsAcceptor>, client: &Path, project: &Path, door: Door, apps: Apps) {
     let port = listener.local_addr().map_or(0, |a| a.port());
-    let app = Router::new().route("/ws", get(upgrade)).route("/bulk", get(upgrade_bulk)).route("/problems", get(problems)).with_state(door).merge(apps::router(apps)).merge(crate::probe::router(port)).fallback_service(files(client));
+    let app = Router::new().route("/ws", get(upgrade)).route("/bulk", get(upgrade_bulk)).route("/problems", get(problems)).with_state(door).merge(apps::router(apps)).merge(crate::probe::router(port)).merge(files(client, project));
     let front = Front::open(listener, tls);
     if let Err(e) = axum::serve(front, app.into_make_service_with_connect_info::<Reached>()).await {
         error!("the web server stopped: {e}");

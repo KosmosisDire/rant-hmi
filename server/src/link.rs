@@ -33,13 +33,14 @@ struct Link {
     sessions: Arc<Mutex<HashMap<u32, Arc<Lanes>>>>,
 }
 
-/// What a screen in this process is served: the client's files from `client`, and its link.
-pub fn router(client: &Path, door: Door) -> Router {
+/// What a screen in this process is served: the client's files from `client`, the project's
+/// shared files, and its link.
+pub fn router(client: &Path, project: &Path, door: Door) -> Router {
     Router::new()
         .route("/link", post(open))
         .route("/link/{session}", post(said).get(poll))
-        .fallback_service(web::files(client))
         .with_state(Link { door, sessions: Arc::default() })
+        .merge(web::files(client, project))
 }
 
 /// Opens a session and answers its number.
@@ -146,7 +147,7 @@ mod tests {
     #[tokio::test]
     async fn a_screen_in_this_process_sends_and_gets_messages_in_order() {
         let (door, mut screens) = Door::new();
-        let router = router(Path::new("."), door);
+        let router = router(Path::new("."), Path::new("."), door);
         let (session, out) = opened(&router, &mut screens).await;
 
         // the loop gets what the screen sent in order, a ping among the rest
@@ -185,7 +186,7 @@ mod tests {
     #[tokio::test]
     async fn a_poll_waits_for_what_is_sent() {
         let (door, mut screens) = Door::new();
-        let router = router(Path::new("."), door);
+        let router = router(Path::new("."), Path::new("."), door);
         let (session, out) = opened(&router, &mut screens).await;
         let polling = tokio::spawn({
             let router = router.clone();
@@ -197,6 +198,34 @@ mod tests {
         let (status, batch) = polling.await.unwrap();
         assert_eq!(status, StatusCode::OK);
         assert_eq!(&unframed(&batch).next().unwrap()[3..], b"late");
+    }
+
+    #[tokio::test]
+    async fn a_page_loads_the_shared_files_and_nothing_outside_them() {
+        let dir = std::env::temp_dir().join(format!("rant-hmi-test-shared-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (client, project) = (dir.join("client"), dir.join("project"));
+        for (file, text) in [(client.join("index.html"), "page"), (project.join("hmi.toml"), "secret"), (project.join("files/arm.glb"), "model"), (project.join("files/maps/hall.png"), "picture"), (project.join("files/.notes"), "hidden")] {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
+        }
+        let (door, _screens) = Door::new();
+        let router = router(&client, &project, door);
+        for (path, body) in [("/files/arm.glb", "model"), ("/files/maps/hall.png", "picture"), ("/hmi.toml", "page"), ("/files/", "page")] {
+            assert_eq!(ask(&router, "GET", path, Vec::new()).await, (StatusCode::OK, Bytes::from(body)), "{path}");
+        }
+        for path in ["/files/../hmi.toml", "/files/..%2Fhmi.toml", "/files/maps/..%2F..%2Fhmi.toml", "/files/.notes", "/files/maps", "/files/gone.glb"] {
+            assert_eq!(ask(&router, "GET", path, Vec::new()).await.0, StatusCode::NOT_FOUND, "{path}");
+        }
+        // a link in the folder that leads out of it, where this system lets a test make one
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(project.join("hmi.toml"), project.join("files/out.toml"));
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(project.join("hmi.toml"), project.join("files/out.toml"));
+        if linked.is_ok() {
+            assert_eq!(ask(&router, "GET", "/files/out.toml", Vec::new()).await.0, StatusCode::NOT_FOUND);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

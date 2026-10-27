@@ -212,7 +212,7 @@ each an expression.
 | `joined` | `points` | `true` to draw one line through them instead of dots |
 | `step` | `grid` | the gap between its lines, `1` |
 | `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
-| `src` | `model` | the URL of a glTF file, `.glb` or `.gltf` |
+| `src` | `model` | a glTF file, `.glb` or `.gltf`: one in the project's `files` folder by its path, as `"files/arm.glb"`, or any URL |
 | `joints` | `model` | its named nodes moved from where the file puts them: `{ Elbow: 0.5 }` turns one by radians about its own z, `{ Slide: { position: vec(0, 0, 0.2) } }` moves one by a pose |
 | `color` | every part but `anchor`, `axes` and `model` | any colour a page takes, `$accent`, or `$border` for a grid |
 | `opacity` | `box`, `sphere`, `cylinder` | `1` |
@@ -441,6 +441,9 @@ JavaScript's own, read everywhere:
 <!-- end names -->
 
 ## Data files
+
+What a page loads, as a model or a picture, goes in the project's `files` folder and is named
+by its path, as `"files/arm.glb"`. Screens load nothing else of the project.
 
 `hmi.toml`:
 
