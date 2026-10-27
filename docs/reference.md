@@ -98,7 +98,7 @@ Lamp per item, is the view placed with `repeat`.
 | `Table` | a list of structs or of lists, every key of the first row unless `columns` names them | `rows`: `struct[]` |
 
 `Toggle` (`bool`), `Slider` and `Knob` (`number`), `Dropdown` and `ModeSwitch` set the name
-their `value` is bound to. `Button`, `Joystick` and `Joystick1D` send events.
+their `value` is bound to. A Dropdown shows `rows` options and scrolls to the rest. `Button`, `Joystick` and `Joystick1D` send events.
 
 ## Elements
 

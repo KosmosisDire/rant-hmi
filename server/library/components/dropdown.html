@@ -1,6 +1,7 @@
 <component name="Dropdown" size="20x4" sizing="fill">
   <prop name="value" default='""' bindable="true"/>
   <prop name="options" default='["Auto", "Manual", "Off"]'/>
+  <prop name="rows" default="6"/>
   <prop name="fill" default="$panel3"/>
   <prop name="listFill" default="$panel2"/>
   <prop name="pickedFill" default="$accentBg"/>
@@ -22,7 +23,7 @@
         <polyline id="e5" name="Line" fill='"none"' points='"0.4,0.7 1,1.3 1.6,0.7"' stroke="$dim" stroke-linecap='"round"' stroke-width="0.2" transform="`rotate(${open ? 180 : 0} 1 1)`"/>
       </svg>
     </div>
-    <div id="e6" name="list" x="0" y="100%" w="100%" h="hug" style='background: listFill; border-radius: radius; box-shadow: "0 8px 24px #000a"; gap: 0; layout: "down"; margin-top: 0.4; padding: 0.4; visibility: open ? "visible" : "hidden"'>
+    <div id="e6" name="list" x="0" y="100%" w="100%" h="hug" style='background: listFill; border-radius: radius; box-shadow: "0 8px 24px #000a"; gap: 0; layout: "down"; margin-top: 0.4; max-height: rows * 3.6 + 0.8; overflow-y: "auto"; padding: 0.4; visibility: open ? "visible" : "hidden"'>
       <div id="e7" name="option" repeat="options" x="1" y="1" w="fill" h="3.6" style='align: "center left"; background: item === value ? pickedFill : "transparent"; border-radius: $radiusSmall; gap: $space; layout: "right"; padding: 0.8'>
         <on event="tap">
           value = item;
