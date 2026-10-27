@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use rant::types::Timestamp;
 use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, TaskOptions, TaskRequest, VariableOptions};
+use rant_hmi::fields::Keep;
 use rant_hmi::mesh::{Delivery, Mesh, MeshOptions};
 use rant_hmi::project::{Import, Intent, Kind};
 use rant_hmi::status::{self, Client, HmiStatus};
@@ -27,7 +28,12 @@ struct Conveyor {
 }
 
 fn import(alias: &str, entity: &str, kind: Kind, intent: Intent) -> Import {
-    Import { alias: alias.into(), entity: entity.into(), kind, intent, fields: None, rate: None }
+    Import { alias: alias.into(), entity: entity.into(), kind, intent, rate: None }
+}
+
+/// What reading these top level fields of an attached import keeps.
+fn reading(mesh: &Mesh, alias: &str, fields: &[&str]) -> Keep {
+    Keep::typed(mesh.shapes(alias).unwrap(), &fields.iter().map(|f| vec![f.to_string()]).collect::<Vec<_>>())
 }
 
 fn within(what: &str, start: Instant) {
@@ -42,15 +48,23 @@ struct Inbox {
 }
 
 impl Inbox {
-    fn next(&mut self, alias: &str, mut pump: impl FnMut()) -> Value {
+    fn next(&mut self, alias: &str, pump: impl FnMut()) -> Value {
+        self.until(alias, pump, |_| true).value
+    }
+
+    /// The first of `alias`'s deliveries that `fits`, dropping those before it.
+    fn until(&mut self, alias: &str, mut pump: impl FnMut(), fits: impl Fn(&Value) -> bool) -> Delivery {
         let start = Instant::now();
         loop {
             pump();
             while let Ok(d) = self.rx.try_recv() {
                 self.kept.push_back(d);
             }
-            if let Some(at) = self.kept.iter().position(|d| d.alias == alias) {
-                return self.kept.remove(at).unwrap().value;
+            while let Some(at) = self.kept.iter().position(|d| d.alias == alias) {
+                let d = self.kept.remove(at).unwrap();
+                if fits(&d.value) {
+                    return d;
+                }
             }
             within(&format!("a value for {alias}"), start);
         }
@@ -75,12 +89,23 @@ fn import_watch_and_set() {
         within("both entities to attach", start);
     }
     assert!(mesh.entities().iter().any(|e| e.name == "Line1/Conveyor" && e.kind == Kind::Topic));
+    // what is read follows the attach, before any value came
+    assert!(mesh.keep("Conveyor", Keep::All).is_none());
 
     let sent = Conveyor { speed: 0.75, running: true, part: "A7".parse().unwrap() };
     let got = inbox.next("Conveyor", || {
         conveyor.send(&sent).unwrap();
     });
     assert_eq!(got, Value::map([("speed", 0.75.into()), ("running", true.into()), ("part", "A7".into())]));
+    // it decodes only the fields read, and the last value again at once when more are read
+    assert!(mesh.keep("Conveyor", reading(&mesh, "Conveyor", &["speed"])).is_none());
+    let later = Conveyor { speed: 0.8, ..sent.clone() };
+    let narrow = inbox.until("Conveyor", || conveyor.send(&later).unwrap(), |v| v.get("running").is_none());
+    assert_eq!(narrow.value, Value::map([("speed", 0.8.into())]));
+    let again = mesh.keep("Conveyor", reading(&mesh, "Conveyor", &["speed", "part"])).unwrap();
+    assert_eq!(again.value, Value::map([("speed", 0.8.into()), ("part", "A7".into())]));
+    assert!(again.seq >= narrow.seq);
+    assert!(mesh.keep("Conveyor", Keep::All).is_some_and(|d| d.value.get("running").is_some()));
 
     assert_eq!(inbox.next("Speed", || {}), Value::Float(0.5));
     mesh.set("Speed", "", Value::Float(1.25), None).unwrap();
@@ -116,21 +141,27 @@ fn publishes_its_own_status() {
     while !mesh.attach(&own) {
         within("its own status to attach", start);
     }
-    assert_eq!(inbox.next("Status", || {}), status::status_value(&status));
+    // a new import reads nothing until it is told what is read, which gives the value again
+    assert_eq!(inbox.next("Status", || {}), Value::map::<&str>([]));
+    assert_eq!(mesh.keep("Status", Keep::All).unwrap().value, status::status_value(&status));
     let later = HmiStatus { clients: 0, ..status.clone() };
     mesh.publish_status(later.clone());
     assert_eq!(inbox.next("Status", || {}), status::status_value(&later));
     assert!(mesh.set("Status", "", Value::Null, None).unwrap_err().contains("only it sets"));
-    // one that keeps some fields gets only those, of its own value too
-    assert!(mesh.attach(&Import { fields: Some(vec!["clients".into(), "version".into()]), ..own.clone() }));
-    assert_eq!(inbox.next("Status", || {}), Value::map([("version", "1.2.3".into()), ("clients", 0u32.into())]));
+    // one that reads some fields gets only those of its own value too, and more at once
+    assert!(mesh.keep("Status", reading(&mesh, "Status", &["clients"])).is_none());
+    let latest = HmiStatus { clients: 2, ..later.clone() };
+    mesh.publish_status(latest.clone());
+    assert_eq!(inbox.next("Status", || {}), Value::map([("clients", 2u32.into())]));
+    let again = mesh.keep("Status", reading(&mesh, "Status", &["clients", "version"])).unwrap();
+    assert_eq!(again.value, Value::map([("version", "1.2.3".into()), ("clients", 2u32.into())]));
 
     // another node reads both as the mesh carries them
     let other = Node::new("status_reader", local()).unwrap();
     let read = other.remote_variable::<HmiStatus>(status::STATUS, VariableOptions::new()).unwrap();
     let list = other.remote_variable::<Vec<Client>>(status::CLIENTS, VariableOptions::new()).unwrap();
     let start = Instant::now();
-    while !(read.get().unwrap() == Some(later.clone()) && list.get().unwrap() == Some(clients.clone())) {
+    while !(read.get().unwrap() == Some(latest.clone()) && list.get().unwrap() == Some(clients.clone())) {
         within("another node to read the status", start);
     }
 }

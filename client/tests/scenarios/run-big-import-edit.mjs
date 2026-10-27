@@ -1,7 +1,8 @@
-// A big value's import edited while a screen's scene draws it: its fields narrowed so its points
-// lack z, which the scene says in the editor, and widened again, its alias renamed, which the
-// page follows, and the import removed, then made again. After each the scene draws it again and
-// its values come at their pace, none waiting on word of one taken that never comes.
+// A big value's import edited while a screen's scene draws it: its points read without z, so the
+// screen is sent them without z, which the scene says in the editor, and read whole again, its
+// alias renamed, which the page follows, and the import removed, then made again. After each the
+// scene draws it again and its values come at their pace, none waiting on word of one taken that
+// never comes.
 
 import { countBig } from "../links.mjs";
 
@@ -46,17 +47,17 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
     /** Changes import `alias` as the Data tab's inspector does. */
     const change = async (alias, to) => {
       const listed = hmi.next((m) => m.type === "imports");
-      hmi.send({ type: "change_import", alias, import: { ...now(alias), fields: undefined, rate: undefined, ...to } });
+      hmi.send({ type: "change_import", alias, import: { ...now(alias), rate: undefined, ...to } });
       await listed;
     };
     const before = lapses();
     await draws("at first");
 
-    // without z its points are no points, until z comes again
-    await change("ScanE", { fields: ["points.x", "points.y"] });
+    // read without z its points are no points, until z is read again
+    await hmi.setProps(pageId, points, { points: "ScanE.points.map((p) => ({ x: p.x, y: p.y }))" });
     let last = "";
     await eventually(async () => (last = await said()).includes(NOT_POINTS), () => `the scene to say its points lack z, not "${last}"`, 10000);
-    await change("ScanE", { fields: ["points"] });
+    await hmi.setProps(pageId, points, { points: "ScanE.points" });
     await draws("with its points' every field again");
 
     // renamed, the page reads it by its new name

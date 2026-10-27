@@ -23,8 +23,9 @@ use crate::lanes::{Lanes, PIECE};
 use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
 use crate::pages::logic::{Rule, When};
-use crate::pages::{Edit, Pages};
-use crate::project::{Computed, Import, Kind, Per, Project, Record, Target, Token, Variable};
+use crate::pages::{Edit, Element, Pages};
+use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Target, Token, Variable};
+use crate::reads::Reads;
 use crate::rules;
 use crate::problems::Problems;
 use crate::protocol::{Base, ClientMsg, EnumInfo, Level, Reported, Sample, ServerMsg, ValueUpdate, encode, encode_plain};
@@ -512,6 +513,8 @@ enum List {
 struct Slot {
     value: Option<Value>,
     known: bool,
+    /// The count of the mesh's delivery it holds, so an older one that comes later is dropped.
+    seq: u64,
 }
 
 pub struct App {
@@ -574,6 +577,8 @@ pub struct App {
     /// Every screen's problems and those of runs here, and when they last went out.
     problems: Problems,
     problems_at: Instant,
+    /// What the HMI's own code reads, so the mesh decodes those fields.
+    reads: Reads,
 }
 
 impl App {
@@ -621,6 +626,7 @@ impl App {
             edited: None,
             problems: Problems::default(),
             problems_at: Instant::now(),
+            reads: Reads::new(),
         }
     }
 
@@ -654,6 +660,11 @@ impl App {
     fn deliver(&mut self, d: Delivery) {
         let waits = self.waits(&d.alias);
         let slot = self.values.entry(d.alias.clone()).or_default();
+        // a value decoded before the newer one held was decoded again to read more
+        if d.seq <= slot.seq {
+            return;
+        }
+        slot.seq = d.seq;
         let previous = slot.value.replace(d.value);
         // only a rule that waits on it needs the value it had, which for a cloud is costly to copy
         if waits && let Some(value) = slot.value.clone() {
@@ -668,6 +679,93 @@ impl App {
         self.pages.rules.iter().any(|r| matches!(&r.when, When::Changes { name: n } if n == name))
     }
 
+    /// Has the mesh decode only what is read of each import. The last value of one that now
+    /// reads more is decoded again: a newer one goes as any value does, while the one held goes
+    /// only to the engine, as a screen that reads more is sent it by what changed its reads.
+    fn fields_changed(&mut self) {
+        let own = self.own_reads();
+        let keeps: Vec<(String, Keep)> = self.project.imports.iter().filter_map(|i| Some((i.alias.clone(), self.keep_of(i, own.as_ref())?))).collect();
+        let mut held = Vec::new();
+        for (alias, keep) in keeps {
+            let Some(d) = self.mesh.keep(&alias, keep) else { continue };
+            match self.values.get_mut(&alias) {
+                Some(slot) if d.seq <= slot.seq => {
+                    slot.value = Some(d.value);
+                    held.push(self.update(&alias));
+                }
+                _ => self.deliver(d),
+            }
+        }
+        if !held.is_empty() {
+            self.script.send(ToScript::Values(held.into_iter().map(|v| (v.alias, v.value.filter(|_| v.known))).collect()));
+        }
+    }
+
+    /// What an import's value must hold: all of it for one imported to write, which writes back
+    /// what it holds, else what the HMI's own code and every screen read of it. None until it is
+    /// on the mesh, as only its type says what its fields are.
+    fn keep_of(&self, import: &Import, own: Option<&HashMap<String, Vec<Vec<String>>>>) -> Option<Keep> {
+        let shapes = self.mesh.shapes(&import.alias)?;
+        let (Intent::Read, Some(own)) = (import.intent, own) else { return Some(Keep::All) };
+        let mut keep = Keep::typed(shapes, own.get(&import.alias).map_or(&[], Vec::as_slice));
+        for s in self.sessions.values() {
+            if let Some(paths) = read_of(&s.watch, &import.alias) {
+                keep.merge(Keep::typed(shapes, paths));
+            }
+        }
+        Some(keep)
+    }
+
+    /// What the HMI's own code reads of each name, the steps after it of each path: its rules,
+    /// its pages' handlers, the computed values and the records. None when some may read any.
+    fn own_reads(&self) -> Option<HashMap<String, Vec<Vec<String>>>> {
+        // each piece of code, whether it is a handler's body, and the name a rule's `p` changes
+        let mut code: Vec<(&str, bool, Option<&str>)> = Vec::new();
+        for r in &self.pages.rules {
+            let changes = match &r.when {
+                When::Turns { condition, .. } => {
+                    code.push((condition, false, None));
+                    None
+                }
+                When::Changes { name } => Some(name.as_str()),
+                _ => None,
+            };
+            code.push((&r.code, true, changes));
+        }
+        let mut elements: Vec<&Element> = self.pages.list.iter().filter(|p| p.interface.is_none()).flat_map(|p| &p.children).collect();
+        while let Some(e) = elements.pop() {
+            code.extend(e.handlers.iter().map(|h| (h.code.as_str(), true, None)));
+            elements.extend(&e.children);
+        }
+        for c in &self.project.computed {
+            code.push((&c.get, false, None));
+            code.extend(c.set.iter().map(|s| (s.value.as_str(), false, None)));
+        }
+        code.extend(self.project.records.iter().map(|r| (r.source.as_str(), false, None)));
+        let mut out: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+        for (src, body, changes) in code {
+            // code that does not parse never runs, so it reads nothing
+            let Some(found) = self.reads.of(src, body) else { continue };
+            if found.all {
+                return None;
+            }
+            for path in found.paths.iter().chain(&found.value) {
+                let (name, steps) = match (changes, path.as_slice()) {
+                    // a rule's `p.value` and `p.previous` are the value it waits on
+                    (Some(name), [p, rest @ ..]) if p == "p" => match rest {
+                        [] => (name, rest),
+                        [v, rest @ ..] if v == "value" || v == "previous" => (name, rest),
+                        _ => continue,
+                    },
+                    (_, [root, rest @ ..]) => (root.as_str(), rest),
+                    _ => continue,
+                };
+                out.entry(name.to_owned()).or_default().push(steps.to_vec());
+            }
+        }
+        Some(out)
+    }
+
     fn inbound(&mut self, i: Inbound) {
         match i {
             Inbound::Open { session, out, local, remote } => {
@@ -676,6 +774,8 @@ impl App {
                 let key = new_key();
                 self.sessions.insert(session, Session { out, channel: None, held: None, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
                 info!("screen {session} connected");
+                // it reads all of every value until it says what it reads
+                self.fields_changed();
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
             }
@@ -845,8 +945,11 @@ impl App {
                 for n in &changed {
                     s.gates.remove(n);
                 }
-                let shown: Vec<&String> = changed.iter().filter(|n| read_of(&s.watch, n).is_some()).collect();
-                let values = shown.into_iter().filter(|n| self.values.contains_key(*n)).map(|n| self.update(n)).collect();
+                self.fields_changed();
+                // one that changed goes to every screen soon anyway
+                let Some(s) = self.sessions.get(&session) else { return };
+                let shown = changed.iter().filter(|n| read_of(&s.watch, n).is_some() && !self.changed.contains(*n));
+                let values = shown.filter(|n| self.values.contains_key(*n)).map(|n| self.update(n)).collect();
                 self.put_values(Some(session), values);
             }
             ClientMsg::Took { alias, seq, missed } => {
@@ -960,10 +1063,15 @@ impl App {
                 self.refresh_known();
                 self.script.send(ToScript::Imports(self.project.imports.clone()));
                 self.types_changed();
+                self.fields_changed();
             }
             List::Variables => self.script.send(ToScript::Variables(self.project.variables.clone())),
-            List::Records => self.script.send(ToScript::Records(sources(&self.project.records))),
+            List::Records => {
+                self.fields_changed();
+                self.script.send(ToScript::Records(sources(&self.project.records)));
+            }
             List::Computed => {
+                self.fields_changed();
                 self.script.send(ToScript::Computed(self.project.computed.clone()));
                 self.script.send(ToScript::Compute);
             }
@@ -1267,6 +1375,7 @@ impl App {
         for r in rules.iter().filter(|r| matches!(r.when, When::Turns { .. })) {
             self.turned.entry(r.id.clone()).or_insert_with(|| Turned { of: Some((r.when.clone(), r.code.clone())), ..Turned::default() });
         }
+        self.fields_changed();
         self.script.send(ToScript::Judge);
     }
 
@@ -1484,6 +1593,8 @@ impl App {
         if applied.rules {
             self.broadcast(&ServerMsg::Rules { rules: self.pages.rules.clone() });
             self.rules_changed();
+        } else {
+            self.fields_changed();
         }
         self.script.send(ToScript::Pages(self.pages.keys()));
     }
@@ -1606,6 +1717,8 @@ impl App {
         if rules_moved {
             self.broadcast(&ServerMsg::Rules { rules: self.pages.rules.clone() });
             self.rules_changed();
+        } else if pages_moved {
+            self.fields_changed();
         }
     }
 
@@ -1622,6 +1735,7 @@ impl App {
             }
             self.refresh_known();
             self.types_changed();
+            self.fields_changed();
             // a camera's Video child can come or go, which changes where its video comes from
             for alias in self.playing.keys().cloned().collect::<Vec<_>>() {
                 if let Some(import) = self.project.find(&alias).cloned() {
@@ -1824,6 +1938,7 @@ impl App {
     fn end(&mut self, session: u32, why: &str) {
         if let Some(s) = self.sessions.remove(&session) {
             info!("screen {session} {why}");
+            self.fields_changed();
             if s.warned.is_some() {
                 self.mesh.screen_warning(session, None);
             }

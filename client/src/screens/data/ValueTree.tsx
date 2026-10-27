@@ -1,8 +1,7 @@
-import { createEffect, For, Match, Show, Switch } from "solid-js";
+import { For, Match, Show, Switch } from "solid-js";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Value } from "../../protocol/Value";
 import { fields, INTEGERS, SCALARS, typeLabel } from "../../state/format";
-import { comes, keeping } from "../../state/kept";
 import { DraftInput } from "../../ui/DraftInput";
 import { Preview } from "../../ui/Preview";
 
@@ -14,19 +13,11 @@ interface Props {
   known: boolean;
   /** Set when the import may be written: scalar fields become editors. */
   onSet?: Commit;
-  /** Set when the import reads: each field has a box for whether it comes. */
-  keep?: Keeping;
-}
-
-/** The fields an import keeps, and what a box's change has it keep. */
-interface Keeping {
-  fields: string[] | null | undefined;
-  onKeep: (fields: string[] | undefined) => void;
 }
 
 /** A value's fields with their live values, as the explorer's value tree shows them. */
 export function ValueTree(p: Props) {
-  return <Rows {...p} all={p.fields} prefix="" depth={0} />;
+  return <Rows {...p} prefix="" depth={0} />;
 }
 
 function member(v: Value | null, name: string): Value | null {
@@ -34,48 +25,27 @@ function member(v: Value | null, name: string): Value | null {
   return fields(v)?.[name] ?? null;
 }
 
-/** Rows of `fields` under `prefix`, of the type `all`. `each` for the members of a list's
- *  records, which have no one value to show. */
-function Rows(p: Props & { all: FieldInfo[]; prefix: string; depth: number; each?: boolean }) {
+/** Rows of `fields` under `prefix`. */
+function Rows(p: Props & { prefix: string; depth: number }) {
   return (
     <For each={p.fields}>
       {(f) => {
         const path = f.name === "" ? p.prefix : p.prefix ? `${p.prefix}.${f.name}` : f.name;
         const v = () => member(p.value, f.name);
         const branch = f.kind === "struct";
-        // a list of records opens only to choose its fields
-        const opens = branch || (!!p.keep && f.kind === "array" && f.members.length > 0);
-        const name = f.name === "" ? "value" : f.name;
-        const keep = () => (f.name === "" ? undefined : p.keep);
-        const brought = () => {
-          const k = keep();
-          return k ? comes(p.all, k.fields, path) : "all";
-        };
         return (
           <>
             <div class="vrow" classList={{ branch }} style={{ "padding-left": `${p.depth * 14}px` }}>
-              <Show when={keep()} fallback={<span class="vname mono">{name}</span>}>
-                {(k) => (
-                  <label class="vname mono kept" classList={{ left: brought() === "none" }} title="Whether it comes">
-                    <input
-                      type="checkbox"
-                      checked={brought() !== "none"}
-                      ref={(box) => createEffect(() => (box.indeterminate = brought() === "some"))}
-                      onChange={(e) => k().onKeep(keeping(p.all, k().fields, path, e.currentTarget.checked))}
-                    />
-                    {name}
-                  </label>
-                )}
-              </Show>
+              <span class="vname mono">{f.name === "" ? "value" : f.name}</span>
               <span class="tag">{typeLabel(f)}</span>
               <span class="vval">
-                <Show when={!branch && !p.each && brought() !== "none"}>
+                <Show when={!branch}>
                   <Cell field={f} value={v()} known={p.known} path={path} onSet={p.onSet} />
                 </Show>
               </span>
             </div>
-            <Show when={opens}>
-              <Rows {...p} fields={f.members} value={v()} prefix={path} depth={p.depth + 1} each={p.each || !branch} />
+            <Show when={branch}>
+              <Rows {...p} fields={f.members} value={v()} prefix={path} depth={p.depth + 1} />
             </Show>
           </>
         );

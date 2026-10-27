@@ -803,20 +803,6 @@
   color: var(--dim);
 }
 
-.vrow .vname.kept {
-  cursor: pointer;
-}
-
-.vrow .vname.kept input {
-  margin: 0 6px 0 0;
-  vertical-align: -2px;
-  accent-color: var(--accent);
-}
-
-.vrow .vname.left {
-  color: var(--faint);
-}
-
 .vrow .vval {
   min-width: 0;
   display: flex;

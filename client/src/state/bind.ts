@@ -13,11 +13,11 @@ import { MISSING, TOKEN_FIXED, WHOLE } from "../protocol/rules";
 import type { Token } from "../protocol/Token";
 import type { Value } from "../protocol/Value";
 import { held, pads } from "./input";
-import { bare } from "./kept";
 import { mode } from "./mode";
 import { named, say } from "./names";
 import { type From, ranInto } from "./problems";
 import { entity, live, promise, state } from "./store";
+import { bare } from "./types";
 
 /** One unit of every length, in CSS pixels: placement, sizes, diagrams, spacing, radii, borders
  *  and type all count in units, a tenth being one pixel. */

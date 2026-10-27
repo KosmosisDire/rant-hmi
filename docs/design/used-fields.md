@@ -71,7 +71,15 @@ seldom changes would wait for its next change.
   past a field to a name the type lacks, as `name.toUpperCase` or `points.length`, reads that
   field whole, and a list's `length` its items with none of their fields.
 - The backend decodes what screens and its own code read, and decodes the last sample again
-  when that changes.
+  when that grows. Its own code is its rules, its pages' handlers (a component's run on the
+  screen), the computed values and the records. A rule waiting on a change reads `p.value` and
+  `p.previous` as the name it waits on. Code that may read any name has every import whole.
+- An import to write decodes whole, as a write of one field starts from all the others.
+- A screen that has not said what it reads reads all, as a tool speaking the protocol may never
+  say. So a screen that connects has every import decoded whole until its first `watch`.
+- A new import decodes nothing until the backend says what is read, which follows its attach.
+- Each value the mesh delivers counts up, so one decoded before the last was decoded again,
+  and so older, is dropped.
 - The `fields` key goes, and so do the boxes. `rate` stays, as a trade of data against delay
   that code cannot make.
 
@@ -80,4 +88,5 @@ seldom changes would wait for its next change.
 1. `reads.js`: the paths code reads, with tests run through QuickJS.
 2. The screen sends paths, the backend types them and sends each screen only those.
 3. The backend reads its own code, decodes the union, and decodes the last sample again.
-4. `fields` and the boxes go, the Data tab shows which fields come, docs.
+   `fields` and the boxes go here, as what the backend decodes takes their place.
+4. The Data tab shows which fields come, docs.
