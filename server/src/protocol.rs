@@ -326,13 +326,13 @@ pub struct FieldInfo {
     pub kind: FieldKind,
     /// A named type's name, such as Pose.
     pub type_name: Option<String>,
-    /// An array's element kind.
-    pub elem: Option<FieldKind>,
+    /// An array's element, named "", as a list of lists or of structs holds one.
+    pub elem: Option<Box<FieldInfo>>,
     /// A fixed array's length, 0 when the array grows.
     pub count: u16,
     /// An enum's options.
     pub options: Vec<String>,
-    /// A struct's members, or those of each element of a struct array.
+    /// A struct's members.
     pub members: Vec<FieldInfo>,
 }
 
