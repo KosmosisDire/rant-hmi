@@ -45,7 +45,8 @@ function Rows(p: Props & { steps: Path; depth: number; item: boolean }) {
         const steps = f.name === "" ? p.steps : [...p.steps, f.name];
         const v = () => member(p.value, f.name);
         const branch = f.kind === "struct";
-        const items = f.kind === "array" && f.members.length > 0;
+        // a list of records shows its items' fields
+        const item = f.kind === "array" && f.elem?.kind === "struct" ? f.elem : null;
         const comes = () => !p.comes || p.comes.some((k) => touches(k, steps));
         const picked = () => same(p.picked, steps);
         const readers = () => p.readers(steps);
@@ -53,7 +54,7 @@ function Rows(p: Props & { steps: Path; depth: number; item: boolean }) {
           <>
             <div
               class="vrow"
-              classList={{ branch: branch || items, picked: picked() }}
+              classList={{ branch: branch || !!item, picked: picked() }}
               style={{ "padding-left": `${p.depth * 14}px` }}
               onClick={(e) => (e.target as HTMLElement).closest("input, select, button") || p.onPick(picked() ? null : steps)}
             >
@@ -80,8 +81,8 @@ function Rows(p: Props & { steps: Path; depth: number; item: boolean }) {
             <Show when={branch}>
               <Rows {...p} fields={f.members} value={v()} steps={steps} depth={p.depth + 1} />
             </Show>
-            <Show when={items}>
-              <Rows {...p} fields={f.members} value={null} steps={[...steps, ITEM]} depth={p.depth + 1} item />
+            <Show when={item}>
+              {(e) => <Rows {...p} fields={e().members} value={null} steps={[...steps, ITEM]} depth={p.depth + 1} item />}
             </Show>
           </>
         );

@@ -12,7 +12,8 @@ use crate::value::{Records, Value};
 pub const ITEM: &str = "[]";
 
 /// What is read of a value: all of it, or some of its fields, each with what is read of it. A
-/// list's items share one tree, so `points` keeping `x` keeps each point's x.
+/// list's items share one tree, so `points` keeping `x` keeps each point's x, and a list of
+/// lists shares it with its lists' items, keeping as much as any level reads.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Keep {
     All,
@@ -51,17 +52,17 @@ impl Keep {
         }
     }
 
-    /// Reads `steps` of the field `s`, this its tree. A list of records reads its items' fields
-    /// after `[]`, and only how many there are by `length`.
+    /// Reads `steps` of the field `s`, this its tree. A list whose items have fields reads
+    /// them after `[]`, and only how many there are by `length`.
     fn field(&mut self, s: &Shape, steps: &[String]) {
         let Some(step) = steps.first() else {
             *self = Keep::All;
             return;
         };
-        match s.field.kind {
-            FieldType::Struct => self.add(&s.members, steps),
-            FieldType::Array | FieldType::VArray if s.field.elem == FieldType::Struct => match step.as_str() {
-                ITEM => self.add(&s.members, &steps[1..]),
+        match (s.field.kind, s.element()) {
+            (FieldType::Struct, _) => self.add(&s.members, steps),
+            (_, Some(e)) if has_fields(e) => match step.as_str() {
+                ITEM => self.field(e, &steps[1..]),
                 "length" => {}
                 _ => *self = Keep::All,
             },
@@ -98,11 +99,18 @@ impl Keep {
     /// Only the `shapes` this keeps, so a value decodes without the rest.
     pub fn shapes(&self, shapes: &[Shape]) -> Vec<Shape> {
         match self {
-            Keep::Some(fields) if bare(shapes).is_none() => {
-                shapes.iter().filter_map(|s| Some(Shape { members: fields.get(&s.field.name)?.shapes(&s.members), ..s.clone() })).collect()
-            }
+            Keep::Some(fields) if bare(shapes).is_none() => shapes.iter().filter_map(|s| Some(fields.get(&s.field.name)?.kept(s))).collect(),
             _ => shapes.to_vec(),
         }
+    }
+
+    /// The shape `s` with only what this keeps of it, a list's element with the same.
+    fn kept(&self, s: &Shape) -> Shape {
+        let members = match s.element() {
+            Some(e) => vec![self.kept(e)],
+            None => self.shapes(&s.members),
+        };
+        Shape { members, ..s.clone() }
     }
 
     /// The paths that read what this keeps of a value made of `shapes`, each the steps after
@@ -119,21 +127,26 @@ impl Keep {
         for s in members {
             let Some(keep) = fields.get(&s.field.name) else { continue };
             at.push(s.field.name.clone());
-            match keep {
-                // a list kept with none of its items' fields is read by its length
-                Keep::Some(items) if items.is_empty() && matches!(s.field.kind, FieldType::Array | FieldType::VArray) => {
-                    at.push("length".to_owned());
-                    out.push(at.clone());
-                    at.pop();
-                }
-                Keep::Some(_) if matches!(s.field.kind, FieldType::Array | FieldType::VArray) => {
-                    at.push(ITEM.to_owned());
-                    keep.walk(&s.members, at, out);
-                    at.pop();
-                }
-                _ => keep.walk(&s.members, at, out),
-            }
+            keep.walk_one(s, at, out);
             at.pop();
+        }
+    }
+
+    /// Adds the paths under `at` to `out`, this the tree of the field `s`.
+    fn walk_one(&self, s: &Shape, at: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+        match (self, s.element()) {
+            // a list kept with none of its items' fields is read by its length
+            (Keep::Some(items), Some(_)) if items.is_empty() => {
+                at.push("length".to_owned());
+                out.push(at.clone());
+                at.pop();
+            }
+            (Keep::Some(_), Some(e)) => {
+                at.push(ITEM.to_owned());
+                self.walk_one(e, at, out);
+                at.pop();
+            }
+            _ => self.walk(&s.members, at, out),
         }
     }
 
@@ -150,6 +163,14 @@ impl Keep {
             }
             other => other.clone(),
         }
+    }
+}
+
+/// Whether a list's items have fields to leave out: records, or lists of them.
+fn has_fields(e: &Shape) -> bool {
+    match e.element() {
+        Some(inner) => has_fields(inner),
+        None => e.field.kind == FieldType::Struct,
     }
 }
 
@@ -244,6 +265,26 @@ Scan { stamp: f64, name: string<16>, pose: Place, points: Point[], ranges: f32[]
         assert_eq!(Keep::none().shapes(&crate::mesh::codec::shapes(&node.schema("f64").unwrap())).len(), 1);
         keep.merge(Keep::All);
         assert_eq!(keep, Keep::All);
+    }
+
+    #[test]
+    fn lists_of_lists_keep_what_any_level_reads() {
+        let node = rant::Node::new("hmi_fields_nested", rant::NodeOptions::new().domain(152).multicast_interface("127.0.0.1")).unwrap();
+        let schema = node.schema("Leg { speed: f32, pts: Double2[], name: string }
+Route { id: u32, segments: Leg[], grid: Double2[][] }").unwrap();
+        let shapes = shapes(&schema);
+        let written = value!({ "id": 1, "segments": [ { "speed": 0.5, "pts": [ { "x": 1.0, "y": 2.0 } ], "name": "a" }, { "speed": 1.0, "pts": [], "name": "b" } ],
+                              "grid": [ [ { "x": 1.0, "y": 2.0 } ], [] ] });
+        let read = decode(&schema.view(&encode(&schema, &shapes, &written).unwrap()), &shapes);
+        assert_eq!(plain(&read), plain(&written));
+        let typed = |p: &[&str]| Keep::typed(&shapes, &paths(p));
+        let keep = typed(&["segments.[].pts.[].x", "grid.[].[].y", "segments.[].name.length"]);
+        assert_eq!(plain(&keep.cut(&read)), plain(&value!({ "segments": [ { "pts": [ { "x": 1.0 } ], "name": "a" }, { "pts": [], "name": "b" } ], "grid": [ [ { "y": 2.0 } ], [] ] })));
+        let bytes = encode(&schema, &shapes, &read).unwrap();
+        for k in [keep.clone(), typed(&["segments.length"]), typed(&["grid.[].length"]), Keep::none()] {
+            assert_eq!(plain(&decode(&schema.view(&bytes), &k.shapes(&shapes))), plain(&k.cut(&read)), "{k:?}");
+            assert_eq!(Keep::typed(&shapes, &k.paths(&shapes)), k);
+        }
     }
 
     #[test]

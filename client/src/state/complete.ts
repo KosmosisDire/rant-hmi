@@ -385,9 +385,9 @@ function members(path: string[], place: Place): Suggestion[] {
     if (field) fields = undefined;
     for (const step of rest) {
       if (/^\d+$/.test(step)) {
-        if (field?.kind !== "array") return [];
-        fields = field.members.length ? field.members : undefined;
-        field = field.members.length ? undefined : { ...field, kind: field.elem ?? "unknown", count: 0 };
+        const item = field?.kind === "array" ? field.elem : null;
+        if (!item) return [];
+        [field, fields] = item.kind === "struct" ? [undefined, item.members] : [item, undefined];
       } else {
         field = fields?.find((f) => f.name === step);
         if (!field) return [];

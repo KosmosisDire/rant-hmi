@@ -6,7 +6,8 @@ use rant::{Field, FieldType, FieldView, MessageBuilder, Schema};
 use crate::protocol::{EnumInfo, FieldInfo, FieldKind, TypeInfo};
 use crate::value::{Num, Numbers, Records, Value};
 
-/// A schema field with its members, built from Rant's flat depth first table.
+/// A schema field with its members, built from Rant's flat depth first table. An array's one
+/// member is its element, named "", which may be a struct, an array or a scalar.
 #[derive(Clone, Debug)]
 pub struct Shape {
     pub field: Field,
@@ -35,6 +36,13 @@ fn level(schema: &Schema, fields: &[Field], at: &mut usize, depth: u16) -> Vec<S
         out.push(Shape { field, options, members });
     }
     out
+}
+
+impl Shape {
+    /// An array's element, else None.
+    pub fn element(&self) -> Option<&Shape> {
+        matches!(self.field.kind, FieldType::Array | FieldType::VArray).then(|| self.members.first()).flatten()
+    }
 }
 
 /// The one shape of a bare type, such as a plain f64, which has no fields.
@@ -90,21 +98,20 @@ pub fn type_info(schema: &Schema) -> TypeInfo {
 }
 
 fn info(shapes: &[Shape]) -> Vec<FieldInfo> {
-    shapes
-        .iter()
-        .map(|s| {
-            let array = matches!(s.field.kind, FieldType::Array | FieldType::VArray);
-            FieldInfo {
-                name: s.field.name.clone(),
-                kind: kind(s.field.kind),
-                type_name: s.field.type_name.clone(),
-                elem: array.then(|| kind(s.field.elem)),
-                count: if s.field.kind == FieldType::Array { s.field.count } else { 0 },
-                options: s.options.clone(),
-                members: info(&s.members),
-            }
-        })
-        .collect()
+    shapes.iter().map(info_of).collect()
+}
+
+fn info_of(s: &Shape) -> FieldInfo {
+    let element = s.element();
+    FieldInfo {
+        name: s.field.name.clone(),
+        kind: kind(s.field.kind),
+        type_name: s.field.type_name.clone(),
+        elem: element.map(|e| Box::new(info_of(e))),
+        count: if s.field.kind == FieldType::Array { s.field.count } else { 0 },
+        options: s.options.clone(),
+        members: if element.is_some() { Vec::new() } else { info(&s.members) },
+    }
 }
 
 fn kind(t: FieldType) -> FieldKind {
@@ -164,43 +171,45 @@ fn read(view: &FieldView, s: &Shape, path: &str) -> Value {
     }
 }
 
+/// A list: bytes as they are, numbers and records of numbers packed, the rest item by item at
+/// `path[i]`, a list of lists too.
 fn list(view: &FieldView, s: &Shape, path: &str) -> Value {
+    let Some(e) = s.element() else { return Value::Null };
     let count = view.get_array_count(path) as usize;
-    match s.field.elem {
-        FieldType::Struct => columns(view, s, path, count)
-            .unwrap_or_else(|| Value::List((0..count).map(|i| object(view, &s.members, &format!("{path}[{i}]"))).collect())),
-        FieldType::String | FieldType::VString => Value::List((0..count).map(|i| view.get_string_at(path, i as u16).into_owned().into()).collect()),
+    let each = || Value::List((0..count).map(|i| read(view, e, &format!("{path}[{i}]"))).collect());
+    match e.field.kind {
+        FieldType::Struct => columns(view, e, path, count).unwrap_or_else(each),
         // a list of bytes stays bytes, as an image's data is
         FieldType::U8 => Value::Bytes(view.get_array(path).to_vec()),
-        elem => match (num(elem), width(elem)) {
-            (Some(kind), _) => Numbers::new(kind, view.get_array(path)).map_or(Value::Null, Value::Numbers),
-            (None, 0) => Value::Null,
-            (None, w) => Value::List(view.get_array(path).chunks_exact(w).map(|b| element(elem, b)).collect()),
+        kind => match num(kind) {
+            Some(n) => Numbers::new(n, view.get_array(path)).map_or(Value::Null, Value::Numbers),
+            None => each(),
         },
     }
 }
 
-/// A list of records whose fields are all numbers, as columns cut from its packed bytes. None
-/// for any other, which goes record by record.
-fn columns(view: &FieldView, s: &Shape, path: &str, count: usize) -> Option<Value> {
-    let (bytes, size) = (view.get_array(path), s.field.elem_size as usize);
-    // the element is the same for every writer, as nested structs match exactly
-    if size == 0 || bytes.len() != count * size {
+/// A list of records whose fields are all numbers, as columns cut from its packed bytes, `e`
+/// its element. None for any other, which goes record by record.
+fn columns(view: &FieldView, e: &Shape, path: &str, count: usize) -> Option<Value> {
+    let (bytes, size) = (view.get_array(path), e.field.size as usize);
+    // packed only when every element has one size, which every writer shares, as nested
+    // structs match exactly
+    if size == 0 || e.field.min_len != e.field.size || bytes.len() != count * size {
         return None;
     }
-    // members sit from a fixed array's own offset, and from 0 in a variable array's element
-    let base = if s.field.kind == FieldType::Array { s.field.offset } else { 0 };
-    Some(Value::Records(Records::new(count, record(&s.members, bytes, size, base)?)?))
+    Some(Value::Records(Records::new(count, record(&e.members, bytes, size)?)?))
 }
 
-fn record(members: &[Shape], bytes: &[u8], size: usize, base: u32) -> Option<Vec<(String, Value)>> {
+/// Columns of the members of fixed elements `size` bytes each, whose offsets count from each
+/// element's start.
+fn record(members: &[Shape], bytes: &[u8], size: usize) -> Option<Vec<(String, Value)>> {
     let count = bytes.len() / size;
     let column = |m: &Shape| -> Option<Value> {
         if m.field.kind == FieldType::Struct {
-            return Some(Value::Records(Records::new(count, record(&m.members, bytes, size, base)?)?));
+            return Some(Value::Records(Records::new(count, record(&m.members, bytes, size)?)?));
         }
         let kind = num(m.field.kind)?;
-        let from = m.field.offset.checked_sub(base)? as usize;
+        let from = m.field.offset as usize;
         let at = from..from + kind.width();
         if at.end > size {
             return None;
@@ -228,28 +237,6 @@ fn num(t: FieldType) -> Option<Num> {
         F64 => Num::F64,
         _ => return None,
     })
-}
-
-fn width(t: FieldType) -> usize {
-    use FieldType::*;
-    match t {
-        U8 | I8 | Bool => 1,
-        U16 | I16 => 2,
-        U32 | I32 | F32 => 4,
-        U64 | I64 | F64 => 8,
-        _ => 0,
-    }
-}
-
-/// An element of a list that is not kept packed.
-fn element(t: FieldType, b: &[u8]) -> Value {
-    let eight = || -> [u8; 8] { b.try_into().unwrap_or_default() };
-    match t {
-        FieldType::Bool => (b[0] != 0).into(),
-        FieldType::U64 => u64::from_le_bytes(eight()).into(),
-        FieldType::I64 => i64::from_le_bytes(eight()).into(),
-        _ => Value::Null,
-    }
 }
 
 /// A message from a value. Fields the value leaves out keep the schema's defaults.
@@ -324,45 +311,31 @@ fn write(m: &mut MessageBuilder, s: &Shape, path: &str, v: &Value) -> Result<(),
 
 fn write_list(m: &mut MessageBuilder, s: &Shape, path: &str, v: &Value) -> Result<(), String> {
     let refused = |e: rant::Error| e.to_string();
-    let variable = s.field.kind == FieldType::VArray;
+    let Some(e) = s.element() else { return Err(format!("{} cannot be written yet", label(path))) };
     // bytes go as they are, and numbers of the list's own kind, the rest one by one
-    match (s.field.elem, v) {
+    match (e.field.kind, v) {
         (FieldType::U8, Value::Bytes(bytes)) => {
             m.set_array(path, bytes).map_err(refused)?;
             return Ok(());
         }
-        (elem, Value::Numbers(n)) if num(elem) == Some(n.kind()) => {
+        (kind, Value::Numbers(n)) if num(kind) == Some(n.kind()) => {
             m.set_array(path, n.bytes()).map_err(refused)?;
             return Ok(());
         }
         _ => {}
     }
     let items = v.items().ok_or_else(|| wants(path, "a list"))?;
-    match s.field.elem {
-        FieldType::Struct => {
-            if variable {
-                m.set_array_count(path, items.len() as u32).map_err(refused)?;
-            }
-            for (i, item) in items.iter().enumerate() {
-                members(m, &s.members, &format!("{path}[{i}]"), item)?;
-            }
-        }
-        FieldType::String | FieldType::VString => {
-            if variable {
-                m.set_array_count(path, items.len() as u32).map_err(refused)?;
-            }
-            for (i, item) in items.iter().enumerate() {
-                let text = item.as_str().ok_or_else(|| wants(path, "a list of text"))?;
-                m.set_string_at(path, i as u16, text).map_err(refused)?;
-            }
-        }
-        elem => {
-            let mut bytes = Vec::with_capacity(items.len() * width(elem));
-            for item in items.iter() {
-                push(&mut bytes, elem, item).ok_or_else(|| wants(path, "a list of numbers"))?;
-            }
-            m.set_array(path, &bytes).map_err(refused)?;
-        }
+    // numbers go packed in one write, so a long list costs one move of the message
+    let mut bytes = Vec::new();
+    if items.iter().all(|item| push(&mut bytes, e.field.kind, item).is_some()) {
+        m.set_array(path, &bytes).map_err(refused)?;
+        return Ok(());
+    }
+    if s.field.kind == FieldType::VArray {
+        m.set_array_count(path, items.len() as u32).map_err(refused)?;
+    }
+    for (i, item) in items.iter().enumerate() {
+        write(m, e, &format!("{path}[{i}]"), item)?;
     }
     Ok(())
 }
@@ -455,6 +428,27 @@ mod tests {
                     "boxes": [ { "min": { "x": 0.0, "y": 1.0 }, "max": { "x": 2.0, "y": 3.0 } },
                                { "min": { "x": 4.0, "y": 5.0 }, "max": { "x": 6.0, "y": 7.0 } } ] }),
         );
+    }
+
+    #[test]
+    fn nested_lists() {
+        round_trip(
+            "Stretch { speed: f32, pts: Double2[] }
+Course { id: u32, names: string[], grid: f32[][], rows: f32[3][], segments: Stretch[], tags: string<4>[2], modes: enum<u8> { Up, Down }[] }",
+            value!({ "id": 7, "names": ["a", "a longer name", ""], "grid": [[1.0, 2.0], [], [3.0]], "rows": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                    "segments": [ { "speed": 0.5, "pts": [ { "x": 1.0, "y": 2.0 }, { "x": 3.0, "y": 4.0 } ] }, { "speed": 1.5, "pts": [] } ],
+                    "tags": ["ab", "cd"], "modes": ["Down", "Up"] }),
+        );
+        // a screen sees each list's element, a list of lists and a record holding one too
+        let node = node();
+        let schema = node.schema("Stretch { speed: f32, pts: Double2[] }
+Routes { grid: f32[][], segments: Stretch[] }").unwrap();
+        let info = info(&shapes(&schema));
+        let grid = info[0].elem.as_ref().unwrap();
+        assert_eq!((grid.kind, grid.elem.as_ref().map(|e| e.kind)), (FieldKind::Array, Some(FieldKind::F32)));
+        let segment = info[1].elem.as_ref().unwrap();
+        assert_eq!((segment.type_name.as_deref(), segment.members[1].name.as_str()), (Some("Stretch"), "pts"));
+        assert!(info[1].members.is_empty());
     }
 
     #[test]

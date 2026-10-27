@@ -48,10 +48,11 @@ export function short(v: Value | null | undefined): string {
   return `{ ${head.join(", ")}${keys.length > 3 ? ", ..." : ""} }`;
 }
 
-/** The type as a tag says it: f64, string, Pose, f64[], f32[3]. */
+/** The type as a tag says it: f64, string, Pose, f64[], f32[3], f32[][]. */
 export function typeLabel(f: FieldInfo): string {
   if (f.kind === "array") {
-    const elem = f.type_name ?? f.elem ?? "?";
+    if (f.type_name) return f.type_name;
+    const elem = f.elem ? typeLabel(f.elem) : "?";
     return f.count > 0 ? `${elem}[${f.count}]` : `${elem}[]`;
   }
   if (f.kind === "struct" || f.kind === "enum") return f.type_name ?? f.kind;

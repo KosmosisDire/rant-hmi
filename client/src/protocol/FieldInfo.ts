@@ -7,9 +7,9 @@ export type FieldInfo = { name: string, kind: FieldKind,
  */
 type_name: string | null, 
 /**
- * An array's element kind.
+ * An array's element, named "", as a list of lists or of structs holds one.
  */
-elem: FieldKind | null, 
+elem: FieldInfo | null, 
 /**
  * A fixed array's length, 0 when the array grows.
  */
@@ -19,6 +19,6 @@ count: number,
  */
 options: Array<string>, 
 /**
- * A struct's members, or those of each element of a struct array.
+ * A struct's members.
  */
 members: Array<FieldInfo>, };

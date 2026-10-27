@@ -24,7 +24,7 @@ export const typeList = (text: string) => text.split(/\s+/).every((w) => w === "
 
 /** Every type name a type holds at any depth, its own first. */
 export function typesIn(t: TypeInfo): string[] {
-  const inside = (fields: FieldInfo[]): string[] => fields.flatMap((f) => [...(f.type_name ? [f.type_name] : []), ...inside(f.members)]);
+  const inside = (fields: FieldInfo[]): string[] => fields.flatMap((f) => [...(f.type_name ? [f.type_name] : []), ...inside(f.elem ? [f.elem] : f.members)]);
   return [...(t.name ? [t.name] : []), ...inside(t.fields)];
 }
 
@@ -41,7 +41,7 @@ export function wholeType(t: TypeInfo): FieldInfo {
 /** The names a value of this type answers to: its type's name, its kind, number for any
  *  number, and for a list each of its items' names with []. */
 export function typeNames(f: FieldInfo): string[] {
-  if (f.kind === "array") return typeNames({ ...f, kind: f.elem ?? "unknown", count: 0 }).map((n) => `${n}[]`);
+  if (f.kind === "array") return [...(f.type_name ? [f.type_name] : []), ...(f.elem ? typeNames(f.elem).map((n) => `${n}[]`) : [])];
   const own = f.type_name ? [f.type_name] : [];
   if (f.kind === "map" || f.kind === "unknown") return own;
   return [...own, f.kind, ...(NUMBERS.has(f.kind) ? ["number"] : [])];
