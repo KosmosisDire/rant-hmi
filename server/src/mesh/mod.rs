@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 use crate::project::{Import, Intent, Kind};
 use crate::protocol::{EntityInfo, EnumInfo, PeerInfo};
 use crate::script::{CallFailure, Form};
-use crate::status::{self, Client, HmiStatus};
+use crate::status::{self, Client, HmiStatus, ProblemRow};
 use codec::Shape;
 
 pub struct MeshOptions {
@@ -50,6 +50,7 @@ pub struct Mesh {
 struct Own {
     clients: VariableDefinition<Vec<Client>>,
     status: VariableDefinition<HmiStatus>,
+    problems: VariableDefinition<Vec<ProblemRow>>,
     values: HashMap<&'static str, Value>,
 }
 
@@ -113,6 +114,7 @@ impl Mesh {
         let own = Own {
             clients: node.variable_definition(status::CLIENTS, VariableOptions::new().read_only(true))?,
             status: node.variable_definition(status::STATUS, VariableOptions::new().read_only(true))?,
+            problems: node.variable_definition(status::PROBLEMS, VariableOptions::new().read_only(true))?,
             values: HashMap::new(),
         };
         Ok(Mesh { node, deliveries, attached: HashMap::new(), frames, videos: HashMap::new(), own })
@@ -220,6 +222,17 @@ impl Mesh {
         }
     }
 
+    /// Publishes the problems every screen found and runs on the system met, once they changed.
+    pub fn publish_problems(&mut self, list: Vec<ProblemRow>) {
+        let value = status::problems_value(&list);
+        if self.own.values.get(status::PROBLEMS) != Some(&value) {
+            if let Err(e) = self.own.problems.set(&list) {
+                warn!("could not publish {}: {e}", status::PROBLEMS);
+            }
+            self.own_changed(status::PROBLEMS, value);
+        }
+    }
+
     /// Keeps an own entity's new value, and hands it to each import of it.
     fn own_changed(&mut self, entity: &'static str, value: Value) {
         for (alias, a) in &self.attached {
@@ -278,7 +291,7 @@ impl Mesh {
             let _ = tx.send(Delivery { alias: alias.clone(), value });
         };
         let handle = match import.kind {
-            Kind::Variable if [status::CLIENTS, status::STATUS].contains(&import.entity.as_str()) => Handle::Own,
+            Kind::Variable if [status::CLIENTS, status::STATUS, status::PROBLEMS].contains(&import.entity.as_str()) => Handle::Own,
             Kind::Topic => {
                 let qos = Qos::new().schema(typed()?).reliable(entity.reliable);
                 // each publisher keeps to a rate only for a best effort reader

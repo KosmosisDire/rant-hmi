@@ -15,6 +15,7 @@ import type { Value } from "../protocol/Value";
 import type { PeerInfo } from "../protocol/PeerInfo";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
 import type { Record as History } from "../protocol/Record";
+import type { Reported } from "../protocol/Reported";
 import type { Sample } from "../protocol/Sample";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import type { Rule } from "../protocol/Rule";
@@ -83,6 +84,10 @@ export interface State {
   refused: Refusal | null;
   /** What this screen should tell the person, newest last. */
   notices: Notice[];
+  /** This screen's number, as its hello gave it. */
+  session: number | null;
+  /** Every screen's problems, as the backend last sent them, null until it has. */
+  problems: Reported[] | null;
 }
 
 export const [state, setState] = createStore<State>({
@@ -108,6 +113,8 @@ export const [state, setState] = createStore<State>({
   made: null,
   refused: null,
   notices: [],
+  session: null,
+  problems: null,
 });
 
 /** Loads the client the backend serves when this screen runs another, as after an update.
@@ -142,7 +149,7 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
   switch (msg.type) {
     case "hello":
       batches.clear();
-      setState({ project: msg.project, node: msg.node, version: msg.version });
+      setState({ project: msg.project, node: msg.node, version: msg.version, session: msg.session, problems: null });
       catchUp(msg.build);
       break;
     case "project":
@@ -231,6 +238,9 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
       break;
     case "notice":
       notify(msg.text, msg.level);
+      break;
+    case "problems":
+      setState("problems", msg.problems);
       break;
     case "open":
       push(msg.page, msg.replace, msg.ask);

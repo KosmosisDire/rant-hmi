@@ -77,6 +77,9 @@ pub enum ServerMsg {
     Refused { text: String, alias: Option<String> },
     /// Something for the person at this screen: what a handler said, or why it stopped.
     Notice { text: String, level: Level },
+    /// Every screen's problems and those runs on the system met, whole, after a change, to each
+    /// screen that asked for them.
+    Problems { problems: Vec<Reported> },
     /// A handler started from this screen opens a page, in place of the top one when `replace`.
     /// `ask` names the handler's wait for what the page closes with.
     Open {
@@ -99,13 +102,55 @@ pub enum ServerMsg {
     },
 }
 
-#[derive(Serialize, TS, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[ts(export)]
 pub enum Level {
     Info,
     Warn,
     Fault,
+}
+
+/// What went wrong on a screen. A page's fault holds while an element shows it, the others
+/// count each time they come again.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Problem {
+    pub source: Source,
+    pub level: Level,
+    pub text: String,
+    /// The stack of a fault in the HMI's own code.
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// The page or component, and its element, that shows a page's fault.
+    #[serde(default)]
+    pub page: Option<String>,
+    #[serde(default)]
+    pub element: Option<String>,
+    pub count: u32,
+    /// When it came last, in ms since 1970.
+    pub at: f64,
+}
+
+/// A problem as the backend gathers them: the screen it was found on, or None for one a run
+/// on the system met.
+#[derive(Serialize, TS, Clone, Debug, PartialEq)]
+#[ts(export)]
+pub struct Reported {
+    pub screen: Option<u32>,
+    #[serde(flatten)]
+    pub problem: Problem,
+}
+
+/// Where a problem comes from: a page's own expressions and drawing, a handler's run, or the
+/// HMI's code, which is a bug in the HMI.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Source {
+    Page,
+    Run,
+    Hmi,
 }
 
 /// From a screen to the backend.
@@ -133,6 +178,9 @@ pub enum ClientMsg {
         #[ts(optional)]
         problem: Option<String>,
     },
+    /// The screen's problems, whole, after a change. `every` asks for every screen's, as the
+    /// editor shows them.
+    Problems { problems: Vec<Problem>, every: bool },
     /// An address the screen found its connection may be reached on, as its `a=candidate` line
     /// without its `a=`.
     Candidate { candidate: String },

@@ -1,6 +1,7 @@
 // Runs the scenarios in tests/scenarios, or those whose file name holds the argument, each on a
 // fresh page. `--workers n` runs them n at a time, 4 by default, each worker against its own
-// backend, demo line and cage cell. A console error fails one.
+// backend, demo line and cage cell. A console error fails one, as does a fault the HMI finds in
+// its own code.
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -81,6 +82,9 @@ async function worker() {
       await page.locator(".statusbar", { hasText: "System" }).waitFor();
       await run({ page, hmi, d: designer(page), sys, check, eventually });
       if (errors.length) throw new Error(`the console logged errors:\n  ${errors.join("\n  ")}`);
+      // what the console never hears, as a fault an error boundary caught, the HMI still lists
+      const own = (await (await fetch(`${sys.url}/problems`)).json()).filter((p) => p.source === "hmi" && p.level === "fault" && p.at >= started);
+      if (own.length) throw new Error(`the HMI found faults in its own code:\n  ${own.map((p) => p.text).join("\n  ")}`);
       times[file] = Date.now() - started;
       console.log(`ok    ${name} (${times[file]} ms)`);
     } catch (e) {

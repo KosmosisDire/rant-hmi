@@ -16,7 +16,8 @@ import { held, pads } from "./input";
 import { bare } from "./kept";
 import { mode } from "./mode";
 import { named, say } from "./names";
-import { entity, live, notify, promise, state } from "./store";
+import { type From, ranInto } from "./problems";
+import { entity, live, promise, state } from "./store";
 
 /** One unit of every length, in CSS pixels: placement, sizes, diagrams, spacing, radii, borders
  *  and type all count in units, a tenth being one pixel. */
@@ -465,13 +466,13 @@ const handlers = new Map<string, ((scope: object, ...math: unknown[]) => Promise
 /** Runs a handler here on the screen: a component's in its instance's scope, with `emit` and
  *  the inputs, a two way one written back, or a page's that touches only the screen's own.
  *  Any other name is refused, so nothing leaks onto the page. */
-export function runHandler(code: string, scope: Scope, emit: ((name: string, payload?: unknown) => void) | undefined, p: unknown, label: string) {
+export function runHandler(code: string, scope: Scope, emit: ((name: string, payload?: unknown) => void) | undefined, p: unknown, from: From) {
   let fn = handlers.get(code);
   if (fn === undefined) {
     fn = make<(scope: object, ...math: unknown[]) => Promise<void>>(`return (async () => { with (scope) {\n${code}\n} })();`, 1);
     handlers.set(code, fn);
   }
-  if (typeof fn === "string") return notify(`${label}: ${fn}`, "fault");
+  if (typeof fn === "string") return ranInto(from, fn, "fault");
   const own: Record<string, unknown> = emit ? { p, emit } : { p };
   // the run reads back what it wrote, as the backend's runs do, before the binding catches up
   const written = new Map<string, unknown>();
@@ -519,8 +520,8 @@ export function runHandler(code: string, scope: Scope, emit: ((name: string, pay
     },
   );
   fn(names, ...MATH).catch((e: unknown) => {
-    if (e instanceof Unknown) notify(`${label}: stopped, since ${e.alias} is unknown`, "warn");
-    else notify(`${label}: ${(e as Error)?.message ?? String(e)}`, "fault");
+    if (e instanceof Unknown) ranInto(from, `stopped, since ${e.alias} is unknown`, "warn");
+    else ranInto(from, (e as Error)?.message ?? String(e), "fault");
   });
 }
 

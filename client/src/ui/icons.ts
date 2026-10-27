@@ -39,6 +39,7 @@ export { default as Cylinder } from "lucide-solid/icons/cylinder";
 export { default as Database } from "lucide-solid/icons/database";
 export { default as Dot } from "lucide-solid/icons/dot";
 export { default as Download } from "lucide-solid/icons/download";
+export { default as Eraser } from "lucide-solid/icons/eraser";
 export { default as ExternalLink } from "lucide-solid/icons/external-link";
 export { default as Eye } from "lucide-solid/icons/eye";
 export { default as File } from "lucide-solid/icons/file";

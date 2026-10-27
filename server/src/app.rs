@@ -25,7 +25,8 @@ use crate::pages::logic::{Rule, When};
 use crate::pages::{Edit, Pages};
 use crate::project::{Computed, Import, Kind, Per, Project, Record, Target, Token, Variable};
 use crate::rules;
-use crate::protocol::{Base, ClientMsg, EnumInfo, Level, Sample, ServerMsg, ValueUpdate, encode, encode_plain};
+use crate::problems::Problems;
+use crate::protocol::{Base, ClientMsg, EnumInfo, Level, Reported, Sample, ServerMsg, ValueUpdate, encode, encode_plain};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::status::{self, Client, HmiStatus};
 use crate::value::Value;
@@ -49,6 +50,8 @@ const PREVIEW_BYTES: f64 = 250_000.0;
 /// How many edits a screen can undo.
 const UNDO_DEPTH: usize = 200;
 const HEALTH_EVERY: Duration = Duration::from_secs(1);
+/// How often every screen's problems may go out, so a fault that comes each frame is one send.
+const PROBLEMS_EVERY: Duration = Duration::from_millis(250);
 /// How long a screen may take to open its WebRTC link channel before `Hmi/Status` warns that it
 /// has none.
 const WEBRTC_GRACE: Duration = Duration::from_secs(15);
@@ -66,6 +69,8 @@ pub enum Inbound {
     Bulk { session: u32, key: String, out: Outbox, ok: oneshot::Sender<bool> },
     /// A screen's second way, the one with these lanes, closed.
     BulkClosed { session: u32, lanes: Arc<Lanes> },
+    /// Asks for every problem, as `GET /problems` serves them.
+    Problems { answer: oneshot::Sender<Vec<Reported>> },
 }
 
 /// How screens reach the loop, over the network or in this process, each numbered from one
@@ -91,6 +96,15 @@ impl Door {
     /// Hands the loop what a screen did, false once the loop is gone.
     pub fn send(&self, i: Inbound) -> bool {
         self.inbound.send(i).is_ok()
+    }
+
+    /// Every problem there is now, None once the loop is gone.
+    pub async fn problems(&self) -> Option<Vec<Reported>> {
+        let (answer, heard) = oneshot::channel();
+        if !self.send(Inbound::Problems { answer }) {
+            return None;
+        }
+        heard.await.ok()
     }
 }
 
@@ -162,6 +176,8 @@ struct Session {
     webrtc_problem: Option<String>,
     /// The warning on the node's status that it has no WebRTC, as last raised.
     warned: Option<String>,
+    /// Whether it shows every screen's problems, as the editor does.
+    shows_problems: bool,
     /// The imports and computed values it shows, None for all.
     watch: Option<HashSet<String>>,
     /// While it only previews them, when its next big value may go, as its previews keep to
@@ -553,6 +569,9 @@ pub struct App {
     health_at: Instant,
     /// When a project file last changed outside the HMI, until it is read.
     edited: Option<Instant>,
+    /// Every screen's problems and those of runs here, and when they last went out.
+    problems: Problems,
+    problems_at: Instant,
 }
 
 impl App {
@@ -598,6 +617,8 @@ impl App {
             enums: Vec::new(),
             health_at: Instant::now(),
             edited: None,
+            problems: Problems::default(),
+            problems_at: Instant::now(),
         }
     }
 
@@ -651,7 +672,7 @@ impl App {
                 let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
                 let key = new_key();
-                self.sessions.insert(session, Session { out, channel: None, held: None, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
+                self.sessions.insert(session, Session { out, channel: None, held: None, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
                 info!("screen {session} connected");
                 self.welcome(session);
                 self.run_rules(|r| matches!(r.when, When::Connects), Value::map([("screen", session.into())]));
@@ -689,6 +710,9 @@ impl App {
                 s.bulk = None;
                 info!("screen {session} lost its second way");
                 self.again(session);
+            }
+            Inbound::Problems { answer } => {
+                let _ = answer.send(self.problems.all());
             }
         }
     }
@@ -766,6 +790,16 @@ impl App {
                     warn!("screen {session} has no WebRTC: {}", status::webrtc_problem_words(p));
                 }
                 s.webrtc_problem = problem.map(|p| p.chars().take(24).collect());
+            }
+            ClientMsg::Problems { problems, every } => {
+                self.problems.screen(session, problems);
+                let Some(s) = self.sessions.get_mut(&session) else { return };
+                // one that just asked hears them at once, the rest as they change
+                let asked = every && !s.shows_problems;
+                s.shows_problems = every;
+                if asked {
+                    self.send(session, &ServerMsg::Problems { problems: self.problems.all() });
+                }
             }
             ClientMsg::Ping { t, rtt } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
@@ -1366,9 +1400,14 @@ impl App {
 
     /// Tells the screen that started a run, naming what said it. A rule's run has no screen,
     /// so every screen hears it.
-    fn tell(&self, run: u64, level: Level, text: String) {
+    fn tell(&mut self, run: u64, level: Level, text: String) {
         let Some(r) = self.runs.get(&run) else { return };
         let text = if matches!(level, Level::Info) { text } else { format!("{}: {text}", r.label) };
+        if !matches!(level, Level::Info) {
+            // a rule's handler key names no page, only the rule
+            let (page, element) = if r.of.page.is_empty() { (None, None) } else { (Some(r.of.page.clone()), Some(r.of.id.clone())) };
+            self.problems.ran(level, text.clone(), page, element);
+        }
         match r.session {
             Some(session) => self.send(session, &ServerMsg::Notice { text, level }),
             None => self.broadcast(&ServerMsg::Notice { text, level }),
@@ -1613,6 +1652,7 @@ impl App {
         self.sample();
         // each screen's round trip goes out as it is measured, the rest once a second
         self.publish_clients();
+        self.publish_problems();
         if self.health_at.elapsed() >= HEALTH_EVERY {
             self.health_at = Instant::now();
             self.broadcast(&ServerMsg::Health { peers: self.mesh.peers() });
@@ -1702,6 +1742,22 @@ impl App {
         self.mesh.publish_clients(clients);
     }
 
+    /// Sends every problem to the screens that show them and publishes them on the mesh, once
+    /// they changed, at most every PROBLEMS_EVERY.
+    fn publish_problems(&mut self) {
+        if self.problems_at.elapsed() < PROBLEMS_EVERY || !self.problems.take_changed() {
+            return;
+        }
+        self.problems_at = Instant::now();
+        let msg = ServerMsg::Problems { problems: self.problems.all() };
+        for (id, s) in &self.sessions {
+            if s.shows_problems {
+                self.send(*id, &msg);
+            }
+        }
+        self.mesh.publish_problems(self.problems.rows());
+    }
+
     /// Publishes the HMI's own state on the mesh, once that changed.
     fn publish_status(&mut self) {
         let missing = self.project.imports.iter().filter(|i| !self.mesh.live(i)).filter_map(|i| i.entity.as_str().try_into().ok()).collect();
@@ -1761,6 +1817,7 @@ impl App {
             if s.warned.is_some() {
                 self.mesh.screen_warning(session, None);
             }
+            self.problems.gone(session);
             self.leaving.insert(session);
             self.watch(session);
             self.rtc.send(ToRtc::Unlink { session });
@@ -2055,7 +2112,7 @@ mod tests {
 
     fn session(remote: IpAddr) -> Session {
         let out = Outbox::new(Arc::new(Lanes::default()));
-        Session { out, channel: None, held: None, bulk: None, key: new_key(), local: remote, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars: HashMap::new(), plays: HashSet::new(), decodes: HashSet::new() }
+        Session { out, channel: None, held: None, bulk: None, key: new_key(), local: remote, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), undo: Vec::new(), redo: Vec::new(), vars: HashMap::new(), plays: HashSet::new(), decodes: HashSet::new() }
     }
 
     /// The messages waiting in `lanes`, each joined from its pieces.

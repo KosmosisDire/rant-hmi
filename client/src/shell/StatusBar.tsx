@@ -2,6 +2,7 @@ import { For, Show } from "solid-js";
 import { inApp } from "../net/link";
 import { number } from "../state/format";
 import { state } from "../state/store";
+import { ProblemsCount } from "./Problems";
 
 /** How this screen reaches the system, and how fast each node on the mesh answers, or on a
  *  phone how many answer. */
@@ -35,6 +36,7 @@ export function StatusBar() {
         )}
       </For>
       <span class="right">{state.project?.name}</span>
+      <ProblemsCount />
     </footer>
   );
 }

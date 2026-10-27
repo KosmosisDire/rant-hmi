@@ -7,6 +7,47 @@ use crate::value::Value;
 
 pub const CLIENTS: &str = "Hmi/Clients";
 pub const STATUS: &str = "Hmi/Status";
+pub const PROBLEMS: &str = "Hmi/Problems";
+
+/// A problem a screen found, or a run on the system met. A list holds only fixed sizes, so its
+/// words are cut to fit, and the stack of a fault in the HMI's code is left to `GET /problems`.
+#[derive(rant::Message, Clone, Debug, PartialEq)]
+pub struct ProblemRow {
+    /// The screen it was found on, 0 for a run on the system.
+    pub screen: u32,
+    /// `page`, `run` or `hmi`.
+    pub source: rant::String<8>,
+    /// `warn` or `fault`.
+    pub level: rant::String<8>,
+    pub text: rant::String<240>,
+    /// The page or component, and its element, that shows a page's problem, empty for none.
+    pub page: rant::String<64>,
+    pub element: rant::String<32>,
+    /// How many times it came.
+    pub count: u32,
+    /// When it came last.
+    pub at: Timestamp,
+}
+
+/// The problems as a value, as the mesh decodes them.
+pub fn problems_value(list: &[ProblemRow]) -> Value {
+    Value::List(
+        list.iter()
+            .map(|p| {
+                Value::map([
+                    ("screen", Value::Int(p.screen.into())),
+                    ("source", (*p.source).into()),
+                    ("level", (*p.level).into()),
+                    ("text", (*p.text).into()),
+                    ("page", (*p.page).into()),
+                    ("element", (*p.element).into()),
+                    ("count", Value::Int(p.count.into())),
+                    ("at", Value::Int(p.at.us.into())),
+                ])
+            })
+            .collect(),
+    )
+}
 
 /// One screen connected to the HMI.
 #[derive(rant::Message, Clone, Debug, PartialEq)]

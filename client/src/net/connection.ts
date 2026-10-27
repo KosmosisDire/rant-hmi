@@ -12,9 +12,13 @@
 // and the values go, on the link channel once it carries them.
 
 import { Decoder, Encoder } from "cbor-x";
-import { type Accessor, createEffect, createRoot, createSignal, type Setter, untrack } from "solid-js";
+import { type Accessor, createEffect, createRoot, createSignal, on, type Setter, untrack } from "solid-js";
+import { unwrap } from "solid-js/store";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
+import { faultOf } from "../state/caught";
+import { operator } from "../state/mode";
+import { problems, report } from "../state/problems";
 import { cameBack, notify, onReading, receive, setState, state, type WebrtcProblem } from "../state/store";
 import { countRead, previewing, watched, wholeNames } from "../state/watch";
 import type { FromData, Second, ToData } from "./data.worker";
@@ -26,6 +30,8 @@ import { BIG, joiner, own } from "./pieces";
 
 /** 20 times a second, so the round trip shown is a fresh one. */
 const ROUND_TRIP_EVERY_MS = 50;
+/** How often this screen's problems may go, so a fault that comes each frame is one send. */
+const PROBLEMS_EVERY_MS = 250;
 const RETRY_MAX_MS = 2000;
 /** How long the WebRTC connection may take to answer and connect before it counts as failed. */
 const RTC_WAIT_MS = 10_000;
@@ -54,6 +60,8 @@ let tries = 0;
 /** The data worker, made once, and the second way it should have, how often it failed, and when
  *  it is tried again. */
 const data = new Worker(new URL("./data.worker.ts", import.meta.url), { type: "module" });
+// the worker tells its own faults, so one heard here is the worker failing to run at all
+data.onerror = (e) => report(faultOf([`the data worker failed: ${e.message || "its script did not load"}`]));
 let second: Second | null = null;
 let secondTries = 0;
 /** The link's session, from its hello, null while it has none. */
@@ -126,6 +134,9 @@ let asked = "";
 let toldWatch: string | undefined;
 /** What the data worker was last told is read whole and shown. */
 let toldData: string | undefined;
+/** This screen's problems as the backend was last told them, and the telling that waits. */
+let toldProblems: string | undefined;
+let problemsDue: number | undefined;
 /** WebRTC did not open, or broke, and has not opened again since. */
 const [stuck, setStuck] = createSignal(false);
 
@@ -195,6 +206,8 @@ function heard(bytes: Uint8Array, lane: number) {
       askFrames();
       toldWatch = undefined;
       tellWatch();
+      toldProblems = undefined;
+      tellProblems();
       secondTries = 0;
       session = msg.session;
       if (state.webrtcProblem) problem(state.webrtcProblem, true);
@@ -219,6 +232,7 @@ function tell(m: ToData, transfer: Transferable[] = []) {
 data.onmessage = (e: MessageEvent<FromData>) => {
   const d = e.data;
   if ("drew" in d) return drew(d.drew);
+  if ("problem" in d) return report(d.problem);
   // read for a session before the link came again, whose batches count apart
   if (("msg" in d || "took" in d) && d.session !== session) return;
   if (!("msg" in d) && "took" in d) return void send(d.missed ? { type: "took", alias: d.took, seq: d.seq, missed: true } : { type: "took", alias: d.took, seq: d.seq });
@@ -263,6 +277,22 @@ function tellWatch() {
   toldWatch = key;
   send({ type: "watch", names, previews });
 }
+
+/** Tells the backend this screen's problems once they changed, at most every PROBLEMS_EVERY_MS,
+ *  and whether it shows every screen's, as the editor does. */
+function tellProblems() {
+  if (state.link !== "open" || problemsDue !== undefined) return;
+  problemsDue = window.setTimeout(() => {
+    problemsDue = undefined;
+    if (state.link !== "open") return;
+    const msg: ClientMsg = { type: "problems", problems: unwrap(problems), every: !operator };
+    const key = JSON.stringify(msg);
+    if (key === toldProblems) return;
+    toldProblems = key;
+    send(msg);
+  }, PROBLEMS_EVERY_MS);
+}
+createRoot(() => createEffect(on(() => JSON.stringify(problems), tellProblems)));
 
 /** Tells the data worker the names read whole and those shown, once they changed. */
 function tellData() {
