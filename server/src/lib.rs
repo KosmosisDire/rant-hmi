@@ -19,6 +19,8 @@ pub mod problems;
 pub mod project;
 pub mod protocol;
 #[cfg(test)]
+mod reads;
+#[cfg(test)]
 mod reference;
 pub mod rtc;
 pub mod rules;

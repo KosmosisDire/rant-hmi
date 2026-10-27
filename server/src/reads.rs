@@ -1,0 +1,172 @@
+//! What code reads of the names it does not bind, found by the client's `lang/reads.js` on
+//! acorn, so the backend decodes only the fields something reads.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use rquickjs::{Context, Function, Persistent, Runtime};
+use serde::Deserialize;
+
+use crate::script::{ACORN, ARITH, MATH, module};
+
+const READS: (&str, &str) = ("reads.js", include_str!("../../client/src/lang/reads.js"));
+
+/// What code reads: each path a name and the fields after it, `[]` for each item of a list,
+/// read with all it holds. `value` is the path an expression's value is, when it is one.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct Found {
+    pub paths: Vec<Vec<String>>,
+    pub value: Option<Vec<String>>,
+    /// It may read any name, by one worked out as it runs.
+    pub all: bool,
+}
+
+/// reads.js in a context of its own, each text read once.
+pub struct Reads {
+    // dropped in this order, the function before its context and runtime
+    reads: Persistent<Function<'static>>,
+    ctx: Context,
+    _rt: Runtime,
+    done: RefCell<HashMap<(String, bool), Option<Found>>>,
+}
+
+impl Reads {
+    pub fn new() -> Reads {
+        let rt = Runtime::new().expect("QuickJS starts");
+        let ctx = Context::full(&rt).expect("QuickJS makes a context");
+        let reads = ctx
+            .with(|ctx| {
+                module(&ctx, ACORN)?;
+                module(&ctx, MATH)?;
+                module(&ctx, ARITH)?;
+                let reads: Function = module(&ctx, READS)?.get("reads")?;
+                Ok::<_, rquickjs::Error>(Persistent::save(&ctx, reads))
+            })
+            .expect("reads.js loads");
+        Reads { reads, ctx, _rt: rt, done: RefCell::default() }
+    }
+
+    /// What `src` reads, an expression, or with `body` a handler's code. None when it does not
+    /// parse, so it never runs.
+    pub fn of(&self, src: &str, body: bool) -> Option<Found> {
+        let key = (src.to_owned(), body);
+        if let Some(found) = self.done.borrow().get(&key) {
+            return found.clone();
+        }
+        let found = self.ctx.with(|ctx| {
+            let reads = self.reads.clone().restore(&ctx).ok()?;
+            let found: rquickjs::Value = reads.call((src, body)).ok()?;
+            let text = ctx.json_stringify(found).ok()??.to_string().ok()?;
+            serde_json::from_str::<Option<Found>>(&text).ok()?
+        });
+        let mut done = self.done.borrow_mut();
+        // each edit is a new text, so old ones are let go now and then
+        if done.len() > 4096 {
+            done.clear();
+        }
+        done.insert(key, found.clone());
+        found
+    }
+}
+
+impl Default for Reads {
+    fn default() -> Reads {
+        Reads::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The paths `src` reads, each written with dots, sorted, and the path its value is.
+    fn read(reads: &Reads, src: &str, body: bool) -> (Vec<String>, Option<String>) {
+        let found = reads.of(src, body).unwrap_or_else(|| panic!("{src} parses"));
+        assert!(!found.all, "{src} reads no name it works out");
+        let mut paths: Vec<String> = found.paths.iter().map(|p| p.join(".")).collect();
+        paths.sort();
+        (paths, found.value.map(|v| v.join(".")))
+    }
+
+    fn reads_of(reads: &Reads, src: &str, body: bool, expect: &[&str]) {
+        let (paths, value) = read(reads, src, body);
+        assert_eq!(paths, expect, "{src}");
+        assert_eq!(value, None, "{src} is no path");
+    }
+
+    #[test]
+    fn an_expression_reads_the_fields_it_names() {
+        let r = Reads::new();
+        reads_of(&r, "\"Last part \" + Conveyor.part", false, &["Conveyor.part"]);
+        reads_of(&r, "`0 0 ${LabelCam.width} ${LabelCam.height}`", false, &["LabelCam.height", "LabelCam.width"]);
+        reads_of(&r, "Robot?.pose?.x * 2", false, &["Robot.pose.x"]);
+        reads_of(&r, "Robot[\"speed\"] + 1", false, &["Robot.speed"]);
+        // an index is each item of a list
+        reads_of(&r, "Joints.position[index] < 0 ? \"a\" : \"b\"", false, &["Joints.position.[]", "index"]);
+        reads_of(&r, "degrees(Joints.position[0]).toFixed(0)", false, &["Joints.position.[]", "degrees"]);
+        reads_of(&r, "Labels.boxes.length - 1", false, &["Labels.boxes.length"]);
+        // a method of a field reads it whole, which the type tells from a field
+        reads_of(&r, "Conveyor.name.toUpperCase()", false, &["Conveyor.name.toUpperCase"]);
+        reads_of(&r, "vec(Pose.position.x, Pose.position.y).length()", false, &["Pose.position.x", "Pose.position.y", "vec"]);
+    }
+
+    #[test]
+    fn a_value_handed_on_is_read_whole() {
+        let r = Reads::new();
+        reads_of(&r, "fmt(Pose)", false, &["Pose", "fmt"]);
+        reads_of(&r, "{ position: Arm.position }", false, &["Arm.position"]);
+        reads_of(&r, "Robot[key] * 2", false, &["Robot.[]", "key"]);
+        reads_of(&r, "Cloud.points.map(scale)", false, &["Cloud.points.[]", "Cloud.points.length", "scale"]);
+        reads_of(&r, "ok ? Lidar.a : Lidar.b", false, &["Lidar.a", "Lidar.b", "ok"]);
+    }
+
+    #[test]
+    fn an_expression_that_is_a_path_gives_it_for_its_reader() {
+        let r = Reads::new();
+        assert_eq!(read(&r, "Lidar", false), (vec![], Some("Lidar".into())));
+        assert_eq!(read(&r, "Scan.points", false), (vec![], Some("Scan.points".into())));
+        // a list's own items, filtered, are still its items
+        assert_eq!(read(&r, "Scan.points.filter((p) => p.z > 0)", false), (vec!["Scan.points.[].z".into(), "Scan.points.length".into()], Some("Scan.points".into())));
+        assert_eq!(read(&r, "Labels.boxes.find((b) => b.id == 3)", false), (vec!["Labels.boxes.[].id".into(), "Labels.boxes.length".into()], Some("Labels.boxes.[]".into())));
+    }
+
+    #[test]
+    fn items_reach_the_functions_of_a_list() {
+        let r = Reads::new();
+        reads_of(&r, "Cloud.points.reduce((sum, p) => sum + p.z, 0)", false, &["Cloud.points.[].z", "Cloud.points.length"]);
+        reads_of(&r, "Jobs.list.toSorted((a, b) => a.due - b.due)[0].name + \"!\"", false, &["Jobs.list.[].due", "Jobs.list.[].name", "Jobs.list.length"]);
+        // a parameter named as an import is the item, not the import
+        reads_of(&r, "Lidar.points.map((Lidar) => Lidar.x)", false, &["Lidar.points.[].x", "Lidar.points.length"]);
+        reads_of(&r, "Lidar.points.map(({ x, y }) => x + y)", false, &["Lidar.points.[].x", "Lidar.points.[].y", "Lidar.points.length"]);
+        reads_of(&r, "Lidar.points.map((p) => p)", false, &["Lidar.points.[]", "Lidar.points.length"]);
+    }
+
+    #[test]
+    fn code_follows_its_own_names() {
+        let r = Reads::new();
+        let src = "const p = Pose.position;\nlet n = 0;\nfor (const q of Cloud.points) n += q.x;\nnotify(p.x + p.y + n);";
+        reads_of(&r, src, true, &["Cloud.points.[].x", "Cloud.points.length", "Pose.position.x", "Pose.position.y", "notify"]);
+        // a name declared after the function that reads it
+        reads_of(&r, "function draw() { return p.x; }\nconst p = Pose.position;\ndraw();", true, &["Pose.position.x"]);
+        reads_of(&r, "const { x, y } = Pose.position;\nlog(x + y);", true, &["Pose.position.x", "Pose.position.y", "log"]);
+        reads_of(&r, "const { x, ...rest } = Pose.position;\nlog(x);", true, &["Pose.position", "Pose.position.x", "log"]);
+        // a name given another value reads all of that value
+        reads_of(&r, "let p = A.pose;\np = B.q;\nlog(p.x);", true, &["A.pose.x", "B.q", "log"]);
+        reads_of(&r, "for (const k in Settings) log(k);", true, &["Settings", "log"]);
+        reads_of(&r, "Speed += 1;", true, &["Speed"]);
+        reads_of(&r, "Speed = Target.value;", true, &["Target.value"]);
+        // a var at the top runs on the scope's own names, so it is no other name for anything
+        reads_of(&r, "var s = Settings;\nlog(s.mode);", true, &["Settings", "log", "s.mode"]);
+        reads_of(&r, "const f = (Pose) => Pose.x;\nlog(f(Arm));", true, &["Arm", "log"]);
+    }
+
+    #[test]
+    fn code_that_may_read_any_name_says_so() {
+        let r = Reads::new();
+        for src in ["eval(\"Speed\")", "globalThis.Speed", "new Function(\"return Speed\")()", "this.Speed"] {
+            assert!(r.of(src, true).is_some_and(|f| f.all), "{src}");
+        }
+        assert!(r.of("function f() { return this.x; }", true).is_some_and(|f| !f.all));
+        assert_eq!(r.of("Speed +", false), None);
+    }
+}
