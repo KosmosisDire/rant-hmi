@@ -240,6 +240,13 @@ impl Lanes {
         l.lanes.get(&lane).map_or(0, |q| q.len() - usize::from(l.at.contains_key(&lane)))
     }
 
+    /// Whether a big value of an import waits on its own lane, not begun, which a newer one put
+    /// there would replace.
+    pub fn holds(&self, alias: &str) -> bool {
+        let lane = self.inner.lock().expect("lanes").own.get(alias).copied();
+        lane.is_some_and(|lane| self.waiting(lane) > 0)
+    }
+
     /// No more messages: the writer ends once it has sent what waits.
     pub fn close(&self) {
         self.inner.lock().expect("lanes").closed = true;

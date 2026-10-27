@@ -207,11 +207,12 @@ struct Session {
     decodes: HashSet<String>,
 }
 
-/// One import's big values to one screen: the one on its way and since when, the newest
-/// waiting for it, and the one the screen took last, which the next goes as the change from.
+/// One import's big values to one screen: those on their way, each since when, the newest
+/// waiting for them, and the one the screen took last, which the next goes as the change from.
 #[derive(Default)]
 struct Gate {
-    out: Option<(Instant, Rc<Big>)>,
+    /// Oldest first, IN_FLIGHT at most.
+    out: VecDeque<(Instant, Rc<Big>)>,
     parked: Option<Rc<Big>>,
     held: Option<Base>,
     /// When its last went, so the imports a screen previews take turns.
@@ -224,6 +225,10 @@ struct Gate {
 
 /// How many lapsed values a gate keeps.
 const LAPSED_KEPT: usize = 3;
+/// How many big values of an import may be on their way to a screen: a second goes while the
+/// screen reads and shows the first, so the way never waits for its word, and no more, so a
+/// screen that falls behind is never sent what is old by the time it reads it.
+const IN_FLIGHT: usize = 2;
 
 /// What became of a big value on its way to a screen.
 enum Fate {
@@ -283,19 +288,32 @@ impl Session {
         self.channel.as_ref().unwrap_or(&self.out)
     }
 
-    /// Sends an import's big value, or keeps it as the newest while the last is on its way or,
-    /// on a screen that previews, until its previews' bytes allow.
+    /// Whether a big value of `alias` may go now: fewer than IN_FLIGHT on their way, the last
+    /// of them begun on its lane, as a newer one would replace one still waiting there, and on
+    /// a screen that previews, its previews' bytes allowing.
+    fn big_may_go(&self, alias: &str) -> bool {
+        if self.previews.is_some_and(|at| at > Instant::now()) {
+            return false;
+        }
+        let out = self.gates.get(alias).map_or(0, |g| g.out.len());
+        out < IN_FLIGHT && (out == 0 || !self.big_way().holds(alias))
+    }
+
+    /// Sends an import's big value, or keeps it as the newest until one may go.
     fn big(&mut self, value: Rc<Big>) {
         let alias = value.update.alias.clone();
-        let now = Instant::now();
-        let wait = self.previews.is_some_and(|at| at > now);
+        let may = self.big_may_go(&alias);
         let gate = self.gates.entry(alias.clone()).or_default();
-        if gate.out.is_some() || wait {
+        if !may {
             gate.parked = Some(value);
             return;
         }
-        let bytes = value.written(gate.held.as_ref());
-        gate.out = Some((now, value));
+        // the change from what the screen holds as it reads this: the last on its way, else
+        // the one it took
+        let last = gate.out.back().and_then(|(_, b)| b.update.value.clone().map(|value| Base { seq: b.seq, value }));
+        let bytes = value.written(last.as_ref().or(gate.held.as_ref()));
+        let now = Instant::now();
+        gate.out.push_back((now, value));
         gate.went = Some(now);
         if let Some(at) = &mut self.previews {
             *at = now + Duration::from_secs_f64(bytes.len() as f64 / PREVIEW_BYTES);
@@ -314,22 +332,22 @@ impl Session {
         self.way().values(seq, together(values, seq, self.here()));
     }
 
-    /// Sends what waits with its way free, once a previewing screen's bytes allow, the import
-    /// that went longest ago first.
+    /// Sends what waits and may go, the import that went longest ago first.
     fn send_parked(&mut self) {
-        while self.previews.is_none_or(|at| at <= Instant::now()) {
-            let next = self.gates.iter().filter(|(_, g)| g.out.is_none() && g.parked.is_some()).min_by_key(|(_, g)| g.went).map(|(a, _)| a.clone());
+        loop {
+            let next = self.gates.iter().filter(|(a, g)| g.parked.is_some() && self.big_may_go(a)).min_by_key(|(_, g)| g.went).map(|(a, _)| a.clone());
             let Some(value) = next.and_then(|a| self.gates.get_mut(&a)?.parked.take()) else { return };
             self.big(value);
         }
     }
 
     /// What became of the big value of `alias` from batch `seq` on its way, so the newest
-    /// waiting goes, or after a miss the one missed again, whole. Word of one sent before is
-    /// late, as after the screen let the import go, and is passed over.
+    /// waiting goes, or after a miss the one missed again, whole. One sent before it that the
+    /// screen never named was passed over for it. Word of one no longer on its way is late, as
+    /// after the screen let the import go, and is passed over.
     fn took(&mut self, alias: &str, seq: u64, fate: Fate) {
         let Some(gate) = self.gates.get_mut(alias) else { return };
-        if gate.out.as_ref().is_none_or(|(_, sent)| sent.seq != seq) {
+        let Some(i) = gate.out.iter().position(|(_, sent)| sent.seq == seq) else {
             if matches!(fate, Fate::Took)
                 && let Some(i) = gate.lapsed.iter().position(|(_, b)| b.seq == seq)
             {
@@ -341,8 +359,8 @@ impl Session {
                 }
             }
             return;
-        }
-        let Some((went, sent)) = gate.out.take() else { return };
+        };
+        let (went, sent) = gate.out.drain(..=i).last().expect("found on its way");
         match fate {
             Fate::Took => self.trips.big(went.elapsed()),
             Fate::Lapsed => {
@@ -358,9 +376,11 @@ impl Session {
             Fate::Took => sent.update.value.clone().map(|value| Base { seq: sent.seq, value }),
             Fate::Missed | Fate::Lapsed => None,
         };
-        if let Some(next) = gate.parked.take().or(matches!(fate, Fate::Missed).then_some(sent)) {
-            self.big(next);
+        // one missed goes again whole, unless a newer one waits in its place
+        if matches!(fate, Fate::Missed) && gate.parked.is_none() {
+            gate.parked = Some(sent);
         }
+        self.send_parked();
     }
 
     /// A new round trip, and how far it was from the last.
@@ -1849,7 +1869,7 @@ impl App {
             self.publish_status();
         }
         for (id, s) in &mut self.sessions {
-            let late: Vec<(String, u64)> = s.gates.iter().filter_map(|(a, g)| g.out.as_ref().filter(|(t, _)| t.elapsed() > TAKE_MOST).map(|(_, b)| (a.clone(), b.seq))).collect();
+            let late: Vec<(String, u64)> = s.gates.iter().filter_map(|(a, g)| g.out.front().filter(|(t, _)| t.elapsed() > TAKE_MOST).map(|(_, b)| (a.clone(), b.seq))).collect();
             for (alias, seq) in late {
                 warn!("screen {id} never said it took {alias}, so the next goes");
                 s.took(&alias, seq, Fate::Lapsed);
@@ -2359,31 +2379,41 @@ mod tests {
     }
 
     #[test]
-    fn a_big_value_goes_once_the_screen_took_the_last_and_only_the_newest_waits() {
+    fn two_big_values_go_once_the_first_began_and_only_the_newest_waits() {
         let mut s = session(IpAddr::from([10, 0, 0, 2]));
         s.big(big("Cam", 1));
+        // a second waits while the first has not begun, as it would replace it on the lane
         s.big(big("Cam", 2));
         s.big(big("Cam", 3));
         // another import's goes beside it
         s.big(big("Map", 9));
         assert_eq!(waiting(&s.out), vec![1, 9]);
-        s.took("Cam", 1, Fate::Took);
+        // the first on its way, the newest goes beside it, and the next waits for one of them
+        s.send_parked();
         assert_eq!(waiting(&s.out), vec![3]);
-        s.took("Cam", 3, Fate::Took);
-        assert!(waiting(&s.out).is_empty());
         s.big(big("Cam", 4));
-        assert_eq!(waiting(&s.out), vec![4]);
-        // one never said taken may be lost, so the next goes without it
         s.big(big("Cam", 5));
-        s.took("Cam", 4, Fate::Lapsed);
-        assert_eq!(waiting(&s.out), vec![5]);
-        assert!(s.gates["Cam"].held.is_none());
-        // word of it taken after all is late, and lets nothing more go
-        s.big(big("Cam", 6));
-        s.took("Cam", 4, Fate::Took);
         assert!(waiting(&s.out).is_empty());
+        s.took("Cam", 1, Fate::Took);
+        assert_eq!(waiting(&s.out), vec![5]);
+        // word of a later one passes over an earlier one still on its way
         s.took("Cam", 5, Fate::Took);
+        assert!(s.gates["Cam"].out.is_empty());
+        s.big(big("Cam", 6));
         assert_eq!(waiting(&s.out), vec![6]);
+        // one never said taken may be lost, so the next goes without it
+        s.big(big("Cam", 7));
+        assert_eq!(waiting(&s.out), vec![7]);
+        s.took("Cam", 6, Fate::Lapsed);
+        assert!(s.gates["Cam"].held.is_none());
+        // word of it taken after all is late, and changes nothing on its way
+        s.big(big("Cam", 8));
+        assert_eq!(waiting(&s.out), vec![8]);
+        s.took("Cam", 6, Fate::Took);
+        assert_eq!(s.gates["Cam"].out.len(), 2);
+        s.took("Cam", 7, Fate::Took);
+        s.took("Cam", 8, Fate::Took);
+        assert!(s.gates["Cam"].out.is_empty() && waiting(&s.out).is_empty());
     }
 
     #[test]
@@ -2479,6 +2509,11 @@ mod tests {
             Written::Small(_) => panic!("a cloud too small to go alone"),
         };
         assert_eq!(here.written(s.gates["Scan"].held.as_ref()), here.whole);
+        // a second on its way goes as the change from the first, which the screen holds by then
+        s.took("Scan", 3, Fate::Took);
+        let four = each(4, cloud(300..4300));
+        s.big(four.clone());
+        assert_eq!(base_of(&sent(&s.out).remove(0)), Some(3));
     }
 
     #[test]

@@ -97,8 +97,8 @@ screen shows a changed file once it loads the page again.
   best effort, the newest at each turn. A value waits for its turn, up to the time between two
   its source sends: up to 100 ms for a source sending 10 a second.
 - Small values, replies and what a screen sends go on its socket. A value over 16 KiB goes on a
-  second socket, read off the page's main thread, one at a time per import: the next waits
-  until the screen has shown the last, and only the newest waits.
+  second socket, read off the page's main thread, two at a time per import at most: a third
+  waits until the screen has shown the first, and only the newest waits.
 - A page on https takes those big values over WebTransport instead, on the HMI's port over
   UDP, and over the second socket where WebTransport does not open within 5 s.
 - A screen on the HMI's own host gets big lists of numbers as they are, any other compressed.
