@@ -16,9 +16,14 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const status = hmi.state.values.HmiStatus.value;
   check(typeof status.version === "string" && status.started_at > 1_700_000_000_000_000, `the status reads ${JSON.stringify(status)}`);
   await eventually(() => (hmi.state.values.Screens?.value ?? []).some((c) => c.address === "127.0.0.1" && c.ping_ms > 0), "this screen listed with its ping");
-  const pings = new Set();
-  for (const start = Date.now(); Date.now() - start < 1000; await page.waitForTimeout(10)) pings.add(JSON.stringify((hmi.state.values.Screens?.value ?? []).map((c) => c.ping_ms)));
-  check(pings.size >= 8, `the round trips changed ${pings.size} times in a second`);
+  // changes counted, not values: a page's clock steps by 0.1 ms, so its round trips here repeat
+  let [last, changes] = ["", 0];
+  for (const start = Date.now(); Date.now() - start < 1000; await page.waitForTimeout(10)) {
+    const now = JSON.stringify((hmi.state.values.Screens?.value ?? []).map((c) => c.ping_ms));
+    if (now !== last) changes++;
+    last = now;
+  }
+  check(changes >= 8, `the round trips changed ${changes} times in a second`);
   // a timestamp is microseconds a page's math can work with, as how long ago it started
   const pageId = await hmi.addPage("Status age");
   const age = await hmi.addElement(pageId, "span", { name: "age", x: "4", y: "4", w: "40", h: "4", text: 'Math.round((Date.now() * 1000 - HmiStatus.started_at) / 1e6) + " s"' });
