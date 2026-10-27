@@ -4,7 +4,7 @@
 import { children, type Node, tree } from "../lang/arith.js";
 import type { Element } from "../protocol/Element";
 import type { EventInfo } from "../protocol/EventInfo";
-import { EVENTS, SENT } from "../protocol/events";
+import { ANY, EVENTS, SENT } from "../protocol/events";
 import type { Handler } from "../protocol/Handler";
 import type { Page } from "../protocol/Page";
 import type { Sender } from "../protocol/Sender";
@@ -23,9 +23,14 @@ export const settingsOf = (event: string): readonly SettingInfo[] => eventInfo(e
  *  and false as written. */
 const filterText = (v: unknown) => (typeof v === "string" ? v : Number.isInteger(v) || typeof v === "boolean" ? String(v) : undefined);
 
-/** Whether `h` takes `event` bringing `p`: each of its filters equals the field of p it names. */
+/** Whether `h` takes `event` bringing `p`: each filter its event takes, as written or left out
+ *  for its default, takes the field of p it names. */
 export const takes = (h: Handler, event: string, p: unknown) =>
-  h.event === event && Object.entries(h.filter).every(([k, v]) => filterText((p as Record<string, unknown> | null)?.[k]) === v);
+  h.event === event &&
+  settingsOf(event).every((s) => {
+    const wanted = h.filter[s.name] ?? s.default;
+    return s.kind !== "filter" || wanted === ANY || filterText((p as Record<string, unknown> | null)?.[s.name]) === wanted;
+  });
 
 /** The end of what `event` begins, or `event` itself when it ends something, as a press's release. */
 export const endOf = (event: string) => eventInfo(event)?.ends_with ?? (EVENTS.some((x) => x.ends_with === event) ? event : undefined);

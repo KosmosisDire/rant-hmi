@@ -144,9 +144,14 @@ impl Handler {
         Handler { event: event.to_owned(), code: String::new(), attrs: BTreeMap::new(), filter }
     }
 
-    /// Whether it runs for `event` bringing `p`: each of its filters equals the field of p it names.
+    /// Whether it runs for `event` bringing `p`: each filter its event takes, as written or left
+    /// out for its default, takes the field of p it names.
     pub fn takes(&self, event: &str, p: &Value) -> bool {
-        self.event == event && self.filter.iter().all(|(k, v)| p.get(k).and_then(events::filter_text).as_ref() == Some(v))
+        self.event == event
+            && events::settings(event)
+                .iter()
+                .filter(|s| s.kind == events::SettingKind::Filter)
+                .all(|s| s.takes(self.filter.get(s.name).map(String::as_str), p.get(s.name).and_then(events::filter_text).as_deref()))
     }
 
     /// The setting `key` as written.
@@ -157,8 +162,10 @@ impl Handler {
     /// Sets the setting `key`, a filter as it is and an expression trimmed, or removes it where
     /// that leaves it empty.
     pub fn set(&mut self, key: &str, value: Option<&str>) {
+        // a filter set to its default is left out, as it takes that anyway
+        let default = events::setting(&self.event, key).map(|s| s.default);
         let (map, value) = match events::filters(&self.event, key) {
-            true => (&mut self.filter, value),
+            true => (&mut self.filter, value.filter(|v| Some(*v) != default)),
             false => (&mut self.attrs, value.map(str::trim)),
         };
         match value.filter(|v| !v.is_empty()) {

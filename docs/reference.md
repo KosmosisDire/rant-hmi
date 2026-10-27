@@ -270,7 +270,8 @@ the event brings as `p`.
 
 - A setting is an attribute of the `<on>`, shown here with its default. Each is an
   expression.
-- A filter takes only the events that bring its value, as `key="a"`, and any when left out.
+- A filter takes only the events that bring its value, as `key="a"`, and any when left out
+  unless its default says otherwise. `any` takes any.
   An element holds one handler per event and filter.
 - Each screen runs a handler as its own, so screens never hold up each other's. What a run
   writes goes out each time it waits and as it ends, so a run going on meanwhile builds on it,
@@ -286,20 +287,20 @@ the event brings as `p`.
 
 | Event | When | Settings | `p` holds |
 | --- | --- | --- | --- |
-| `tap` | Pressed and let go on it. | `while="true"` | `x` across it, 0 to 1<br>`y` down it, 0 to 1<br>`angle` degrees around its centre, 0 up<br>`on` the part pressed, by name<br>`inside` true while over it |
-| `press` | Pressed down. Ended by `release`. | `while="true"` | as `tap` |
-| `release` | Let go, anywhere. | none | as `tap` |
-| `hold` | Held down a while. | `after="500"`<br>`while="true"` | as `tap` |
-| `repeat` | Again and again while pressed. | `every="100"`<br>`while="true"` | as `tap` |
-| `drag` | Moved while pressed. A stream, summing `dx` and `dy`. | `while="true"` | `x` across it, 0 to 1<br>`y` down it, 0 to 1<br>`angle` degrees around its centre, 0 up<br>`on` the part pressed, by name<br>`inside` true while over it<br>`dx` how far it moved across since the last, as its own x counts<br>`dy` how far it moved down since the last, as its own y counts |
+| `tap` | Pressed and let go on it. | `button` filter, `left` when left out<br>`while="true"` | `x` across it, 0 to 1<br>`y` down it, 0 to 1<br>`angle` degrees around its centre, 0 up<br>`on` the part pressed, by name<br>`inside` true while over it<br>`button` "left", "middle" or "right", a finger and a pen's tip left<br>`shift` true while Shift is down<br>`ctrl` true while Ctrl is down<br>`alt` true while Alt is down<br>`w` its width, as its own x counts<br>`h` its height, as its own y counts |
+| `press` | Pressed down. Ended by `release`. | `button` filter, `left` when left out<br>`while="true"` | as `tap` |
+| `release` | Let go, anywhere. | `button` filter, `left` when left out | as `tap` |
+| `hold` | Held down a while. | `button` filter, `left` when left out<br>`after="500"`<br>`while="true"` | as `tap` |
+| `repeat` | Again and again while pressed. | `button` filter, `left` when left out<br>`every="100"`<br>`while="true"` | as `tap` |
+| `drag` | Moved while pressed. A stream, summing `dx` and `dy`. | `button` filter, `left` when left out<br>`while="true"` | `x` across it, 0 to 1<br>`y` down it, 0 to 1<br>`angle` degrees around its centre, 0 up<br>`on` the part pressed, by name<br>`inside` true while over it<br>`button` "left", "middle" or "right", a finger and a pen's tip left<br>`shift` true while Shift is down<br>`ctrl` true while Ctrl is down<br>`alt` true while Alt is down<br>`w` its width, as its own x counts<br>`h` its height, as its own y counts<br>`dx` how far it moved across since the last, as its own x counts<br>`dy` how far it moved down since the last, as its own y counts |
 | `outside` | A press anywhere else. | `while="true"` | as `tap` |
 
 ### Wheel and pinch
 
 | Event | When | Settings | `p` holds |
 | --- | --- | --- | --- |
-| `scroll` | Scrolled over it. A stream, summing `dx` and `dy`. | `while="true"` | `x` across it, 0 to 1<br>`y` down it, 0 to 1<br>`on` the part under it, by name<br>`dx` how far across, as its own x counts<br>`dy` how far down, as its own y counts, below 0 as a wheel turns down |
-| `zoom` | Pinched or zoomed over it. A stream, multiplying `factor`. | `while="true"` | `x` across it, 0 to 1<br>`y` down it, 0 to 1<br>`on` the part under it, by name<br>`factor` how much bigger, below 1 smaller |
+| `scroll` | Scrolled over it. A stream, summing `dx` and `dy`. | `from` filter<br>`while="true"` | `x` across it, 0 to 1<br>`y` down it, 0 to 1<br>`on` the part under it, by name<br>`from` "wheel" or "fingers"<br>`w` its width, as its own x counts<br>`h` its height, as its own y counts<br>`dx` how far across, as its own x counts<br>`dy` how far down, as its own y counts, below 0 as a wheel turns down |
+| `zoom` | Pinched or zoomed over it. A stream, multiplying `factor`. | `from` filter<br>`while="true"` | `x` across it, 0 to 1<br>`y` down it, 0 to 1<br>`on` the part under it, by name<br>`from` "wheel" or "fingers"<br>`w` its width, as its own x counts<br>`h` its height, as its own y counts<br>`factor` how much bigger, below 1 smaller |
 
 ### Entry
 
@@ -325,7 +326,23 @@ the event brings as `p`.
 
 A component's own events, which its code sends with `emit`, take `while="true"`.
 
-### The `button` filter
+### The `button` filter of a pointer
+
+| Value | Is |
+| --- | --- |
+| `left` | the main button, a finger or a pen |
+| `middle` | the wheel pressed |
+| `right` | the second button |
+| `any` | every button |
+
+### The `from` filter
+
+| Value | Is |
+| --- | --- |
+| `wheel` | a mouse wheel or a trackpad |
+| `fingers` | fingers on a touch screen |
+
+### The `button` filter of a gamepad
 
 | Value | Is |
 | --- | --- |

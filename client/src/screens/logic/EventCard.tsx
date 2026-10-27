@@ -3,6 +3,7 @@
 import { createEffect, createSignal, For, type JSX, Match, on, Show, Switch } from "solid-js";
 import type { Place } from "../../lang/api.js";
 import { type Key, keyOf } from "../../page/keys";
+import { ANY } from "../../protocol/events";
 import type { SettingInfo } from "../../protocol/SettingInfo";
 import { complete, signature, type Suggestion } from "../../state/complete";
 import { type Brought, eventInfo, keyWords, type Offered, pOf, settingsOf } from "../../state/events";
@@ -100,7 +101,7 @@ function FilterField(p: { setting: SettingInfo; from?: Offered["from"]; value: s
         onKeyUp={(e) => modifier?.key === e.key && take(modifier)}
       />
       <Show when={p.value && !waiting()}>
-        <button class="icon-btn" title={`Take any ${p.setting.label.toLowerCase()}`} onClick={() => p.onSet("")}>
+        <button class="icon-btn" title={p.setting.default === ANY ? `Take any ${p.setting.label.toLowerCase()}` : `Back to ${p.setting.default}`} onClick={() => p.onSet("")}>
           <X size={12} />
         </button>
       </Show>

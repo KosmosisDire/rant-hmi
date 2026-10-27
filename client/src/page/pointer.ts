@@ -9,13 +9,16 @@ export interface Spot {
 }
 
 /** What a pointer event brings: where across the element, 0 to 1, the angle around its
- *  centre (0 up, clockwise), the named part the press began on, and whether it is inside. */
+ *  centre (0 up, clockwise), the named part the press began on, whether it is inside, and the
+ *  element's width and height as its own x and y count. */
 export interface Pointer {
   x: number;
   y: number;
   angle: number;
   on: string | null;
   inside: boolean;
+  w: number;
+  h: number;
 }
 
 /** The named part an event happened on, the innermost. */
@@ -26,8 +29,21 @@ export function pointer(el: globalThis.Element, e: Spot, on: string | null): Poi
   // a diagram's matrix is single precision, so its noise is rounded away
   const clamp = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 1e5) / 1e5;
   const angle = (Math.atan2(at.x - at.w / 2, at.h / 2 - at.y) * 180) / Math.PI;
-  return { x: clamp(at.w > 0 ? at.x / at.w : 0), y: clamp(at.h > 0 ? at.y / at.h : 0), angle, on, inside: at.x >= 0 && at.y >= 0 && at.x <= at.w && at.y <= at.h };
+  // a frame measures itself in px, a shape in its diagram's units
+  const units = el instanceof SVGGraphicsElement ? 1 : UNIT;
+  const size = (v: number) => Math.round((v / units) * 1e5) / 1e5;
+  const inside = at.x >= 0 && at.y >= 0 && at.x <= at.w && at.y <= at.h;
+  return { x: clamp(at.w > 0 ? at.x / at.w : 0), y: clamp(at.h > 0 ? at.y / at.h : 0), angle, on, inside, w: size(at.w), h: size(at.h) };
 }
+
+/** A pointer's buttons by number, as its events bring them, a finger and a pen's tip left. */
+const BUTTONS = ["left", "middle", "right"];
+
+/** The button an event pressed or let go, by name, or undefined for one beyond these. */
+export const buttonOf = (e: MouseEvent): string | undefined => BUTTONS[e.button];
+
+/** The keys held as a pointer's event came. */
+export const keysHeld = (e: MouseEvent) => ({ shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey });
 
 /** Where a pointer falls in an element as drawn, turned and scaled with all around it: from
  *  its own top left in its own units, with its own width and height. */
