@@ -32,10 +32,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.el(start).click();
   await d.addEvent("tap");
-  await eventually(async () => (await right.locator(".event-meta").textContent())?.trim() === "p = { x, y, angle, on, inside }", "the tap card to say what p brings");
+  await eventually(async () => (await right.locator(".event-meta").textContent())?.trim() === "p = { x, y, angle, on, inside, button, shift, ctrl, alt, w, h }", "the tap card to say what p brings");
   await d.code("tap").click();
   await page.keyboard.type("p.");
-  await eventually(async () => (await names()).join() === "x,y,angle,on,inside", "the fields of p");
+  await eventually(async () => (await names()).join() === "x,y,angle,on,inside,button,shift,ctrl,alt,w,h", "the fields of p");
   const box = await whole("the inspector");
   const code = await d.code("tap").boundingBox();
   check(box.y < code.y + code.height, "the list opens under the whole box, not the line typed");

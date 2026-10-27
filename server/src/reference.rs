@@ -5,7 +5,7 @@ use std::fmt::Write;
 
 use serde_json::Value as Json;
 
-use crate::events::{EVENTS, EventInfo, Gather, SENT, SettingInfo, SettingKind};
+use crate::events::{ANY, EVENTS, EventInfo, Gather, SENT, SettingInfo, SettingKind};
 use crate::pages::format::{ATTRS, own_attrs};
 use crate::pages::WORDS;
 
@@ -33,12 +33,15 @@ fn events() -> String {
     }
     writeln!(out, "A component's own events, which its code sends with `emit`, take {}.", settings(SENT)).unwrap();
     let mut shown = Vec::new();
-    for s in EVENTS.iter().flat_map(|e| e.settings).filter(|s| !s.options.is_empty()) {
-        if shown.contains(&s.name) {
+    for (e, s) in EVENTS.iter().flat_map(|e| e.settings.iter().map(move |s| (e, s))).filter(|(_, s)| !s.options.is_empty()) {
+        if shown.contains(&(s.name, s.options)) {
             continue;
         }
-        shown.push(s.name);
-        writeln!(out, "\n### The `{}` filter\n\n| Value | Is |\n| --- | --- |", s.name).unwrap();
+        shown.push((s.name, s.options));
+        // a name two senders give values of their own is told apart by its sender
+        let shared = EVENTS.iter().flat_map(|e| e.settings).any(|o| o.name == s.name && o.options != s.options);
+        let of = if shared { format!(" of a {}", e.from.label().to_lowercase()) } else { String::new() };
+        writeln!(out, "\n### The `{}` filter{of}\n\n| Value | Is |\n| --- | --- |", s.name).unwrap();
         for (value, words) in s.options {
             writeln!(out, "| `{value}` | {words} |").unwrap();
         }
@@ -71,7 +74,8 @@ fn settings(of: &[SettingInfo]) -> String {
         .iter()
         .map(|s| match s.kind {
             SettingKind::Expression => format!("`{}=\"{}\"`", s.name, s.default),
-            SettingKind::Filter => format!("`{}` filter", s.name),
+            SettingKind::Filter if s.default == ANY => format!("`{}` filter", s.name),
+            SettingKind::Filter => format!("`{}` filter, `{}` when left out", s.name, s.default),
         })
         .collect();
     each.join("<br>")

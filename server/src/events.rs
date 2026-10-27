@@ -52,6 +52,9 @@ pub enum SettingKind {
     Filter,
 }
 
+/// What a filter written as this takes: every value its field may bring.
+pub const ANY: &str = "any";
+
 /// A setting a handler takes as an attribute of its `<on>`.
 #[derive(Serialize, TS, Debug)]
 #[ts(export)]
@@ -65,6 +68,14 @@ pub struct SettingInfo {
     /// The values a filter may take, each with a few words, or none for any.
     #[ts(type = "readonly [string, string][]")]
     pub options: &'static [(&'static str, &'static str)],
+}
+
+impl SettingInfo {
+    /// Whether this filter, as `written` or left out for its default, takes the field `value`.
+    pub fn takes(&self, written: Option<&str>, value: Option<&str>) -> bool {
+        let wanted = written.unwrap_or(self.default);
+        wanted == ANY || value == Some(wanted)
+    }
 }
 
 /// An event an element may handle.
@@ -90,22 +101,35 @@ pub struct EventInfo {
     pub ends_with: Option<&'static str>,
 }
 
-/// What a pointer's event brings: where it is on the element.
+/// What a pointer's event brings: where it is on the element, the button and keys held, and
+/// the element's size.
 const AT: &[(&str, &str)] = &[
     ("x", "across it, 0 to 1"),
     ("y", "down it, 0 to 1"),
     ("angle", "degrees around its centre, 0 up"),
     ("on", "the part pressed, by name"),
     ("inside", "true while over it"),
+    ("button", "\"left\", \"middle\" or \"right\", a finger and a pen's tip left"),
+    ("shift", "true while Shift is down"),
+    ("ctrl", "true while Ctrl is down"),
+    ("alt", "true while Alt is down"),
+    ("w", "its width, as its own x counts"),
+    ("h", "its height, as its own y counts"),
 ];
 
-/// What a drag brings: where it is, and how far it moved since the last.
+/// What a drag brings: as any pointer's event, and how far it moved since the last.
 const MOVED: &[(&str, &str)] = &[
     ("x", "across it, 0 to 1"),
     ("y", "down it, 0 to 1"),
     ("angle", "degrees around its centre, 0 up"),
     ("on", "the part pressed, by name"),
     ("inside", "true while over it"),
+    ("button", "\"left\", \"middle\" or \"right\", a finger and a pen's tip left"),
+    ("shift", "true while Shift is down"),
+    ("ctrl", "true while Ctrl is down"),
+    ("alt", "true while Alt is down"),
+    ("w", "its width, as its own x counts"),
+    ("h", "its height, as its own y counts"),
     ("dx", "how far it moved across since the last, as its own x counts"),
     ("dy", "how far it moved down since the last, as its own y counts"),
 ];
@@ -116,6 +140,9 @@ const SCROLLED: &[(&str, &str)] = &[
     ("x", "across it, 0 to 1"),
     ("y", "down it, 0 to 1"),
     ("on", "the part under it, by name"),
+    ("from", "\"wheel\" or \"fingers\""),
+    ("w", "its width, as its own x counts"),
+    ("h", "its height, as its own y counts"),
     ("dx", "how far across, as its own x counts"),
     ("dy", "how far down, as its own y counts, below 0 as a wheel turns down"),
 ];
@@ -125,6 +152,9 @@ const ZOOMED: &[(&str, &str)] = &[
     ("x", "across it, 0 to 1"),
     ("y", "down it, 0 to 1"),
     ("on", "the part under it, by name"),
+    ("from", "\"wheel\" or \"fingers\""),
+    ("w", "its width, as its own x counts"),
+    ("h", "its height, as its own y counts"),
     ("factor", "how much bigger, below 1 smaller"),
 ];
 
@@ -159,7 +189,7 @@ const fn expression(name: &'static str, label: &'static str, default: &'static s
 }
 
 const fn filter(name: &'static str, label: &'static str, options: &'static [(&'static str, &'static str)]) -> SettingInfo {
-    SettingInfo { name, label, default: "any", kind: SettingKind::Filter, options }
+    SettingInfo { name, label, default: ANY, kind: SettingKind::Filter, options }
 }
 
 const AFTER: SettingInfo = expression("after", "After ms", "500");
@@ -194,6 +224,14 @@ const BUTTON: SettingInfo = filter(
         ("home", "Guide, PS"),
     ],
 );
+/// A pointer's button, the left when left out, as a finger and a pen's tip press.
+const MOUSE: SettingInfo = SettingInfo {
+    default: "left",
+    ..filter("button", "Button", &[("left", "the main button, a finger or a pen"), ("middle", "the wheel pressed"), ("right", "the second button"), (ANY, "every button")])
+};
+/// What a scroll or a zoom comes from: a wheel, as a trackpad's glide and pinch come, or fingers
+/// on a touch screen.
+const FROM: SettingInfo = filter("from", "From", &[("wheel", "a mouse wheel or a trackpad"), ("fingers", "fingers on a touch screen")]);
 /// A pad by its place among those the screen has.
 const PAD: SettingInfo = filter("pad", "Pad", &[("0", "the first"), ("1", "the second"), ("2", "the third"), ("3", "the fourth")]);
 /// How far a stick or trigger moves before it counts, 0 to 1, past which it counts from 0.
@@ -208,7 +246,7 @@ const fn pointer(name: &'static str, words: &'static str, once: bool, settings: 
 
 /// A stream from a wheel, a trackpad or two fingers.
 const fn wheel(name: &'static str, words: &'static str, brings: &'static [(&'static str, &'static str)], gathers: &'static [(&'static str, Gather)]) -> EventInfo {
-    EventInfo { name, from: Sender::Wheel, words, once: false, settings: &[WHILE], brings, gathers, ends_with: None }
+    EventInfo { name, from: Sender::Wheel, words, once: false, settings: &[FROM, WHILE], brings, gathers, ends_with: None }
 }
 
 const fn keyboard(name: &'static str, words: &'static str, settings: &'static [SettingInfo]) -> EventInfo {
@@ -221,13 +259,13 @@ const fn gamepad(name: &'static str, words: &'static str, settings: &'static [Se
 
 /// Every event, in the order an element lists its handlers. A component's own come after.
 pub const EVENTS: &[EventInfo] = &[
-    pointer("tap", "pressed and let go on it", true, &[WHILE]),
-    EventInfo { ends_with: Some("release"), ..pointer("press", "pressed down", true, &[WHILE]) },
+    pointer("tap", "pressed and let go on it", true, &[MOUSE, WHILE]),
+    EventInfo { ends_with: Some("release"), ..pointer("press", "pressed down", true, &[MOUSE, WHILE]) },
     // an end is heard whenever what it ends was, so it takes no while
-    pointer("release", "let go, anywhere", true, &[]),
-    pointer("hold", "held down a while", true, &[AFTER, WHILE]),
-    pointer("repeat", "again and again while pressed", true, &[EVERY, WHILE]),
-    EventInfo { brings: MOVED, gathers: MOVES, ..pointer("drag", "moved while pressed", false, &[WHILE]) },
+    pointer("release", "let go, anywhere", true, &[MOUSE]),
+    pointer("hold", "held down a while", true, &[MOUSE, AFTER, WHILE]),
+    pointer("repeat", "again and again while pressed", true, &[MOUSE, EVERY, WHILE]),
+    EventInfo { brings: MOVED, gathers: MOVES, ..pointer("drag", "moved while pressed", false, &[MOUSE, WHILE]) },
     pointer("outside", "a press anywhere else", true, &[WHILE]),
     wheel("scroll", "scrolled over it", SCROLLED, MOVES),
     wheel("zoom", "pinched or zoomed over it", ZOOMED, &[("factor", Gather::Product)]),
@@ -328,6 +366,7 @@ mod tests {
     fn the_client_reads_the_same_events() {
         let mut ts = String::from("// Written by the backend's tests from server/src/events.rs, where they change.\n\n");
         ts += "import type { EventInfo } from \"./EventInfo\";\nimport type { Sender } from \"./Sender\";\nimport type { SettingInfo } from \"./SettingInfo\";\n\n";
+        ts += &format!("export const ANY = {ANY:?};\n\n");
         ts += &format!("export const EVENTS: readonly EventInfo[] = {};\n\n", serde_json::to_string_pretty(EVENTS).unwrap());
         ts += &format!("export const SENT: readonly SettingInfo[] = {};\n\n", serde_json::to_string_pretty(SENT).unwrap());
         let senders: serde_json::Map<String, serde_json::Value> = EVENTS.iter().map(|e| (serde_json::to_value(e.from).unwrap().as_str().unwrap().to_owned(), e.from.label().into())).collect();
@@ -341,7 +380,8 @@ mod tests {
     #[test]
     fn a_component_s_events_follow_these_in_order_and_take_a_while() {
         assert!(rank("tap") < rank("change") && rank("change") < rank("a") && rank("a") < rank("b"));
-        assert!(settings("pressed")[0].name == "while" && settings("hold")[0].name == "after" && settings("release").is_empty());
+        assert!(settings("pressed")[0].name == "while" && setting("hold", "after").is_some());
+        assert!(settings("release").iter().all(|s| s.kind == SettingKind::Filter));
     }
 
     #[test]

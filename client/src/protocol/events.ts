@@ -4,6 +4,8 @@ import type { EventInfo } from "./EventInfo";
 import type { Sender } from "./Sender";
 import type { SettingInfo } from "./SettingInfo";
 
+export const ANY = "any";
+
 export const EVENTS: readonly EventInfo[] = [
   {
     "name": "tap",
@@ -11,6 +13,30 @@ export const EVENTS: readonly EventInfo[] = [
     "words": "pressed and let go on it",
     "once": true,
     "settings": [
+      {
+        "name": "button",
+        "label": "Button",
+        "default": "left",
+        "kind": "filter",
+        "options": [
+          [
+            "left",
+            "the main button, a finger or a pen"
+          ],
+          [
+            "middle",
+            "the wheel pressed"
+          ],
+          [
+            "right",
+            "the second button"
+          ],
+          [
+            "any",
+            "every button"
+          ]
+        ]
+      },
       {
         "name": "while",
         "label": "While",
@@ -39,6 +65,30 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "inside",
         "true while over it"
+      ],
+      [
+        "button",
+        "\"left\", \"middle\" or \"right\", a finger and a pen's tip left"
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ],
+      [
+        "w",
+        "its width, as its own x counts"
+      ],
+      [
+        "h",
+        "its height, as its own y counts"
       ]
     ],
     "gathers": [],
@@ -51,6 +101,30 @@ export const EVENTS: readonly EventInfo[] = [
     "once": true,
     "settings": [
       {
+        "name": "button",
+        "label": "Button",
+        "default": "left",
+        "kind": "filter",
+        "options": [
+          [
+            "left",
+            "the main button, a finger or a pen"
+          ],
+          [
+            "middle",
+            "the wheel pressed"
+          ],
+          [
+            "right",
+            "the second button"
+          ],
+          [
+            "any",
+            "every button"
+          ]
+        ]
+      },
+      {
         "name": "while",
         "label": "While",
         "default": "true",
@@ -78,6 +152,30 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "inside",
         "true while over it"
+      ],
+      [
+        "button",
+        "\"left\", \"middle\" or \"right\", a finger and a pen's tip left"
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ],
+      [
+        "w",
+        "its width, as its own x counts"
+      ],
+      [
+        "h",
+        "its height, as its own y counts"
       ]
     ],
     "gathers": [],
@@ -88,7 +186,32 @@ export const EVENTS: readonly EventInfo[] = [
     "from": "pointer",
     "words": "let go, anywhere",
     "once": true,
-    "settings": [],
+    "settings": [
+      {
+        "name": "button",
+        "label": "Button",
+        "default": "left",
+        "kind": "filter",
+        "options": [
+          [
+            "left",
+            "the main button, a finger or a pen"
+          ],
+          [
+            "middle",
+            "the wheel pressed"
+          ],
+          [
+            "right",
+            "the second button"
+          ],
+          [
+            "any",
+            "every button"
+          ]
+        ]
+      }
+    ],
     "brings": [
       [
         "x",
@@ -109,6 +232,30 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "inside",
         "true while over it"
+      ],
+      [
+        "button",
+        "\"left\", \"middle\" or \"right\", a finger and a pen's tip left"
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ],
+      [
+        "w",
+        "its width, as its own x counts"
+      ],
+      [
+        "h",
+        "its height, as its own y counts"
       ]
     ],
     "gathers": [],
@@ -120,6 +267,30 @@ export const EVENTS: readonly EventInfo[] = [
     "words": "held down a while",
     "once": true,
     "settings": [
+      {
+        "name": "button",
+        "label": "Button",
+        "default": "left",
+        "kind": "filter",
+        "options": [
+          [
+            "left",
+            "the main button, a finger or a pen"
+          ],
+          [
+            "middle",
+            "the wheel pressed"
+          ],
+          [
+            "right",
+            "the second button"
+          ],
+          [
+            "any",
+            "every button"
+          ]
+        ]
+      },
       {
         "name": "after",
         "label": "After ms",
@@ -155,6 +326,30 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "inside",
         "true while over it"
+      ],
+      [
+        "button",
+        "\"left\", \"middle\" or \"right\", a finger and a pen's tip left"
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ],
+      [
+        "w",
+        "its width, as its own x counts"
+      ],
+      [
+        "h",
+        "its height, as its own y counts"
       ]
     ],
     "gathers": [],
@@ -166,6 +361,30 @@ export const EVENTS: readonly EventInfo[] = [
     "words": "again and again while pressed",
     "once": true,
     "settings": [
+      {
+        "name": "button",
+        "label": "Button",
+        "default": "left",
+        "kind": "filter",
+        "options": [
+          [
+            "left",
+            "the main button, a finger or a pen"
+          ],
+          [
+            "middle",
+            "the wheel pressed"
+          ],
+          [
+            "right",
+            "the second button"
+          ],
+          [
+            "any",
+            "every button"
+          ]
+        ]
+      },
       {
         "name": "every",
         "label": "Every ms",
@@ -201,6 +420,30 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "inside",
         "true while over it"
+      ],
+      [
+        "button",
+        "\"left\", \"middle\" or \"right\", a finger and a pen's tip left"
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ],
+      [
+        "w",
+        "its width, as its own x counts"
+      ],
+      [
+        "h",
+        "its height, as its own y counts"
       ]
     ],
     "gathers": [],
@@ -212,6 +455,30 @@ export const EVENTS: readonly EventInfo[] = [
     "words": "moved while pressed",
     "once": false,
     "settings": [
+      {
+        "name": "button",
+        "label": "Button",
+        "default": "left",
+        "kind": "filter",
+        "options": [
+          [
+            "left",
+            "the main button, a finger or a pen"
+          ],
+          [
+            "middle",
+            "the wheel pressed"
+          ],
+          [
+            "right",
+            "the second button"
+          ],
+          [
+            "any",
+            "every button"
+          ]
+        ]
+      },
       {
         "name": "while",
         "label": "While",
@@ -240,6 +507,30 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "inside",
         "true while over it"
+      ],
+      [
+        "button",
+        "\"left\", \"middle\" or \"right\", a finger and a pen's tip left"
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ],
+      [
+        "w",
+        "its width, as its own x counts"
+      ],
+      [
+        "h",
+        "its height, as its own y counts"
       ],
       [
         "dx",
@@ -296,6 +587,30 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "inside",
         "true while over it"
+      ],
+      [
+        "button",
+        "\"left\", \"middle\" or \"right\", a finger and a pen's tip left"
+      ],
+      [
+        "shift",
+        "true while Shift is down"
+      ],
+      [
+        "ctrl",
+        "true while Ctrl is down"
+      ],
+      [
+        "alt",
+        "true while Alt is down"
+      ],
+      [
+        "w",
+        "its width, as its own x counts"
+      ],
+      [
+        "h",
+        "its height, as its own y counts"
       ]
     ],
     "gathers": [],
@@ -307,6 +622,22 @@ export const EVENTS: readonly EventInfo[] = [
     "words": "scrolled over it",
     "once": false,
     "settings": [
+      {
+        "name": "from",
+        "label": "From",
+        "default": "any",
+        "kind": "filter",
+        "options": [
+          [
+            "wheel",
+            "a mouse wheel or a trackpad"
+          ],
+          [
+            "fingers",
+            "fingers on a touch screen"
+          ]
+        ]
+      },
       {
         "name": "while",
         "label": "While",
@@ -327,6 +658,18 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "on",
         "the part under it, by name"
+      ],
+      [
+        "from",
+        "\"wheel\" or \"fingers\""
+      ],
+      [
+        "w",
+        "its width, as its own x counts"
+      ],
+      [
+        "h",
+        "its height, as its own y counts"
       ],
       [
         "dx",
@@ -356,6 +699,22 @@ export const EVENTS: readonly EventInfo[] = [
     "once": false,
     "settings": [
       {
+        "name": "from",
+        "label": "From",
+        "default": "any",
+        "kind": "filter",
+        "options": [
+          [
+            "wheel",
+            "a mouse wheel or a trackpad"
+          ],
+          [
+            "fingers",
+            "fingers on a touch screen"
+          ]
+        ]
+      },
+      {
         "name": "while",
         "label": "While",
         "default": "true",
@@ -375,6 +734,18 @@ export const EVENTS: readonly EventInfo[] = [
       [
         "on",
         "the part under it, by name"
+      ],
+      [
+        "from",
+        "\"wheel\" or \"fingers\""
+      ],
+      [
+        "w",
+        "its width, as its own x counts"
+      ],
+      [
+        "h",
+        "its height, as its own y counts"
       ],
       [
         "factor",

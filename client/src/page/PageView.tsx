@@ -8,6 +8,7 @@ import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originCss, pageScope, percentOf, resolve, resolveSource, runDraw, type Scope, sizeWord, sourceOf, tokenValue, UNIT } from "../state/bind";
+import { takes } from "../state/events";
 import { fields, short } from "../state/format";
 import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
 import type { Level } from "../protocol/Level";
@@ -24,7 +25,7 @@ import { useGamepads } from "./gamepads";
 import { useKeys } from "./keys";
 import { svgOf } from "./markup";
 import { isPart } from "./parts";
-import { moved, partOf, type Pointer, pointer, type Spot } from "./pointer";
+import { buttonOf, keysHeld, moved, partOf, type Pointer, pointer, type Spot } from "./pointer";
 import { COPIES, Repeated } from "./repeat";
 import { useScroll } from "./scroll";
 import { EVENTS } from "../protocol/events";
@@ -235,27 +236,34 @@ function Placed(p: ElementProps) {
 function usePress(p: ElementProps & { at?: At }) {
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
+  // whether a handler takes a press of the button `e` pressed
+  const pressable = (e: PointerEvent) => live() && p.element.handlers.some((h) => PRESSES.includes(h.event) && takes(h, h.event, { button: buttonOf(e) }));
   const fire = (event: string, payload: object) => p.act?.fire(p.element, event, payload, p.at);
-  // a hold's or a repeat's time, an expression read where the element sits
-  const msOf = (event: string, setting: string) => {
-    const h = p.element.handlers.find((x) => x.event === event);
+  // a hold's or a repeat's time for `button`, an expression read where the element sits
+  const msOf = (event: string, setting: string, button: string) => {
+    const h = p.element.handlers.find((x) => takes(x, event, { button }));
     return h && numberOf(h, setting, p.scope);
   };
   let self: globalThis.Element | undefined;
   let landed: { e: PointerEvent; at: Pointer } | undefined;
   let pressing = false;
   const read = (e: PointerEvent) => {
-    if (!self || !live() || e.button !== 0) return;
+    if (!self || !pressable(e)) return;
     landed = { e, at: pointer(self, e, partOf(e.target)) };
   };
   const down = (e: PointerEvent & { currentTarget: Element | globalThis.Element }) => {
-    if (!live() || e.button !== 0 || pressing || landed?.e !== e || taken(e.pointerId)) return;
+    if (!pressable(e) || pressing || landed?.e !== e || taken(e.pointerId)) return;
     const el = e.currentTarget as globalThis.Element;
-    const at = landed.at;
-    const on = at.on;
+    const on = landed.at.on;
+    const button = buttonOf(e)!;
+    // what each event of the press brings: where, the button it began with and the keys held
+    const brings = (ev: PointerEvent) => ({ ...pointer(el, ev, on), button, ...keysHeld(ev) });
+    const at = { ...landed.at, button, ...keysHeld(e) };
     landed = undefined;
     pressing = true;
-    const drags = p.element.handlers.some((h) => h.event === "drag" && p.act?.hears(p.element, h, p.at));
+    // a press of the wheel scrolls the page by itself in some browsers
+    if (button === "middle") e.preventDefault();
+    const drags = p.element.handlers.some((h) => takes(h, "drag", { button }) && p.act?.hears(p.element, h, p.at));
     let last: PointerEvent = e;
     let held: ReturnType<typeof setTimeout> | undefined;
     let beat: ReturnType<typeof setInterval> | undefined;
@@ -266,13 +274,13 @@ function usePress(p: ElementProps & { at?: At }) {
       fire("press", { ...at });
       fire("drag", { ...at, dx: 0, dy: 0 });
       // a hold counts from the finger going down, however long the press waited to begin
-      const ms = msOf("hold", "after");
-      if (ms !== undefined) held = setTimeout(() => fire("hold", pointer(el, last, on)), Math.max(0, ms - (performance.now() - e.timeStamp)));
+      const ms = msOf("hold", "after", button);
+      if (ms !== undefined) held = setTimeout(() => fire("hold", brings(last)), Math.max(0, ms - (performance.now() - e.timeStamp)));
       // a repeat runs at once, then on each beat until the press ends
-      const every = msOf("repeat", "every");
+      const every = msOf("repeat", "every", button);
       if (every !== undefined) {
         fire("repeat", { ...at });
-        beat = setInterval(() => fire("repeat", pointer(el, last, on)), Math.max(every, QUICKEST));
+        beat = setInterval(() => fire("repeat", brings(last)), Math.max(every, QUICKEST));
       }
     };
     // a finger that landed on what may yet scroll, here or in a frame this holds, begins its
@@ -285,7 +293,7 @@ function usePress(p: ElementProps & { at?: At }) {
     let next: PointerEvent | null = null;
     const flush = () => {
       if (!next) return;
-      fire("drag", { ...pointer(el, next, on), ...moved(el, next.clientX - sent.clientX, next.clientY - sent.clientY) });
+      fire("drag", { ...brings(next), ...moved(el, next.clientX - sent.clientX, next.clientY - sent.clientY) });
       [sent, next] = [next, null];
     };
     const move = (m: PointerEvent) => {
@@ -306,7 +314,7 @@ function usePress(p: ElementProps & { at?: At }) {
       clearTimeout(held);
       clearInterval(beat);
       setPressed(false);
-      const at = pointer(el, u ?? last, on);
+      const at = brings(u ?? last);
       fire("release", at);
       if (u?.type === "pointerup" && at.inside) fire("tap", at);
     };
@@ -316,9 +324,9 @@ function usePress(p: ElementProps & { at?: At }) {
   // shows: the editor keeps its run hidden behind the other tabs, and a run its covered pages
   createEffect(() => {
     if (!p.act || !p.element.handlers.some((h) => h.event === "outside")) return;
-    let away: { e: PointerEvent; at: Pointer } | undefined;
+    let away: { e: PointerEvent; at: object } | undefined;
     const readAway = (e: PointerEvent) => {
-      if (self && !self.contains(e.target as Node) && !self.closest("[hidden]")) away = { e, at: pointer(self, e, null) };
+      if (self && !self.contains(e.target as Node) && !self.closest("[hidden]")) away = { e, at: { ...pointer(self, e, null), button: buttonOf(e), ...keysHeld(e) } };
     };
     const actAway = (e: PointerEvent) => {
       if (away?.e === e) fire("outside", away.at);
