@@ -23,7 +23,7 @@ import type { Picking } from "./ObjectsScreen";
 import { ValueTree } from "./ValueTree";
 
 /** A variable whose owner takes no sets can only be read. */
-const canWrite = (o: Thing, imp: Import) => imp.kind !== "variable" || (entity(entityOf(o, imp.entity))?.writable ?? true);
+export const canWrite = (o: Thing, imp: Import) => imp.kind !== "variable" || (entity(entityOf(o, imp.entity))?.writable ?? true);
 
 /** A topic's rate, a whole number of values a second Rant can ask for. */
 const rateOf = (text: string): number | undefined => (/^[1-9]\d{0,4}$/.test(text.trim()) && Number(text) <= 65535 ? Number(text) : undefined);

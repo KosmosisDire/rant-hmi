@@ -15,6 +15,22 @@
   min-width: 0;
 }
 
+/* A part's word folds its body, the whole head left of its actions. */
+.fold {
+  align-self: stretch;
+  color: inherit;
+  text-align: left;
+}
+
+.fold > svg {
+  flex: 0 0 auto;
+  color: var(--dim);
+}
+
+.pane-head.below {
+  border-top: 1px solid var(--border);
+}
+
 .pane-body {
   flex: 1;
   min-height: 0;

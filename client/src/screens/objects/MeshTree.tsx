@@ -2,9 +2,10 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import { importOf } from "../../state/names";
 import { split, state } from "../../state/store";
-import { ChevronDown, ChevronRight, Copy, Plus, Search, X } from "../../ui/icons";
+import { ChevronDown, ChevronRight, Copy, Plus, Search, Trash, X } from "../../ui/icons";
 import { KindIcon } from "../../ui/marks";
 import { copyText, openMenu } from "../../ui/Menu";
+import { removeMember } from "./Member";
 import type { Picking } from "./ObjectsScreen";
 
 /** One step of a name: the entity there, if any, and the names under it. An entity may hold
@@ -67,8 +68,10 @@ export function MeshTree(p: { picking: Picking; onAdd: (e: EntityInfo) => void; 
   const menu = (ev: MouseEvent, e: EntityInfo) => {
     pick(e);
     const to = p.picking.open;
+    const i = importOf(e.name);
     openMenu(ev, [
-      ...(to !== null && !importOf(e.name) ? [{ label: `Add to ${to}`, icon: <Plus size={13} />, run: () => p.onAdd(e) }, "-" as const] : []),
+      ...(i ? [{ label: `Remove ${i.alias}`, icon: <Trash size={13} />, run: () => removeMember(...split(i.alias)) }, "-" as const] : []),
+      ...(to !== null && !i ? [{ label: `Add to ${to}`, icon: <Plus size={13} />, run: () => p.onAdd(e) }, "-" as const] : []),
       { label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(e.name) },
     ]);
   };
@@ -172,7 +175,6 @@ export function MeshTree(p: { picking: Picking; onAdd: (e: EntityInfo) => void; 
 
   return (
     <>
-      <div class="list-group">Mesh</div>
       <div class="filter mesh-filter">
         <Search size={14} />
         <input placeholder="Filter the mesh..." value={filter()} onInput={(e) => setFilter(e.currentTarget.value)} aria-label="Filter the mesh" />
@@ -182,9 +184,11 @@ export function MeshTree(p: { picking: Picking; onAdd: (e: EntityInfo) => void; 
           </button>
         </Show>
       </div>
-      <Show when={state.entities.length > 0} fallback={<div class="placeholder">Nothing on the mesh yet.</div>}>
-        <Level branch={tree()} depth={0} />
-      </Show>
+      <div class="pane-body">
+        <Show when={state.entities.length > 0} fallback={<div class="placeholder">Nothing on the mesh yet.</div>}>
+          <Level branch={tree()} depth={0} />
+        </Show>
+      </div>
     </>
   );
 }

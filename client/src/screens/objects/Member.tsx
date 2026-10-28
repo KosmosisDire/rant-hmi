@@ -84,13 +84,15 @@ export function MemberPane(p: {
         value={p.name}
         shape={p.shape}
         focus={p.picking.focus(`member:${k()}`)}
-        onCommit={(name) =>
+        onCommit={(name) => {
+          // read before the rename, which takes this pane's member away
+          const from = p.name;
           batch(() => {
             setState("refused", null);
             p.rename(name);
-            p.picking.onPick({ kind: "member", name });
-          })
-        }
+            p.picking.onRename(from, name);
+          });
+        }}
       />
       {p.access}
       <div class="field">

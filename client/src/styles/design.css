@@ -323,22 +323,6 @@
   max-height: none;
 }
 
-/* A pane's word folds its body, the whole head left of its actions. */
-.fold {
-  align-self: stretch;
-  color: inherit;
-  text-align: left;
-}
-
-.fold > svg {
-  flex: 0 0 auto;
-  color: var(--dim);
-}
-
-.layers-head {
-  border-top: 1px solid var(--border);
-}
-
 /* A layer being dragged, and where it would land. */
 .list-row.dragged {
   opacity: 0.45;
