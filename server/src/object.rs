@@ -1,5 +1,5 @@
 //! An object: one thing the HMI controls, as its mesh members, state, computed values, records,
-//! functions and logic, kept in `objects/<name>.html` as `docs/files.md` shows.
+//! functions and logic, kept in `objects/<name>.html` as `docs/project.md` shows.
 
 use std::collections::BTreeMap;
 

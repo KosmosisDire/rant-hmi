@@ -217,7 +217,7 @@ handlers, with no second model beside them. In two parts:
 
 - `objects/<name>.html` replaces `data/imports.toml`, `variables.toml`, `computed.toml`,
   `records.toml` and `logic/handlers.html`, which nothing reads now. The format is in
-  [files.md](../files.md#objects). `Hmi`, its mesh at `Hmi`, is in every project and keeps
+  [project.md](../project.md#objects). `Hmi`, its mesh at `Hmi`, is in every project and keeps
   its name.
 - The backend keeps the objects and a flat view by key for the wire, the engine and screens.
   A rename of an object or a member follows every reference in objects and pages, its values
