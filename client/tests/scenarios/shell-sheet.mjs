@@ -6,7 +6,7 @@
 export default async function ({ page, hmi, sys, check, eventually }) {
   await hmi.addPage("Sheets");
   await page.locator(".tab", { hasText: "Design" }).click();
-  const row = (p) => p.locator(".screen:not([hidden]) .pages .list-row", { has: p.locator(".list-label", { hasText: /^Sheets$/ }) });
+  const row = (p) => p.locator(".screen:not([hidden]) .page-row", { has: p.locator(".list-label", { hasText: /^Sheets$/ }) });
   await row(page).click({ button: "right" });
   await page.locator(".popover.menu").waitFor();
   check((await page.locator(".sheet").count()) === 0, "a desktop's menu is a sheet");

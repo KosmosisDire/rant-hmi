@@ -59,7 +59,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     await eventually(async () => (await comes(editor)) >= 3, "the editor's Data tab to get the camera's pictures", 8000);
     const run = async (name) => {
       await editor.locator(".tab", { hasText: "Design" }).click();
-      await editor.locator(".screen:not([hidden]) .pages .list-row", { hasText: new RegExp(`^${name}`) }).click();
+      await editor.locator(".screen:not([hidden]) .page-row", { hasText: new RegExp(`^${name}`) }).click();
       await editor.locator(".tab", { hasText: "Run" }).click();
       await editor.waitForTimeout(1000);
     };

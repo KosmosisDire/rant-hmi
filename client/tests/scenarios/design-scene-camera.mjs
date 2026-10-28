@@ -55,7 +55,7 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   await touch.goto(sys.url);
   await touch.locator(".statusbar", { hasText: "System" }).waitFor();
   await touch.locator(".tab", { hasText: "Design" }).click();
-  await touch.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Scene Camera/ }).click();
+  await touch.locator(".screen:not([hidden]) .page-row", { hasText: /^Scene Camera/ }).click();
   await touch.locator(".tab", { hasText: "Run" }).click();
   const at = (id) => touch.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   await eventually(async () => (await at(text).textContent()).startsWith("{"), "the view shown on the touch screen");

@@ -10,7 +10,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const id = await eventually(() => hmi.page(pageId)?.children[0]?.id, "the frame");
   const at = () => props(hmi, pageId, id);
 
-  const sheet = await page.locator(".artboard .page").boundingBox();
+  const sheet = await page.locator(".artboard .page-layer.open > .page").boundingBox();
   const b = await d.box(id);
   await d.drag(id, 0, sheet.y + sheet.height + 40 - b.y);
   await eventually(() => Number(at().y) > 72, "the frame to land below the page");

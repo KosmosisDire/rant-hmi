@@ -13,7 +13,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const red = ([r, g, b]) => r > 200 && g < 60 && b < 60;
 
   // a new canvas draws a disc in the theme's accent, in its middle and not its corner
-  const hex = await page.evaluate(() => getComputedStyle(document.querySelector(".artboard .page")).getPropertyValue("--t-accent").trim());
+  const hex = await page.evaluate(() => getComputedStyle(document.querySelector(".artboard .page-layer.open > .page")).getPropertyValue("--t-accent").trim());
   const accent = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
   const near = (want) => (c) => c.every((v, i) => Math.abs(v - want[i]) < 12);
   await d.shows(d.el(bar), 0.5, 0.5, near(accent), `the new canvas to draw a disc in ${hex}`);

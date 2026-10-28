@@ -21,7 +21,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await hmi.addElement(button, "span", { name: "label", x: "2", y: "2", w: "16", h: "4", text: 'count + " holds"', color: "#e4e6e8", "font-size": "2" }, face);
 
   // completion offers the parts' pointer state after a dot
-  await page.locator(".screen:not([hidden]) .sidebar.left .list-row", { has: page.locator(".list-label", { hasText: /^face$/ }) }).click();
+  await d.select("face");
   await d.addEvent("hold");
   await d.code("hold").click();
   await page.keyboard.type("root.");

@@ -71,7 +71,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await touch.goto(page.url());
   await touch.locator(".statusbar", { hasText: "System" }).waitFor();
   await touch.locator(".tab", { hasText: "Design" }).click();
-  await touch.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Map View/ }).click();
+  await touch.locator(".screen:not([hidden]) .page-row", { hasText: /^Map View/ }).click();
   await touch.locator(".tab", { hasText: "Run" }).click();
   const on = (id) => touch.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   await on(map).waitFor();

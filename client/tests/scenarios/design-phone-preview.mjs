@@ -14,7 +14,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const c = await hmi.addElement(pageId, "div", box("C", 40, 4, 20, 20));
   await d.openPage("Phone preview");
   const phone = page.locator(".artboard .zoom button:has(svg.lucide-smartphone)");
-  const sheet = page.locator(".artboard .page");
+  const sheet = page.locator(".artboard .page-layer.open > .page");
   const head = page.locator(".screen:not([hidden]) .sidebar.right .pane-head");
   const says = (words) => eventually(async () => (await head.textContent())?.includes(words), () => `the inspector to say ${words}`);
 

@@ -12,10 +12,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const b = await hmi.addElement(pageId, "div", box("B", 220));
   const c = await hmi.addElement(pageId, "div", box("C", 396));
   await d.openPage("Layers");
+  const group = await d.layers();
 
   const order = () => hmi.page(pageId).children.map((e) => e.props.name).join("");
-  const rows = () => page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-label").allTextContents();
-  const row = (name) => page.locator(".screen:not([hidden]) .sidebar.left .list-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
+  const rows = () => group.locator(".layer-list .list-label").allTextContents();
+  const row = (name) => group.locator(".list-row[data-id]", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
   /** Drags one row onto another, at a fraction of its height. */
   const dragRow = async (from, to, f) => {
     const s = await row(from).boundingBox();
@@ -37,7 +38,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === c)?.children[0]?.id === b, "B to go inside C");
   check(props(hmi, pageId, b).x === String(220 - 396), `B inside C has x ${props(hmi, pageId, b).x}`);
   // measured once the page draws it there, not while its old element goes
-  await page.locator(`.artboard .el[data-id="${c}"] .el[data-id="${b}"]`).waitFor();
+  await page.locator(`.artboard .page-layer.open .el[data-id="${c}"] .el[data-id="${b}"]`).waitFor();
   const after = await d.box(b);
   check(Math.abs(after.x - before.x) < 1 && Math.abs(after.y - before.y) < 1, "B moved on the page when it went into C");
 
@@ -51,7 +52,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Control+BracketRight");
   await eventually(() => order() === "BAC", "A to come forward one");
   await eventually(async () => (await rows()).join("") === "CAB", "the list to show A forward");
-  check((await page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-row.selected .list-label").textContent()) === "A", "a click on a row no longer selects it");
+  check((await group.locator(".list-row.selected[data-id] .list-label").textContent()) === "A", "a click on a row no longer selects it");
 
   // the bottom of one row and the top of the next mark one place, with one line
   const line = page.locator(".screen:not([hidden]) .sidebar.left .drop-line");

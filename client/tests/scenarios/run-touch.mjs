@@ -23,7 +23,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await touch.goto(sys.url);
   await touch.locator(".statusbar", { hasText: "System" }).waitFor();
   await touch.locator(".tab", { hasText: "Design" }).click();
-  await touch.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Touch/ }).click();
+  await touch.locator(".screen:not([hidden]) .page-row", { hasText: /^Touch/ }).click();
   const cdp = await touch.context().newCDPSession(touch);
   const finger = (type, x, y) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y }] });
   const longPress = (target) =>
@@ -33,7 +33,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     });
 
   // the editor: a long press mid drag opens the menu and puts the element back
-  const drawn = touch.locator(`.artboard .el[data-id="${pad}"]`);
+  const drawn = touch.locator(`.artboard .page-layer.open .el[data-id="${pad}"]`);
   const at = await drawn.boundingBox();
   await finger("touchStart", at.x + 20, at.y + 20);
   await finger("touchMove", at.x + 60, at.y + 40);

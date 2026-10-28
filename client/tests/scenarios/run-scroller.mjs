@@ -20,7 +20,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await touch.goto(sys.url);
   await touch.locator(".statusbar", { hasText: "System" }).waitFor();
   await touch.locator(".tab", { hasText: "Design" }).click();
-  await touch.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Scroll List/ }).click();
+  await touch.locator(".screen:not([hidden]) .page-row", { hasText: /^Scroll List/ }).click();
   await touch.locator(".tab", { hasText: "Run" }).click();
   const el = (id) => touch.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   const rows = el(row);

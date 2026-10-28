@@ -25,7 +25,7 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   check(ground === "rgba(0, 0, 0, 0),rgba(0, 0, 0, 0)", `a card shows a ground, ${ground}`);
   const placed = () => hmi.page(target).children.filter((e) => e.component === "Tile");
   const { width: w, height: h } = hmi.page(tile);
-  const sheet = await page.locator(".screen:not([hidden]) .artboard .page-layer > .page").boundingBox();
+  const sheet = await page.locator(".screen:not([hidden]) .artboard .page-layer.open > .page").boundingBox();
   const k = sheet.width / hmi.page(target).width;
   const on = (x, y) => ({ x: sheet.x + x * k, y: sheet.y + y * k });
   const from = await card.boundingBox();
@@ -57,8 +57,9 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   await touch.goto(sys.url);
   await touch.locator(".statusbar", { hasText: "System" }).waitFor();
   await touch.locator(".tab", { hasText: "Design" }).click();
-  await touch.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Cards/ }).click();
-  const tsheet = await touch.locator(".screen:not([hidden]) .artboard .page-layer > .page").boundingBox();
+  await touch.locator(".screen:not([hidden]) .page-row", { hasText: /^Cards/ }).click();
+  await touch.locator(".screen:not([hidden]) .artboard:not([data-flying])").waitFor();
+  const tsheet = await touch.locator(".screen:not([hidden]) .artboard .page-layer.open > .page").boundingBox();
   const tk = tsheet.width / hmi.page(target).width;
   const tcards = touch.locator(".screen:not([hidden]) .sidebar.left .card", { hasText: /^Tile$/ });
   await tcards.scrollIntoViewIfNeeded();

@@ -27,7 +27,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await eventually(() => has("pages", "packing-hall.html") && !has("pages", "press-line.html"), "the file renamed with the page");
   await eventually(() => start() === "packing-hall", () => `the start page to follow, it is ${start()}`);
   await d.el(bar).waitFor();
-  await page.locator(".screen:not([hidden]) .sidebar.left .pages .selected", { hasText: "Packing hall" }).waitFor();
+  await page.locator(".screen:not([hidden]) .sidebar.left .page-row.open", { hasText: "Packing hall" }).waitFor();
 
   hmi.undo();
   await eventually(() => props(hmi, "packing-hall", bar)?.x === "4", "the other screen's edit undone on the renamed page");

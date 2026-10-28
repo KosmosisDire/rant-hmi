@@ -51,13 +51,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.setField("Name", "Light");
   await eventually(() => hmi.page(indicators).children.every((e) => e.component === "Light"), "the instances to follow the rename");
 
-  await d.menu(page.locator(".screen:not([hidden]) .pages :is(.list-row, .card)", { has: page.getByText("Light", { exact: true }) }), "Delete component");
+  await d.menu(page.locator(".screen:not([hidden]) .card", { has: page.getByText("Light", { exact: true }) }), "Delete component");
   await page.locator(".notice.fault", { hasText: "Light is placed on Indicators, so it stays" }).waitFor();
 
   await d.openPage("Indicators");
   await d.el(first.id).click({ position: { x: 5, y: 5 } });
   await side("right").locator("button", { hasText: "Open it" }).click();
-  await eventually(async () => (await page.locator(".pages :is(.list-row, .card).selected").first().textContent()).includes("Light"), "Open it to open the component");
+  await eventually(async () => (await page.locator(":is(.page-row.open, .card.selected)").first().textContent()).includes("Light"), "Open it to open the component");
   const light = hmi.state.pages.find((p) => p.name === "Light");
   check(light.id === "light" && props(hmi, light.id, light.children[0].id) !== undefined, `the component is ${light.id} and holds ${light.children.length} parts`);
 }

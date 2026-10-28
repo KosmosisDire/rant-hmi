@@ -1,5 +1,5 @@
 // A component as a card in the Design sidebar: a live picture of it over its name. A click
-// opens it, and a drag places an instance on the open page, centred where it lands. Either
+// opens it, and a drag places an instance on the page it lands on, centred there. Either
 // puts a phone's drawer away.
 
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
@@ -7,6 +7,7 @@ import { Portal } from "solid-js/web";
 import { fitIn, PageView } from "../../page/PageView";
 import type { Page } from "../../protocol/Page";
 import { UNIT } from "../../state/bind";
+import { page as pageOf } from "../../state/store";
 import { openPage } from "../../state/view";
 import { addElement } from "./add";
 import { follow } from "../../ui/press";
@@ -27,7 +28,7 @@ function Picture(p: { component: Page; w: number; h: number }) {
   );
 }
 
-export function ComponentCard(p: { component: Page; open: boolean; page: Page | undefined; onMenu: (e: MouseEvent) => void }) {
+export function ComponentCard(p: { component: Page; open: boolean; onMenu: (e: MouseEvent) => void }) {
   let thumb!: HTMLDivElement;
   const box = createSize();
   onMount(() => box.track(thumb));
@@ -68,10 +69,11 @@ export function ComponentCard(p: { component: Page; open: boolean; page: Page | 
     if (press && e?.type === "pointerup" && ghost()) drop(e.clientX, e.clientY);
     end();
   };
-  // onto the canvas's page, unless that page is this component
+  // onto the page on the board where it lands, unless that page is this component
   const drop = (x: number, y: number) => {
-    const page = p.page;
-    const sheet = document.elementFromPoint(x, y)?.closest(".artboard")?.querySelector(".page-layer > .page");
+    const layer = document.elementFromPoint(x, y)?.closest(".artboard .page-layer[data-page]");
+    const page = layer && pageOf(layer.getAttribute("data-page") ?? "");
+    const sheet = layer?.querySelector(":scope > .page");
     if (!page || !sheet || page.id === p.component.id) return;
     const r = sheet.getBoundingClientRect();
     const k = r.width / page.width;

@@ -68,7 +68,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   // the layers' empty space adds to the page itself, whatever is picked
   await d.select("Box");
-  const layers = await row.locator("xpath=ancestor::div[contains(@class,'pane-body')][1]").boundingBox();
+  // below every page's band, which a tall list of them reaches once scrolled to its end
+  const pane = row.locator("xpath=ancestor::div[contains(@class,'pane-body')][1]");
+  // after the frame the pick scrolls its row into sight in
+  await pane.evaluate((el) => new Promise((done) => requestAnimationFrame(() => done((el.scrollTop = el.scrollHeight)))));
+  const layers = await pane.boundingBox();
   await page.mouse.click(layers.x + 20, layers.y + layers.height - 10, { button: "right" });
   await sub("Add", "Text");
   await eventually(() => top().some((e) => e.tag === "span"), "a text at the page's top level");

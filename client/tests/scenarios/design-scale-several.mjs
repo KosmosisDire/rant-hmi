@@ -12,7 +12,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const b = await hmi.addElement(pageId, "div", box("B", 40, 20));
   const c = await hmi.addElement(pageId, "div", { ...box("C", 0, 10), x: "60 + 20" });
   await d.openPage("Scaling");
-  const k = (await page.locator(".artboard .page").boundingBox()).width / 128;
+  await d.layers();
+  const k = (await page.locator(".artboard .page-layer.open > .page").boundingBox()).width / 128;
   const at = (id) => ["x", "y", "w", "h"].map((key) => props(hmi, pageId, id)[key]).join();
   const head = page.locator(".screen:not([hidden]) .sidebar.right .pane-head");
   const says = (words) => eventually(async () => (await head.textContent())?.includes(words), () => `the inspector to say ${words}`);

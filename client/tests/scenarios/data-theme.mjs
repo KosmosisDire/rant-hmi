@@ -80,7 +80,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const ground = () =>
     page.evaluate(() => {
       const c = document.querySelector(".artboard-grid");
-      const [sheet, host] = [document.querySelector(".artboard .page").getBoundingClientRect(), c.getBoundingClientRect()];
+      const [sheet, host] = [document.querySelector(".artboard .page-layer.open > .page").getBoundingClientRect(), c.getBoundingClientRect()];
       const at = (v) => Math.round((v + 3) * devicePixelRatio);
       return [...c.getContext("2d").getImageData(at(sheet.left - host.left), at(sheet.top - host.top), 1, 1).data.slice(0, 3)].join();
     });
@@ -96,7 +96,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await look("color")) === "rgb(237, 237, 237)", "plain text in $text");
   check((await look("fontSize")) === "14px", `plain text is ${await look("fontSize")}, not $textSize`);
   const made = await d.add("frame", { Name: "Made" });
-  const find = (es) => es.flatMap((e) => (e.id === made ? [e] : find(e.children)))[0];
+  const find = (es) => es.flatMap((e) => (e.id === made ? [e] : (find(e.children) ?? [])))[0];
   const starts = () => find(hmi.page(pageId).children)?.props ?? {};
   await eventually(() => starts().background === "$panel" && starts()["border-radius"] === "$radius", `a new frame to start in the theme's tokens, not ${JSON.stringify(starts())}`);
   await d.tab("Data");

@@ -88,6 +88,16 @@ export function openElement(w: Wanted) {
 /** Design took what was asked for. */
 export const tookWanted = () => setWanted(null);
 
+/** A page Design's board is asked to fly to, or null for every page, counted so the same one
+ *  asked again flies again. */
+const [flight, setFlight] = createSignal<{ page: string | null; n: number } | null>(null);
+export { flight };
+
+export const flyTo = (page: string | null) => setFlight({ page, n: (flight()?.n ?? 0) + 1 });
+
+/** The pages Design's board draws now, those in sight. */
+export const [boardPages, setBoardPages] = createSignal<string[]>([]);
+
 // what is open here follows a rename that moved its id, in this tab's history too
 onMoved((from, to) => {
   if (chosen() === from) {

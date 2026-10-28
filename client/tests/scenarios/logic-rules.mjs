@@ -82,5 +82,5 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await rows()).join() === "Speedvariable, write,tickssets", "the lamp's reads and writes");
   check((await box.locator(".event-meta").textContent()) === "p = { x, y, angle, on, inside, button, shift, ctrl, alt, w, h }", "the card does not say what its event brings");
   await box.locator("button", { hasText: "Open in Design" }).click();
-  await page.locator(".pages .list-row.selected", { hasText: "Logic page" }).waitFor();
+  await page.locator(".page-row.open", { hasText: "Logic page" }).waitFor();
 }

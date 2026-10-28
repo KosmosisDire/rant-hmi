@@ -50,7 +50,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await screen.goto(sys.url);
   await screen.locator(".statusbar", { hasText: "System" }).waitFor();
   await screen.locator(".tab", { hasText: "Design" }).click();
-  await screen.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Press order/ }).click();
+  await screen.locator(".screen:not([hidden]) .page-row", { hasText: /^Press order/ }).click();
   await screen.locator(".tab", { hasText: "Run" }).click();
   const drawn = screen.locator(`.run-layer:not([hidden]) .el[data-id="${inst}"] [data-name="base"]`);
   await drawn.waitFor();

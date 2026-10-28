@@ -6,7 +6,7 @@ export default async function ({ page, hmi, check, eventually }) {
   const pageId = await hmi.addPage("Snapshot");
   const shot = await hmi.addElement(pageId, "media", { name: "camera", x: "4", y: "4", w: "32", h: "24", src: "Camera", fit: '"meet"' });
   await page.locator(".tab", { hasText: "Design" }).click();
-  await page.locator(".screen:not([hidden]) .pages .list-row", { hasText: "Snapshot" }).click();
+  await page.locator(".screen:not([hidden]) .page-row", { hasText: "Snapshot" }).click();
   await page.locator(".tab", { hasText: "Run" }).click();
   const picture = page.locator(`.run-layer:not([hidden]) .el[data-id="${shot}"]`);
   // the transcoder probes a new camera for 3 s, and the first frame waits for a keyframe

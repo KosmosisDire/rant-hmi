@@ -19,7 +19,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   const near = (a, b) => Math.abs(a - b) < 1e-3;
 
   await page.locator(".tab", { hasText: "Design" }).click();
-  await page.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Pointer Buttons/ }).click();
+  await page.locator(".screen:not([hidden]) .page-row", { hasText: /^Pointer Buttons/ }).click();
   await page.locator(".tab", { hasText: "Run" }).click();
   const el = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   const b = await el(pad).boundingBox();
@@ -61,7 +61,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await touch.goto(sys.url);
   await touch.locator(".statusbar", { hasText: "System" }).waitFor();
   await touch.locator(".tab", { hasText: "Design" }).click();
-  await touch.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Pointer Buttons/ }).click();
+  await touch.locator(".screen:not([hidden]) .page-row", { hasText: /^Pointer Buttons/ }).click();
   await touch.locator(".tab", { hasText: "Run" }).click();
   const there = touch.locator(`.run-layer:not([hidden]) .el[data-id="${view}"]`);
   await there.waitFor();
