@@ -14,7 +14,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
     const k = a.width / width;
     return { x: (b.x - a.x) / k, w: b.width / k, h: b.height / k };
   };
-  const drawn = (id) => page.locator(`.artboard .el[data-id="${id}"]`);
+  const drawn = (id) => page.locator(`.artboard .page-layer.open .el[data-id="${id}"]`);
   let r = await within(drawn, 40);
   check(Math.abs(r.x - 10) < 0.1 && Math.abs(r.w - 20) < 0.1 && Math.abs(r.h - 10) < 0.1, `the half sits at ${r.x} as ${r.w} by ${r.h}`);
 

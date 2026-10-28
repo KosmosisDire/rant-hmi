@@ -1,6 +1,7 @@
-// The page on its artboard, or as an upright phone lays it out: the wheel or a pinch zooms, a
-// drag on empty space or with two fingers pans, elements move and resize on the grid (Alt
-// slips it), and a drag writes when it ends.
+// Every page side by side on one board, the open one editable, or as an upright phone lays it
+// out: the wheel or a pinch zooms, a drag on empty space, with Space or the middle button, or
+// with two fingers pans, elements move and resize on the grid (Alt slips it), and a drag
+// writes when it ends.
 
 import { createEffect, createMemo, createSignal, For, type JSX, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import { type Box, fitIn, homeOf, leaves, PageView, pageGround, SHAPES, union } from "../../page/PageView";
@@ -9,7 +10,7 @@ import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Pick } from "./DesignScreen";
-import { Keyboard, Smartphone } from "../../ui/icons";
+import { Component, File, Keyboard, Smartphone } from "../../ui/icons";
 import { fingers } from "../../ui/fingers";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
@@ -17,6 +18,7 @@ import { createSize, onResize } from "../../ui/size";
 import { wheelPx, zoomBy } from "../../ui/wheel";
 import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
 import { find } from "../../state/elements";
+import { flight, flyTo, setBoardPages } from "../../state/view";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
 import { absolute, boxOf, boxText, childrenOf, entered, flowed, laidOut, literal, moveTo, originOf, parentOf, pickFrom, roomOf, scopeOf, sendEdits, setProps, showProps, stackAt, tops } from "./tree";
@@ -49,10 +51,18 @@ function cursorOf(h: Handle, turn: number): string {
   return CURSORS[Math.round(along / 45) % 4];
 }
 
+/** The room between pages on the board, in units. */
+const GAP = 12;
+/** How long a flight to a page takes, in ms. */
+const FLIGHT = 260;
+/** A page's label shows above it while the page is at least this wide on screen. */
+const LABELLED = 40;
+
 /** What each key and gesture does here, as the keys list shows it. */
 const KEYS: [string, string][] = [
   ["Wheel", "zoom about the pointer"],
-  ["Drag on empty space", "pan, as the middle button does"],
+  ["Drag on empty space", "pan, as Space or the middle button does"],
+  ["Shift 1", "fit every page"],
   ["Click", "select the outermost element there"],
   ["Click again", "the next one there, further in, then beneath"],
   ["Shift or Ctrl click", "add to the selection or take away"],
@@ -112,8 +122,11 @@ function asDesigned(page: Page): string | undefined {
   return undefined;
 }
 
-/** Screen pixels per unit, kept to where the page still reads. */
-const zoomed = (k: number) => Math.min(8 * UNIT, Math.max(0.1 * UNIT, k));
+/** Screen pixels per unit, kept to where a page still reads, or many pages still fit. */
+const zoomed = (k: number) => Math.min(8 * UNIT, Math.max(0.02 * UNIT, k));
+
+/** Where the board's corner is on screen, and `k` screen pixels per unit. */
+type Cam = { k: number; x: number; y: number };
 
 function snap(v: number, free: boolean) {
   return free ? Math.round(v * UNIT) / UNIT : Math.round(v / GRID) * GRID;
@@ -177,9 +190,14 @@ function ink(g: CanvasRenderingContext2D, ground: string): string {
 }
 
 export function Artboard(p: {
+  /** What the board shows side by side: every page, or a component open alone. */
+  pages: Page[];
+  /** The one open, whose elements are picked and edited. */
   page: Page;
   selected: string[];
   onPick: Pick;
+  /** Opens a page pressed on the board, with nothing picked. */
+  onOpen: (id: string) => void;
   onEdit: (id: string) => void;
   /** Whether the keys list shows. */
   keys: boolean;
@@ -187,8 +205,29 @@ export function Artboard(p: {
 }) {
   let host!: HTMLDivElement;
   let grid!: HTMLCanvasElement;
-  /** Where the page sits on screen, and `k` screen pixels per unit. */
-  const [view, setView] = createSignal({ k: UNIT / 2, x: 0, y: 0 });
+  const [cam, setCam] = createSignal<Cam>({ k: UNIT / 2, x: 0, y: 0 });
+  const room = createSize();
+  /** Where each page's corner sits on the board, in units, left to right in their order. */
+  const slots = createMemo(() => {
+    const at: Record<string, { x: number; y: number }> = {};
+    let x = 0;
+    for (const pg of p.pages) {
+      at[pg.id] = { x, y: 0 };
+      x += pg.width + GAP;
+    }
+    return at;
+  });
+  const slot = (id: string) => slots()[id] ?? { x: 0, y: 0 };
+  const byId = (id: string) => p.pages.find((pg) => pg.id === id);
+  /** Where the open page sits on screen, and `k` screen pixels per unit, as all that edits it reads. */
+  const view = () => {
+    const [c, s] = [cam(), slot(p.page.id)];
+    return { k: c.k, x: c.x + s.x * c.k, y: c.y + s.y * c.k };
+  };
+  const setView = (v: Cam) => {
+    const s = slot(p.page.id);
+    setCam({ k: v.k, x: v.x - s.x * v.k, y: v.y - s.y * v.k });
+  };
   const [held, setHeld] = createSignal<Held>({});
   /** The box a Shift drag draws, on screen. */
   const [box, setBox] = createSignal<{ left: number; top: number; width: number; height: number } | null>(null);
@@ -209,22 +248,96 @@ export function Artboard(p: {
   let drag: Drag | null = null;
   let drags = 0;
   /** The pinch two fingers make: how far apart they began, their middle then and the view then. */
-  let pinch: { d: number; cx: number; cy: number; view: { k: number; x: number; y: number } } | null = null;
+  let pinch: { d: number; cx: number; cy: number; cam: Cam } | null = null;
 
-  // each page fits when it opens, and again as the preview comes or goes, a phone page by the
-  // phone's screen, however far down it runs
-  let fittedFor = "";
-  const fitKey = () => `${p.page.id}${preview() ? " phone" : ""}`;
-  const fit = () => {
-    const r = host.getBoundingClientRect();
-    if (r.width === 0 || r.height === 0) return;
-    const screen = preview() ?? p.page;
-    // a 32 px margin all round
-    const f = fitIn(screen.width, screen.height, { w: r.width - 64, h: r.height - 64 });
-    setView({ k: f.k, x: f.x + 32, y: f.y + 32 });
-    fittedFor = fitKey();
+  /** A page's box on the board, the open one as the phone lays it out while it does. */
+  const boxOn = (pg: Page): Box => {
+    const [s, z] = [slot(pg.id), pg.id === p.page.id ? size() : pg];
+    return { x: s.x, y: s.y, w: z.width, h: z.height };
   };
-  // the page's ground and its grid, drawn at screen size so every line is one crisp pixel
+  /** A box on the board as it lands on screen. */
+  const screenOf = (b: Box, c = cam()) => ({ left: c.x + b.x * c.k, top: c.y + b.y * c.k, width: b.w * c.k, height: b.h * c.k });
+  /** The pages in sight or nearly, which alone are drawn, the open one always and last, so it
+   *  lies over the others and what it holds is pressed first. */
+  const inSight = createMemo(
+    () => {
+      const r = room();
+      const near = (pg: Page) => {
+        const s = screenOf(boxOn(pg));
+        return s.left < r.w + 200 && s.top < r.h + 200 && s.left + s.width > -200 && s.top + s.height > -200;
+      };
+      return [...p.pages.filter((pg) => pg.id !== p.page.id && near(pg)).map((pg) => pg.id), p.page.id];
+    },
+    [],
+    { equals: (a, b) => a.length === b.length && a.every((id, i) => id === b[i]) },
+  );
+  createEffect(() => setBoardPages(inSight()));
+  onCleanup(() => setBoardPages([]));
+  /** Whether enough of a page is in sight that opening it needs no flight: a quarter of it, or
+   *  of the artboard. */
+  const seen = (id: string) => {
+    const pg = byId(id);
+    if (!pg) return false;
+    const [s, r] = [screenOf(boxOn(pg)), room()];
+    const across = Math.max(0, Math.min(s.left + s.width, r.w) - Math.max(s.left, 0));
+    const down = Math.max(0, Math.min(s.top + s.height, r.h) - Math.max(s.top, 0));
+    return across * down >= 0.25 * Math.min(s.width * s.height, r.w * r.h);
+  };
+
+  /** The view that shows a box of the board whole, with a 32 px margin all round. */
+  const showing = (b: Box): Cam | undefined => {
+    const r = host.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return undefined;
+    const f = fitIn(b.w, b.h, { w: r.width - 64, h: r.height - 64 });
+    const k = zoomed(f.k);
+    return { k, x: f.x + 32 + (f.k - k) * b.w * 0.5 - b.x * k, y: f.y + 32 + (f.k - k) * b.h * 0.5 - b.y * k };
+  };
+  // a flight glides the middle of the view and the scale together, and any press or wheel
+  // ends it where it is
+  let flying = 0;
+  const [isFlying, setFlying] = createSignal(false);
+  const flyCam = (to: Cam | undefined, glide = true) => {
+    if (!to) return;
+    cancelAnimationFrame(flying);
+    const from = cam();
+    if (!glide || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setFlying(false);
+      return setCam(to);
+    }
+    const r = host.getBoundingClientRect();
+    const [cx, cy] = [r.width / 2, r.height / 2];
+    const mid = (c: Cam) => ({ x: (cx - c.x) / c.k, y: (cy - c.y) / c.k });
+    const [a, b] = [mid(from), mid(to)];
+    const start = performance.now();
+    setFlying(true);
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / FLIGHT);
+      const e = 1 - (1 - t) ** 3;
+      const k = from.k * (to.k / from.k) ** e;
+      const m = { x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e };
+      setCam(t < 1 ? { k, x: cx - m.x * k, y: cy - m.y * k } : to);
+      if (t < 1) flying = requestAnimationFrame(step);
+      else setFlying(false);
+    };
+    flying = requestAnimationFrame(step);
+  };
+  const land = () => {
+    cancelAnimationFrame(flying);
+    setFlying(false);
+  };
+  onCleanup(land);
+  /** Fits a page, a phone page by the phone's screen however far down it runs. */
+  const fitPage = (id: string, glide = true) => {
+    const pg = byId(id);
+    if (!pg) return;
+    const b = boxOn(pg);
+    const screen = pg.id === p.page.id ? (preview() ?? pg) : pg;
+    flyCam(showing({ ...b, w: screen.width, h: screen.height }), glide);
+  };
+  const fitAll = (glide = true) => p.pages.length > 0 && flyCam(showing(union(p.pages.map(boxOn))), glide);
+  let fitted = false;
+
+  // every page's ground and its grid, drawn at screen size so every line is one crisp pixel
   const draw = () => {
     const r = host.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -233,56 +346,142 @@ export function Artboard(p: {
     const g = grid.getContext("2d");
     if (!g) return;
     g.clearRect(0, 0, cw, ch);
-    const v = view();
-    // the page's fill, else the default its style gives
-    const sheet = host.querySelector<HTMLElement>(".page");
-    const ground = pageGround(p.page) ?? ((sheet && getComputedStyle(sheet).getPropertyValue("--page-ground").trim()) || "#000000");
-    const [x0, y0] = [Math.round(v.x * dpr), Math.round(v.y * dpr)];
-    const [x1, y1] = [Math.round((v.x + size().width * v.k) * dpr), Math.round((v.y + size().height * v.k) * dpr)];
-    const lines = ink(g, ground);
-    g.save();
-    g.shadowColor = "rgba(0, 0, 0, 0.45)";
-    g.shadowBlur = 30 * dpr;
-    g.shadowOffsetY = 10 * dpr;
-    g.fillStyle = ground;
-    g.fillRect(x0, y0, x1 - x0, y1 - y0);
-    g.restore();
-    // the phone lays the blocks out, so no grid shows
-    if (preview()) return;
-    const width = Math.max(1, Math.round(dpr));
-    for (const [step, strength] of LEVELS) {
-      const a = strength * Math.min(1, Math.max(0, (step * v.k - 4) / 8));
-      if (a <= 0) continue;
-      g.fillStyle = `rgba(${lines}, ${a})`;
-      for (let u = step; u < p.page.width; u += step) g.fillRect(Math.round((v.x + u * v.k) * dpr), y0, width, y1 - y0);
-      for (let u = step; u < p.page.height; u += step) g.fillRect(x0, Math.round((v.y + u * v.k) * dpr), x1 - x0, width);
+    const c = cam();
+    for (const id of inSight()) {
+      const pg = byId(id);
+      if (!pg) continue;
+      const s = screenOf(boxOn(pg), c);
+      // the page's fill, else the default its style gives
+      const sheet = host.querySelector<HTMLElement>(`.page-layer[data-page="${CSS.escape(id)}"] > .page`);
+      const ground = pageGround(pg) ?? ((sheet && getComputedStyle(sheet).getPropertyValue("--page-ground").trim()) || "#000000");
+      const [x0, y0] = [Math.round(s.left * dpr), Math.round(s.top * dpr)];
+      const [x1, y1] = [Math.round((s.left + s.width) * dpr), Math.round((s.top + s.height) * dpr)];
+      const lines = ink(g, ground);
+      g.save();
+      g.shadowColor = "rgba(0, 0, 0, 0.45)";
+      g.shadowBlur = 30 * dpr;
+      g.shadowOffsetY = 10 * dpr;
+      g.fillStyle = ground;
+      g.fillRect(x0, y0, x1 - x0, y1 - y0);
+      g.restore();
+      // the phone lays the blocks out, so no grid shows
+      if (id === p.page.id && preview()) continue;
+      const width = Math.max(1, Math.round(dpr));
+      for (const [step, strength] of LEVELS) {
+        const a = strength * Math.min(1, Math.max(0, (step * c.k - 4) / 8));
+        if (a <= 0) continue;
+        g.fillStyle = `rgba(${lines}, ${a})`;
+        for (let u = step; u < pg.width; u += step) g.fillRect(Math.round((s.left + u * c.k) * dpr), y0, width, y1 - y0);
+        for (let u = step; u < pg.height; u += step) g.fillRect(x0, Math.round((s.top + u * c.k) * dpr), x1 - x0, width);
+      }
     }
   };
   createEffect(draw);
 
+  /** Space held pans with any press, as the middle button does. */
+  const [space, setSpace] = createSignal(false);
+  const [panning, setPanning] = createSignal(false);
   onMount(() => {
-    // fits once the artboard first has a size, and again for each page opened
+    room.track(host);
+    // fits the open page once the artboard first has a size
     onResize(host, () => {
-      if (fittedFor !== fitKey()) return fit();
+      if (!fitted) {
+        fitted = host.getBoundingClientRect().width > 0;
+        return fitPage(p.page.id, false);
+      }
       draw();
       keep();
     });
-    drawn.track(host.querySelector<HTMLElement>(".page-layer .page")!);
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
-      const v = view();
+      land();
+      const c = cam();
       const r = host.getBoundingClientRect();
       const [px, py] = [e.clientX - r.left, e.clientY - r.top];
       // a wheel's notch, a trackpad's glide and a pinch all zoom
-      const k = zoomed(v.k * zoomBy(wheelPx(e, r).y));
-      setView({ k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k });
+      const k = zoomed(c.k * zoomBy(wheelPx(e, r).y));
+      setCam({ k, x: px - ((px - c.x) * k) / c.k, y: py - ((py - c.y) * k) / c.k });
     };
     host.addEventListener("wheel", wheel, { passive: false });
-    onCleanup(() => host.removeEventListener("wheel", wheel));
+    // Space held anywhere but in a field, while the board shows
+    const key = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || host.offsetParent === null || (e.target as HTMLElement).closest?.("input, textarea, select, [contenteditable]")) return;
+      e.preventDefault();
+      setSpace(e.type === "keydown");
+    };
+    const away = () => setSpace(false);
+    window.addEventListener("keydown", key);
+    window.addEventListener("keyup", key);
+    window.addEventListener("blur", away);
+    onCleanup(() => {
+      host.removeEventListener("wheel", wheel);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("keyup", key);
+      window.removeEventListener("blur", away);
+    });
   });
+  // the open page's own page, whose height a phone page grows to
   createEffect(() => {
-    if (fitKey() !== fittedFor) fit();
+    p.page.id;
+    const sheet = host.querySelector<HTMLElement>(".page-layer.open > .page");
+    if (sheet) drawn.track(sheet);
   });
+  // a page opened anywhere but on the board flies into sight, unless enough of it shows. A
+  // component opens alone and fitted, and so does a page after it, as the board changes.
+  let opened: string | null = null;
+  const openId = createMemo(() => p.page.id);
+  const alone = createMemo(() => (p.page.interface !== null ? p.page.id : ""));
+  const phone = createMemo(() => !!preview());
+  createEffect(
+    on(
+      openId,
+      (id) => {
+        const own = opened === id;
+        opened = null;
+        if (!own && !seen(id)) fitPage(id);
+      },
+      { defer: true },
+    ),
+  );
+  createEffect(on([alone, phone], () => fitPage(p.page.id, false), { defer: true }));
+  // the open page keeps its place on screen as pages before it come, go or resize, and as a
+  // rename sorts it elsewhere, which takes its new id first and its new place after
+  let kept: { id: string; x: number; y: number } | null = null;
+  createEffect(() => {
+    const id = openId();
+    const s = slot(id);
+    untrack(() => {
+      if (kept?.id === id && (kept.x !== s.x || kept.y !== s.y)) {
+        const c = cam();
+        setCam({ ...c, x: c.x - (s.x - kept.x) * c.k, y: c.y - (s.y - kept.y) * c.k });
+      }
+    });
+    kept = { id, ...s };
+  });
+  createEffect(
+    on(
+      flight,
+      (f) => {
+        if (!f) return;
+        if (f.page === null) fitAll();
+        else fitPage(f.page);
+      },
+      { defer: true },
+    ),
+  );
+  /** Opens a page the board was pressed on, which so needs no flight. */
+  const openHere = (id: string) => {
+    if (id !== p.page.id) opened = id;
+    p.onOpen(id);
+  };
+  /** The page drawn under a point of the screen: the one whose element or ground is there. */
+  const pageAt = (x: number, y: number) => {
+    for (const el of document.elementsFromPoint(x, y)) {
+      const layer = el.closest(".page-layer[data-page]");
+      if (layer && host.contains(layer)) return layer.getAttribute("data-page");
+    }
+    return null;
+  };
 
   // a written drag keeps showing until the page carries its numbers, so nothing jumps back.
   // The page is read before the skip, so its numbers arriving after the drag run this again.
@@ -305,36 +504,45 @@ export function Artboard(p: {
     begin: (at) => {
       cancel();
       const r = host.getBoundingClientRect();
-      pinch = { d: at.spread, cx: at.clientX - r.left, cy: at.clientY - r.top, view: view() };
+      pinch = { d: at.spread, cx: at.clientX - r.left, cy: at.clientY - r.top, cam: cam() };
       return true;
     },
     move: (at) => {
       if (!pinch) return;
       const r = host.getBoundingClientRect();
       const [cx, cy] = [at.clientX - r.left, at.clientY - r.top];
-      const v = pinch.view;
-      const k = zoomed((v.k * at.spread) / pinch.d);
-      setView({ k, x: cx - ((pinch.cx - v.x) * k) / v.k, y: cy - ((pinch.cy - v.y) * k) / v.k });
+      const c = pinch.cam;
+      const k = zoomed((c.k * at.spread) / pinch.d);
+      setCam({ k, x: cx - ((pinch.cx - c.x) * k) / c.k, y: cy - ((pinch.cy - c.y) * k) / c.k });
     },
     end: () => (pinch = null),
   });
 
   // what this page draws under a point, front to back, each element once
   const hitsAt = (x: number, y: number) => {
-    const layer = host.querySelector(".page-layer");
+    const layer = host.querySelector(".page-layer.open");
     const ids = document.elementsFromPoint(x, y).map((el) => (layer?.contains(el) ? el.closest(".el[data-id]")?.getAttribute("data-id") : null));
     return [...new Set(ids.filter((id): id is string => !!id))];
   };
 
   const down = (e: PointerEvent) => {
+    land();
     if (e.pointerType === "touch" && finger.down(e) > 1) return;
     const target = e.target as HTMLElement;
-    const v = view();
     // a field being typed in commits before the canvas takes over
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    if (e.button === 1) {
-      drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
+    const panFrom = () => {
+      setPanning(true);
+      return { kind: "pan" as const, sx: e.clientX, sy: e.clientY, vx: cam().x, vy: cam().y };
+    };
+    if (e.button === 1 || (e.button === 0 && space())) {
+      // the middle button's own scroll never starts
+      e.preventDefault();
+      drag = panFrom();
     } else if (e.button === 0) {
+      // a press on another page opens it, then goes on as a press there
+      const at = pageAt(e.clientX, e.clientY);
+      if (at && at !== p.page.id) openHere(at);
       const handle = target.closest("[data-handle]")?.getAttribute("data-handle") as Handle | null;
       const hits = hitsAt(e.clientX, e.clientY);
       const stack = stackAt(p.page, hits);
@@ -365,7 +573,7 @@ export function Artboard(p: {
       };
       // a shape's own attributes move and scale it, in its diagram's units
       const startShape = (how: "move" | Handle, id: string) => {
-        const el = host.querySelector(`.page-layer [data-id="${id}"]`);
+        const el = host.querySelector(`.page-layer.open [data-id="${id}"]`);
         const base = find(p.page.children, id);
         const screen = el instanceof SVGGraphicsElement ? (el.parentNode as SVGGraphicsElement).getScreenCTM() : null;
         if (!(el instanceof SVGGraphicsElement) || !base || !screen || !reshape(base, moving(0, 0))) return;
@@ -375,7 +583,7 @@ export function Artboard(p: {
       if (preview() && hit && !(e.shiftKey || e.ctrlKey || e.metaKey)) {
         // the phone lays out each block, so a press picks and a drag pans
         p.onPick(hit);
-        drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
+        drag = panFrom();
       } else if (handle && p.selected.length === 1 && shape(p.selected[0])) {
         startShape(handle, p.selected[0]);
       } else if (handle && p.selected.length === 1) {
@@ -407,7 +615,7 @@ export function Artboard(p: {
         drag = { kind: "box", sx: e.clientX, sy: e.clientY };
       } else {
         p.onPick(null);
-        drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
+        drag = panFrom();
       }
     }
     if (!drag) return;
@@ -419,7 +627,7 @@ export function Artboard(p: {
     if (!drag) return;
     const [dx, dy] = [e.clientX - drag.sx, e.clientY - drag.sy];
     if (drag.kind === "pan") {
-      setView({ ...view(), x: drag.vx + dx, y: drag.vy + dy });
+      setCam({ ...cam(), x: drag.vx + dx, y: drag.vy + dy });
       return;
     }
     if (drag.kind === "box") {
@@ -484,6 +692,7 @@ export function Artboard(p: {
   const cancel = () => {
     const d = drag;
     drag = null;
+    setPanning(false);
     if (!d || d.kind === "pan") return;
     if (d.kind === "box") setBox(null);
     else if (d.kind === "reorder") setSlotLine(null);
@@ -494,6 +703,7 @@ export function Artboard(p: {
   const up = () => {
     const d = drag;
     drag = null;
+    setPanning(false);
     if (d?.kind === "box") return takeBox();
     if (d?.kind === "reorder") {
       setSlotLine(null);
@@ -586,9 +796,25 @@ export function Artboard(p: {
     setView({ k: UNIT, x: cx - ((cx - v.x) / v.k) * UNIT, y: cy - ((cy - v.y) / v.k) * UNIT });
   };
 
-  const sheet = () => {
-    const v = view();
-    return { left: `${v.x}px`, top: `${v.y}px`, width: `${size().width * v.k}px`, height: `${size().height * v.k}px` };
+  /** The pages in sight as holes in a sheet over the artboard, each edge on a pixel's middle so
+   *  its outline stays crisp. */
+  const veil = () => {
+    const r = room();
+    let d = `M-10 -10H${r.w + 10}V${r.h + 10}H-10Z`;
+    for (const id of inSight()) {
+      const pg = byId(id);
+      if (!pg) continue;
+      const s = screenOf(boxOn(pg));
+      const [l, t, rt, b] = [s.left, s.top, s.left + s.width, s.top + s.height].map((v) => Math.round(v) - 0.5);
+      d += `M${l} ${t}H${rt + 1}V${b + 1}H${l}Z`;
+    }
+    return d;
+  };
+  /** Where a page's label goes: above it, as wide as it shows, and none while it is too small. */
+  const labelAt = (id: string) => {
+    const pg = byId(id);
+    const s = pg && screenOf(boxOn(pg));
+    return pg && s && s.width >= LABELLED ? { pg, style: { left: `${Math.round(s.left)}px`, top: `${Math.round(s.top)}px`, "max-width": `${Math.round(s.width)}px` } } : null;
   };
 
   // a shape's attributes place it, and the page lays some elements out itself, so their rings
@@ -625,7 +851,7 @@ export function Artboard(p: {
     let frame = requestAnimationFrame(function measure() {
       const at: Record<string, DOMRect> = {};
       for (const id of ids) {
-        const el = host.querySelector(`.page-layer [data-id="${id}"]`);
+        const el = host.querySelector(`.page-layer.open [data-id="${id}"]`);
         if (el) at[id] = el.getBoundingClientRect();
       }
       setMeasured(at);
@@ -653,7 +879,7 @@ export function Artboard(p: {
   // the artboard shrinks, as under a phone's sheet. One a press picks stays put under it.
   const keep = () => {
     const id = one();
-    const el = id && !drag && host.querySelector(`.page-layer [data-id="${id}"]`);
+    const el = id && !drag && !isFlying() && host.querySelector(`.page-layer.open [data-id="${id}"]`);
     if (!el) return;
     const [r, b] = [host.getBoundingClientRect(), el.getBoundingClientRect()];
     // along one side: wholly in with a margin, or one too big to fit at least partly in
@@ -668,14 +894,14 @@ export function Artboard(p: {
   };
   createEffect(on(one, () => queueMicrotask(keep), { defer: true }));
   const turnsOf = (id: string): Turns => {
-    const el = host.querySelector(`.page-layer [data-id="${id}"]`);
+    const el = host.querySelector(`.page-layer.open [data-id="${id}"]`);
     const angle = (x: globalThis.Element) => parseFloat(getComputedStyle(x).rotate) || 0;
     let room = 0;
     for (let a = el?.parentElement?.closest(".el"); a; a = a.parentElement?.closest(".el")) room += angle(a);
     return { own: el ? angle(el) : 0, room };
   };
   const turnOf = (id: string) => {
-    const el = host.querySelector(`.page-layer [data-id="${id}"]`);
+    const el = host.querySelector(`.page-layer.open [data-id="${id}"]`);
     if (!el) return null;
     const style = getComputedStyle(el);
     const angle = parseFloat(style.rotate) || 0;
@@ -766,10 +992,14 @@ export function Artboard(p: {
   return (
     <div
       class="artboard"
+      classList={{ grab: space(), panning: panning() }}
+      data-flying={isFlying() ? "" : undefined}
       ref={host}
       onPointerDown={down}
       onContextMenu={(e) => {
         cancel();
+        const on = pageAt(e.clientX, e.clientY);
+        if (on && on !== p.page.id) openHere(on);
         const stack = stackAt(p.page, hitsAt(e.clientX, e.clientY));
         // on what is selected, or inside it, the menu acts on the selection
         const around = stack.find((id) => p.selected.includes(id));
@@ -786,10 +1016,51 @@ export function Artboard(p: {
       }}
     >
       <canvas class="artboard-grid" ref={grid} />
-      <div class="page-layer" style={{ transform: `translate(${view().x}px, ${view().y}px) scale(${view().k / UNIT})` }}>
-        <PageView page={preview() ?? p.page} overrides={overrides} grows={!!preview()} design />
-      </div>
-      <div class="veil" style={sheet()} />
+      <For each={inSight()}>
+        {(id) => (
+          <Show when={byId(id)}>
+            {(pg) => {
+              const open = () => id === p.page.id;
+              const at = () => screenOf(boxOn(pg()));
+              return (
+                <div class="page-layer" classList={{ open: open() }} data-page={id} style={{ transform: `translate(${at().left}px, ${at().top}px) scale(${cam().k / UNIT})` }}>
+                  <PageView page={open() ? (preview() ?? pg()) : pg()} overrides={open() ? overrides : undefined} grows={open() && !!preview()} design />
+                </div>
+              );
+            }}
+          </Show>
+        )}
+      </For>
+      <svg class="veil">
+        <path d={veil()} />
+      </svg>
+      <For each={inSight()}>
+        {(id) => (
+          <Show when={labelAt(id)}>
+            {(at) => (
+              <button
+                class="board-label"
+                classList={{ open: id === p.page.id }}
+                style={at().style}
+                title={at().pg.name}
+                onPointerDown={(e) => e.button === 0 && !space() && e.stopPropagation()}
+                onClick={() => {
+                  openHere(id);
+                  flyTo(id);
+                }}
+              >
+                <Show when={at().pg.interface !== null} fallback={<File size={12} />}>
+                  <Component size={12} />
+                </Show>
+                <span class="list-label">{at().pg.name}</span>
+                <span class="mono">
+                  {at().pg.width}x{at().pg.height}
+                </span>
+              </button>
+            )}
+          </Show>
+        )}
+      </For>
       <Show when={box()}>{(b) => <div class="marquee" style={{ left: `${b().left}px`, top: `${b().top}px`, width: `${b().width}px`, height: `${b().height}px` }} />}</Show>
       <Show when={slotLine()}>
         {(b) => <div class="slot" style={{ left: `${view().x + b().x * view().k}px`, top: `${view().y + b().y * view().k}px`, width: `${b().w * view().k}px`, height: `${b().h * view().k}px` }} />}
@@ -821,7 +1092,7 @@ export function Artboard(p: {
         <button class="icon-btn mono" title="Show at 100%" onClick={actual} onPointerDown={(e) => e.stopPropagation()}>
           {Math.round((view().k / UNIT) * 100)}%
         </button>
-        <button class="icon-btn" title="Fit the page" onClick={fit} onPointerDown={(e) => e.stopPropagation()}>
+        <button class="icon-btn" title="Fit every page (Shift 1)" onClick={() => fitAll()} onPointerDown={(e) => e.stopPropagation()}>
           Fit
         </button>
         <button

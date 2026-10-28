@@ -58,7 +58,7 @@ export function flowed(e: Element, room: Room, scope: Scope = pageScope): boolea
 /** The box the editor drew an element at, from its frame's inner corner, for one the page
  *  lays out itself. A repeat's first copy stands for it, as everywhere in the editor. */
 function drawn(id: string): Box | undefined {
-  const el = document.querySelector<HTMLElement>(`.page-layer [data-id="${id}"]`);
+  const el = document.querySelector<HTMLElement>(`.page-layer.open [data-id="${id}"]`);
   return el ? { x: el.offsetLeft / UNIT, y: el.offsetTop / UNIT, w: el.offsetWidth / UNIT, h: el.offsetHeight / UNIT } : undefined;
 }
 
@@ -230,7 +230,7 @@ export function originEdits(page: Page, id: string, origin: string | null): Edit
  *  its own box: by the turn of the point's move less the move. Empty when it does not turn or
  *  an expression places it. */
 function turnedOutline(e: Element, origin: string | null, scope: Scope): Record<string, string> {
-  const el = document.querySelector(`.page-layer [data-id="${e.id}"]`);
+  const el = document.querySelector(`.page-layer.open [data-id="${e.id}"]`);
   const r = resolve(e.props.rotate ?? "0", scope);
   const turn = ((r.ok && Number(r.value)) || 0) * (Math.PI / 180);
   if (!(el instanceof SVGGraphicsElement) || !turn) return {};

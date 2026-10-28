@@ -27,7 +27,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   // over the layout a drag moves it, with grips to size it
   check((await page.locator(".artboard .ring .handle").count()) === 8, "the freed part offers no grips");
-  const k = (await page.locator(".artboard .page").boundingBox()).width / 128;
+  const k = (await page.locator(".artboard .page-layer.open > .page").boundingBox()).width / 128;
   const b = await d.box(parts[1]);
   await d.gesture(b.x + b.width - 2 * k, b.y + b.height / 2, 20 * k, 3 * k);
   await eventually(() => props(hmi, pageId, parts[1]).x === "21" && props(hmi, pageId, parts[1]).y === "9", () => `the drag to move it, it is at ${props(hmi, pageId, parts[1]).x}, ${props(hmi, pageId, parts[1]).y}`);

@@ -9,7 +9,7 @@ export default async function ({ page, hmi, d, eventually }) {
   const corner = await hmi.addElement(pageId, "div", { name: "Corner", x: "20", y: "20", w: "10", h: "5", rotate: "90", background: "#2a2f35" });
   const middle = await hmi.addElement(pageId, "div", { name: "Middle", x: "60", y: "30", w: "10", h: "5", rotate: "90", origin: '"50% 50%"', background: "#4a8fd6" });
   await d.openPage("Turned grips");
-  const k = (await page.locator(".artboard .page").boundingBox()).width / 128;
+  const k = (await page.locator(".artboard .page-layer.open > .page").boundingBox()).width / 128;
   const pull = async (id, dx, dy) => {
     await d.el(id).click();
     const g = await page.locator(".artboard .ring .handle.e").boundingBox();

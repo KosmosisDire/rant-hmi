@@ -47,7 +47,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     check(shows >= 3 * CAP, `the screen showing the scan took ${kb(shows)} beside the Data tab`);
 
     await editor.locator(".tab", { hasText: "Design" }).click();
-    await editor.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Preview cap/ }).click();
+    await editor.locator(".screen:not([hidden]) .page-row", { hasText: /^Preview cap/ }).click();
     await editor.locator(".tab", { hasText: "Run" }).click();
     await editor.waitForTimeout(1000);
     const runs = await rate(editor, 3);

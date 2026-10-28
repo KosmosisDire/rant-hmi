@@ -29,7 +29,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   // on the canvas, a drag ends where the pointer was last held
   await d.tab("Design");
-  const drawn = page.locator(`.artboard .el[data-id="${pad}"]`);
+  const drawn = page.locator(`.artboard .page-layer.open .el[data-id="${pad}"]`);
   const a = await drawn.boundingBox();
   await page.mouse.move(a.x + 20, a.y + 20);
   await page.mouse.down();

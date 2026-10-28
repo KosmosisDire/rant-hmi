@@ -24,7 +24,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   const screen = await context.newPage();
   await screen.goto(sys.url);
   await screen.locator(".tab", { hasText: "Design" }).click();
-  await screen.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Held/ }).click();
+  await screen.locator(".screen:not([hidden]) .page-row", { hasText: /^Held/ }).click();
   await screen.locator(".tab", { hasText: "Run" }).click();
   const text = (id) => screen.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`).textContent();
   const reads = async (id, want) => {

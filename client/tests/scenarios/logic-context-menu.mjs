@@ -27,6 +27,6 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(() => hmi.state.rules.length === before, "the new handler to go");
 
   await d.menu(list.locator(".list-row", { has: page.locator(".list-label", { hasText: /^menuPad$/ }) }), "Open in Design");
-  await page.locator(".screen:not([hidden]) .pages .list-row.selected", { hasText: "Logic menus" }).waitFor();
+  await page.locator(".screen:not([hidden]) .page-row.open", { hasText: "Logic menus" }).waitFor();
   check((await page.locator(".tab.on").textContent()).includes("Design"), "the Design tab did not open");
 }

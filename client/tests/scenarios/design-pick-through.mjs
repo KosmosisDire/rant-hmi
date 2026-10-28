@@ -15,7 +15,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.openPage("Pick through");
 
   const picked = () => page.locator(".screen:not([hidden]) .sidebar.left .list-row.selected[data-id]").getAttribute("data-id").catch(() => null);
-  const board = await page.locator(".artboard .page").boundingBox();
+  const board = await page.locator(".artboard .page-layer.open > .page").boundingBox();
   const k = board.width / 128;
   // page units to the screen
   const at = (x, y) => [board.x + x * k, board.y + y * k];

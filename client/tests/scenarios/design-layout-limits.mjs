@@ -10,7 +10,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const fill = await hmi.addElement(pageId, "div", { name: "Filler", w: "fill", h: "4", background: "#d2574b" }, row);
   const fixed = await hmi.addElement(pageId, "div", { name: "Fixed", w: "6", h: "4", background: "#4a8fd6" }, row);
   await d.openPage("Limits");
-  const k = async () => (await page.locator(".artboard .page").boundingBox()).width / 128;
+  const k = async () => (await page.locator(".artboard .page-layer.open > .page").boundingBox()).width / 128;
   const width = async () => Math.round(((await d.box(fill)).width / (await k())) * 10) / 10;
   let seen;
   const is = (w) => eventually(async () => (seen = await width()) === w, () => `the filler to be ${w} wide, it is ${seen}`);

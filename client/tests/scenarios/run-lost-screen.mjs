@@ -12,13 +12,13 @@ export default async function ({ page, hmi, sys, d, eventually }) {
   await hmi.setHandler(pageId, jog, "release", "Speed = 0.25;");
   await hmi.set("Speed", 0.25);
   await d.openPage("Jog");
-  await page.locator(".pages .list-row.selected").waitFor();
+  await page.locator(".page-row.open").waitFor();
 
   const other = await page.context().browser().newContext({ viewport: { width: 1200, height: 800 } });
   const tablet = await other.newPage();
   await tablet.goto(sys.url);
   await tablet.locator(".tab", { hasText: "Design" }).click();
-  await tablet.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Jog/ }).click();
+  await tablet.locator(".screen:not([hidden]) .page-row", { hasText: /^Jog/ }).click();
   await tablet.locator(".tab", { hasText: "Run" }).click();
   const button = tablet.locator(`.run-layer:not([hidden]) .el[data-id="${jog}"]`);
   const b = await button.boundingBox();

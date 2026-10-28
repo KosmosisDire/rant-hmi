@@ -9,15 +9,22 @@ export function designer(page) {
     await field.fill(text);
     await field.press("Enter");
   };
-  // a page or component from its list's +, open once its row is the one selected: until then
-  // the inspector still shows the one open before, which a name typed now would rename
+  // a page or component from its +, open once its row is the one selected: until then the
+  // inspector still shows the one open before, which a name typed now would rename. A
+  // component open shows as a card and a band both, the card first.
   const fresh = async (button, named) => {
-    const rows = left().locator(".pages :is(.list-row, .card)");
-    const before = await rows.count();
+    const open = left().locator(":is(.page-row, .card).selected .list-label");
+    const now = async () => ((await open.count()) > 0 ? ((await open.first().textContent()) ?? "") : "");
+    const before = await now();
     await left().locator(`button[title="${button}"]`).click();
-    const open = left().locator(".pages :is(.list-row, .card).selected .list-label");
-    await until(async () => (await rows.count()) > before && (await open.count()) === 1 && named.test((await open.textContent()) ?? ""), `the new one from ${button}`);
+    await until(async () => {
+      const name = await now();
+      return name !== before && named.test(name);
+    }, `the new one from ${button}`);
+    await landed();
   };
+  // the board done flying to what was opened, so what is on it stays where it is measured
+  const landed = () => page.locator(".screen:not([hidden]) .artboard:not([data-flying])").waitFor();
   // the element the editor has selected, by its layer row
   const selected = async () => (await left().locator(".list-row.selected[data-id]").count()) === 1 ? left().locator(".list-row.selected[data-id]").getAttribute("data-id") : null;
   const until = async (fn, what, ms = 4000) => {
@@ -49,14 +56,19 @@ export function designer(page) {
       await page.locator(".tab", { hasText: name }).click();
     },
 
-    /** Opens a page or a component by its exact name. */
+    /** Opens a page or a component by its exact name, its band or its card, once the board has
+     *  flown to it. */
     async openPage(name) {
       await d.tab("Design");
-      await page.locator(".pages :is(.list-row, .card)", { has: page.getByText(name, { exact: true }) }).click();
+      await left().locator(":is(.page-row, .card)", { has: page.getByText(name, { exact: true }) }).last().click();
+      await landed();
     },
 
+    landed,
+
+    /** An element of the page open, which every other page on the board may share ids with. */
     el(id) {
-      return page.locator(`.artboard .el[data-id="${id}"]`);
+      return page.locator(`.artboard .page-layer.open .el[data-id="${id}"]`);
     },
 
     /** Picks an element on the canvas, clicking on it again until the picks, which go from the
@@ -148,7 +160,7 @@ export function designer(page) {
       await d.tab("Design");
       await fresh("Add a component", /^Component\d*$/);
       await d.setField("Name", name);
-      await left().locator(":is(.list-row, .card).selected", { has: page.getByText(name, { exact: true }) }).waitFor();
+      await left().locator(".card.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
       await d.set({ w: String(w), h: String(h) });
     },
 
@@ -264,12 +276,12 @@ export function designer(page) {
       await box.press("Control+Enter");
     },
 
-    /** Adds a page from the Pages list and opens it. */
+    /** Adds a page from the layers' + and opens it. */
     async addPage(name) {
       await d.tab("Design");
       await fresh("Add a page", /^Page \d+$/);
       await d.setField("Name", name);
-      await left().locator(".list-row.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
+      await left().locator(".page-row.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
     },
 
     /** Right clicks `target` and picks the menu's row with these words. */
@@ -285,14 +297,25 @@ export function designer(page) {
       return left().locator(`.list-row[title="${entity}"]`);
     },
 
-    /** A row of the pages or components list by its name. */
+    /** A page's band or a component's card by its name. */
     pageRow(name) {
-      return left().locator(".pages :is(.list-row, .card)", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
+      return left().locator(":is(.page-row, .card)", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
     },
 
-    /** Selects an element by its name in the layers. */
+    /** The open page's band and layers, every fold in them opened as a person opens them, since
+     *  the layers start folded. */
+    async layers() {
+      const open = left().locator(".page-group.open");
+      const shut = open.locator('.open-caret[title="Show what it holds"]');
+      for (let n = 0; n < 60 && (await shut.count()) > 0; n++) await shut.first().click();
+      await open.evaluate((el) => el.scrollIntoView({ block: "nearest" }));
+      return open;
+    },
+
+    /** Selects an element of the page open by its name in the layers. */
     async select(name) {
-      await left().locator(".list-row[data-id]", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) }).first().click();
+      const open = await d.layers();
+      await open.locator(".list-row[data-id]", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) }).first().click();
     },
 
     /** Writes the code of the element's handler for `event` that takes any, added when it has

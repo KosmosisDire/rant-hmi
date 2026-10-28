@@ -153,14 +153,16 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
   openMenu(e, entries);
 }
 
-/** The menu on the layers' empty space: what adds to the page itself, at its top level. */
-export function layersMenu(e: MouseEvent, page: Page, pick: Pick, selectAll: () => void) {
+/** The menu on a page's band in the layers: what adds to the page itself, at its top level,
+ *  then `more`, the page's own rows. */
+export function layersMenu(e: MouseEvent, page: Page, pick: Pick, selectAll: () => void, more: MenuEntry[] = []) {
   pick(null);
   openMenu(e, [
     ...adds(page, (tag, props, component) => addElement(page, null, tag, props, component ?? null)),
     "-",
     { label: "Paste", keys: "Ctrl V", icon: <ClipboardPaste size={13} />, run: () => void pasteHere(page, null) },
     { label: "Select all", keys: "Ctrl A", run: selectAll },
+    ...more,
   ]);
 }
 

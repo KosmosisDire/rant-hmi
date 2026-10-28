@@ -9,7 +9,7 @@ import { operator } from "./mode";
 import { pathsOf } from "./paths";
 import { stack } from "./stack";
 import { page, state } from "./store";
-import { currentPage, currentTab } from "./view";
+import { boardPages, currentTab } from "./view";
 
 /** How many of what is drawn now read each name, and how many of those read it whole: each read
  *  counts until what made it runs again or goes. */
@@ -56,7 +56,7 @@ function shownPages(): (Page | undefined)[] {
     case "logic":
       return [];
     case "design":
-      return [currentPage()];
+      return boardPages().map(page);
     default:
       return stacked();
   }

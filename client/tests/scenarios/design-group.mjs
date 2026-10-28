@@ -11,6 +11,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const a = await hmi.addElement(pageId, "div", box("A", 44));
   const b = await hmi.addElement(pageId, "div", box("B", 220));
   await d.openPage("Grouping");
+  await d.layers();
   const head = page.locator(".screen:not([hidden]) .sidebar.right .pane-head");
   const says = (words) => eventually(async () => (await head.textContent())?.includes(words), () => `the inspector to say ${words}`);
   const row = (name) => page.locator(".screen:not([hidden]) .sidebar.left .list-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });

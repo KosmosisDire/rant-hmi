@@ -11,7 +11,7 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   const prop = (key) => props(hmi, pageId, box)[key];
 
   await d.openPage("Typing page");
-  await page.locator(".screen:not([hidden]) .layers .list-row", { hasText: "Box" }).click();
+  await (await d.layers()).locator(".list-row", { hasText: "Box" }).click();
   await page.locator(".screen:not([hidden]) .sidebar.right .field.inside").first().waitFor();
   check((await page.locator(".screen:not([hidden]) .steps").count()) === 0, "a desktop's number fields have steppers");
 
@@ -25,9 +25,11 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   const on = (selector) => screen.locator(`.screen:not([hidden]) ${selector}`);
   const toggle = screen.locator(".topbar .bar-btn");
   await toggle.first().tap();
-  await on(".pages .list-row").filter({ has: screen.locator(".list-label", { hasText: /^Typing page$/ }) }).tap();
+  await on(".page-row").filter({ has: screen.locator(".list-label", { hasText: /^Typing page$/ }) }).tap();
   await toggle.first().tap();
-  await on(".sidebar.left .layers .list-row").filter({ hasText: "Box" }).tap();
+  // the page's band starts folded, so its caret shows what it holds
+  await on(".page-group.open .page-row .open-caret").tap();
+  await on(".sidebar.left .layers .list-row[data-id]").filter({ hasText: "Box" }).tap();
   const sheet = on(".sheet.dock");
   const x = sheet.locator('.field.inside:has(.lead[aria-label="x"])');
   const opacity = sheet.locator(".field").filter({ has: screen.locator("label", { hasText: /^Opacity$/ }) });

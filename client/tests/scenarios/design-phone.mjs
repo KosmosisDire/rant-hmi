@@ -65,13 +65,15 @@ export default async function ({ page, hmi, sys, check, eventually }) {
 
   // a page picked from the drawer opens and the drawer goes
   await toggle.first().tap();
-  await on(".pages .list-row").filter({ has: screen.locator(".list-label", { hasText: /^Phone page$/ }) }).tap();
+  await on(".page-row").filter({ has: screen.locator(".list-label", { hasText: /^Phone page$/ }) }).tap();
   await eventually(async () => !(await drawer.isVisible()), "the drawer to go once a page is picked");
-  const el = on(`.page-layer [data-id="${small}"]`);
+  const el = on(`.page-layer.open [data-id="${small}"]`);
   await el.waitFor();
 
   // a layer picked from the drawer shows in the risen sheet, in sight above it
   await toggle.first().tap();
+  // the page's band starts folded, so its caret shows what it holds
+  await drawer.locator(".page-group.open .page-row .open-caret").tap();
   await drawer.locator(".layers .list-row", { hasText: "Small" }).tap();
   await eventually(async () => !(await drawer.isVisible()), "the drawer to go once a layer is picked");
   const up = await settled(sheet, "the sheet to rise");
@@ -103,7 +105,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
 
   // a component card dragged out of the drawer puts it away and lands where it is let go
   const placed = () => hmi.page(pageId).children.filter((c) => c.component === "Phonepart").length;
-  const sheetBox = await on(".page-layer > .page").boundingBox();
+  const sheetBox = await on(".page-layer.open > .page").boundingBox();
   await toggle.first().tap();
   await settled(drawer, "the drawer to slide out for a card");
   const card = drawer.locator(".card", { hasText: "Phonepart" });
@@ -134,11 +136,11 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   for (let i = 1; i <= 5; i++) await touch("touchMove", [[mx - 20 - i * 12, my], [mx + 20 + i * 12, my]]);
   await touch("touchEnd");
   await eventually(async () => (await zoom()) > before * 2, `a pinch to zoom in from ${before}%`);
-  const at = await on(".page-layer > .page").boundingBox();
+  const at = await on(".page-layer.open > .page").boundingBox();
   await touch("touchStart", [[mx - 30, my], [mx + 30, my]]);
   for (let i = 1; i <= 4; i++) await touch("touchMove", [[mx - 30 + i * 10, my + i * 10], [mx + 30 + i * 10, my + i * 10]]);
   await touch("touchEnd");
-  const moved = await on(".page-layer > .page").boundingBox();
+  const moved = await on(".page-layer.open > .page").boundingBox();
   check(Math.abs(moved.x - at.x - 40) < 1 && Math.abs(moved.y - at.y - 40) < 1 && Math.abs(moved.width - at.width) < 1, `two fingers moved the page from ${JSON.stringify(at)} to ${JSON.stringify(moved)}`);
   check(props(hmi, pageId, small).x === "30", "a pinch moved the element its first finger was on");
 

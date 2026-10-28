@@ -14,7 +14,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const parts = [];
   for (const [i, colour] of ["#d2574b", "#4a8fd6", "#3fa66b"].entries()) parts.push(await hmi.addElement(pageId, "div", { name: `P${i}`, x: String(50 + i), y: "30", w: "6", h: "4", background: colour }, row));
   await d.openPage("Rows");
-  const k = async () => (await page.locator(".artboard .page").boundingBox()).width / 128;
+  const k = async () => (await page.locator(".artboard .page-layer.open > .page").boundingBox()).width / 128;
   // where each sits in the row, in page units from the row's corner, to a tenth
   const at = async (id) => {
     const [r, b, z] = [await d.box(row), await d.box(id), await k()];

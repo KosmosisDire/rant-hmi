@@ -1,7 +1,7 @@
 import { batch, createEffect, createSignal, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import { UNIT } from "../../state/bind";
 import { onMoved, state } from "../../state/store";
-import { currentPage, openPage, tookWanted, wanted } from "../../state/view";
+import { currentPage, flyTo, openPage, tookWanted, wanted } from "../../state/view";
 import { find } from "../../state/elements";
 import { Edge, reveal, Sidebar } from "../../ui/Sidebars";
 import { Artboard, GRID, STEP } from "./Artboard";
@@ -43,19 +43,25 @@ export function DesignScreen(p: { shown: boolean }) {
     if (t && !(s.length === 1 && s[0] === t.id)) setTyping(null);
   });
 
-  // what this screen just made: a new page opens, a new element is selected
+  /** The page open as the selection was last made, whose ids it names. */
+  let at = currentPage()?.id;
+  onCleanup(onMoved((from, to) => at === from && (at = to)));
+  /** Opens a page, from the board or the layers, with one element on it picked or none. */
+  const openOn = (page: string, id: string | null = null) => {
+    if (page !== currentPage()?.id) {
+      at = page;
+      openPage(page);
+    }
+    setSelection(id ? [id] : []);
+  };
+
+  // what this screen just made: a new page opens, a new element is selected on its page
   createEffect(
     on(
       () => state.made?.n,
       () => {
         const m = state.made;
-        if (!m) return;
-        if (m.id === m.page) {
-          openPage(m.page);
-          setSelection([]);
-        } else if (m.page === currentPage()?.id) {
-          setSelection([m.id]);
-        }
+        if (m) openOn(m.page, m.id === m.page ? null : m.id);
       },
       { defer: true },
     ),
@@ -63,8 +69,6 @@ export function DesignScreen(p: { shown: boolean }) {
 
   // another page opened starts with nothing selected, since ids repeat across pages, unless
   // an element on it was asked for, as the Logic tab asks for a handler's, once this shows
-  let at = currentPage()?.id;
-  onCleanup(onMoved((from, to) => at === from && (at = to)));
   createEffect(() => {
     const id = currentPage()?.id;
     const w = p.shown ? wanted() : null;
@@ -82,6 +86,10 @@ export function DesignScreen(p: { shown: boolean }) {
   // on a phone an element picked from the drawer or tapped on the page shows in the sheet
   const pickShown: Pick = (id, add) => {
     pick(id, add);
+    if (id) reveal();
+  };
+  const openShown = (page: string, id: string | null = null) => {
+    openOn(page, id);
     if (id) reveal();
   };
   const tapped = (e: MouseEvent) => document.elementFromPoint(e.clientX, e.clientY)?.closest(".page-layer .el[data-id]") && reveal();
@@ -106,6 +114,10 @@ export function DesignScreen(p: { shown: boolean }) {
       }
       if (e.key === "Escape" && keys()) {
         setKeys(false);
+        return;
+      }
+      if (e.shiftKey && !mod && e.code === "Digit1") {
+        flyTo(null);
         return;
       }
       const page = currentPage();
@@ -167,15 +179,21 @@ export function DesignScreen(p: { shown: boolean }) {
     });
   });
 
+  // the board shows every page side by side, or a component open alone
+  const onBoard = () => {
+    const open = currentPage();
+    return open && open.interface !== null ? [open] : state.pages.filter((pg) => pg.interface === null);
+  };
+
   return (
     <div class="screen" hidden={!p.shown}>
       <Sidebar side="left">
-        <Outline page={currentPage()} selected={selection()} onPick={pickShown} onEdit={edit} />
+        <Outline page={currentPage()} selected={selection()} onPick={pickShown} onOpen={openShown} onEdit={edit} />
       </Sidebar>
       <Edge side="left" />
       <section class="detail" onClick={tapped}>
         <Show when={currentPage()} fallback={<div class="later">No page yet.</div>}>
-          {(page) => <Artboard page={page()} selected={selection()} onPick={pick} onEdit={edit} keys={keys()} onKeys={setKeys} />}
+          {(page) => <Artboard pages={onBoard()} page={page()} selected={selection()} onPick={pick} onOpen={openOn} onEdit={edit} keys={keys()} onKeys={setKeys} />}
         </Show>
       </section>
       <Edge side="right" />

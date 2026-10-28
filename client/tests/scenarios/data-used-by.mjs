@@ -17,6 +17,6 @@ export default async function ({ page, hmi, d, check }) {
   check(!rows.some((r) => r.startsWith("label")), "a text that only says Speed was listed");
 
   await used.filter({ hasText: "speedText" }).click();
-  await page.locator(".screen:not([hidden]) .pages .list-row.selected", { hasText: "Uses" }).waitFor();
+  await page.locator(".screen:not([hidden]) .page-row.open", { hasText: "Uses" }).waitFor();
   check((await page.locator(".tab.on").textContent()).includes("Design"), "the Design tab did not open");
 }

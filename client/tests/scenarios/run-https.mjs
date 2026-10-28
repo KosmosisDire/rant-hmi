@@ -26,7 +26,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await screen.goto(`https://${url.host}`);
   check((await screen.evaluate(() => location.protocol)) === "https:", "the screen on https");
   await screen.locator(".tab", { hasText: "Design" }).click();
-  await screen.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Secure/ }).click();
+  await screen.locator(".screen:not([hidden]) .page-row", { hasText: /^Secure/ }).click();
   await screen.locator(".tab", { hasText: "Run" }).click();
   const el = screen.locator(`.run-layer:not([hidden]) .el[data-id="${said}"]`);
   await eventually(async () => (await el.textContent()) === "open", async () => `the screen's link to come up over https, not "${await el.textContent()}"`, 10000);

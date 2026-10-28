@@ -48,10 +48,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.setField("h", "844");
   await d.setField("w", "390");
   await eventually(() => hmi.page(pageId)?.width === 390 && hmi.page(pageId)?.height === 844, "the new size");
-  await d.menu(page.locator(".screen:not([hidden]) .pages :is(.list-row, .card)", { has: page.getByText("Undo", { exact: true }) }), "Delete page");
+  await d.menu(page.locator(".screen:not([hidden]) :is(.page-row, .card)", { has: page.getByText("Undo", { exact: true }) }), "Delete page");
   await eventually(() => !hmi.page(pageId), "the page to go");
-  await eventually(async () => (await page.locator(".pages .list-row", { hasText: "Undo" }).count()) === 0, "the deleted page to leave the list");
+  await eventually(async () => (await page.locator(".page-row", { hasText: "Undo" }).count()) === 0, "the deleted page to leave the list");
   await page.keyboard.press("Control+z");
   await eventually(() => hmi.page(pageId)?.width === 390, "undo to bring the page back");
-  await page.locator(".pages .list-row.selected", { hasText: "Undo" }).waitFor();
+  await page.locator(".page-row.open", { hasText: "Undo" }).waitFor();
 }

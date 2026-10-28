@@ -305,7 +305,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await touch.goto(sys.url);
   await touch.locator(".statusbar", { hasText: "System" }).waitFor();
   await touch.locator(".tab", { hasText: "Design" }).click();
-  await touch.locator(".screen:not([hidden]) .pages .list-row", { hasText: /^Overview/ }).click();
+  await touch.locator(".screen:not([hidden]) .page-row", { hasText: /^Overview/ }).click();
   await touch.locator(".tab", { hasText: "Run" }).click();
   const at = (id, n = 0) => touch.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`).nth(n);
   await at(jog).waitFor();
