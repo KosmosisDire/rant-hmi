@@ -17,7 +17,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::logic::When;
 use crate::object::{self, Flat, owner};
 use crate::project::{self, Computed, Found, Import, Intent, Kind, Per, Variable};
-use crate::protocol::EnumInfo;
+use crate::protocol::{EnumInfo, Mode};
 
 /// How long code may run without waiting before it is stopped.
 const BUDGET: Duration = Duration::from_millis(250);
@@ -36,6 +36,8 @@ pub enum ToScript {
     Values(Vec<(String, Option<Value>)>),
     /// A screen's own variables that changed.
     Screen { session: u32, values: Vec<(String, Value)> },
+    /// The mode a screen draws its pages in now.
+    Mode { session: u32, mode: Mode },
     /// A screen went, and its own variables with it.
     Gone(u32),
     /// State that starts over, by key, on the HMI and every screen.
@@ -99,6 +101,8 @@ pub enum FromScript {
     Open { run: u64, page: String, replace: bool, call: u64 },
     /// Closes the top page on the screen that started the run, with an answer.
     Close { run: u64, answer: Value },
+    /// Sets the mode of the screen that started the run.
+    Mode { run: u64, mode: Mode },
     /// How a run ended, and what its code returned, null for nothing.
     Done { run: u64, end: End, value: Value },
     /// Each condition's truth now. One that reads an unknown value, or fails, is false.
@@ -269,6 +273,8 @@ struct Shared {
     values: HashMap<String, Value>,
     /// Each screen's own variables.
     screens: HashMap<u32, HashMap<String, Value>>,
+    /// The mode each screen draws in.
+    modes: HashMap<u32, Mode>,
     /// The screen each live run belongs to.
     sessions: HashMap<u64, Option<u32>>,
     /// The state each live run reads, by key.
@@ -401,6 +407,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         computed: HashMap::new(),
         values: HashMap::new(),
         screens: HashMap::new(),
+        modes: HashMap::new(),
         sessions: HashMap::new(),
         bound: HashMap::new(),
         returned: HashMap::new(),
@@ -693,8 +700,11 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
         ToScript::Objects(_) | ToScript::Judge | ToScript::Sample(_) | ToScript::Compute | ToScript::Invert { .. } | ToScript::Try { .. } => {}
         ToScript::Pages(list) => shared.borrow_mut().pages = list,
         ToScript::Screen { session, values } => shared.borrow_mut().screens.entry(session).or_default().extend(values),
+        ToScript::Mode { session, mode } => drop(shared.borrow_mut().modes.insert(session, mode)),
         ToScript::Gone(session) => {
-            shared.borrow_mut().screens.remove(&session);
+            let mut s = shared.borrow_mut();
+            s.screens.remove(&session);
+            s.modes.remove(&session);
         }
         ToScript::Forget(keys) => {
             let mut s = shared.borrow_mut();
@@ -951,6 +961,33 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         Ok(())
     };
     g.set("__close", Function::new(ctx.clone(), close)?)?;
+    // the mode of the run's screen, as it last said, and a new one for it
+    const NO_SCREEN: &str = "theme is a screen's, so it works in an element's handler or a screen's logic";
+    let s = shared.clone();
+    let mode = move |ctx: Ctx<'js>| -> rquickjs::Result<String> {
+        let st = s.borrow();
+        let session = st.sessions.get(&run).copied().flatten().ok_or_else(|| Exception::throw_type(&ctx, NO_SCREEN))?;
+        Ok(if st.modes.get(&session) == Some(&Mode::Light) { "light" } else { "dark" }.to_owned())
+    };
+    g.set("__mode", Function::new(ctx.clone(), mode)?)?;
+    let s = shared.clone();
+    let set_mode = move |ctx: Ctx<'js>, given: String| -> rquickjs::Result<()> {
+        let mode = match given.as_str() {
+            "dark" => Mode::Dark,
+            "light" => Mode::Light,
+            "device" => Mode::Device,
+            _ => return Err(Exception::throw_type(&ctx, &format!("theme.set takes \"dark\", \"light\" or \"device\", not {given:?}"))),
+        };
+        let mut st = s.borrow_mut();
+        let session = st.sessions.get(&run).copied().flatten().ok_or_else(|| Exception::throw_type(&ctx, NO_SCREEN))?;
+        // read back at once, till the screen says what the device gave
+        if mode != Mode::Device {
+            st.modes.insert(session, mode);
+        }
+        st.send(FromScript::Mode { run, mode });
+        Ok(())
+    };
+    g.set("__setMode", Function::new(ctx.clone(), set_mode)?)?;
     g.set("__budget", Function::new(ctx.clone(), || BUDGET.as_millis() as f64)?)?;
 
     // with what the code returned, or what stopped it

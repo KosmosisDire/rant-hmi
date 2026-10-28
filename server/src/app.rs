@@ -953,6 +953,7 @@ impl App {
                 }
             }
             ClientMsg::Unswitch => self.channel_closed(session),
+            ClientMsg::Mode { mode } => self.script.send(ToScript::Mode { session, mode }),
             ClientMsg::Shown { shown } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
                 let was = std::mem::replace(&mut s.shown, shown);
@@ -1631,6 +1632,11 @@ impl App {
             FromScript::Close { run, answer } => {
                 if let Some(session) = self.runs.get(&run).and_then(|r| r.session) {
                     self.send(session, &ServerMsg::Close { answer });
+                }
+            }
+            FromScript::Mode { run, mode } => {
+                if let Some(session) = self.runs.get(&run).and_then(|r| r.session) {
+                    self.send(session, &ServerMsg::Mode { mode });
                 }
             }
             FromScript::Judged(truths) => self.judged(truths),

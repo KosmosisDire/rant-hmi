@@ -14,7 +14,7 @@ import type { Token } from "../protocol/Token";
 import type { Value } from "../protocol/Value";
 import type { Variable } from "../protocol/Variable";
 import { held, pads } from "./input";
-import { mode } from "./mode";
+import { mode, setMode } from "./mode";
 import { imported, key, members, named, say } from "./names";
 import { type From, ranInto } from "./problems";
 import { entity, keptValue, live, promise, split, state } from "./store";
@@ -193,10 +193,23 @@ const link = Object.freeze({
 /** The keys held now, each true by what it types, as keys.a, or where it sits, as keys.KeyA. */
 const keys = new Proxy({}, { get: (_, name) => typeof name === "string" && held.read().has(name) });
 
-/** What code on a screen reads of the screen itself, which only reads. */
+/** The screen's mode, which its handlers may change. */
+const theme = Object.freeze({
+  get mode() {
+    return mode();
+  },
+  set: (m: unknown) => {
+    if (m !== "dark" && m !== "light" && m !== "device") throw new TypeError(`theme.set takes "dark", "light" or "device", not ${JSON.stringify(m)}`);
+    setMode(m);
+  },
+  toggle: () => setMode(mode() === "dark" ? "light" : "dark"),
+});
+
+/** What code on a screen reads of the screen itself, which only reads but for its mode. */
 const SCREEN: Record<string, unknown> = {
   link,
   keys,
+  theme,
   get gamepads() {
     return pads.read();
   },

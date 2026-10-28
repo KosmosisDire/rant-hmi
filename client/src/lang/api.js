@@ -67,6 +67,16 @@ export const API = [
     ],
   },
   { name: "keys", words: "the keys held, each true by what it types or where it sits, as keys.a or keys.KeyA", places: ["expression", "component"] },
+  {
+    name: "theme",
+    words: "this screen's light or dark mode, which picks each token's value",
+    places: ["expression", "handler", "component"],
+    fields: [
+      { name: "mode", words: "\"dark\" or \"light\", as the screen draws now" },
+      { name: "set", takes: ["mode"], words: "draw in \"dark\" or \"light\", or \"device\" to follow the device's own, kept on the device" },
+      { name: "toggle", takes: [], words: "draw in the other mode, kept on the device" },
+    ],
+  },
   { name: "gamepads", words: "the gamepads, gamepads[0] the first, null where none is", places: ["expression", "component"] },
 
   { name: "Math", words: "JavaScript's math", standard: true },

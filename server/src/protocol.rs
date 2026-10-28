@@ -69,6 +69,8 @@ pub enum ServerMsg {
     Refused { text: String, alias: Option<String> },
     /// Something for the person at this screen: what a handler said, or why it stopped.
     Notice { text: String, level: Level },
+    /// Draw the pages in this mode, as code on the system asked for this screen.
+    Mode { mode: Mode },
     /// Every screen's problems and those runs on the system met, whole, after a change, to each
     /// screen that asked for them.
     Problems { problems: Vec<Reported> },
@@ -148,6 +150,17 @@ pub enum Source {
     Hmi,
 }
 
+/// Which of its tokens' values a screen draws pages in. `Device` follows the device's own
+/// setting, which code may ask for but a screen never reports.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Mode {
+    Dark,
+    Light,
+    Device,
+}
+
 /// From a screen to the backend.
 #[derive(Deserialize, TS, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -169,6 +182,9 @@ pub enum ClientMsg {
     /// no values, as it can show none and its browser lets it run only now and then, and one
     /// shown again gets every value anew at once, so it never replays what it missed.
     Shown { shown: bool },
+    /// The mode the screen draws its pages in, as it starts and after each change, which code on
+    /// the system reads for it as `theme.mode`.
+    Mode { mode: Mode },
     /// The last message on the socket before the screen sends on its link channel, which the
     /// backend holds what comes on until this.
     Switch,
