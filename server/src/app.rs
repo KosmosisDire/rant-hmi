@@ -774,9 +774,7 @@ impl App {
     /// What each piece of the HMI's own code reads, by key: the objects' logic, functions,
     /// computed values and records, and the pages' handlers.
     fn own_reads(&self) -> Vec<OwnRead> {
-        // each piece of code, who it is, whether it is a handler's body, the object whose code it
-        // is, and the key a rule's `p` changes
-        let mut code: Vec<(String, &str, bool, Option<&object::Object>, Option<String>)> = Vec::new();
+        let mut code: Vec<Piece> = Vec::new();
         for o in self.project.objects() {
             for r in &o.logic {
                 let who = format!("the {} rule", r.name);
@@ -2346,6 +2344,10 @@ fn read_of<'a>(watch: &'a Option<HashMap<String, Vec<Vec<String>>>>, name: &str)
 fn shown<'a>(watch: &'a Option<HashMap<String, Vec<Vec<String>>>>, previews: bool, name: &str) -> Option<&'a [Vec<String>]> {
     if previews { Some(WHOLE) } else { read_of(watch, name) }
 }
+
+/// A piece of the HMI's own code: who it is, its source, whether it is a handler's body, the
+/// object whose code it is, and the key a rule's `p` changes.
+type Piece<'a> = (String, &'a str, bool, Option<&'a object::Object>, Option<String>);
 
 /// What a piece of the HMI's own code reads: the steps after a name, or every name whole when it
 /// may read any.
