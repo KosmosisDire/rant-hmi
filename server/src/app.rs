@@ -498,12 +498,12 @@ struct Running {
 }
 
 /// A handler as it runs: an element's for an event and filter on the copy of a repeat it
-/// happened on, or a rule's, which is its id alone.
+/// happened on, the index of each copy it sits in, or a rule's, which is its id alone.
 #[derive(Clone, PartialEq, Eq, Hash, Default)]
 struct HandlerKey {
     page: String,
     id: String,
-    index: Option<u32>,
+    copies: Vec<u32>,
     event: String,
     filter: Filter,
 }
@@ -519,14 +519,14 @@ struct Held {
     session: u32,
     page: String,
     id: String,
-    index: Option<u32>,
+    copies: Vec<u32>,
     end: &'static str,
     by: Filter,
 }
 
-/// An event waiting for its screen's run of its handler to end: what it brought and the copy of
-/// a repeat it happened on.
-type Waiting = (Value, Option<(u32, Value)>);
+/// An event waiting for its screen's run of its handler to end: what it brought and the item of
+/// the copy it happened on.
+type Waiting = (Value, Option<Value>);
 
 /// A rule's condition: true since when, and whether it has fired since it turned true, for the
 /// condition and code it was judged with.
@@ -1091,12 +1091,11 @@ impl App {
                     self.edit(session, edit, Step::Redo);
                 }
             }
-            ClientMsg::Fire { page, id, event, payload, index, item, heard } => {
-                let on = HandlerKey { page, id, index, event, filter: Filter::new() };
+            ClientMsg::Fire { page, id, event, payload, copies, item, heard } => {
+                let on = HandlerKey { page, id, copies, event, filter: Filter::new() };
                 self.follow_held(session, &on, &payload, &heard);
-                let at = index.map(|i| (i, item.unwrap_or(Value::Null)));
                 for filter in heard {
-                    self.fire(session, HandlerKey { filter, ..on.clone() }, payload.clone(), at.clone());
+                    self.fire(session, HandlerKey { filter, ..on.clone() }, payload.clone(), item.clone());
                 }
             }
             ClientMsg::Answer { ask, value } => {
@@ -1187,6 +1186,25 @@ impl App {
     fn take_variable(&mut self, name: &str) -> (Option<Value>, HashMap<u32, Value>) {
         let own = self.sessions.iter_mut().filter_map(|(id, s)| s.vars.remove(name).map(|v| (*id, v))).collect();
         (self.shared.remove(name), own)
+    }
+
+    /// Drops the values of the state under each key, every copy's on the HMI and every screen,
+    /// so each reads its start again.
+    fn restart_state(&mut self, keys: &[String]) {
+        let gone = |k: &String| keys.iter().any(|key| k.strip_prefix(key.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('#')));
+        let mut dropped: Vec<String> = self.shared.keys().filter(|k| gone(k)).cloned().collect();
+        self.shared.retain(|k, _| !gone(k));
+        for s in self.sessions.values_mut() {
+            dropped.extend(s.vars.keys().filter(|k| gone(k)).cloned());
+            s.vars.retain(|k, _| !gone(k));
+        }
+        if dropped.is_empty() {
+            return;
+        }
+        dropped.sort();
+        dropped.dedup();
+        self.script.send(ToScript::Forget(dropped.clone()));
+        self.put_values(None, dropped.into_iter().map(|alias| ValueUpdate { alias, value: None, known: false, base: None }).collect());
     }
 
     /// Adds, changes or removes a record. A rename carries its history and every use of its
@@ -1363,9 +1381,8 @@ impl App {
 
     /// Runs the element's handler `of` names, unless the screen's run of it from before goes on.
     /// Then a stream's event and an end wait for it, while a one off start is dropped. Each
-    /// screen runs its own, so one never drops another's. `at` is the copy of a repeat it
-    /// happened on, its index and item.
-    fn fire(&mut self, session: u32, of: HandlerKey, payload: Value, at: Option<(u32, Value)>) {
+    /// screen runs its own, so one never drops another's. `item` is the copy's it happened on.
+    fn fire(&mut self, session: u32, of: HandlerKey, payload: Value, item: Option<Value>) {
         let Some(e) = self.pages.element(&of.page, &of.id) else { return };
         let Some(h) = e.handlers.iter().find(|h| h.event == of.event && h.filter == of.filter) else { return };
         if self.runs.values().any(|r| r.of == of && r.session == Some(session)) {
@@ -1377,14 +1394,14 @@ impl App {
             let queue = self.waiting.entry((session, of.clone())).or_default();
             match queue.back_mut() {
                 // a stream's events on the same copy gather in, so no move is lost
-                Some((was, a)) if stream && a.as_ref().map(|a| a.0) == at.as_ref().map(|a| a.0) => *was = events::gather(&of.event, was, payload),
-                _ => queue.push_back((payload, at)),
+                Some((was, _)) if stream => *was = events::gather(&of.event, was, payload),
+                _ => queue.push_back((payload, item)),
             }
             return;
         }
         let label = format!("{} {}", e.props.get("name").unwrap_or(&of.id), of.event);
         let code = h.code.clone();
-        self.start(Running { session: Some(session), of, label }, code, payload, at);
+        self.start(Running { session: Some(session), of, label }, code, payload, item);
     }
 
     /// The filters of an element's handlers that take `event` bringing `p`.
@@ -1399,7 +1416,7 @@ impl App {
         let (page, id, event) = (on.page.as_str(), on.id.as_str(), on.event.as_str());
         let Some(info) = events::find(event) else { return };
         let end = info.ends_with.unwrap_or(info.name);
-        let at = |by: Filter| Held { session, page: page.to_owned(), id: id.to_owned(), index: on.index, end, by };
+        let at = |by: Filter| Held { session, page: page.to_owned(), id: id.to_owned(), copies: on.copies.clone(), end, by };
         if events::ends_itself(event) {
             let rest = events::rest(event, p);
             for filter in heard {
@@ -1419,12 +1436,16 @@ impl App {
         }
     }
 
-    /// Starts `code` as the run `running` names, with `p` and the copy of a repeat `at`.
-    fn start(&mut self, running: Running, code: String, p: Value, at: Option<(u32, Value)>) {
+    /// Starts `code` as the run `running` names, with `p` and the item of the copy it is for. It
+    /// reads the state its element sees, that copy's.
+    fn start(&mut self, running: Running, code: String, p: Value, item: Option<Value>) {
         self.next_run += 1;
         let session = running.session;
+        let of = &running.of;
+        let at = of.copies.last().map(|i| (*i, item.unwrap_or_default()));
+        let bound = self.pages.bound(&of.page, &of.id, &of.copies);
         self.runs.insert(self.next_run, running);
-        self.script.send(ToScript::Run { run: self.next_run, session, code, p, at });
+        self.script.send(ToScript::Run { run: self.next_run, session, code, p, at, bound });
     }
 
     /// Runs each rule that `fits`, unless it still runs from before.
@@ -1584,8 +1605,8 @@ impl App {
                 if !goes || self.waiting.get(&key).is_some_and(VecDeque::is_empty) {
                     self.waiting.remove(&key);
                 }
-                if let Some((payload, at)) = next.filter(|_| goes) {
-                    self.fire(session, key.1, payload, at);
+                if let Some((payload, item)) = next.filter(|_| goes) {
+                    self.fire(session, key.1, payload, item);
                 }
                 self.forget(session);
             }
@@ -1670,6 +1691,7 @@ impl App {
                 self.broadcast(&ServerMsg::Page { page: page.clone() });
             }
         }
+        self.restart_state(&applied.reset);
         if let Some((page, id)) = applied.made {
             self.send(session, &ServerMsg::Made { page, id });
         }
@@ -1685,7 +1707,12 @@ impl App {
     /// Writes a variable, the screen's own for one each screen has, or sets a variable import
     /// on the mesh.
     fn set(&mut self, session: Option<u32>, alias: &str, path: &str, value: Value) -> Result<(), String> {
-        let target = self.project.look_up(alias).target(alias, path, session.is_some()).map_err(|u| u.text)?;
+        // state a page or an element keeps, by its key, holds its start until first written
+        let start = self.pages.state(alias).map(|v| (v.per, v.start.clone()));
+        let target = match &start {
+            Some((per, _)) => Target::Variable(*per),
+            None => self.project.look_up(alias).target(alias, path, session.is_some()).map_err(|u| u.text)?,
+        };
         // a computed value's setter works out what its target takes, then that is set
         if let Target::Computed = target {
             self.script.send(ToScript::Invert { session, name: alias.to_owned(), v: value });
@@ -1693,8 +1720,12 @@ impl App {
         }
         if let Target::Variable(per) = target {
             let held = match per {
-                Per::Hmi => self.shared.get_mut(alias),
-                Per::Screen => session.and_then(|s| self.sessions.get_mut(&s)).and_then(|s| s.vars.get_mut(alias)),
+                Per::Hmi => Some(&mut self.shared),
+                Per::Screen => session.and_then(|s| self.sessions.get_mut(&s)).map(|s| &mut s.vars),
+            };
+            let held = match start {
+                Some((_, start)) => held.map(|vars| vars.entry(alias.to_owned()).or_insert(start)),
+                None => held.and_then(|vars| vars.get_mut(alias)),
             };
             let held = held.ok_or_else(|| rules::say(rules::NO_SCREEN, alias))?;
             let before = held.clone();
@@ -2071,8 +2102,8 @@ impl App {
                 false => self.taking(&h.page, &h.id, h.end, &p),
             };
             for filter in ends {
-                let of = HandlerKey { page: h.page.clone(), id: h.id.clone(), index: h.index, event: h.end.into(), filter };
-                self.fire(session, of, p.clone(), h.index.map(|i| (i, Value::Null)));
+                let of = HandlerKey { page: h.page.clone(), id: h.id.clone(), copies: h.copies.clone(), event: h.end.into(), filter };
+                self.fire(session, of, p.clone(), None);
             }
         }
     }

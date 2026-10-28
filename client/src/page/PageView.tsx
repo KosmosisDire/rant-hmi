@@ -7,7 +7,7 @@ import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originCss, pageScope, percentOf, resolve, resolveSource, runDraw, type Scope, sizeWord, sourceOf, tokenValue, UNIT } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originCss, percentOf, resolve, resolveSource, runDraw, type Scope, sizeWord, stateScope, sourceOf, tokenValue, UNIT } from "../state/bind";
 import { takes } from "../state/events";
 import { fields, short } from "../state/format";
 import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
@@ -128,7 +128,7 @@ const LENGTHS = new Set([
  *  or a project without that token, which take the default. */
 export function pageGround(page: Page): string | undefined {
   if (page.interface) return undefined;
-  const r = resolve(page.fill || "$ground", pageScope);
+  const r = resolve(page.fill || "$ground", docScope(page));
   return r.ok && r.value !== undefined && r.value !== null && r.value !== "" ? String(r.value) : undefined;
 }
 
@@ -216,11 +216,14 @@ interface ElementProps {
   inside?: boolean;
 }
 
-/** An element, or a copy of it per item when it repeats. */
+/** An element, or a copy of it per item when it repeats, each reading what it keeps. */
 function Placed(p: ElementProps) {
   return (
     <Repeated element={p.element} scope={p.scope} design={p.design}>
-      {(scope, at) => <ElementView {...p} scope={scope()} at={at} />}
+      {(scope, at) => {
+        const own = createMemo(() => stateScope(scope(), p.element.id, p.element.state));
+        return <ElementView {...p} scope={own()} at={at} />;
+      }}
     </Repeated>
   );
 }
@@ -238,7 +241,7 @@ function usePress(p: ElementProps & { at?: At }) {
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
   // whether a handler takes a press of the button `e` pressed
   const pressable = (e: PointerEvent) => live() && p.element.handlers.some((h) => PRESSES.includes(h.event) && takes(h, h.event, { button: buttonOf(e) }));
-  const fire = (event: string, payload: object) => p.act?.fire(p.element, event, payload, p.at);
+  const fire = (event: string, payload: object) => p.act?.fire(p.element, event, payload, p.scope);
   // a hold's or a repeat's time for `button`, an expression read where the element sits
   const msOf = (event: string, setting: string, button: string) => {
     const h = p.element.handlers.find((x) => takes(x, event, { button }));
@@ -263,7 +266,7 @@ function usePress(p: ElementProps & { at?: At }) {
     pressing = true;
     // a press of the wheel scrolls the page by itself in some browsers
     if (button === "middle") e.preventDefault();
-    const drags = p.element.handlers.some((h) => takes(h, "drag", { button }) && p.act?.hears(p.element, h, p.at));
+    const drags = p.element.handlers.some((h) => takes(h, "drag", { button }) && p.act?.hears(p.element, h, p.scope));
     let last: PointerEvent = e;
     let held: ReturnType<typeof setTimeout> | undefined;
     let beat: ReturnType<typeof setInterval> | undefined;
@@ -771,7 +774,7 @@ function InputBox(p: { element: Element; scope: Scope; value: unknown; act?: Act
     } catch (e) {
       ranInto({ label: p.element.props.name ?? p.element.id, page: doc(), element: p.element.id }, (e as Error).message, "fault");
     }
-    p.act?.fire(p.element, "change", { value });
+    p.act?.fire(p.element, "change", { value }, p.scope);
     return true;
   };
   const drop = () => {
@@ -826,7 +829,7 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
     <Show when={component(name())} fallback={<div class="instance-missing">{name()} is missing</div>}>
       {(c) => {
         const scope = componentScope(c(), { props: p.element.props, outer: p.scope, own, kept: p.act ? kept : undefined });
-        const act = p.act && componentAct(c(), scope, p.element, p.act, p.at);
+        const act = p.act && componentAct(c(), p.element, p.act, p.scope);
         // a control whose values are all bound one way, and whose instance handles nothing,
         // only shows: it takes no input and does not look pressable
         const bindable = () => c().interface?.inputs.filter((i) => i.bindable) ?? [];

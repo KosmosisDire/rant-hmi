@@ -38,6 +38,8 @@ pub enum ToScript {
     Screen { session: u32, values: Vec<(String, Value)> },
     /// A screen went, and its own variables with it.
     Gone(u32),
+    /// State that starts over, by key, on the HMI and every screen.
+    Forget(Vec<String>),
     /// Every rule condition, by rule id, whole, after any change.
     Conditions(Vec<(String, String)>),
     /// Judges each condition now, answered with `Judged`.
@@ -59,8 +61,9 @@ pub enum ToScript {
     /// Every page as code names it, and its id, whole, after any change.
     Pages(Vec<(String, String)>),
     /// Runs code for a screen, or for none. `p` is what its event brought, `at` the copy of a
-    /// repeat it happened on, which the code reads as `index` and `item`.
-    Run { run: u64, session: Option<u32>, code: String, p: Value, at: Option<(u32, Value)> },
+    /// repeat it happened on, which the code reads as `index` and `item`. `bound` is the state
+    /// its element sees, by key, which the code reads by name over any other.
+    Run { run: u64, session: Option<u32>, code: String, p: Value, at: Option<(u32, Value)>, bound: Vec<(String, Variable)> },
     /// How a call ended: its answer, or why it failed.
     Answer { call: u64, outcome: Result<Value, CallFailure> },
     /// One of a task call's progress updates, for the function the call was given.
@@ -264,6 +267,8 @@ struct Shared {
     screens: HashMap<u32, HashMap<String, Value>>,
     /// The screen each live run belongs to.
     sessions: HashMap<u64, Option<u32>>,
+    /// The state each live run reads, by key.
+    bound: HashMap<u64, Vec<(String, Variable)>>,
     pages: Vec<(String, String)>,
     /// Runs not ended yet.
     live: HashSet<u64>,
@@ -291,12 +296,24 @@ impl Shared {
         self.imports.get(name).map_or(Found::Nothing, Found::Import)
     }
 
+    /// The state the run reads under `key`.
+    fn state(&self, run: u64, key: &str) -> Option<&Variable> {
+        self.bound.get(&run)?.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
     /// What the run sees: its own write not sent yet, else the latest value, its screen's
-    /// for a variable each screen has.
+    /// for a variable each screen has, and a state's start until it has one.
     fn read(&self, run: u64, alias: &str) -> Option<&Value> {
         let own = self.pending.get(&run).and_then(|p| p.iter().find(|(a, _)| a == alias));
         if let Some((_, v)) = own {
             return Some(v);
+        }
+        if let Some(state) = self.state(run, alias) {
+            let held = match state.per {
+                Per::Screen => self.sessions.get(&run).copied().flatten().and_then(|s| self.screens.get(&s)?.get(alias)),
+                Per::Hmi => self.values.get(alias),
+            };
+            return Some(held.unwrap_or(&state.start));
         }
         if self.variables.get(alias).is_some_and(|v| v.per == Per::Screen) {
             let session = self.sessions.get(&run).copied().flatten()?;
@@ -323,7 +340,7 @@ impl Shared {
     /// Takes a write going out as the latest value, so another run's write soon after builds on
     /// it and not on what the mesh has not echoed back yet. A refused one comes back corrected.
     fn hold(&mut self, run: u64, alias: &str, value: &Value) {
-        match self.variables.get(alias).map(|v| v.per) {
+        match self.variables.get(alias).or_else(|| self.state(run, alias)).map(|v| v.per) {
             Some(Per::Screen) => {
                 if let Some(session) = self.sessions.get(&run).copied().flatten() {
                     self.screens.entry(session).or_default().insert(alias.to_owned(), value.clone());
@@ -384,6 +401,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         values: HashMap::new(),
         screens: HashMap::new(),
         sessions: HashMap::new(),
+        bound: HashMap::new(),
         pages: Vec::new(),
         live: HashSet::new(),
         pending: HashMap::new(),
@@ -667,6 +685,13 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
         ToScript::Gone(session) => {
             shared.borrow_mut().screens.remove(&session);
         }
+        ToScript::Forget(keys) => {
+            let mut s = shared.borrow_mut();
+            for key in &keys {
+                s.values.remove(key);
+                s.screens.values_mut().for_each(|m| drop(m.remove(key)));
+            }
+        }
         ToScript::Values(list) => {
             let mut s = shared.borrow_mut();
             for (alias, value) in list {
@@ -676,10 +701,11 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
                 };
             }
         }
-        ToScript::Run { run, session, code, p, at } => {
+        ToScript::Run { run, session, code, p, at, bound } => {
             let mut s = shared.borrow_mut();
             s.live.insert(run);
             s.sessions.insert(run, session);
+            s.bound.insert(run, bound);
             drop(s);
             // rewritten first, since the rewrite runs in a context of its own and one runs at a time.
             // What the run wrote goes out as it ends, before another run goes on, unless it threw.
@@ -743,6 +769,7 @@ fn finish(shared: &Rc<RefCell<Shared>>, run: u64, end: End) {
     s.pending.remove(&run);
     s.live.remove(&run);
     s.sessions.remove(&run);
+    s.bound.remove(&run);
     s.send(FromScript::Done { run, end });
 }
 
@@ -789,7 +816,9 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let write = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
         let st = s.borrow();
         let screen = st.sessions.get(&run).copied().flatten().is_some();
-        if let Err(u) = st.look_up(&alias).target(&alias, "", screen) {
+        if st.state(run, &alias).is_none()
+            && let Err(u) = st.look_up(&alias).target(&alias, "", screen)
+        {
             return Err(if u.unknown { Exception::throw_reference(&ctx, &u.text) } else { Exception::throw_type(&ctx, &u.text) });
         }
         // read with nothing borrowed, since reading a proxy or a getter runs code that reads too
@@ -904,11 +933,14 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     };
     g.set("__end", Function::new(ctx.clone(), end)?)?;
 
-    // a variable, or a computed value, reads and takes assignment as a variable import does
+    // a variable, or a computed value, reads and takes assignment as a variable import does, and
+    // state too, by its name over any other of that name
     let st = shared.borrow();
-    let entry = |alias: &str, kind: String| Value::map([("alias", alias.into()), ("kind", kind.into())]);
-    let mut imports: Vec<Value> = st.imports.values().map(|i| entry(&i.alias, format!("{:?}", i.kind).to_lowercase())).collect();
-    imports.extend(st.variables.keys().chain(st.computed.keys()).map(|name| entry(name, "variable".into())));
+    let bound = st.bound.get(&run).map_or(&[][..], Vec::as_slice);
+    let entry = |name: &str, alias: &str, kind: String| Value::map([("name", name.into()), ("alias", alias.into()), ("kind", kind.into())]);
+    let mut imports: Vec<Value> = st.imports.values().map(|i| entry(&i.alias, &i.alias, format!("{:?}", i.kind).to_lowercase())).collect();
+    imports.extend(st.variables.keys().chain(st.computed.keys()).filter(|name| !bound.iter().any(|(_, v)| v.name == **name)).map(|name| entry(name, name, "variable".into())));
+    imports.extend(bound.iter().map(|(key, v)| entry(&v.name, key, "variable".into())));
     drop(st);
     let pages: Vec<Value> = shared.borrow().pages.iter().map(|(key, id)| Value::map([("key", key.as_str().into()), ("id", id.as_str().into())])).collect();
     let options = |e: &EnumInfo| Value::List(e.options.iter().map(|o| o.as_str().into()).collect());

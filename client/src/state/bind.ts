@@ -12,11 +12,12 @@ import type { Page } from "../protocol/Page";
 import { MISSING, TOKEN_FIXED, WHOLE } from "../protocol/rules";
 import type { Token } from "../protocol/Token";
 import type { Value } from "../protocol/Value";
+import type { Variable } from "../protocol/Variable";
 import { held, pads } from "./input";
 import { mode } from "./mode";
 import { named, say } from "./names";
 import { type From, ranInto } from "./problems";
-import { entity, live, promise, state } from "./store";
+import { entity, keptValue, live, promise, state } from "./store";
 import { bare } from "./types";
 
 /** One unit of every length, in CSS pixels: placement, sizes, diagrams, spacing, radii, borders
@@ -120,6 +121,17 @@ export interface Scope {
   writes(name: string): boolean;
   /** What to say of a name it does not have. */
   missing(name: string): string;
+  /** Where it reads state, on a page. */
+  place?: Place;
+  /** The nearest state called `name`, unless a nearer name hides it. */
+  state?(name: string): Variable | undefined;
+}
+
+/** Where a scope reads state: its page, and the index of each copy of a repeat it sits in,
+ *  outermost first, as each copy keeps its own. */
+export interface Place {
+  page: string;
+  copies: number[];
 }
 
 /** A theme token by the name code gives it, `$accent`. */
@@ -409,12 +421,47 @@ export function repeatScope(s: Scope, index: number, item: () => unknown): Scope
     },
     writes: (name) => !own(name) && s.writes(name),
     missing: (name) => s.missing(name),
+    place: s.place && { page: s.place.page, copies: [...s.place.copies, index] },
+    state: s.state,
   };
 }
 
-/** The scope a page or component is drawn and edited in. */
+/** The key the system keeps state under, as the backend makes it: `@page/name` for a page's,
+ *  `@page/element/name` for an element's, then `#index` for each copy it sits in. */
+export function stateKey(place: Place, holder: string | null, name: string): string {
+  return `@${place.page}/${holder === null ? "" : `${holder}/`}${name}${place.copies.map((i) => `#${i}`).join("")}`;
+}
+
+/** What a page, or its element `holder`, keeps, read over what `outer` has. A value reads its
+ *  start until it is written, and one kept each screen shows this screen's write at once. */
+export function stateScope(outer: Scope, holder: string | null, kept: Variable[]): Scope {
+  const place = outer.place;
+  if (!place || kept.length === 0) return outer;
+  const own = (name: string) => kept.find((v) => v.name === name);
+  const get = (v: Variable) => keptValue(stateKey(place, holder, v.name)) ?? v.start;
+  return {
+    has: (name) => !!own(name) || outer.has(name),
+    get: (name) => {
+      const v = own(name);
+      return v ? get(v) : outer.get(name);
+    },
+    set: (name, path, value) => {
+      const v = own(name);
+      if (!v) return outer.set(name, path, value);
+      const key = stateKey(place, holder, name);
+      if (v.per === "screen") promise(key, withField(get(v), path, value) as Value);
+      send({ type: "set", alias: key, path, value: value as Value });
+    },
+    writes: (name) => !!own(name) || outer.writes(name),
+    missing: (name) => outer.missing(name),
+    place,
+    state: (name) => own(name) ?? outer.state?.(name),
+  };
+}
+
+/** The scope a page or component is drawn and edited in: a page's reads what it keeps. */
 export function docScope(doc: Page): Scope {
-  return doc.interface ? componentScope(doc) : pageScope;
+  return doc.interface ? componentScope(doc) : stateScope({ ...pageScope, place: { page: doc.id, copies: [] } }, null, doc.state);
 }
 
 const proxies = new WeakMap<Scope, object>();

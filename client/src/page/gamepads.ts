@@ -6,7 +6,7 @@
 import { createEffect, createMemo, onCleanup } from "solid-js";
 import type { Element } from "../protocol/Element";
 import type { Handler } from "../protocol/Handler";
-import type { At, Scope } from "../state/bind";
+import type { Scope } from "../state/bind";
 import { eventInfo, handlerKey, rest, rests, settingsOf, takes } from "../state/events";
 import { type Axes, type Pad, pads as drawn } from "../state/input";
 import { notify } from "../state/store";
@@ -141,13 +141,13 @@ interface Stream {
 /** Hands an element's pads to its handlers while it shows: buttondown and buttonup however the
  *  button ends, and to each axes handler, past its own deadband, once a frame while what it
  *  brings changes, then once at rest. An end that never came brings `lost`. */
-export function useGamepads(p: { element: Element; act?: Act; at?: At; scope: Scope }, self: () => globalThis.Element | undefined) {
+export function useGamepads(p: { element: Element; act?: Act; scope: Scope }, self: () => globalThis.Element | undefined) {
   const listens = createMemo(() => !!p.act && p.element.handlers.some(gamepad));
   createEffect(() => {
     const [el, act] = [self(), p.act];
     if (!listens() || !el || !act) return;
-    const hears = (h: Handler) => act.hears(p.element, h, p.at);
-    const fire = (event: string, sent: object, only?: Handler) => act.fire(p.element, event, sent, p.at, only);
+    const hears = (h: Handler) => act.hears(p.element, h, p.scope);
+    const fire = (event: string, sent: object, only?: Handler) => act.fire(p.element, event, sent, p.scope, only);
     const buttons = holds<Button>((b, up) => fire("buttonup", up ?? { ...b, lost: true }));
     const streams = holds<Stream>((s, still) => fire("axes", still?.p ?? { ...rest("axes", s.p), lost: true }, s.h));
     const stop = listening.add({

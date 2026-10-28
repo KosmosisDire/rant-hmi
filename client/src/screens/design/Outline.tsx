@@ -3,6 +3,7 @@ import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
+import type { Variable } from "../../protocol/Variable";
 import { edit } from "../../state/change";
 import { remembered, rememberedWords } from "../../state/remember";
 import { freeName } from "../../state/names";
@@ -236,6 +237,9 @@ function PageLayers(p: {
           </Show>
         </span>
         <span class="list-label">{p.page.name}</span>
+        <Show when={p.page.state.length > 0}>
+          <Kept state={p.page.state} />
+        </Show>
         <Show when={p.start}>
           <span class="tag" title="Operators' screens open on this page">
             start
@@ -356,10 +360,22 @@ function LayerList(p: { page: Page; selected: string[]; shut: (id: string) => bo
 
 /** What a layer's row marks of it: that it repeats, and that it has handlers, the events named
  *  in its title. */
+/** How much a page or an element keeps, its names in its title. */
+function Kept(p: { state: Variable[] }) {
+  return (
+    <span class="mark mark-state" title={`Keeps ${p.state.map((v) => v.name).join(", ")}`}>
+      {p.state.length}
+    </span>
+  );
+}
+
 function Marks(p: { element: Element }) {
   const events = () => [...new Set(p.element.handlers.map((h) => h.event))];
   return (
     <span class="marks">
+      <Show when={p.element.state.length > 0}>
+        <Kept state={p.element.state} />
+      </Show>
       <Show when={p.element.props.repeat?.trim()}>
         <span class="mark" title={`Repeats over ${p.element.props.repeat}`}>
           <Repeat size={11} />

@@ -65,9 +65,10 @@
       },
     );
 
-  for (const { alias, kind } of imports) {
+  // each by the name code gives it, read and written under its alias, as state is by its key
+  for (const { name, alias, kind } of imports) {
     if (kind === "topic") {
-      Object.defineProperty(globalThis, alias, { get: () => topic(alias), set: (v) => write(alias, v), enumerable: true });
+      Object.defineProperty(globalThis, name, { get: () => topic(alias), set: (v) => write(alias, v), enumerable: true });
     } else if (kind === "function" || kind === "task") {
       // none is an empty request. A task's last function takes each progress update, and
       // its own cancel stops every call of it, as what a call gives stops that one.
@@ -76,9 +77,9 @@
         return __call(alias, args.length === 0 ? {} : shape(alias, alias, args), progress);
       };
       if (kind === "task") call.cancel = () => __cancel(alias);
-      Object.defineProperty(globalThis, alias, { value: call, enumerable: true });
+      Object.defineProperty(globalThis, name, { value: call, enumerable: true });
     } else {
-      Object.defineProperty(globalThis, alias, {
+      Object.defineProperty(globalThis, name, {
         get: () => wrap(alias, read(alias), []),
         set: (v) => write(alias, v),
         enumerable: true,

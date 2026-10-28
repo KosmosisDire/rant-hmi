@@ -545,7 +545,7 @@ fn check_local(name: &str, what: &str) -> Result<(), String> {
     unreserved(name)
 }
 
-fn unreserved(name: &str) -> Result<(), String> {
+pub(crate) fn unreserved(name: &str) -> Result<(), String> {
     match crate::script::reserved(name) {
         true => Err(format!("{name} is a name code already uses, so pick another")),
         false => Ok(()),

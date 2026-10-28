@@ -53,6 +53,6 @@ const STARTS: Record<Part, Record<string, string>> = {
 export function addPart(page: Page, at: Element, tag: Part) {
   const holder = at.tag === "scene" || at.tag === "anchor" ? at.id : parentOf(page, at.id);
   if (!holder || !find(page.children, holder)) return;
-  const element: Element = { id: "", tag, component: null, props: { ...STARTS[tag] }, handlers: [], children: [] };
+  const element: Element = { id: "", tag, component: null, props: { ...STARTS[tag] }, handlers: [], state: [], children: [] };
   edit({ kind: "add_element", page: page.id, parent: holder, index: null, element });
 }

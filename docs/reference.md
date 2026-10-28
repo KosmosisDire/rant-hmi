@@ -59,6 +59,12 @@ A component's interface comes first in its file:
 | `<event>` | `name` | an event its code sends with `emit`, heard on the instance by `<on event>` |
 | `<var>` | `name`, `start` | each instance's own state on each screen |
 
+What a page or an element keeps comes first inside its tag:
+
+| Tag | Attributes | Is |
+| --- | --- | --- |
+| `<var>` | `name`, `start` as JSON, `per="hmi"` | state the element and all it holds read by name, each screen's own unless `per="hmi"` shares it, each copy's own in a repeat |
+
 ### Input types
 
 An input's `type` lists the types it takes, apart by spaces, as `type="Pose"` or
@@ -393,7 +399,8 @@ Code reads the project's names:
 - a mesh enum by its type's name, its `options` the names it takes.
 - a theme token as `$name`.
 
-A handler reads `p`, and what a repeat draws reads `index` and `item`. A component's code
+A handler reads `p`, and what a repeat draws reads `index` and `item`. Code on a page reads the
+state its element and what holds it keep by name, the nearest first. A component's code
 reads its inputs and `<var>` by name, and each part's `pressed`, `hovered` and `heldFor` in ms
 by the part's name, `root` for the whole. A handler sets a name by assignment:
 `Speed = 0.5`, `jog[index] = 1`.

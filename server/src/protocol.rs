@@ -249,18 +249,18 @@ pub enum ClientMsg {
         value: Value,
     },
     /// `event` happened to an element of a running page: a pointer's, or one its component
-    /// sent with `payload`, which handler code reads as `p`. On a repeated element, `index` and
-    /// `item` name the copy, which the code reads by those names. `heard` names the element's
-    /// handlers for it the screen heard, by their filters. With none it still tells what the
-    /// screen holds, as a press, for the end to run should the screen be lost.
+    /// sent with `payload`, which handler code reads as `p`. In a repeat, `copies` names the
+    /// copy, the index of each copy it sits in outermost first, and `item` is the nearest
+    /// copy's, which the code reads as `index` and `item`. `heard` names the element's handlers
+    /// for it the screen heard, by their filters. With none it still tells what the screen
+    /// holds, as a press, for the end to run should the screen be lost.
     Fire {
         page: String,
         id: String,
         event: String,
         payload: Value,
         #[serde(default)]
-        #[ts(optional)]
-        index: Option<u32>,
+        copies: Vec<u32>,
         #[serde(default)]
         #[ts(optional)]
         item: Option<Value>,

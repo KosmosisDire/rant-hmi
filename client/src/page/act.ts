@@ -9,20 +9,17 @@ import type { Element } from "../protocol/Element";
 import type { Handler } from "../protocol/Handler";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, pageScope, repeatScope, resolve, runHandler, type Scope } from "../state/bind";
+import { resolve, runHandler, type Scope } from "../state/bind";
 import { endOf, eventInfo, handlerKey, rests, settingsOf, takes } from "../state/events";
 import { named } from "../state/names";
 
 export interface Act {
-  /** `at` is the copy of a repeated element it happened to, and `only` the one handler a
+  /** `scope` is what the element reads, its copy's in a repeat, and `only` the one handler a
    *  timed event is for, as a repeat's on its own beat. */
-  fire(e: Element, event: string, payload?: unknown, at?: At, only?: Handler): void;
-  /** Whether `e`'s handler `h` is heard now, read where it sits, so a watch follows it. */
-  hears(e: Element, h: Handler, at?: At): boolean;
+  fire(e: Element, event: string, payload: unknown, scope: Scope, only?: Handler): void;
+  /** Whether `e`'s handler `h` is heard now, read in `scope`, so a watch follows it. */
+  hears(e: Element, h: Handler, scope: Scope): boolean;
 }
-
-/** The scope a copy of a repeated element reads, or the one given for any other. */
-const within = (scope: Scope, at?: At) => (at ? repeatScope(scope, at.index, () => at.item) : scope);
 
 /** Whether `h` is heard now: its `while` is true where it sits, or it has none. One not worked
  *  out yet, or failing, is not. */
@@ -57,10 +54,16 @@ function hearing(e: Element, event: string, p: unknown, scope: Scope, only?: Han
 const BOTH = new Set(apiIn("handler").filter((a) => apiIn("component").includes(a)).map((a) => a.name));
 
 /** Whether a page's handler runs here on the screen: every name in it the system holds is one
- *  of the screen's own variables, a token or an enum, and it names no part of the API only the
- *  system has. One reading a shared value runs there too, so it never reads a stale copy. */
-export function runsHere(h: Handler): boolean {
+ *  of the screen's own variables or state each screen keeps, a token or an enum, and it names
+ *  no part of the API only the system has. One reading a shared value runs there too, so it
+ *  never reads a stale copy. */
+export function runsHere(h: Handler, scope: Scope): boolean {
   for (const name of names(h.code)) {
+    const kept = scope.state?.(name);
+    if (kept) {
+      if (kept.per !== "screen") return false;
+      continue;
+    }
     if (API.some((a) => a.name === name) && !BOTH.has(name)) return false;
     const n = named(name);
     if (n && !(n.screen || n.of === "token" || n.of === "enum")) return false;
@@ -75,29 +78,30 @@ export function runsHere(h: Handler): boolean {
  *  held per handler there, so it goes only to those. */
 export function pageAct(page: string): Act {
   return {
-    fire: (e, event, payload, at, only) => {
-      const scope = within(pageScope, at);
+    fire: (e, event, payload, scope, only) => {
       const heard = hearing(e, event, payload, scope, only);
-      for (const h of heard.filter(runsHere)) runHandler(h.code, scope, undefined, payload ?? null, { label: `${e.props.name ?? e.id} ${event}`, page, element: e.id });
-      const there = heard.filter((h) => !runsHere(h));
+      const here = (h: Handler) => runsHere(h, scope);
+      for (const h of heard.filter(here)) runHandler(h.code, scope, undefined, payload ?? null, { label: `${e.props.name ?? e.id} ${event}`, page, element: e.id });
+      const there = heard.filter((h) => !here(h));
       const end = eventInfo(event)?.ends_with === event ? undefined : endOf(event);
-      if (there.length > 0 || (end && e.handlers.some((h) => takes(h, end, payload) && (end === event || !runsHere(h))))) {
-        send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as Value, index: at?.index, item: at?.item as Value, heard: there.map((h) => h.filter) });
+      if (there.length > 0 || (end && e.handlers.some((h) => takes(h, end, payload) && (end === event || !here(h))))) {
+        // the copy it happened on, by the index of each copy it sits in, and the nearest's item
+        const item = scope.place?.copies.length ? (scope.get("item") as Value) : undefined;
+        send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as Value, copies: scope.place?.copies ?? [], item, heard: there.map((h) => h.filter) });
       }
     },
-    hears: (_, h, at) => heard(h, within(pageScope, at)),
+    hears: (_, h, scope) => heard(h, scope),
   };
 }
 
-/** A component's events, run here. `emit` sends one out as the instance's own, from `copy`
- *  when the instance repeats. */
-export function componentAct(c: Page, scope: Scope, instance: Element, outer: Act, copy?: At): Act {
+/** A component's events, run here. `emit` sends one out as the instance's own, read in `at`,
+ *  the scope the instance sits in. */
+export function componentAct(c: Page, instance: Element, outer: Act, at: Scope): Act {
   return {
-    fire: (e, event, payload, at, only) => {
-      const here = within(scope, at);
-      const emit = (name: string, sent?: unknown) => outer.fire(instance, String(name), sent, copy);
-      for (const h of hearing(e, event, payload, here, only)) runHandler(h.code, here, emit, payload ?? null, { label: `${c.name} ${e.props.name ?? e.id} ${event}`, page: c.id, element: e.id });
+    fire: (e, event, payload, scope, only) => {
+      const emit = (name: string, sent?: unknown) => outer.fire(instance, String(name), sent, at);
+      for (const h of hearing(e, event, payload, scope, only)) runHandler(h.code, scope, emit, payload ?? null, { label: `${c.name} ${e.props.name ?? e.id} ${event}`, page: c.id, element: e.id });
     },
-    hears: (_, h, at) => heard(h, within(scope, at)),
+    hears: (_, h, scope) => heard(h, scope),
   };
 }
