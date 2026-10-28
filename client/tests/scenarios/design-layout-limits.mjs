@@ -42,7 +42,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   };
   await eventually(async () => (seen = await top()) === fixed, () => `the last part on top, ${seen} is`);
   await d.select("Row");
-  await page.locator(".screen:not([hidden]) .sidebar.right .choice button", { hasText: /^First$/ }).click();
+  await d.choose("On top", "first");
   await eventually(() => props(hmi, pageId, row).stack === '"first"', "the row to put its first part on top");
   await eventually(async () => (seen = await top()) === fill, () => `the first part on top, ${seen} is`);
 }

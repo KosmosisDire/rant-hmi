@@ -524,7 +524,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">Look</div>
           <For each={BOX_LOOK}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
-          <LooseProps page={p.page} element={p.element} loose={loose} placeholder="opacity: Running ? 1 : 0.4" css />
+          <LooseProps page={p.page} element={p.element} loose={loose} placeholder='visibility: Running ? "visible" : "hidden"' css />
         </Show>
         <Show when={text()}>
           <div class="section">Text</div>
@@ -544,7 +544,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <PartsField of={RADIUS} props={p.element.props} write={(props) => setProps(p.page, p.element.id, props)} show={(props) => showProps(p.page, p.element.id, props)} motion={moving("border-radius")} />
           <For each={LOOK.slice(1)}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
-          <LooseProps page={p.page} element={p.element} loose={loose} placeholder="box-shadow: 0 0.2 0.8 $border" css />
+          <LooseProps page={p.page} element={p.element} loose={loose} placeholder='filter: Running ? "none" : "grayscale(1)"' css />
         </Show>
         <Show when={pageOf(p.page)?.interface === null ? pageOf(p.page) : undefined}>{(doc) => <State page={doc()} holder={p.element} />}</Show>
         <Show when={!grouped() && !part()}>
