@@ -398,21 +398,15 @@
   align-items: center;
 }
 
+/* a count shows by the icon, an expression only in the title */
 .mark-repeat {
   gap: 3px;
-  max-width: 76px;
   height: 17px;
-  padding: 0 6px;
+  padding: 0 5px;
   border-radius: 4px;
   background: var(--panel3);
   color: var(--dim);
   font-size: 10.5px;
-}
-
-.mark-words {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* what a layer keeps, blue as the HMI's own names are */

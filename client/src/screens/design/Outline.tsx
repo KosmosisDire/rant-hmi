@@ -9,6 +9,7 @@ import { remembered, rememberedWords } from "../../state/remember";
 import { freeName } from "../../state/names";
 import { startPage, state } from "../../state/store";
 import { flyTo, openPage } from "../../state/view";
+import { isNumber } from "../../state/bind";
 import { chain, find } from "../../state/elements";
 import { ChevronDown, ChevronRight, CircleDot, Component, CopyPlus, File, FilePlus, Plus, Repeat, Star, Trash, Zap } from "../../ui/icons";
 import { type MenuEntry, openMenu } from "../../ui/Menu";
@@ -383,7 +384,7 @@ function Marks(p: { element: Element }) {
         {(over) => (
           <span class="mark mark-repeat" title={`Repeats over ${over()}`}>
             <Repeat size={10} />
-            <span class="mark-words">{over()}</span>
+            <Show when={isNumber(over())}>{over().trim()}</Show>
           </span>
         )}
       </Show>
