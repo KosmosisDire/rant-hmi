@@ -1,5 +1,5 @@
 //! An object's logic: handlers that belong to no element, each an `<on>` in its object's file
-//! as `docs/files.md` shows.
+//! as `docs/project.md` shows.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

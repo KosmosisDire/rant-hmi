@@ -1,4 +1,4 @@
-//! A page or component as an HTML like file, as `docs/files.md` shows. Values are kept raw,
+//! A page or component as an HTML like file, as `docs/pages.md` shows. Values are kept raw,
 //! so an expression needs no escaping and text keeps its quotes.
 
 use std::collections::{BTreeMap, HashSet};

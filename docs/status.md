@@ -1,72 +1,60 @@
 # Status
 
-The HMI publishes three read only variables about itself. Other nodes read them, and an object
-takes them as members like any entity, as the `Hmi` object does with its mesh at `Hmi`. They sit
-at `Hmi/` whatever prefix the HMI starts under. Each is
-set only when it changed: the clients as each screen's round trip is measured, 20 times a
-second, the problems at most 4 times a second, and the status once a second.
-
-## Hmi/Clients
-
-The screens connected, a list. Each holds:
-
-- `id`: its number, as the log and `p.screen` give it
-- `address`: where it connects from
-- `connected_at`: when it connected, a Rant Timestamp: microseconds since the Unix epoch
-- `ping_ms`: the last round trip the screen timed, 0 until one is measured: a ping through the
-  HMI in turn with what the screen sends, and back the way its values come, so on its WebRTC
-  link channel once that carries them.
-- `jitter_ms`: how much the round trip wavers, smoothed as RTP does: each new round trip
-  moves it a sixteenth of the way to how far that one was from the last
-- `webrtc`: whether its WebRTC connection is open. Without it the screen gets its video as
-  frames over its socket and decodes them itself, which only a page on https or localhost can
-  do.
-- `channel`: whether its values, pings and actions go on its WebRTC link channel, else its
-  socket
-- `ping_spread_ms`: its round trips of the last 10 s, as `[median, 90th percentile, most]`
-- `big_spread_ms`: the trips of the big values it took in the last 10 s, from going until it
-  said it took each, so what each took to arrive, be read and be shown, the same way
-- `bigs_per_s`: how many big values it took a second, over the last 10 s
-- `lapsed`: the big values it never said it took within 5 s, since it connected
-- `kbps`: what its socket, second way and link channel carried to it over the last 10 s, in
-  kilobits a second, its WebRTC video apart
-- `webrtc_problem`: why its WebRTC connection did not open, as the screen found, empty while
-  it is open: `no_webrtc`, `browser_blocks` (no address gathered at all, as a VPN or a privacy
-  extension makes so), `network_blocks_udp` (no public address) or `no_path`
-
-## Hmi/Status
-
-- `version`: the HMI's version
-- `project`: the project's name
-- `started_at`: when the HMI started, a Timestamp too
-- `clients`: how many screens are connected
-- `missing`: the entities of mesh members not on the mesh now
+The HMI publishes three read only variables about itself: `Hmi/Status`, `Hmi/Clients` and
+`Hmi/Problems`. Every project's `Hmi` object reads them as `Hmi.Status`, `Hmi.Clients` and
+`Hmi.Problems`, and any node on the mesh may read them too.
 
 ```js
 `${Hmi.Clients.length} screens, ${Hmi.Status.missing.length} members missing`
-```
-
-## Hmi/Problems
-
-What is wrong now, the newest 100, as the editor's problems list shows them
-([files.md](files.md#problems)). Each holds:
-
-- `screen`: the screen that found it, 0 for a handler or logic run on the system
-- `source`: `page` (an expression or drawing that fails), `run` (a handler or logic that
-  stopped) or `hmi` (a fault in the HMI's own code)
-- `level`: `warn` or `fault`
-- `text`: what went wrong, cut to 240 bytes
-- `page`, `element`: the page or component and the element it is on, empty for none
-- `count`: how many times it came
-- `at`: when it came last, a Timestamp
-
-```js
 Hmi.Problems.filter((p) => p.level === "fault").length
 ```
 
-## The node's status
+Times are Rant Timestamps, microseconds since 1970.
 
-A screen still without its WebRTC link channel 15 s after it connected raises a warning on the
-HMI node's Rant status, `screen-<id>-webrtc`, naming its address and what to check, which clears
-once the channel opens or the screen goes. A screen on the HMI's own host keeps to its socket and
-is never warned of. The screen shows the same in its banner, which the person may dismiss.
+## Hmi/Status
+
+| Field | Is |
+| --- | --- |
+| `version` | the HMI's version |
+| `project` | the project's name |
+| `started_at` | when it started |
+| `clients` | how many screens are connected |
+| `missing` | the mesh members whose entities are not on the mesh now |
+
+## Hmi/Clients
+
+A list, one per screen connected:
+
+| Field | Is |
+| --- | --- |
+| `id` | its number, as the log and `p.screen` give it |
+| `address` | where it connects from |
+| `connected_at` | when it connected |
+| `ping_ms` | its last round trip to the HMI and back, 0 until one is measured |
+| `jitter_ms` | how much its round trip wavers |
+| `ping_spread_ms` | its round trips over the last 10 s, as `[median, 90th percentile, most]` |
+| `webrtc` | true while its WebRTC connection is open |
+| `channel` | true while its values go over WebRTC rather than its socket |
+| `webrtc_problem` | why WebRTC did not open, empty while it is open: `no_webrtc`, `browser_blocks` (no address at all, as a VPN or a privacy extension makes), `network_blocks_udp` (no public address) or `no_path` |
+| `kbps` | what it was sent over the last 10 s in kilobits a second, video apart |
+| `big_spread_ms` | how long its large values, as pictures and point clouds, took to show over the last 10 s, as `[median, 90th percentile, most]` |
+| `bigs_per_s` | how many large values it showed a second, over the last 10 s |
+| `lapsed` | how many large values never showed within 5 s, since it connected |
+
+## Hmi/Problems
+
+What is wrong now, the newest 100, as the editor's list shows them:
+
+| Field | Is |
+| --- | --- |
+| `screen` | the screen that found it, 0 for the HMI itself |
+| `source` | `page` for a value or drawing that fails, `run` for a handler or logic that stopped, `hmi` for a fault in the HMI itself |
+| `level` | `warn` or `fault` |
+| `text` | what went wrong |
+| `page`, `element` | where it is, empty for none |
+| `count` | how many times it came |
+| `at` | when it came last |
+
+`GET /problems` on the HMI's port gives every problem as JSON with the same fields, but
+`screen` null for the HMI itself, `detail` holding the stack where there is one, and `at` in
+ms since 1970.

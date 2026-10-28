@@ -1,5 +1,5 @@
 //! The project folder: `hmi.toml`, the objects in `objects/` and the theme in `data/`, as
-//! `docs/files.md` shows.
+//! `docs/project.md` shows.
 
 use std::collections::HashMap;
 use std::fs;
