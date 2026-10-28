@@ -1,11 +1,12 @@
 /* The frame and the slots a screen fills. The only file that sizes anything. */
 
-/* Notices stack low in the middle, clear of both sidebars, newest at the bottom. */
+/* Notices stack at the top in the middle, clear of both sidebars, newest at the bottom. Each
+   drops in tinted by how much it matters, and a click puts it away. */
 .notices {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--bar) + 12px);
+  top: calc(var(--bar) + 12px);
   z-index: 50;
   display: flex;
   flex-direction: column;
@@ -15,41 +16,39 @@
 }
 
 .notice {
+  --tone: var(--blue);
   display: flex;
   align-items: flex-start;
   gap: 9px;
-  padding: 9px 6px 9px 12px;
+  padding: 9px 12px;
   font-size: 12px;
   line-height: 1.45;
   color: var(--text);
-  background: var(--float);
-  border: 1px solid var(--border2);
-  border-left: 3px solid var(--blue);
+  background: color-mix(in srgb, var(--tone) 16%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--tone) 55%, var(--panel));
   border-radius: var(--radius);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
   pointer-events: auto;
+  animation: notice-in 0.18s ease-out;
+}
+
+:root:not([data-pointer="touch"]) .notice:hover {
+  background: color-mix(in srgb, var(--tone) 24%, var(--panel));
+}
+
+.notice.warn {
+  --tone: var(--amber);
+}
+
+.notice.fault {
+  --tone: var(--red);
 }
 
 .notice > svg {
   flex: 0 0 auto;
   margin-top: 1px;
-  color: var(--blue);
-}
-
-.notice.warn {
-  border-left-color: var(--amber);
-}
-
-.notice.warn > svg {
-  color: var(--amber);
-}
-
-.notice.fault {
-  border-left-color: var(--red);
-}
-
-.notice.fault > svg {
-  color: var(--red);
+  color: var(--tone);
 }
 
 .notice-text {
@@ -57,6 +56,30 @@
   min-width: 0;
   padding-top: 1px;
   overflow-wrap: anywhere;
+}
+
+/* How many times the same words came. */
+.notice-count {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 0 5px;
+  font: 11px/18px var(--mono);
+  text-align: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--tone) 35%, var(--panel));
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice {
+    animation: none;
+  }
 }
 
 /* Zero minimums keep the frame inside the window, so the middle shrinks and scrolls. */

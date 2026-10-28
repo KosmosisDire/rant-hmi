@@ -37,6 +37,8 @@ export interface Notice {
   n: number;
   text: string;
   level: Level;
+  /** How many times it was told: the same words at the same level count on one notice. */
+  count: number;
 }
 
 /** The batch each value last came in. A big value on the second way may pass a small one
@@ -134,14 +136,26 @@ function catchUp(build: string) {
 }
 
 let notices = 0;
+/** When each notice fades, put off again each time its words come again. */
+const fades = new Map<number, ReturnType<typeof setTimeout>>();
 
+/** Shows a notice, or counts once more on the one showing the same words, which keeps its
+ *  place so none moves under a pointer about to put it away. */
 export function notify(text: string, level: Level) {
-  const n = ++notices;
-  setState("notices", (all) => [...all.slice(-4), { n, text, level }]);
-  setTimeout(() => dismiss(n), STAYS[level]);
+  const same = state.notices.find((x) => x.text === text && x.level === level);
+  const n = same?.n ?? ++notices;
+  if (same) setState("notices", (x) => x.n === n, "count", (c) => c + 1);
+  else setState("notices", (all) => [...all.slice(-4), { n, text, level, count: 1 }]);
+  clearTimeout(fades.get(n));
+  fades.set(
+    n,
+    setTimeout(() => dismiss(n), STAYS[level]),
+  );
 }
 
 export function dismiss(n: number) {
+  clearTimeout(fades.get(n));
+  fades.delete(n);
   setState("notices", (all) => all.filter((x) => x.n !== n));
 }
 
