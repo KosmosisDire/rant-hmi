@@ -30,7 +30,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const shown = () => page.locator(".run-layer:not([hidden])").evaluateAll((els) => els.map((e) => e.dataset.page).join());
   const tap = (pageId, id) => page.locator(`.run-layer[data-page="${pageId}"] .el[data-id="${id}"]`).click();
   const notice = (text) => page.locator(".notice", { hasText: text }).last().waitFor({ timeout: 4000 });
-  const dismiss = () => page.locator(".notice button").evaluateAll((bs) => bs.forEach((b) => b.click()));
+  const dismiss = () => page.locator(".notice").evaluateAll((ns) => ns.forEach((n) => n.click()));
   const ask = async () => {
     await tap(cell, run);
     await eventually(async () => (await shown()) === `${cell},${confirm}`, "Confirm over Cell with Cell in sight");
