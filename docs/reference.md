@@ -142,6 +142,7 @@ Each element has an `id` of its own in its file. `name`, `repeat`, `x`, `y`, `w`
 | `x`, `y` | where its origin sits, from the origin of what holds it: units, or a percent of the holder, as `50%` or `level * 100%` |
 | `w`, `h` | its size: units, a percent, `hug` to fit what it holds, or `fill` for the room its frame leaves it, else the whole holder |
 | `origin` | the point of its own box that `x` and `y` place and it turns about: two lengths, each units or a percent of its box, as `'"50% 50%"'`. Its top left corner when left out |
+| `enabled` | `false` to take no events, in it and all it holds, and to draw it at 40% of its opacity. One not worked out yet counts as false. True when left out |
 
 ### Frames
 
@@ -249,8 +250,9 @@ each an expression.
 
 ### Shapes
 
-Every property of a shape but `name` is an SVG attribute, each an expression: `cx`, `r`,
-`fill`, `stroke`, `d`, `points` and the rest, in small letters, as `pathlength`.
+Every property of a shape but `name`, `repeat` and `enabled` is an SVG attribute, each an
+expression: `cx`, `r`, `fill`, `stroke`, `d`, `points` and the rest, in small letters, as
+`pathlength`.
 
 - `rotate` turns it by degrees about its `origin`, a point of its own box, its centre when
   left out.

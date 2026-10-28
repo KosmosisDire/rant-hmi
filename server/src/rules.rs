@@ -21,7 +21,7 @@ pub const TOKEN: Shape = Shape { capital: false, underscore: false, except: &[] 
 /// A component, as code and files name it.
 pub const COMPONENT: Shape = Shape { capital: true, underscore: false, except: &[] };
 /// A component's input or variable, clear of what places and repeats an instance.
-pub const INPUT: Shape = Shape { capital: false, underscore: false, except: &["name", "repeat", "x", "y", "w", "h", "origin", "rotate"] };
+pub const INPUT: Shape = Shape { capital: false, underscore: false, except: &["name", "repeat", "enabled", "x", "y", "w", "h", "origin", "rotate"] };
 /// An event a component sends.
 pub const EVENT: Shape = Shape { capital: false, underscore: false, except: &[] };
 
@@ -131,7 +131,7 @@ mod tests {
     fn a_shape_says_what_a_name_needs() {
         assert!(LOCAL.fits("jog_mode") && !TOKEN.fits("jog_mode") && ALIAS.fits("Line_1") && !ALIAS.fits("line"));
         assert!(!INPUT.fits("x") && INPUT.fits("xs") && !EVENT.fits("Pressed"));
-        assert_eq!(INPUT.check("w", "an input").unwrap_err(), "\"w\" cannot name an input: start with a small letter, then use letters and digits, and keep clear of name, repeat, x, y, w, h, origin and rotate");
+        assert_eq!(INPUT.check("w", "an input").unwrap_err(), "\"w\" cannot name an input: start with a small letter, then use letters and digits, and keep clear of name, repeat, enabled, x, y, w, h, origin and rotate");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // A page drawn as HTML: each element an absolutely placed div, its properties resolved
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
-import { createContext, createEffect, createMemo, createReaction, createRoot, createSignal, For, lazy, mapArray, Match, onCleanup, onMount, Show, Switch, useContext } from "solid-js";
+import { createContext, createEffect, createMemo, createReaction, createRoot, createSignal, For, lazy, mapArray, Match, on, onCleanup, onMount, Show, Switch, useContext } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
@@ -75,7 +75,17 @@ export interface Holder {
 const CORNER: Holder = { ox: "0px", oy: "0px" };
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup", "context", "draw", "target", "yaw", "pitch", "distance"]);
+export const OWN = new Set(["name", "repeat", "enabled", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup", "context", "draw", "target", "yaw", "pitch", "distance"]);
+
+/** How much of its opacity an element keeps while it is not enabled. */
+const DIM = 0.4;
+
+/** An element's props as what it holds sees them, with no act while it is not enabled, so it and
+ *  its parts take no events, as an instance that only shows takes none. */
+function actingWhile<T extends { act?: Act }>(p: T, enabled: () => boolean): T {
+  // not mergeProps, which reads past a source that gives undefined
+  return new Proxy(p, { get: (to, key) => (key === "act" ? (enabled() ? to.act : undefined) : Reflect.get(to, key)) });
+}
 
 /** The contexts a canvas draws with, "2d" when it names none. */
 export const CONTEXTS = ["2d", "webgl2"] as const;
@@ -258,16 +268,19 @@ function usePress(p: ElementProps & { at?: At }) {
   const down = (e: PointerEvent & { currentTarget: Element | globalThis.Element }) => {
     if (!pressable(e) || pressing || landed?.e !== e || taken(e.pointerId)) return;
     const el = e.currentTarget as globalThis.Element;
-    const on = landed.at.on;
+    const part = landed.at.on;
     const button = buttonOf(e)!;
     // what each event of the press brings: where, the button it began with and the keys held
-    const brings = (ev: PointerEvent) => ({ ...pointer(el, ev, on), button, ...keysHeld(ev) });
+    const brings = (ev: PointerEvent) => ({ ...pointer(el, ev, part), button, ...keysHeld(ev) });
     const at = { ...landed.at, button, ...keysHeld(e) };
     landed = undefined;
     pressing = true;
     // a press of the wheel scrolls the page by itself in some browsers
     if (button === "middle") e.preventDefault();
-    const drags = p.element.handlers.some((h) => takes(h, "drag", { button }) && p.act?.hears(p.element, h, p.scope));
+    // its release goes where its press went, even once the element takes no more events
+    const act = p.act;
+    const send = (event: string, payload: object) => act?.fire(p.element, event, payload, p.scope);
+    const drags = p.element.handlers.some((h) => takes(h, "drag", { button }) && act?.hears(p.element, h, p.scope));
     let last: PointerEvent = e;
     let held: ReturnType<typeof setTimeout> | undefined;
     let beat: ReturnType<typeof setInterval> | undefined;
@@ -275,16 +288,16 @@ function usePress(p: ElementProps & { at?: At }) {
     const begin = () => {
       begun = true;
       setPressed(true);
-      fire("press", { ...at });
-      fire("drag", { ...at, dx: 0, dy: 0 });
+      send("press", { ...at });
+      send("drag", { ...at, dx: 0, dy: 0 });
       // a hold counts from the finger going down, however long the press waited to begin
       const ms = msOf("hold", "after", button);
-      if (ms !== undefined) held = setTimeout(() => fire("hold", brings(last)), Math.max(0, ms - (performance.now() - e.timeStamp)));
+      if (ms !== undefined) held = setTimeout(() => send("hold", brings(last)), Math.max(0, ms - (performance.now() - e.timeStamp)));
       // a repeat runs at once, then on each beat until the press ends
       const every = msOf("repeat", "every", button);
       if (every !== undefined) {
-        fire("repeat", { ...at });
-        beat = setInterval(() => fire("repeat", brings(last)), Math.max(every, QUICKEST));
+        send("repeat", { ...at });
+        beat = setInterval(() => send("repeat", brings(last)), Math.max(every, QUICKEST));
       }
     };
     // a finger that landed on what may yet scroll, here or in a frame this holds, begins its
@@ -297,7 +310,7 @@ function usePress(p: ElementProps & { at?: At }) {
     let next: PointerEvent | null = null;
     const flush = () => {
       if (!next) return;
-      fire("drag", { ...brings(next), ...moved(el, next.clientX - sent.clientX, next.clientY - sent.clientY) });
+      send("drag", { ...brings(next), ...moved(el, next.clientX - sent.clientX, next.clientY - sent.clientY) });
       [sent, next] = [next, null];
     };
     const move = (m: PointerEvent) => {
@@ -309,7 +322,9 @@ function usePress(p: ElementProps & { at?: At }) {
     // a release missed ends the press where the pointer was last, and taps nothing. The move
     // since the last drag goes first, so the drags add up to the whole. One let go while its
     // press waited begins it first, and one missed then never began
+    let unwatch = () => {};
     const end = (u?: PointerEvent) => {
+      unwatch();
       clearTimeout(wait);
       pressing = false;
       if (!begun && u?.type !== "pointerup") return;
@@ -319,10 +334,17 @@ function usePress(p: ElementProps & { at?: At }) {
       clearInterval(beat);
       setPressed(false);
       const at = brings(u ?? last);
-      fire("release", at);
-      if (u?.type === "pointerup" && at.inside) fire("tap", at);
+      send("release", at);
+      if (u?.type === "pointerup" && at.inside) send("tap", at);
     };
-    follow(e, { move, end, yields: true, keeps: drags });
+    const stop = follow(e, { move, end, yields: true, keeps: drags });
+    // one that stops taking events while pressed, as when it is no longer enabled, ends its press
+    // as if the release was missed
+    if (pressing)
+      unwatch = createRoot((dispose) => {
+        createEffect(on(() => !!p.act, (acts) => acts || queueMicrotask(() => pressing && (stop(), end())), { defer: true }));
+        return dispose;
+      });
   };
   // a press anywhere else is this element's outside, as closes what it opened, while its page
   // shows: the editor keeps its run hidden behind the other tabs, and a run its covered pages
@@ -457,14 +479,18 @@ function ElementView(p: ElementProps & { at?: At }) {
     const first = p.element.tag === "div" && take("stack") === "first" ? p.element.children.length * COPIES : undefined;
     // a frame whose overflow scrolls, which a finger on what it holds may scroll
     const scroller = ["overflow", "overflow-x", "overflow-y"].some((k) => /auto|scroll/.test(style[k] ?? ""));
-    return { style, unknown, faults, text, value, diagram, markup, canvas, media, scroller, holder: { ox, oy, flow, first } as Holder };
+    // one not enabled dims, and one not worked out yet counts as not enabled
+    const enabled = p.element.props.enabled === undefined || !!take("enabled");
+    if (!enabled) style.opacity = String(Number(style.opacity ?? 1) * DIM);
+    return { style, unknown, faults, text, value, diagram, markup, canvas, media, scroller, enabled, holder: { ox, oy, flow, first } as Holder };
   });
   // what its own drawing found last, known only once it draws
   const [drawn, setDrawn] = createSignal<Drawn>(CLEAN);
   const faults = () => [...look().faults, ...drawn().faults];
   useFaults(() => p.element.id, faults);
-  const press = usePress(p);
-  const inner = (c: Element, i: () => number) => <Placed element={c} scope={p.scope} room={look().holder} order={i()} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />;
+  const q = actingWhile(p, () => look().enabled);
+  const press = usePress(q);
+  const inner = (c: Element, i: () => number) => <Placed element={c} scope={p.scope} room={look().holder} order={i()} overrides={p.overrides} design={p.design} act={q.act} inside={p.inside} />;
   return (
     <div
       data-id={p.inside ? undefined : p.element.id}
@@ -475,7 +501,7 @@ function ElementView(p: ElementProps & { at?: At }) {
       title={p.design && faults().length > 0 ? faults().join("\n") : undefined}
       ref={(el) => {
         press.ref(el);
-        if (p.element.tag === "use") el.addEventListener("pointerdown", () => p.act && setRaised(p.element));
+        if (p.element.tag === "use") el.addEventListener("pointerdown", () => q.act && setRaised(p.element));
       }}
       onPointerDown={press.down}
     >
@@ -512,10 +538,10 @@ function ElementView(p: ElementProps & { at?: At }) {
         </Match>
         <Match when={look().media}>{(m) => <MediaView src={m().src} fit={m().fit} element={p.element.id} />}</Match>
         <Match when={p.element.tag === "use"}>
-          <Instance element={p.element} scope={p.scope} design={p.design} act={p.act} at={p.at} />
+          <Instance element={p.element} scope={p.scope} design={p.design} act={q.act} at={p.at} />
         </Match>
         <Match when={p.element.tag === "input"}>
-          <InputBox element={p.element} scope={p.scope} value={look().value} act={p.act} />
+          <InputBox element={p.element} scope={p.scope} value={look().value} act={q.act} />
         </Match>
       </Switch>
     </div>
@@ -624,12 +650,16 @@ function ShapeView(p: ElementProps & { at?: At }) {
     const faults: string[] = [];
     let unknown = false;
     let text = "";
+    // one not worked out yet counts as not enabled
+    let enabled = p.element.props.enabled === undefined;
     for (const [key, value] of Object.entries(p.element.props)) {
       if (key === "name" || key === "repeat") continue;
       const r = resolve(value, p.scope);
       if (!r.ok) {
         if (r.unknown) unknown = true;
         else faults.push(`${key}: ${r.error}`);
+      } else if (key === "enabled") {
+        enabled = !!r.value;
       } else if (key === "text") {
         text = words(r.value);
       } else if (r.value !== undefined && r.value !== null && r.value !== "") {
@@ -638,10 +668,13 @@ function ShapeView(p: ElementProps & { at?: At }) {
       }
     }
     if (Object.keys(style).length > 0) Object.assign(style, { "transform-box": "fill-box", "transform-origin": style["transform-origin"] ?? "50% 50%" });
-    return { attrs, style, faults, unknown, text };
+    // CSS opacity overrides the attribute's
+    if (!enabled) style.opacity = String(Number(attrs.opacity ?? 1) * DIM);
+    return { attrs, style, faults, unknown, text, enabled };
   });
   useFaults(() => p.element.id, () => look().faults);
-  const press = usePress(p);
+  const q = actingWhile(p, () => look().enabled);
+  const press = usePress(q);
   return (
     <Dynamic
       component={p.element.tag}
@@ -654,7 +687,7 @@ function ShapeView(p: ElementProps & { at?: At }) {
       ref={press.ref}
       onPointerDown={press.down}
     >
-      <Show when={p.element.tag === "text"} fallback={<For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} room={p.room} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>}>
+      <Show when={p.element.tag === "text"} fallback={<For each={p.element.children}>{(c) => <Placed element={c} scope={p.scope} room={p.room} overrides={p.overrides} design={p.design} act={q.act} inside={p.inside} />}</For>}>
         {look().text}
       </Show>
       <Show when={p.design && look().faults.length > 0}>
@@ -829,8 +862,9 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
   return (
     <Show when={component(name())} fallback={<div class="instance-missing">{name()} is missing</div>}>
       {(c) => {
-        const scope = componentScope(c(), { props: p.element.props, outer: p.scope, own, kept: p.act ? kept : undefined });
-        const act = p.act && componentAct(c(), p.element, p.act, p.scope);
+        // it keeps its variables while it is not enabled, so they hold when it is again
+        const scope = componentScope(c(), { props: p.element.props, outer: p.scope, own, kept });
+        const act = createMemo(() => p.act && componentAct(c(), p.element, p.act, p.scope));
         // a control whose values are all bound one way, and whose instance handles nothing,
         // only shows: it takes no input and does not look pressable
         const bindable = () => c().interface?.inputs.filter((i) => i.bindable) ?? [];
@@ -856,7 +890,7 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
             onPointerLeave={() => kept.leave()}
           >
             <Doc.Provider value={() => c().id}>
-              <For each={c().children}>{(e) => <Placed element={e} scope={scope} room={CORNER} design={p.design} act={display() ? undefined : act} inside />}</For>
+              <For each={c().children}>{(e) => <Placed element={e} scope={scope} room={CORNER} design={p.design} act={display() ? undefined : act()} inside />}</For>
             </Doc.Provider>
           </div>
         );

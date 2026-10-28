@@ -8,7 +8,7 @@ export const STATE: Shape = { pattern: /^[a-z][A-Za-z0-9_]*$/, except: ["p", "in
 export const ALIAS: Shape = { pattern: /^[A-Z][A-Za-z0-9_]*$/, except: [] };
 export const TOKEN: Shape = { pattern: /^[a-z][A-Za-z0-9]*$/, except: [] };
 export const COMPONENT: Shape = { pattern: /^[A-Z][A-Za-z0-9]*$/, except: [] };
-export const INPUT: Shape = { pattern: /^[a-z][A-Za-z0-9]*$/, except: ["name", "repeat", "x", "y", "w", "h", "origin", "rotate"] };
+export const INPUT: Shape = { pattern: /^[a-z][A-Za-z0-9]*$/, except: ["name", "repeat", "enabled", "x", "y", "w", "h", "origin", "rotate"] };
 export const EVENT: Shape = { pattern: /^[a-z][A-Za-z0-9]*$/, except: [] };
 export const TYPE_WORD = /^[A-Za-z][A-Za-z0-9_]*(\[\])*$/;
 
