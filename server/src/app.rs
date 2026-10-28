@@ -1217,8 +1217,9 @@ impl App {
                 self.mesh.attach(import);
             }
             self.refresh_known();
-            self.types_changed();
         }
+        // an object's name hides an enum's, so a new name or a new member may change them
+        self.types_changed();
         let old = old.renamed(moved);
         for v in old.variables.iter().filter(|v| !new.variables.contains(v)) {
             self.take_variable(&v.name);
