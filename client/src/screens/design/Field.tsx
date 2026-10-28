@@ -74,7 +74,7 @@ export interface FieldProps {
   /** Shows a value at once while a gesture runs, before it lets go. */
   onShow?: (text: string) => void;
   kind?: Kind;
-  /** A choice's options, as expressions: `"left"`, `600`. */
+  /** A choice's options, or what a number may be besides numbers, as expressions: `"left"`, `600`. */
   options?: string[];
   min?: number;
   max?: number;
@@ -304,6 +304,8 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   // a shadow's parts may each be code, so its panel takes any shadow it can split
   const literal = () => (kind() === "shadow" ? !!shadowParts(p.value) : p.value.trim() === "" || isConstant(p.value) || percent() || (!!p.percent && !!sizeWord(p.value)));
   const scrubs = () => plainNumber(p);
+  // a number with options lists them on a click, as a gap's "auto"
+  const listed = () => kind() === "choice" || (kind() === "number" && !!p.options);
   const [opened, setOpened] = createSignal(false);
   let lead!: HTMLButtonElement;
   // what the value draws now, for a swatch
@@ -319,7 +321,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   const click = () => {
     if (scrubs()) return;
     if (p.lead?.onClick) p.lead.onClick(lead);
-    else if (kind() === "colour" || kind() === "choice" || kind() === "point" || (kind() === "shadow" && literal())) setOpened(!opened());
+    else if (kind() === "colour" || listed() || kind() === "point" || (kind() === "shadow" && literal())) setOpened(!opened());
     else if (kind() === "flag" && literal()) p.onWrite(p.value.trim() === "true" ? "false" : "true");
     else focusText();
   };
@@ -346,7 +348,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
     const up = () => {
       window.removeEventListener("keydown", cancel, true);
       if (moved) p.onWrite(String(Number(at.toFixed(decimals(step) + 1))) + unit);
-      else if (travel < 3) p.lead?.onClick ? p.lead.onClick(lead) : focusText();
+      else if (travel < 3) p.lead?.onClick ? p.lead.onClick(lead) : listed() ? setOpened(!opened()) : focusText();
     };
     const stop = follow(e, { move, end: up });
     const cancel = (k: KeyboardEvent) => {
@@ -362,6 +364,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   };
   const title = () => {
     if (p.lead) return p.lead.title;
+    if (kind() === "number" && p.options) return scrubs() ? "Drag to change it, Shift for finer steps, or click to pick one" : "Pick one";
     if (kind() === "number") return scrubs() ? "Drag to change it, Shift for finer steps" : "An expression gives it, so a drag leaves it be";
     if (kind() === "colour") return "Pick a colour";
     if (kind() === "choice") return "Pick one";
@@ -422,7 +425,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
         </Switch>
       </button>
       <Show when={opened()}>
-        <Popover anchor={lead} onClose={() => setOpened(false)} class={kind() === "choice" ? "choice-list" : kind() === "shadow" ? "parts" : undefined}>
+        <Popover anchor={lead} onClose={() => setOpened(false)} class={listed() ? "choice-list" : kind() === "shadow" ? "parts" : undefined}>
           <Switch>
             <Match when={kind() === "shadow" && shadowParts(p.value)}>
               {(parts) => (
@@ -455,7 +458,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
                 }}
               />
             </Match>
-            <Match when={kind() === "choice"}>
+            <Match when={listed()}>
               <For each={p.options}>
                 {(o) => (
                   <button

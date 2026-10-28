@@ -24,7 +24,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.handler("tap", "open = !open;");
   await d.handler("outside", "open = false;");
   await d.add("frame", { Name: "content", x: "0", y: "0", w: "100%", h: "100%", Fill: "", Radius: "" });
-  await d.layOut("Left to right", "Center left");
+  await d.layOut("right", "Center left");
   await d.setField("Padding", "1.2");
   await d.add("text", { Name: "label", w: "fill", h: "hug", Text: "value", Colour: "textColour", Size: "textSize" });
   await d.select("content");
@@ -33,13 +33,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.select("face");
   // under the face, as wide as it, its rows one under another
   await d.add("frame", { Name: "list", x: "0", y: "100%", w: "100%", h: "hug", Fill: "listFill", Radius: "radius" });
-  await d.layOut("Top to bottom", undefined, "0");
+  await d.layOut("down", undefined, "0");
   await d.setField("Padding", "0.4");
   await d.css('visibility: open ? "visible" : "hidden"\nmargin-top: 0.4\nbox-shadow: "0 8px 24px #000a"\nmax-height: rows * 3.6 + 0.8\noverflow-y: "auto"');
   await d.add("frame", { Name: "option", w: "fill", h: "3.6", Fill: 'item === value ? pickedFill : "transparent"', Radius: "$radiusSmall" });
   await d.setField("Repeat", "options");
   await d.handler("tap", 'value = item;\nopen = false;\nemit("change", item);');
-  await d.layOut("Left to right", "Center left");
+  await d.layOut("right", "Center left");
   await d.setField("Padding", "0.8");
   await d.add("text", { Name: "optionLabel", w: "fill", h: "hug", Text: "item", Colour: "textColour", Size: "textSize" });
 
@@ -55,11 +55,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("radius", "$radiusPill");
   await d.addSends("change");
   await d.add("frame", { Name: "track", x: "0", y: "0", w: "100%", h: "100%", Fill: "fill", Radius: "radius" });
-  await d.layOut("Left to right", undefined, "0");
+  await d.layOut("right", undefined, "0");
   await d.add("frame", { Name: "segment", w: "fill", h: "fill", Fill: 'item === value ? colour : "transparent"', Radius: "radius" });
   await d.setField("Repeat", "options");
   await d.handler("tap", 'value = item;\nemit("change", item);');
-  await d.layOut("Left to right", "Center");
+  await d.layOut("right", "Center");
   await d.add("text", { Name: "segmentLabel", w: "hug", h: "hug", Text: "item", Colour: "item === value ? pickedTextColour : textColour", Size: "textSize" });
 
   await d.addPage("Modes");

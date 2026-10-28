@@ -12,7 +12,7 @@ import { COMPONENT, EVENT, INPUT, STATE } from "../../protocol/rules";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
 import type { Variable } from "../../protocol/Variable";
-import { docScope, type Flow, keptOf, pageScope, type Place, resolve, type Scope, setKept, sizeWord, stateKey, tokenValue } from "../../state/bind";
+import { docScope, keptOf, pageScope, type Place, resolve, type Scope, setKept, sizeWord, stateKey, tokenValue } from "../../state/bind";
 import { complete, completeCss, completeType, componentNames, drawing, REPEAT, signature, signatureCss, stateNames } from "../../state/complete";
 import { literal } from "../../state/format";
 import { typeList } from "../../state/types";
@@ -41,10 +41,7 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
-  ArrowDown,
   ArrowLeft,
-  ArrowRight,
-  ArrowUp,
   Check,
   Globe,
   Monitor,
@@ -56,7 +53,7 @@ import {
   X,
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
-import { BorderField, Field, type FieldProps, keysOf, kindOf, type Moving, PADDING, PartsField, Points, POINTS, RADIUS, type Where, WhereContext } from "./Field";
+import { BorderField, Field, type FieldProps, keysOf, kindOf, type Moving, PADDING, PartsField, POINTS, RADIUS, type Where, WhereContext } from "./Field";
 import { AddRow } from "./AddRow";
 import { addPart, cameraFields, PART_KINDS, partFields, partKeys } from "./SceneFields";
 import { addShape, GEOMETRY, ORIGINS, PAINT, ROTATE, SHAPE_KINDS, shapeKeys, type Spec, TURN } from "./ShapeFields";
@@ -82,10 +79,11 @@ const TEXT_LOOK: Spec[] = [
   ["Colour", "color", { kind: "colour", placeholder: "#e4e6e8" }],
   ["Size", "font-size", { kind: "number", min: 0.1, step: 0.1, placeholder: "1.6" }],
   ["Weight", "font-weight", { kind: "choice", options: ["300", "400", "500", "600", "700"], placeholder: "400" }],
-  ["Align", "text-align", { kind: "choice", options: ['"left"', '"center"', '"right"'], placeholder: '"left"' }],
-  // a text's lines within its box, as CSS aligns a block's content
-  ["Vertical", "align-content", { kind: "choice", options: ['"start"', '"center"', '"end"'], placeholder: '"start"' }],
 ];
+/** Where a text's lines sit in its box, and an input's across it, the one line it has being
+ *  always in the middle. */
+const TEXT_ALIGN: Spec = ["Align", "align", { kind: "point", options: POINTS.map((w) => `"${w}"`), placeholder: '"top left"' }];
+const INPUT_ALIGN: Spec = ["Align", "align", { kind: "choice", options: ['"left"', '"center"', '"right"'], placeholder: '"left"' }];
 /** The properties whose changes may animate, by key, each the CSS property it draws as. */
 const ANIMATES: Record<string, string> = {
   x: "left",
@@ -537,7 +535,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <Field {...prop("value")} label="Value" placeholder="Speed" focus={typed("value")} />
         </Show>
         <Show when={text() || input()}>
-          <For each={TEXT_LOOK.filter(([, key]) => text() || key !== "align-content")}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
+          <For each={[...TEXT_LOOK, text() ? TEXT_ALIGN : INPUT_ALIGN]}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
         </Show>
         <Show when={placed() && !instance() && !grouped()}>
           <div class="section">Look</div>
@@ -646,21 +644,12 @@ function LooseProps(p: { page: string; element: Element; loose: (key: string) =>
   );
 }
 
-/** Each way a frame may lay out what it holds, as its button says it. */
-const DIRECTIONS: [Flow, string, typeof ArrowRight][] = [
-  ["right", "Left to right", ArrowRight],
-  ["down", "Top to bottom", ArrowDown],
-  ["left", "Right to left", ArrowLeft],
-  ["up", "Bottom to top", ArrowUp],
-];
-
 /** How a frame lays out what it holds: not at all, each placed by its x and y, or one after
- *  another in a direction, with a gap or spread over its length, padding, wrapping and a point
- *  they sit at. */
+ *  another in a direction, with a gap or "auto" to spread them over its length, padding,
+ *  wrapping and a point they sit at. Each is a value code may give. */
 function AutoLayout(p: { page: string; element: Element; prop: (key: string) => Pick<FieldProps, "value" | "onWrite" | "onShow"> }) {
-  const text = (key: string) => p.element.props[key]?.trim();
   const set = (props: Record<string, string | null>) => setProps(p.page, p.element.id, props);
-  const spread = () => text("gap") === '"auto"';
+  const stop = () => set({ layout: null, wrap: null, align: null, gap: p.element.props.gap?.trim() === '"auto"' ? null : (p.element.props.gap ?? null) });
   return (
     <>
       <div class="section">Auto layout</div>
@@ -673,53 +662,17 @@ function AutoLayout(p: { page: string; element: Element; prop: (key: string) => 
           </button>
         }
       >
-        <div class="field">
-          <label>Direction</label>
-          <div class="tool-row">
-            <For each={DIRECTIONS}>
-              {([flow, title, Icon]) => (
-                <button class="icon-btn" classList={{ on: text("layout") === `"${flow}"` }} title={title} onClick={() => set({ layout: `"${flow}"` })}>
-                  <Icon size={15} />
-                </button>
-              )}
-            </For>
-            <button class="icon-btn" title="Stop laying out, so each part is placed by its x and y" onClick={() => set({ layout: null, wrap: null, align: null, gap: spread() ? null : (p.element.props.gap ?? null) })}>
-              <X size={14} />
-            </button>
-          </div>
-        </div>
+        <Field {...p.prop("layout")} onWrite={(t) => (t === null ? stop() : set({ layout: t }))} label="Direction" kind="choice" options={['"right"', '"down"', '"left"', '"up"']} placeholder='"down"' />
         <Field {...p.prop("wrap")} label="Wrap" kind="flag" placeholder="false" />
-        <div class="field">
-          <label>Spacing</label>
-          <Choice
-            options={[
-              [false, "Packed", "A gap between each"],
-              [true, "Spread", "Spread over the frame's whole length"],
-            ]}
-            value={spread()}
-            onPick={(spread) => set({ gap: spread ? '"auto"' : "$space" })}
-          />
-        </div>
-        <Show when={!spread()}>
-          <Field {...p.prop("gap")} label="Gap" kind="number" min={0} placeholder="0" />
-        </Show>
+        <Field {...p.prop("gap")} label="Gap" kind="number" min={0} placeholder="0" options={["$space", '"auto"']} />
         <PartsField of={PADDING} props={p.element.props} write={set} show={(props) => showProps(p.page, p.element.id, props)} />
-        <div class="field">
-          <label>Align</label>
-          <Points values={POINTS.map((w) => `"${w}"`)} on={text("align") ?? '"top left"'} pick={(v) => set({ align: v === '"top left"' ? null : v })} />
-        </div>
+        <Field {...p.prop("align")} label="Align" kind="point" options={POINTS.map((w) => `"${w}"`)} placeholder='"top left"' />
         {/* which part draws over the next where they overlap */}
-        <div class="field">
-          <label>On top</label>
-          <Choice
-            options={[
-              [false, "Last", "Each part over the one before it"],
-              [true, "First", "Each part over the one after it"],
-            ]}
-            value={text("stack") === '"first"'}
-            onPick={(first) => set({ stack: first ? '"first"' : null })}
-          />
-        </div>
+        <Field {...p.prop("stack")} label="On top" kind="choice" options={['"last"', '"first"']} placeholder='"last"' />
+        <button class="ghost" title="Stop laying out, so each part is placed by its x and y" onClick={stop}>
+          <X size={13} />
+          Stop laying out
+        </button>
       </Show>
     </>
   );

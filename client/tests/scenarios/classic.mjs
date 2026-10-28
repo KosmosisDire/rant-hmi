@@ -94,8 +94,8 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
     await d.set({ Width: "0.1", Colour: "$border" });
     await page.keyboard.press("Escape");
   };
-  const title = (holder, text, w, h = "4") => inside(holder, "text", { Name: `${holder} title`, x: "0", y: "0", w, h, Text: `"${text}"`, Size: "2.2", Weight: "700", Align: '"center"', Vertical: '"center"' });
-  const label = (holder, name, text, x, y, w, h) => inside(holder, "text", { Name: name, x, y, w, h, Text: text, Size: "1.6", Vertical: '"center"' });
+  const title = (holder, text, w, h = "4") => inside(holder, "text", { Name: `${holder} title`, x: "0", y: "0", w, h, Text: `"${text}"`, Size: "2.2", Weight: "700", Align: '"center"' });
+  const label = (holder, name, text, x, y, w, h) => inside(holder, "text", { Name: name, x, y, w, h, Text: text, Size: "1.6", Align: '"center left"' });
 
   // the robot: how it jogs, the jog pad, the job, its state, and run, halt, servos, alarm, home
   await panel("Robot panel", "80", "1", "47", "49");
@@ -112,7 +112,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const row = "1 + (index % 3) * 8";
   const minus = await inside("Jog pad", "Button", { Name: "Minus", Repeat: "6", x: column(1), y: row, w: "6", h: "6", text: '"-"', textSize: "3" });
   await handlers([["press", "Cage.jogVel[index] = -1;"], ["release", "Cage.jogVel[index] = 0;"]]);
-  await inside("Jog pad", "text", { Name: "Joint angle", Repeat: "6", x: column(7), y: row, w: "8", h: "6", Text: "degrees(Cage.JointState.position[index]).toFixed(1)", Size: "1.9", Align: '"center"', Vertical: '"center"' });
+  await inside("Jog pad", "text", { Name: "Joint angle", Repeat: "6", x: column(7), y: row, w: "8", h: "6", Text: "degrees(Cage.JointState.position[index]).toFixed(1)", Size: "1.9", Align: '"center"' });
   const plus = await inside("Jog pad", "Button", { Name: "Plus", Repeat: "6", x: column(15), y: row, w: "6", h: "6", text: '"+"', textSize: "3" });
   await handlers([["press", "Cage.jogVel[index] = 1;"], ["release", "Cage.jogVel[index] = 0;"]]);
   await inside("Robot panel", "frame", { Name: "Divider", x: "1", y: "32", w: "45", h: "0.2", Fill: "$border", Radius: "" });
@@ -127,7 +127,6 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
     Text: 'Cage.Robot.start ? "Running " + Cage.Robot.cur_job_name + " at " + Cage.Robot.job_step : Cage.Robot.is_home ? "HOME IDLE" : "IDLE"',
     Size: "1.5",
     Align: '"center"',
-    Vertical: '"center"',
   });
   // run and halt share a place, one shown at a time, each in a frame since an instance takes no CSS
   await inside("Robot panel", "frame", { Name: "Run holder", x: "1", y: "38", w: "18", h: "10", Fill: "", Radius: "" });
@@ -214,7 +213,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await d.deselect();
   await d.add("frame", { Name: "Estop", x: "23", y: "17", w: "79", h: "39", Fill: "$red.alpha(0.55)", Radius: "6.4" });
   await d.css('visibility: Cage.SafetyStatus.estop ? "hidden" : "visible"');
-  await d.add("text", { Name: "Estop text", x: "0", y: "0", w: "100%", h: "100%", Text: '"ESTOP ACTIVE"', Colour: "$onFill", Size: "8.4", Weight: "700", Align: '"center"', Vertical: '"center"' });
+  await d.add("text", { Name: "Estop text", x: "0", y: "0", w: "100%", h: "100%", Text: '"ESTOP ACTIVE"', Colour: "$onFill", Size: "8.4", Weight: "700", Align: '"center"' });
 
   // ---------------------------------------------------------------- running it
   await d.tab("Run");

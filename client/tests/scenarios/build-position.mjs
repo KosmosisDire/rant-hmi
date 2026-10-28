@@ -16,7 +16,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("fill", "$panel");
   await d.addInput("radius", "$radius");
   await d.add("frame", { Name: "card", x: "0", y: "0", w: "100%", h: "100%", Fill: "fill", Radius: "radius" });
-  await d.layOut("Top to bottom", undefined, "0.8");
+  await d.layOut("down", undefined, "0.8");
   await d.setField("Padding", "1.5");
   // the view box turned over, so y counts up
   await d.add("diagram", { Name: "plane", w: "fill", h: "fill", "View box": "`${min.x} ${-max.y} ${max.x - min.x} ${max.y - min.y}`" });

@@ -80,7 +80,6 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const box = await hmi.addElement(pageId, "div", { name: "Box", x: "4", y: "40", w: "30", h: "20", background: "#2a2f35" });
   for (const name of ["A", "B"]) await hmi.addElement(pageId, "div", { name, x: "0", y: "0", w: "5", h: "5", background: "#4a8fd6" }, box);
   const right = page.locator(".screen:not([hidden]) .sidebar.right");
-  const field = (label) => right.locator(".field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) });
   const is = (key, value) => eventually(() => props(hmi, pageId, box)[key] === value, () => `${key} to be ${value}, not ${props(hmi, pageId, box)[key]}`);
   await d.select("Box");
   const marked = () => right.locator(".placement .lead .sizes").count();
@@ -88,15 +87,18 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await right.locator(".ghost", { hasText: "Lay out what it holds" }).click();
   await is("layout", '"down"');
   await is("gap", "$space");
-  await right.locator('button[title="Left to right"]').click();
+  await d.choose("Direction", "right");
   await is("layout", '"right"');
-  await right.locator('.point[title="Center"]').click();
+  await d.point("Align", "Center");
   await is("align", '"center"');
-  await field("Spacing").locator("button", { hasText: /^Spread$/ }).click();
+  await d.choose("Gap", "auto");
   await is("gap", '"auto"');
-  await field("Spacing").locator("button", { hasText: /^Packed$/ }).click();
+  await d.choose("Gap", "$space");
   await is("gap", "$space");
-  await field("Spacing").locator("button", { hasText: /^Spread$/ }).click();
+  // a plain number's lead lists them too on a click, as a drag scrubs it
+  await d.setField("Gap", "2");
+  await is("gap", "2");
+  await d.choose("Gap", "auto");
   await is("gap", '"auto"');
   await eventually(async () => (await marked()) === 2, "w and h to offer their sizes once it lays out");
   await d.size("w", "Hug");
@@ -109,4 +111,23 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check((await right.locator(".placement .lead", { hasText: /^x$/ }).count()) === 0, "a part the box lays out offers x");
   await d.size("w", "Fill");
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === box).children[0].props.w === "fill", "A to fill");
+
+  // each may be code, and a pick from a lead's list replaces it
+  hmi.setVariable("Hmi.alFlow", "down");
+  await d.select("Box");
+  await d.setField("Direction", "Hmi.alFlow");
+  await is("layout", "Hmi.alFlow");
+  const look = (key) => d.el(box).evaluate((el, key) => getComputedStyle(el)[key], key);
+  await eventually(async () => (await look("flexDirection")) === "column", "the code's down to lay out a column");
+  hmi.set("Hmi.alFlow", "right");
+  await eventually(async () => (await look("flexDirection")) === "row", "a new value to lay out a row");
+  await d.setField("Align", 'Hmi.alFlow === "right" ? "bottom left" : "top left"');
+  await eventually(async () => (await look("alignItems")) === "flex-end", "the code's point to align them");
+  await d.choose("Direction", "down");
+  await is("layout", '"down"');
+  await d.choose("On top", "first");
+  await is("stack", '"first"');
+  await right.locator(".ghost", { hasText: "Stop laying out" }).click();
+  await is("layout", undefined);
+  check(props(hmi, pageId, box).align === undefined && props(hmi, pageId, box).gap === undefined, "stopping kept the align or the auto gap");
 }
