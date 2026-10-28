@@ -286,7 +286,8 @@ function shared(was: unknown, next: unknown): unknown {
   if (was === next || !holds(next) || Object.isFrozen(next)) return next;
   // frozen already, and its numbers compare far faster than its records
   if (packed(next)) return samePacked(was, next) ? was : next;
-  const old = holds(was) && Array.isArray(was) === Array.isArray(next) ? was : undefined;
+  // a packed one before shares nothing, as a far one's items are never read here
+  const old = holds(was) && !packed(was) && Array.isArray(was) === Array.isArray(next) ? was : undefined;
   let same = old !== undefined;
   if (Array.isArray(next)) {
     const before = old as unknown[] | undefined;
