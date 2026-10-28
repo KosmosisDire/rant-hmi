@@ -71,6 +71,8 @@ const LOOK: Spec[] = [
   // hidden clips what it holds to its box, as a card or a chart wants
   ["Overflow", "overflow", { kind: "choice", options: ['"visible"', '"hidden"'], placeholder: '"visible"' }],
   ["Shadow", "box-shadow", { kind: "shadow", placeholder: '"0 0.2 0.8 0 #00000066"' }],
+  // how far what shows through it blurs, in units, as frosted glass
+  ["Backdrop blur", "backdrop-filter", { kind: "number", min: 0, step: 0.1, placeholder: "0" }],
   // false dims it, and it and all it holds take no events
   ["Enabled", "enabled", { kind: "flag", placeholder: "true" }],
 ];
@@ -97,6 +99,7 @@ const ANIMATES: Record<string, string> = {
   "font-size": "font-size",
   "border-radius": "border-radius",
   "box-shadow": "box-shadow",
+  "backdrop-filter": "backdrop-filter",
 };
 /** What of an instance animates: its box, never its inputs. */
 const BOX = new Set(["x", "y", "w", "h", "rotate"]);

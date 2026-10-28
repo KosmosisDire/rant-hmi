@@ -270,8 +270,9 @@ Any CSS property goes in `style`, each value an expression:
 `background: Running ? $green : $panel`.
 
 - A bare number is units for a length: sizes, padding, margin, gap, borders and their radius,
-  font size, letter spacing and outlines. It is degrees for `rotate`, and as it is for the
-  rest, as `opacity: 0.5`.
+  font size, letter spacing and outlines. It is degrees for `rotate`, a blur in units for
+  `backdrop-filter`, as `backdrop-filter: 0.8` for frosted glass, and as it is for the rest, as
+  `opacity: 0.5`.
 - CSS text is taken as written: `box-shadow: "0 2px 8px #0008"`. Bare numbers in it that the
   browser would refuse read as units: `"0 0.2 0.8 #0008"`.
 - `transition` runs on screens only, so the editor follows a drag at once.

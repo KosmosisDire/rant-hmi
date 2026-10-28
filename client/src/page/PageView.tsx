@@ -192,7 +192,7 @@ function useFaults(element: () => string, faults: () => string[], level: Level =
 
 function css(key: string, v: unknown): string {
   const text = String(v);
-  if (/^-?\d+(\.\d+)?$/.test(text)) return LENGTHS.has(key) ? `${Number(text) * UNIT}px` : key === "rotate" ? `${text}deg` : text;
+  if (/^-?\d+(\.\d+)?$/.test(text)) return LENGTHS.has(key) ? `${Number(text) * UNIT}px` : key === "rotate" ? `${text}deg` : key === "backdrop-filter" ? `blur(${Number(text) * UNIT}px)` : text;
   // CSS text whose bare numbers the browser refuses reads them in units, as a token's are
   if (CSS.supports(key, text)) return text;
   const units = text.replace(/(^|[\s(,])(-?\d*\.?\d+)(?=$|[\s),])/g, (_, before: string, n: string) => `${before}${Number(n) * UNIT}px`);
