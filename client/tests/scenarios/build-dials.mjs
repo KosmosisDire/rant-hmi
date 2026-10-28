@@ -21,8 +21,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.add("diagram", { Name: "dial", x: "0", y: "0", w: "16", h: "16" });
   await d.addShape("circle", { Name: "track", ...arc(6.4, "trackColour", 1.1) });
   await d.css('pathlength: 100\nstroke-dasharray: "75 100"');
-  await d.addShape("circle", { Name: "level", ...arc(6.4, "(value - min) / (max - min) > alarm ? alarmColour : colour", 1.1) });
-  await d.css('pathlength: 100\nstroke-dasharray: `${Math.min(Math.max((value - min) / (max - min), 0), 1) * 75} 100`');
+  // an empty level draws nothing: round ends only while it has a length, and a gap past the
+  // circle's end, so the dash never comes round again as a second dot
+  await d.addShape("circle", { Name: "level", ...arc(6.4, "(value - min) / (max - min) > alarm ? alarmColour : colour", 1.1), Ends: 'value > min ? "round" : "butt"' });
+  await d.css('pathlength: 100\nstroke-dasharray: `${Math.min(Math.max((value - min) / (max - min), 0), 1) * 75} 200`');
   await d.addShape("text", { Name: "reading", Text: "value.toFixed(digits)", x: "8", y: "8.4", Size: "2.7", Fill: "textColour" });
   await d.addShape("text", { Name: "units", Text: "unit", x: "8", y: "11.5", Size: "1.3", Fill: "$dim" });
 
@@ -40,8 +42,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const ring = { "Centre x": "6", "Centre y": "6", Radius: "5.3", Fill: '"none"', Thickness: "0.5", Ends: '"round"', Transform: '"rotate(135 6 6)"' };
   await d.addShape("circle", { Name: "track", ...ring, Stroke: "trackColour" });
   await d.css('pathlength: 100\nstroke-dasharray: "75 100"');
-  await d.addShape("circle", { Name: "level", ...ring, Stroke: "colour" });
-  await d.css('pathlength: 100\nstroke-dasharray: `${(value - min) / (max - min) * 75} 100`');
+  await d.addShape("circle", { Name: "level", ...ring, Stroke: "colour", Ends: 'value > min ? "round" : "butt"' });
+  await d.css('pathlength: 100\nstroke-dasharray: `${Math.min(Math.max((value - min) / (max - min), 0), 1) * 75} 200`');
   await d.addShape("circle", { Name: "face", "Centre x": "6", "Centre y": "6", Radius: "4.2", Fill: "root.pressed ? face.lighten(0.06) : face", Stroke: "$border2", Thickness: "0.2" });
   await d.addShape("line", { Name: "pointer", "From x": "6", "From y": "4.5", "To x": "6", "To y": "2.5", Stroke: "pointerColour", Thickness: "0.5", Transform: "`rotate(${-135 + (value - min) / (max - min) * 270} 6 6)`" });
 
@@ -54,7 +56,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   await eventually(async () => (await inst(gauge).locator("text").first().textContent()) === "1.0", "the gauge to read 1.0");
   const dash = await inst(gauge).locator('[data-name="level"]').getAttribute("stroke-dasharray");
-  check(dash === "37.5 100", `the gauge's arc is ${dash}`);
+  check(dash === "37.5 200", `the gauge's arc is ${dash}`);
 
   // a drag around the knob to its right turns it to a little past the middle
   const b = await inst(knob).boundingBox();
@@ -70,4 +72,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // past its alarm share the gauge's level turns red
   const level = () => inst(gauge).locator('[data-name="level"]').evaluate((e) => getComputedStyle(e).stroke);
   check((await level()) === "rgb(210, 87, 75)", `the level past its alarm is ${await level()}`);
+
+  // at its least, neither dial draws a level
+  await hmi.set("Line.Speed", 0);
+  const ends = (id) => inst(id).locator('[data-name="level"]').evaluate((e) => getComputedStyle(e).strokeLinecap);
+  await eventually(async () => (await ends(gauge)) === "butt" && (await ends(knob)) === "butt", "both levels to draw nothing at zero");
+  check((await inst(gauge).locator('[data-name="level"]').getAttribute("stroke-dasharray")) === "0 200", "the gauge's empty arc");
 }

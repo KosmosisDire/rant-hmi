@@ -14,7 +14,7 @@
       emit("change", value);
     </on>
     <circle id="e2" name="track" cx="6" cy="6" fill='"none"' pathlength="100" r="5.3" stroke="trackColour" stroke-dasharray='"75 100"' stroke-linecap='"round"' stroke-width="0.5" transform='"rotate(135 6 6)"'/>
-    <circle id="e3" name="level" cx="6" cy="6" fill='"none"' pathlength="100" r="5.3" stroke="colour" stroke-dasharray="`${(value - min) / (max - min) * 75} 100`" stroke-linecap='"round"' stroke-width="0.5" transform='"rotate(135 6 6)"'/>
+    <circle id="e3" name="level" cx="6" cy="6" fill='"none"' pathlength="100" r="5.3" stroke="colour" stroke-dasharray="`${Math.min(Math.max((value - min) / (max - min), 0), 1) * 75} 200`" stroke-linecap='value > min ? "round" : "butt"' stroke-width="0.5" transform='"rotate(135 6 6)"'/>
     <circle id="e4" name="face" cx="6" cy="6" fill="root.pressed ? face.lighten(0.06) : face" r="4.2" stroke="$border2" stroke-width="0.2"/>
     <line id="e5" name="pointer" fill='"none"' stroke="pointerColour" stroke-linecap='"round"' stroke-width="0.5" transform="`rotate(${-135 + (value - min) / (max - min) * 270} 6 6)`" x1="6" x2="6" y1="4.5" y2="2.5"/>
   </svg>
