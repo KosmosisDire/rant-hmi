@@ -5,7 +5,7 @@ import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
-import { docScope, flowOf, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope, sizeWord, UNIT } from "../../state/bind";
+import { docScope, flowOf, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope, sizeWord, stateScope, UNIT } from "../../state/bind";
 import { edit, show } from "../../state/change";
 import { chain, find } from "../../state/elements";
 import { notify } from "../../state/store";
@@ -244,7 +244,8 @@ function turnedOutline(e: Element, origin: string | null, scope: Scope): Record<
 }
 
 /** What each element along a path reads in the editor, outermost first: the page's or
- *  component's names, and inside a repeat its first copy, as the editor draws it. */
+ *  component's names, inside a repeat its first copy, as the editor draws it, and what each
+ *  keeps. */
 function scopes(page: Page, path: Element[]): Scope[] {
   let scope = docScope(page);
   return path.map((e) => {
@@ -253,6 +254,7 @@ function scopes(page: Page, path: Element[]): Scope[] {
       const first = r.ok && Array.isArray(r.value) ? r.value[0] : 0;
       scope = repeatScope(scope, 0, () => first);
     }
+    scope = stateScope(scope, e.id, e.state);
     return scope;
   });
 }

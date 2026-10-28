@@ -4,9 +4,11 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Handler, Home, Input, Interface, Local, Page, Shows, Sizing, Tag, check_handler};
+use super::{Element, Handler, Home, Input, Interface, Local, Page, Shows, Sizing, Tag, all, check_handler};
 use crate::events::{self, rank};
+use crate::project::{Per, Variable};
 use crate::rules;
+use crate::value::Value;
 
 /// The properties written as attributes, in this order. The rest go in `style`.
 pub(crate) const ATTRS: [&str; 7] = ["name", "repeat", "x", "y", "w", "h", "origin"];
@@ -68,6 +70,9 @@ pub fn write(page: &Page, components: &[Page]) -> String {
     for v in page.interface.iter().flat_map(|i| &i.variables) {
         out.push_str(&format!("  <var name={} start={}/>\n", quote(&v.name), quote(&v.start)));
     }
+    for v in &page.state {
+        var(&mut out, "  ", v);
+    }
     for e in &page.children {
         element(&mut out, e, 1, components);
     }
@@ -118,12 +123,16 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
     }
     let text = e.props.get(TEXT).filter(|_| body);
     let code = code_of(e.tag).and_then(|k| e.props.get(k));
+    let bare = e.handlers.is_empty() && e.state.is_empty();
     match text {
-        Some(text) if e.handlers.is_empty() => out.push_str(&format!(">{text}</{tag}>\n")),
-        _ if e.handlers.is_empty() && e.children.is_empty() && code.is_none() => out.push_str("/>\n"),
+        Some(text) if bare => out.push_str(&format!(">{text}</{tag}>\n")),
+        _ if bare && e.children.is_empty() && code.is_none() => out.push_str("/>\n"),
         _ => {
             out.push_str(">\n");
             let inner = "  ".repeat(depth + 1);
+            for v in &e.state {
+                var(out, &inner, v);
+            }
             for h in &e.handlers {
                 // settings in the order the event lists them
                 let settings: String = events::settings(&h.event).iter().filter_map(|s| Some(format!(" {}={}", s.name, quote(h.setting(s.name)?)))).collect();
@@ -142,6 +151,13 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
             out.push_str(&format!("</{tag}>\n"));
         }
     }
+}
+
+/// A `<var>` line of state, its start as JSON. Kept for each screen unless it says otherwise.
+fn var(out: &mut String, indent: &str, v: &Variable) {
+    let start = serde_json::to_string(&v.start).expect("a value is JSON");
+    let per = if v.per == Per::Hmi { " per=\"hmi\"" } else { "" };
+    out.push_str(&format!("{indent}<var name={} start={}{per}/>\n", quote(&v.name), quote(&start)));
 }
 
 /// Code between its opening and closing tags, a step further in, blank lines left bare.
@@ -193,7 +209,7 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     let attrs = r.attrs()?;
     r.expect(">")?;
     let interface = (root == "component").then(Interface::default);
-    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 128, height: 72, shows: Shows::Full, fill: String::new(), interface, children: Vec::new() };
+    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 128, height: 72, shows: Shows::Full, fill: String::new(), interface, state: Vec::new(), children: Vec::new() };
     for (k, v) in attrs {
         match k.as_str() {
             "name" => page.name = v,
@@ -221,12 +237,18 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
             other => return Err(r.error(&format!("<{root}> takes no attribute {other}"))),
         }
     }
-    if let Some(interface) = &mut page.interface {
-        interface.inputs = r.props()?;
-        interface.events = r.events()?;
-        interface.variables = r.vars()?;
+    match &mut page.interface {
+        Some(interface) => {
+            interface.inputs = r.props()?;
+            interface.events = r.events()?;
+            interface.variables = r.vars()?;
+        }
+        None => page.state = r.state()?,
     }
     page.children = r.children(root)?;
+    if page.interface.is_some() && all(&page.children).any(|e| !e.state.is_empty()) {
+        return Err("a component keeps its state in its own <var> lines, and nothing in it keeps any".into());
+    }
     r.gap();
     if r.at < r.s.len() {
         return Err(r.error("nothing may follow </page>"));
@@ -412,6 +434,37 @@ impl Reader<'_> {
         }
     }
 
+    /// The `<var>` lines of what a page or an element keeps.
+    fn state(&mut self) -> Result<Vec<Variable>, String> {
+        let mut out = Vec::new();
+        loop {
+            self.gap();
+            if !self.eat("<var") {
+                return Ok(out);
+            }
+            let mut v = Variable { name: String::new(), start: Value::Null, per: Per::Screen };
+            for (k, value) in self.attrs()? {
+                match k.as_str() {
+                    "name" => v.name = value,
+                    "start" => v.start = serde_json::from_str(&value).map_err(|_| self.error(&format!("{value} is no start: write it as JSON, as 0, true or \"text\"")))?,
+                    "per" => {
+                        v.per = match value.as_str() {
+                            "screen" => Per::Screen,
+                            "hmi" => Per::Hmi,
+                            _ => return Err(self.error("per is screen or hmi")),
+                        }
+                    }
+                    other => return Err(self.error(&format!("<var> takes no attribute {other}"))),
+                }
+            }
+            self.expect("/>")?;
+            if v.name.is_empty() || v.start.is_null() {
+                return Err(self.error("<var> needs a name and a start"));
+            }
+            out.push(v);
+        }
+    }
+
     /// The `<on>` blocks at the reading point.
     fn handlers(&mut self) -> Result<Vec<Handler>, String> {
         let mut out = Vec::new();
@@ -510,9 +563,11 @@ impl Reader<'_> {
         }
         let mut children = Vec::new();
         let mut handlers = Vec::new();
+        let mut state = Vec::new();
         if !self.eat("/>") {
             self.expect(">")?;
             let block = self.opens_block();
+            state = self.state()?;
             handlers = self.handlers()?;
             match tag {
                 _ if tag.inside().is_some() => children = self.children(&word)?,
@@ -523,7 +578,7 @@ impl Reader<'_> {
                 },
             }
         }
-        Ok(Element { id, tag, component, props, handlers, children })
+        Ok(Element { id, tag, component, props, handlers, state, children })
     }
 }
 
@@ -695,6 +750,20 @@ mod tests {
     }
 
     #[test]
+    fn a_page_and_its_elements_keep_state() {
+        let text = "<page name=\"A\" size=\"1408x792\">\n  <var name=\"mode\" start='\"Auto\"' per=\"hmi\"/>\n  <div id=\"e1\" repeat=\"Lines\">\n    <var name=\"open\" start=\"false\"/>\n    <on event=\"tap\">\n      open = !open;\n    </on>\n    <span id=\"e2\">\n      <var name=\"seen\" start=\"[1,2.5]\"/>\n      open ? mode : \"\"\n    </span>\n  </div>\n</page>\n";
+        let page = parse(text, "a").unwrap();
+        assert_eq!((page.state[0].name.as_str(), &page.state[0].start, page.state[0].per), ("mode", &Value::Text("Auto".into()), Per::Hmi));
+        let e1 = &page.children[0];
+        assert_eq!((e1.state[0].name.as_str(), &e1.state[0].start, e1.state[0].per), ("open", &Value::Bool(false), Per::Screen));
+        assert_eq!(e1.children[0].props["text"], "open ? mode : \"\"");
+        assert_eq!(write(&page, &[]), text);
+        let held = "<component name=\"B\" size=\"10x10\">\n  <div id=\"e1\">\n    <var name=\"open\" start=\"false\"/>\n  </div>\n</component>\n";
+        assert!(parse(held, "b").unwrap_err().contains("nothing in it keeps any"));
+        assert!(parse("<page>\n<var name=\"a\" start=\"nope\"/>\n</page>", "a").unwrap_err().starts_with("line 2: nope is no start"));
+    }
+
+    #[test]
     fn values_holding_quotes_or_entities_come_back_whole() {
         let mut page = parse(PAGE, "overview").unwrap();
         for v in ["Mode == \"Auto\" ? \"A\" : \"M\"", "a ? \"it's\" : 'b'", "\"&quot; &amp; &\""] {
@@ -714,7 +783,7 @@ mod tests {
 ", "a").unwrap();
         let mut half = page.clone();
         half.children[0].handlers.push(Handler { code: "open(\"".into(), ..Handler::new("tap", BTreeMap::new()) });
-        half.children.push(Element { id: "e2".into(), tag: Tag::Span, component: None, props: [("text".to_string(), "\"Hi".to_string())].into(), handlers: vec![Handler { code: "log(`".into(), ..Handler::new("tap", BTreeMap::new()) }], children: Vec::new() });
+        half.children.push(Element { id: "e2".into(), tag: Tag::Span, component: None, props: [("text".to_string(), "\"Hi".to_string())].into(), handlers: vec![Handler { code: "log(`".into(), ..Handler::new("tap", BTreeMap::new()) }], state: Vec::new(), children: Vec::new() });
         let again = parse(&write(&half, &[]), "a").unwrap();
         assert_eq!(again.children[0].handlers[0].code, "open(\"");
         assert_eq!(again.children[1].handlers[0].code, "log(`");
@@ -852,7 +921,20 @@ mod tests {
     }
 
     /// Shapes for a diagram or parts for a scene, a group of them holding more.
-    fn random_held(rng: &mut Rng, ids: &mut usize, depth: usize, home: Home) -> Vec<Element> {
+    /// What an element or a page keeps, sometimes nothing, starts of every kind.
+    fn some_state(rng: &mut Rng, keeps: bool) -> Vec<Variable> {
+        const STARTS: [&str; 7] = ["false", "0", "-2.5", "\"Auto\"", "\"it's \\\"x\\\"\"", "[1, 2, 3]", "{\"a\": {\"b\": [true]}}"];
+        let mut out: Vec<Variable> = Vec::new();
+        for name in ["open", "count", "mode"] {
+            if keeps && rng.below(4) == 0 {
+                let start = serde_json::from_str(STARTS[rng.below(STARTS.len())]).unwrap();
+                out.push(Variable { name: name.into(), start, per: if rng.below(2) == 0 { Per::Hmi } else { Per::Screen } });
+            }
+        }
+        out
+    }
+
+    fn random_held(rng: &mut Rng, ids: &mut usize, depth: usize, home: Home, keeps: bool) -> Vec<Element> {
         let (tags, keys): ([Tag; 5], &[&str]) = match home {
             Home::Diagram => ([Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G], &["name", "cx", "r", "fill", "stroke", "d", "transform"]),
             _ => ([Tag::Box, Tag::Model, Tag::Points, Tag::Arrow, Tag::Anchor], &["name", "repeat", "pose", "size", "color", "points", "src", "joints"]),
@@ -866,13 +948,13 @@ mod tests {
                 props.insert(TEXT.to_owned(), rng.pick(&VALUES));
             }
             let id = format!("e{ids}");
-            let children = if tag.inside().is_some() && depth < 3 { random_held(rng, ids, depth + 1, home) } else { Vec::new() };
-            out.push(Element { id, tag, component: None, props, handlers: some_handlers(rng, tag), children });
+            let children = if tag.inside().is_some() && depth < 3 { random_held(rng, ids, depth + 1, home, keeps) } else { Vec::new() };
+            out.push(Element { id, tag, component: None, props, handlers: some_handlers(rng, tag), state: some_state(rng, keeps), children });
         }
         out
     }
 
-    fn random_element(rng: &mut Rng, ids: &mut usize, depth: usize) -> Element {
+    fn random_element(rng: &mut Rng, ids: &mut usize, depth: usize, keeps: bool) -> Element {
         *ids += 1;
         let id = format!("e{ids}");
         let tag = [Tag::Div, Tag::Span, Tag::Input, Tag::Media, Tag::Svg, Tag::Markup, Tag::Canvas, Tag::Scene, Tag::Use, Tag::Group][rng.below(10)];
@@ -883,7 +965,7 @@ mod tests {
         match tag {
             Tag::Div | Tag::Group if depth < 3 => {
                 for _ in 0..rng.below(3) {
-                    children.push(random_element(rng, ids, depth + 1));
+                    children.push(random_element(rng, ids, depth + 1, keeps));
                 }
             }
             Tag::Span if rng.below(4) > 0 => {
@@ -898,11 +980,11 @@ mod tests {
             }
             Tag::Svg => {
                 props.insert(VIEWBOX.to_owned(), "\"0 0 100 100\"".to_owned());
-                children = random_held(rng, ids, depth, Home::Diagram);
+                children = random_held(rng, ids, depth, Home::Diagram, keeps);
             }
             Tag::Scene => {
                 props.insert(CAMERA[rng.below(4)].to_owned(), rng.pick(&VALUES));
-                children = random_held(rng, ids, depth, Home::Scene);
+                children = random_held(rng, ids, depth, Home::Scene, keeps);
             }
             Tag::Markup | Tag::Canvas if rng.below(4) > 0 => {
                 props.insert(code_of(tag).unwrap().to_owned(), rng.pick(&CODE));
@@ -914,7 +996,8 @@ mod tests {
             _ => {}
         }
         let handlers = some_handlers(rng, tag);
-        Element { id, tag, component, props, handlers, children }
+        let state = some_state(rng, keeps);
+        Element { id, tag, component, props, handlers, state, children }
     }
 
     fn random_page(rng: &mut Rng) -> Page {
@@ -928,11 +1011,14 @@ mod tests {
         let shows = if rng.below(3) == 0 { Shows::Over } else { Shows::Full };
         // a component draws on what holds it, so only a page has a fill
         let fill = if interface.is_none() && rng.below(2) == 0 { rng.pick(&VALUES) } else { String::new() };
+        // a component keeps its own variables, so nothing in it keeps state
+        let keeps = interface.is_none();
+        let state = some_state(rng, keeps);
         let mut children = Vec::new();
         for _ in 0..1 + rng.below(4) {
-            children.push(random_element(rng, &mut ids, 0));
+            children.push(random_element(rng, &mut ids, 0, keeps));
         }
-        Page { id: "p".into(), name: "Overview".into(), width: 1408, height: 792, shows, fill, interface, children }
+        Page { id: "p".into(), name: "Overview".into(), width: 1408, height: 792, shows, fill, interface, state, children }
     }
 
     #[test]

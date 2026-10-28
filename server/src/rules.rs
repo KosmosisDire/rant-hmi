@@ -13,6 +13,8 @@ pub struct Shape {
 
 /// A variable, a computed value or a record: camelCase, which tells them from imports.
 pub const LOCAL: Shape = Shape { capital: false, underscore: true, except: &[] };
+/// State a page or an element keeps: camelCase, clear of what an event and a copy bring.
+pub const STATE: Shape = Shape { capital: false, underscore: true, except: &["p", "index", "item"] };
 /// An import's alias: PascalCase, which tells mesh names from the HMI's own.
 pub const ALIAS: Shape = Shape { capital: true, underscore: true, except: &[] };
 pub const TOKEN: Shape = Shape { capital: false, underscore: false, except: &[] };
@@ -94,7 +96,7 @@ mod tests {
     #[test]
     fn the_client_reads_the_same_rules() {
         let pattern = |s: &Shape| format!("/^[{}][A-Za-z0-9{}]*$/", if s.capital { "A-Z" } else { "a-z" }, if s.underscore { "_" } else { "" });
-        let shapes = [("LOCAL", &LOCAL), ("ALIAS", &ALIAS), ("TOKEN", &TOKEN), ("COMPONENT", &COMPONENT), ("INPUT", &INPUT), ("EVENT", &EVENT)];
+        let shapes = [("LOCAL", &LOCAL), ("STATE", &STATE), ("ALIAS", &ALIAS), ("TOKEN", &TOKEN), ("COMPONENT", &COMPONENT), ("INPUT", &INPUT), ("EVENT", &EVENT)];
         let mut ts = String::from("// Written by the backend's tests from server/src/rules.rs, where they change.\n\n");
         ts += "/** How a kind of name is spelled, and the names it may not take. */\n";
         ts += "export type Shape = { pattern: RegExp; except: readonly string[] };\n\n";

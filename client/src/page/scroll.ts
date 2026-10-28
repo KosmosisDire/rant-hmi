@@ -5,7 +5,7 @@
 import { createEffect, createMemo, onCleanup } from "solid-js";
 import type { Element } from "../protocol/Element";
 import type { Handler } from "../protocol/Handler";
-import type { At } from "../state/bind";
+import type { Scope } from "../state/bind";
 import { eventInfo, takes } from "../state/events";
 import { fingers } from "../ui/fingers";
 import { kept, take } from "../ui/press";
@@ -32,14 +32,14 @@ type Gesture = Event & { scale: number; clientX?: number; clientY?: number };
  *  they began. One finger scrolls it once it moves a little, unless what it pressed drags.
  *  Each says what it came from, a wheel or fingers. What no handler here hears is left to
  *  what holds it, so the page or a frame around still scrolls. */
-export function useScroll(p: { element: Element; act?: Act; at?: At }, self: () => globalThis.Element | undefined) {
+export function useScroll(p: { element: Element; act?: Act; scope: Scope }, self: () => globalThis.Element | undefined) {
   const scrolls = createMemo(() => !!p.act && p.element.handlers.some(fingered));
   const wheeled = createMemo(() => !!p.act && p.element.handlers.some((h) => eventInfo(h.event)?.from === "wheel"));
   createEffect(() => {
     const el = self();
     const act = p.act;
     if (!el || !act || !wheeled()) return;
-    const hears = (event: string, from: From) => p.element.handlers.some((h) => takes(h, event, { from }) && act.hears(p.element, h, p.at));
+    const hears = (event: string, from: From) => p.element.handlers.some((h) => takes(h, event, { from }) && act.hears(p.element, h, p.scope));
     // since the last frame: how far what it shows moved in px on the screen, the zoom, where,
     // and what moved it
     let gathered: { sx: number; sy: number; zoom: number; at: Spot; on: string | null; from: From } | null = null;
@@ -48,8 +48,8 @@ export function useScroll(p: { element: Element; act?: Act; at?: At }, self: () 
       const { sx, sy, zoom, at, on, from } = gathered;
       gathered = null;
       const { x, y, w, h } = pointer(el, at, on);
-      if (sx !== 0 || sy !== 0) act.fire(p.element, "scroll", { x, y, on, from, w, h, ...moved(el, sx, sy) }, p.at);
-      if (zoom !== 1) act.fire(p.element, "zoom", { x, y, on, from, w, h, factor: zoom }, p.at);
+      if (sx !== 0 || sy !== 0) act.fire(p.element, "scroll", { x, y, on, from, w, h, ...moved(el, sx, sy) }, p.scope);
+      if (zoom !== 1) act.fire(p.element, "zoom", { x, y, on, from, w, h, factor: zoom }, p.scope);
     };
     const gather = (from: From, at: Spot, on: string | null, sx: number, sy: number, zoom = 1) => {
       if (!gathered) {

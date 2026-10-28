@@ -400,6 +400,15 @@ export function live(alias: string): Live {
   return { value: v?.value ?? null, known: state.link === "open" && !!v?.known };
 }
 
+/** State's value by its key: what this screen promised, else what came, else undefined while it
+ *  is at its start. Always the screen's to read, it counts as no import's read. */
+export function keptValue(key: string): Value | undefined {
+  const p = cell(promised, key)[0]();
+  if (p) return p.value;
+  const v = cell(values, key)[0]();
+  return v?.known ? v.value : undefined;
+}
+
 /** An import's value as it last came, read without counting as one of its readers. */
 export function brought(alias: string): Value | null {
   return cell(values, alias)[0]()?.value ?? null;

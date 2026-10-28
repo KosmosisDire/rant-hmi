@@ -5,6 +5,16 @@ import type { Intent } from "../protocol/Intent";
 import type { Kind } from "../protocol/Kind";
 import type { Value } from "../protocol/Value";
 
+/** A JSON literal that is not null, as a start value or a value typed in. */
+export function literal(text: string): Value | undefined {
+  try {
+    const v = JSON.parse(text);
+    return v === null ? undefined : v;
+  } catch {
+    return undefined;
+  }
+}
+
 export function number(n: number): string {
   if (Number.isInteger(n)) return String(n);
   if (Math.abs(n) >= 1000) return n.toFixed(1);

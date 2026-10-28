@@ -56,7 +56,7 @@ const read = (value: string | undefined, scope: Scope) => untrack(() => resolve(
 const num = (n: number) => String(Number(n.toFixed(3)));
 
 /** A frame the phone page adds, named by where it sits so it keeps its name as values change. */
-const frame = (id: string, props: Record<string, string>, children: Element[]): Element => ({ id, tag: "div", component: null, props, handlers: [], children });
+const frame = (id: string, props: Record<string, string>, children: Element[]): Element => ({ id, tag: "div", component: null, props, handlers: [], state: [], children });
 
 /** `page` laid out again for an upright screen `screen` pixels across and down: one frame laid
  *  out down, as wide as the screen and as tall as it needs, holding the page's blocks. */

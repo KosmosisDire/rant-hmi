@@ -130,18 +130,26 @@ Kept across restarts does not exist yet and waits.
   mark a repeat and the events handled.
 - The open page keeps its place on screen as pages before it come, go or are renamed.
 
-### Step 2 design
+### Step 2 as built
 
 - State is a `Variable` as the Data tab's (name, start as a JSON literal, `per` each screen or
-  every screen), kept in a page's or an element's `state`, written `<var name start per>`
-  first inside its tag.
-- The backend keeps it, as it keeps variables: under a key no alias can be, `@page/name` or
-  `@page/element/name`, with `#index` for a var on a repeated element or inside one.
-- A run binds the names its element reads, nearest first, as globals over the imports'. The
-  screen's scope does the same, reading the start until a value comes.
-- A handler touching only state each screen keeps runs on the screen, as one touching only a
-  screen variable does now.
-- Not yet: a var between two nested repeats takes the inner copy's index.
+  every screen), kept in a page's or an element's `state`, written `<var name start>` first
+  inside its tag, `per="hmi"` when every screen shares it. A component and what it holds keep
+  none, as a component has its own variables.
+- The backend keeps it as it keeps variables, under a key no alias can be: `@page/name` or
+  `@page/element/name`, then `#index` for each copy of a repeat it sits in, outermost first.
+  A screen's fire now names the copy by every index, so nested repeats keep apart.
+- A run binds the names its element sees, nearest first, as globals over the project's. The
+  screen's scopes do the same, reading the start until a value comes.
+- A handler touching only state each screen keeps runs on the screen. Handlers now run in
+  their element's own scope, so one inside a repeated frame reads its copy's `index` and `item`.
+- Inspector: a State list on the page and on each element: name, Kept (Each screen or Every
+  screen), Start, a move button and remove. The tree marks a row or a page band with a count.
+- Completion offers the state an element sees first, and a nearer name hides one further out.
+- A rename follows what reads it, stopping where something keeps a name of its own. A move is
+  refused while something reading it would lose it or would read it in place of another,
+  naming that reader. Changing a state's name, start or kept starts its values over.
+- Not yet: renaming a page starts its state's values over, as its key changes.
 
 ## Open for the user
 

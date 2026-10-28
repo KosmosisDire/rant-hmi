@@ -10,6 +10,7 @@ import type { Page } from "../protocol/Page";
 import type { TypeInfo } from "../protocol/TypeInfo";
 import type { Value } from "../protocol/Value";
 import { partNames, tokenValue } from "./bind";
+import { chain as path } from "./elements";
 import { fields, typeLabel } from "./format";
 import { names } from "./names";
 import { entity, live, state } from "./store";
@@ -90,6 +91,17 @@ function mathMethods(value: Value | null, known: boolean): Suggestion[] {
   });
 }
 
+/** The state code on the element `id` reads, or on the page for none, nearest first: what it
+ *  keeps, what holds it keeps, then the page's, each name once. */
+export function stateNames(page: Page, id: string | null): Suggestion[] {
+  const holders = [...(id === null ? [] : (path(page.children, id) ?? [])).reverse().map((e) => ({ by: e.props.name ?? e.id, kept: e.state })), { by: page.name, kept: page.state }];
+  const out: Suggestion[] = [];
+  for (const { by, kept } of holders) {
+    for (const v of kept) if (!out.some((o) => o.label === v.name)) out.push({ label: v.name, insert: v.name, icon: "local", type: `${by} keeps it`, value: v.start, known: true });
+  }
+  return out;
+}
+
 /** What a repeated element and all inside it read of their copy. */
 export const REPEAT: Suggestion[] = [
   { label: "index", insert: "index", icon: "local", type: "the copy, from 0" },
@@ -114,7 +126,7 @@ export function drawing(context: "2d" | "webgl2"): Suggestion[] {
 
 /** The completion at `caret`, or null where none fits, such as inside a string. `names` stand
  *  for the mesh imports where code reads something else, as a component reads its own, and
- *  `also` adds to them, as a repeat adds `index` and `item`. */
+ *  `also` comes before them, the nearest names, as a repeat's `index` and `item`. */
 export function complete(text: string, caret: number, place: Place, names?: Suggestion[], also?: Suggestion[]): Completion | null {
   const before = text.slice(0, caret);
   if (inWords(before)) return null;
@@ -122,10 +134,10 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   while (from > 0 && WORD.test(before[from - 1])) from--;
   const word = before.slice(from);
   if (/^\d/.test(word)) return null;
-  const items =
-    before[from - 1] === "."
-      ? given(chain(before.slice(0, from - 1)), place, names, also)
-      : [...(names ?? top(place)), ...(also ?? []), ...(THEMED.includes(place) ? tokens() : []), ...own(place)];
+  // a nearer name hides one further out, which is not offered
+  const near = also ?? [];
+  const far = (names ?? top(place)).filter((n) => !near.some((a) => a.label === n.label));
+  const items = before[from - 1] === "." ? given(chain(before.slice(0, from - 1)), place, names, also) : [...near, ...far, ...(THEMED.includes(place) ? tokens() : []), ...own(place)];
   return matching(items, word, from);
 }
 
@@ -286,7 +298,7 @@ export function componentNames(c: Page): Suggestion[] {
 function given(path: string[], place: Place, names?: Suggestion[], also?: Suggestion[]): Suggestion[] {
   const token = path[0].startsWith("$") && THEMED.includes(place) ? tokens().find((t) => t.label === path[0]) : undefined;
   if (token) return path.length === 1 ? (token.members ?? []) : [];
-  const own = [...(names ?? []), ...(also ?? [])].find((n) => n.label === path[0]);
+  const own = [...(also ?? []), ...(names ?? [])].find((n) => n.label === path[0]);
   if (own) return path.length === 1 ? (own.members ?? []) : [];
   // the language's names read in every place, the mesh's only where code names nothing else
   return language(path, place) ?? (names ? [] : members(path, place));

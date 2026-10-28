@@ -96,13 +96,14 @@ export function makeComponent(page: Page, ids: string[]) {
 
   const name = freeName(joined((group ?? picked[0]).props.name ?? "", (w) => w[0].toUpperCase() + w.slice(1)).replace(/^[^A-Z]+/, "") || "Part", (n) => state.pages.some((p) => p.interface !== null && p.name === n));
   const id = freeName(slug(name), (n) => state.pages.some((p) => p.id === n));
-  const component: Page = { id, name, width: right - left, height: bottom - top, shows: "full", fill: "", interface: { inputs, events, variables: [], sizing: "scale" }, children: parts };
+  const component: Page = { id, name, width: right - left, height: bottom - top, shows: "full", fill: "", interface: { inputs, events, variables: [], sizing: "scale" }, state: [], children: parts };
   const instance: Element = {
     id: "",
     tag: "use",
     component: name,
     props: { name, w: String(right - left), h: String(bottom - top), ...Object.fromEntries([...renamed].map(([from, to]) => [to, from])) },
     handlers,
+    state: [],
     children: [],
   };
   // where they stood, counted from the origin of their frame

@@ -7,11 +7,14 @@ import type { Handler } from "../../protocol/Handler";
 import type { Input } from "../../protocol/Input";
 import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
-import { COMPONENT, EVENT, INPUT } from "../../protocol/rules";
+import type { Per } from "../../protocol/Per";
+import { COMPONENT, EVENT, INPUT, STATE } from "../../protocol/rules";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
+import type { Variable } from "../../protocol/Variable";
 import { docScope, type Flow, pageScope, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
-import { complete, completeCss, completeType, componentNames, drawing, REPEAT, signature, signatureCss } from "../../state/complete";
+import { complete, completeCss, completeType, componentNames, drawing, REPEAT, signature, signatureCss, stateNames } from "../../state/complete";
+import { literal } from "../../state/format";
 import { typeList } from "../../state/types";
 import { brings, filterWords, handlerKey, type Offered, offered, settingOf } from "../../state/events";
 import { fits, freeName } from "../../state/names";
@@ -39,6 +42,7 @@ import {
   ArrowRight,
   ArrowUp,
   Check,
+  MoveUpRight,
   Pin,
   PinOff,
   Plus,
@@ -101,7 +105,7 @@ export function ElementInspector(p: { page: Page | undefined; selected: string[]
   const element = createMemo(() => (p.page && p.selected.length === 1 ? find(p.page.children, p.selected[0]) : undefined));
   const where = createMemo((): Where => {
     const doc = p.page;
-    if (!doc?.interface) return { scope: pageScope, handlers: "handler", expressions: "expression" };
+    if (!doc?.interface) return { scope: doc ? docScope(doc) : pageScope, handlers: "handler", expressions: "expression", also: doc && stateNames(doc, null) };
     return { scope: docScope(doc), names: componentNames(doc), handlers: "component", expressions: "expression" };
   });
   return (
@@ -242,6 +246,7 @@ function PageInspector(p: { page: Page }) {
             <label>Shows</label>
             <Choice options={SHOWS} value={p.page.shows} onPick={(shows) => edit({ kind: "set_shows", page: p.page.id, shows })} />
           </div>
+          <State page={p.page} />
         </Show>
       </div>
     </>
@@ -254,7 +259,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const repeats = () => chain(pageOf(p.page)?.children ?? [], p.element.id)?.some((e) => !!e.props.repeat?.trim());
   const where = (): Where => {
     const doc = pageOf(p.page);
-    return { ...outer(), scope: doc ? scopeOf(doc, p.element.id) : outer().scope, also: repeats() ? REPEAT : undefined };
+    return { ...outer(), scope: doc ? scopeOf(doc, p.element.id) : outer().scope, also: [...(doc ? stateNames(doc, p.element.id) : []), ...(repeats() ? REPEAT : [])] };
   };
   // a property's value and its write, as a field takes them
   const prop = (key: string) => ({
@@ -509,6 +514,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">More CSS</div>
           <LooseProps page={p.page} element={p.element} loose={loose} placeholder="box-shadow: 0 0.2 0.8 $border" css />
         </Show>
+        <Show when={pageOf(p.page)?.interface === null ? pageOf(p.page) : undefined}>{(doc) => <State page={doc()} holder={p.element} />}</Show>
         <Show when={!grouped() && !part()}>
           <Events page={p.page} element={p.element} focus={(key) => typed(`on:${key}`)} />
         </Show>
@@ -884,6 +890,66 @@ function Variables(p: { page: string; variables: Local[] }) {
             <div class="field input-default">
               <label>Start</label>
               <DraftInput value={v.start} onCommit={(start) => write(v.name, { ...v, start })} complete={constants} hint={(t, c) => signature(t, c, "theme")} />
+            </div>
+          </div>
+        )}
+      </For>
+    </>
+  );
+}
+
+/** How state is kept, each with who sees its value. */
+const KEPT: [Per, string, string][] = [
+  ["screen", "Each screen", "Each screen keeps its own value"],
+  ["hmi", "Every screen", "Every screen shares one value"],
+];
+
+/** What the page, or its element `holder`, keeps, each a box: its name, how it is kept and its
+ *  start. It moves to the page, a frame holding it or one it holds, while all that reads it
+ *  still sees it there. */
+function State(p: { page: Page; holder?: Element }) {
+  const kept = () => p.holder?.state ?? p.page.state;
+  const id = () => p.holder?.id ?? null;
+  const write = (name: string, v: Variable | null) => edit({ kind: "set_state", page: p.page.id, id: id(), name, var: v });
+  const add = () => {
+    const name = freeName("state", (n) => kept().some((v) => v.name === n));
+    write(name, { name, start: 0, per: "screen" });
+  };
+  const places = (): [string | null, string][] => {
+    const named = (e: Element) => e.props.name ?? TAG_WORDS[e.tag];
+    if (!p.holder) return p.page.children.map((e) => [e.id, named(e)]);
+    const above = (chain(p.page.children, p.holder.id) ?? []).slice(0, -1).reverse();
+    return [...above.map((e): [string, string] => [e.id, named(e)]), [null, p.page.name], ...p.holder.children.map((e): [string, string] => [e.id, named(e)])];
+  };
+  const move = (lead: HTMLElement, name: string) => {
+    const r = lead.getBoundingClientRect();
+    openMenu(
+      { x: r.left, y: r.bottom + 4 },
+      places().map(([to, words]) => ({ label: `To ${words}`, run: () => edit({ kind: "move_state", page: p.page.id, from: id(), to, name }) })),
+    );
+  };
+  return (
+    <>
+      <ListHead title="State" add="Add state" onAdd={add} />
+      <For each={kept()}>
+        {(v) => (
+          <div class="handler" data-state={v.name}>
+            <div class="handler-head">
+              <DraftInput class="editor input-name" value={v.name} accept={(t) => fits(STATE, t.trim())} onCommit={(name) => write(v.name, { ...v, name: name.trim() })} />
+              <button class="icon-btn" title={`Move ${v.name} to another layer`} onClick={(e) => move(e.currentTarget, v.name)}>
+                <MoveUpRight size={13} />
+              </button>
+              <button class="icon-btn" title={`Remove ${v.name}`} onClick={() => write(v.name, null)}>
+                <X size={13} />
+              </button>
+            </div>
+            <div class="field">
+              <label>Kept</label>
+              <Choice options={KEPT} value={v.per} onPick={(per) => write(v.name, { ...v, per })} />
+            </div>
+            <div class="field input-default">
+              <label>Start</label>
+              <DraftInput value={JSON.stringify(v.start)} accept={(t) => literal(t) !== undefined} onCommit={(t) => write(v.name, { ...v, start: literal(t)! })} />
             </div>
           </div>
         )}

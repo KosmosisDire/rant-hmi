@@ -98,6 +98,6 @@ export function addShape(page: Page, at: Element, tag: Tag) {
   while (id && find(page.children, id)?.tag !== "svg") id = parentOf(page, id);
   const diagram = id ? find(page.children, id) : undefined;
   if (!diagram) return;
-  const element: Element = { id: "", tag, component: null, props: start(tag, units(diagram)), handlers: [], children: [] };
+  const element: Element = { id: "", tag, component: null, props: start(tag, units(diagram)), handlers: [], state: [], children: [] };
   edit({ kind: "add_element", page: page.id, parent: holder, index: null, element });
 }

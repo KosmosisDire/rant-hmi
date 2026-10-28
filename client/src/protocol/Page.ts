@@ -2,6 +2,7 @@
 import type { Element } from "./Element";
 import type { Interface } from "./Interface";
 import type { Shows } from "./Shows";
+import type { Variable } from "./Variable";
 
 /**
  * A page: an artboard of `width` by `height` pixels holding elements. With an interface it
@@ -19,4 +20,8 @@ name: string, width: number, height: number, shows: Shows,
 /**
  * A page's ground, an expression. Empty is the theme's `$ground`.
  */
-fill: string, interface: Interface | null, children: Array<Element>, };
+fill: string, interface: Interface | null, 
+/**
+ * What the page keeps, which all on it reads. A component keeps its own variables instead.
+ */
+state: Array<Variable>, children: Array<Element>, };

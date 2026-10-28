@@ -16,6 +16,7 @@ use ts_rs::TS;
 use crate::events::{self, rank};
 use crate::files;
 use crate::list::{self, by_name};
+use crate::project::{self, Variable};
 use crate::rules;
 use crate::value::Value;
 use logic::Rule;
@@ -38,6 +39,9 @@ pub struct Page {
     pub fill: String,
     #[serde(default)]
     pub interface: Option<Interface>,
+    /// What the page keeps, which all on it reads. A component keeps its own variables instead.
+    #[serde(default)]
+    pub state: Vec<Variable>,
     pub children: Vec<Element>,
 }
 
@@ -119,6 +123,10 @@ pub struct Element {
     pub props: BTreeMap<String, String>,
     /// At most one per event and filter, in the order events are listed.
     pub handlers: Vec<Handler>,
+    /// What it keeps, which it and all it holds read, nearest first. Each copy keeps its own
+    /// where it repeats or sits in a repeat.
+    #[serde(default)]
+    pub state: Vec<Variable>,
     pub children: Vec<Element>,
 }
 
@@ -426,6 +434,12 @@ pub enum Edit {
     /// Adds, changes or with null removes a component's variable called `name`. The
     /// component's code follows a rename.
     SetLocal { page: String, name: String, local: Option<Local> },
+    /// Adds, changes or with null removes the state called `name` that the page keeps, or its
+    /// element `id`. What reads it follows a rename.
+    SetState { page: String, id: Option<String>, name: String, var: Option<Variable> },
+    /// Moves the state `name` from the page or an element to another. It is refused while
+    /// something that reads it would no longer see it, or would see it in place of another.
+    MoveState { page: String, from: Option<String>, to: Option<String>, name: String },
     /// Sets the rule `id`, puts it back under that id when it is gone, gives it a new id when
     /// `id` is empty, or with null removes it.
     SetRule { id: String, rule: Option<Rule> },
@@ -443,6 +457,8 @@ pub struct Applied {
     pub rules: bool,
     pub made: Option<(String, String)>,
     pub moved: Vec<(String, String)>,
+    /// The keys of state whose values start over, as `key` gives them without a copy's index.
+    pub reset: Vec<String>,
     pub undo: Edit,
 }
 
@@ -468,6 +484,8 @@ macro_rules! on_page {
             | Edit::SetInput { page: $page, .. }
             | Edit::SetEvent { page: $page, .. }
             | Edit::SetLocal { page: $page, .. }
+            | Edit::SetState { page: $page, .. }
+            | Edit::MoveState { page: $page, .. }
     };
 }
 
@@ -507,6 +525,8 @@ pub struct Pages {
     rules_changed: bool,
     /// The ids renames moved during an edit, until it is applied.
     moved: Vec<(String, String)>,
+    /// The state an edit changed, until it is applied.
+    reset: Vec<String>,
 }
 
 /// A new page, in units of 10 px: 1280 by 720 pixels.
@@ -547,7 +567,7 @@ impl Pages {
             true => logic::parse(&fs::read_to_string(&file).context("reading logic/handlers.html")?).map_err(|e| anyhow::anyhow!("logic/handlers.html, {e}"))?,
             false => Vec::new(),
         };
-        let mut pages = Pages { root: root.to_path_buf(), list, rules, rules_changed: false, moved: Vec::new() };
+        let mut pages = Pages { root: root.to_path_buf(), list, rules, rules_changed: false, moved: Vec::new(), reset: Vec::new() };
         if !pages.list.iter().any(|p| p.interface.is_none()) {
             pages.apply(Edit::AddPage { name: "Overview".into() }).map_err(anyhow::Error::msg)?;
         }
@@ -578,6 +598,11 @@ impl Pages {
     /// exists and does not hold `page`, which would make it hold itself.
     fn check_uses(&self, page: &str, e: &Element) -> Result<(), String> {
         let host = self.get(page).filter(|p| p.interface.is_some()).map(|p| p.name.clone());
+        if let Some(host) = &host
+            && all(std::slice::from_ref(e)).any(|e| !e.state.is_empty())
+        {
+            return Err(format!("{host} keeps its own variables, so nothing in it keeps state"));
+        }
         for c in all(std::slice::from_ref(e)).filter_map(|e| e.component.as_ref()) {
             if self.component(c).is_none() {
                 return Err(format!("there is no component {c}"));
@@ -597,23 +622,60 @@ impl Pages {
         self.get(page).and_then(|p| find(&p.children, id))
     }
 
+    /// The state a key names, as `bound` gives it, whatever copy it is of.
+    pub fn state(&self, key: &str) -> Option<&Variable> {
+        let path = key.strip_prefix('@')?.split('#').next()?;
+        let (page, id, name) = match path.split('/').collect::<Vec<_>>().as_slice() {
+            [page, name] => (*page, None, *name),
+            [page, id, name] => (*page, Some(*id), *name),
+            _ => return None,
+        };
+        let p = self.get(page)?;
+        let kept = match id {
+            Some(id) => &find(&p.children, id)?.state,
+            None => &p.state,
+        };
+        kept.iter().find(|v| v.name == name)
+    }
+
+    /// The state code on the element `id` reads, each name once and the nearest: what it keeps,
+    /// what holds it keeps, then the page's. Each comes with its key: the copy of each repeat
+    /// it sits in, outermost first as `copies` gives them, keeps its own.
+    pub fn bound(&self, page: &str, id: &str, copies: &[u32]) -> Vec<(String, Variable)> {
+        let Some(p) = self.get(page) else { return Vec::new() };
+        let mut out: Vec<(String, Variable)> = p.state.iter().map(|v| (key(page, None, &v.name), v.clone())).collect();
+        let mut depth = 0;
+        for e in chain(&p.children, id).unwrap_or_default() {
+            if repeats(e) {
+                depth += 1;
+            }
+            let copy: String = copies[..depth.min(copies.len())].iter().map(|i| format!("#{i}")).collect();
+            for v in &e.state {
+                out.retain(|(_, o)| o.name != v.name);
+                out.push((format!("{}{copy}", key(page, Some(&e.id), &v.name)), v.clone()));
+            }
+        }
+        out
+    }
+
     /// Writes every use of `from` as `to` and saves each page that changed, which it returns.
     /// Components read only their inputs and the theme, so they follow only when `components`.
     pub fn rename(&mut self, from: &str, to: &str, components: bool) -> Result<Vec<String>, String> {
         let mut touched = Vec::new();
         for p in self.list.iter_mut().filter(|p| components || p.interface.is_none()) {
-            let fill = js::rename(&p.fill, from, to);
-            let mut changed = fill != p.fill;
-            p.fill = fill;
+            let was = p.clone();
             // a component's input defaults and variable starts may read a theme token
             if let Some(i) = p.interface.as_mut() {
                 for code in i.inputs.iter_mut().map(|i| &mut i.default).chain(i.variables.iter_mut().map(|v| &mut v.start)) {
-                    let renamed = js::rename(code, from, to);
-                    changed |= renamed != *code;
-                    *code = renamed;
+                    *code = js::rename(code, from, to);
                 }
             }
-            if each_mut(&mut p.children, &mut |e| rename_in(e, from, to)) | changed {
+            // what reads state of that name reads the state instead
+            if p.state.iter().all(|v| v.name != from) {
+                p.fill = js::rename(&p.fill, from, to);
+                follow(&mut p.children, from, to);
+            }
+            if *p != was {
                 touched.push(p.id.clone());
             }
         }
@@ -645,7 +707,11 @@ impl Pages {
     pub fn apply(&mut self, edit: Edit) -> Result<Applied, String> {
         let mut pages = Vec::new();
         let mut made = None;
-        let undo = self.change(edit, &mut pages, &mut made)?;
+        // a batch that failed took back what it did, renames and state too
+        let undo = self.change(edit, &mut pages, &mut made).inspect_err(|_| {
+            self.moved.clear();
+            self.reset.clear();
+        })?;
         pages.sort();
         pages.dedup();
         for page in &pages {
@@ -655,7 +721,7 @@ impl Pages {
         if rules {
             self.save_rules()?;
         }
-        Ok(Applied { pages, rules, made, moved: std::mem::take(&mut self.moved), undo })
+        Ok(Applied { pages, rules, made, moved: std::mem::take(&mut self.moved), reset: std::mem::take(&mut self.reset), undo })
     }
 
     fn change(&mut self, edit: Edit, touched: &mut Vec<String>, made: &mut Option<(String, String)>) -> Result<Edit, String> {
@@ -679,7 +745,7 @@ impl Pages {
             Edit::AddPage { name } => {
                 let name = named(&name)?;
                 let id = self.free_id(&slug(&name), None);
-                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, fill: String::new(), interface: None, children: Vec::new() });
+                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, fill: String::new(), interface: None, state: Vec::new(), children: Vec::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
@@ -688,7 +754,7 @@ impl Pages {
                 let name = self.component_name(&name, None)?;
                 let id = self.free_id(&slug(&name), None);
                 let interface = Some(Interface::default());
-                self.insert_page(Page { id: id.clone(), name, width: COMPONENT_WIDTH, height: COMPONENT_HEIGHT, shows: Shows::Full, fill: String::new(), interface, children: Vec::new() });
+                self.insert_page(Page { id: id.clone(), name, width: COMPONENT_WIDTH, height: COMPONENT_HEIGHT, shows: Shows::Full, fill: String::new(), interface, state: Vec::new(), children: Vec::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
@@ -845,7 +911,7 @@ impl Pages {
                 let (holder, mut order) = sharing(&p.children, &page, &ids, "group")?;
                 order.sort();
                 let tag = find(&p.children, &order[0].1).expect("located above").tag.home().group();
-                let element = Element { id: String::new(), tag, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: Vec::new() };
+                let element = Element { id: String::new(), tag, component: None, props: BTreeMap::new(), handlers: Vec::new(), state: Vec::new(), children: Vec::new() };
                 let edits = into_new(&page, &p.children, holder, &order, element);
                 return self.change(edits, touched, made);
             }
@@ -855,7 +921,7 @@ impl Pages {
                 if let Some(other) = order.iter().map(|(_, id)| find(&p.children, id).expect("located above").tag.home()).find(|h| *h != Home::Page) {
                     return Err(format!("a frame holds elements, and {}", other.misplaced()));
                 }
-                let element = Element { id: String::new(), tag: Tag::Div, component: None, props, handlers: Vec::new(), children: Vec::new() };
+                let element = Element { id: String::new(), tag: Tag::Div, component: None, props, handlers: Vec::new(), state: Vec::new(), children: Vec::new() };
                 let edits = into_new(&page, &p.children, holder, &order, element);
                 return self.change(edits, touched, made);
             }
@@ -1005,6 +1071,59 @@ impl Pages {
                 }
                 Edit::SetLocal { page: page.clone(), name: to.unwrap_or(name), local: old }
             }
+            Edit::SetState { page, id, name, var } => {
+                let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
+                if p.interface.is_some() {
+                    return Err(format!("{} keeps its own variables, so nothing in it keeps state", p.name));
+                }
+                let (holder, kept) = keeper(p, id.as_deref())?;
+                if let Some(new) = &var {
+                    rules::STATE.check(&new.name, "state")?;
+                    project::unreserved(&new.name)?;
+                    if new.start.is_null() {
+                        return Err(format!("{} needs a start value", new.name));
+                    }
+                    if list::taken(kept, &new.name, &name) {
+                        return Err(format!("{holder} already keeps {}", new.name));
+                    }
+                }
+                let to = var.as_ref().map(|v| v.name.clone());
+                let p = self.page_mut(&page)?;
+                let old = list::put(kept_mut(p, id.as_deref())?, &name, var, || format!("{holder} keeps no {name}"))?;
+                if let (Some(_), Some(to)) = (&old, &to)
+                    && *to != name
+                {
+                    follow_state(p, id.as_deref(), &name, to);
+                }
+                self.reset.push(key(&page, id.as_deref(), &name));
+                Edit::SetState { page: page.clone(), id, name: to.unwrap_or(name), var: old }
+            }
+            Edit::MoveState { page, from, to, name } => {
+                let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
+                let (holder, kept) = keeper(p, from.as_deref())?;
+                let var = kept.iter().find(|v| v.name == name).cloned().ok_or_else(|| format!("{holder} keeps no {name}"))?;
+                let (place, kept) = keeper(p, to.as_deref())?;
+                if kept.iter().any(|v| v.name == name) {
+                    return Err(format!("{place} already keeps {name}"));
+                }
+                // what reads it sees it there, and nothing else comes to
+                let mut moved = p.clone();
+                kept_mut(&mut moved, from.as_deref())?.retain(|v| v.name != name);
+                kept_mut(&mut moved, to.as_deref())?.push(var.clone());
+                let seen = |page: &Page, by: &Option<String>| -> Vec<String> { readers(page, &name).into_iter().filter(|(_, k)| k.as_ref() == Some(by)).map(|(r, _)| r).collect() };
+                let (before, after) = (seen(p, &from), seen(&moved, &to));
+                if let Some(lost) = before.iter().find(|r| !after.contains(r)) {
+                    return Err(format!("{} reads {name}. Change that first.", reader(p, lost)));
+                }
+                if let Some(other) = after.iter().find(|r| !before.contains(r)) {
+                    return Err(format!("{} reads another {name}. Change that first.", reader(p, other)));
+                }
+                let edits = vec![
+                    Edit::SetState { page: page.clone(), id: from, name: name.clone(), var: None },
+                    Edit::SetState { page, id: to, name, var: Some(var) },
+                ];
+                return self.change(Edit::Batch { edits }, touched, made);
+            }
             Edit::SetRule { id, mut rule } => {
                 self.rules_changed = true;
                 if let Some(rule) = &mut rule {
@@ -1116,8 +1235,13 @@ fn each_mut(elements: &mut [Element], f: &mut impl FnMut(&mut Element) -> bool) 
 /// Writes every use of the name `from` in an element's own values and handlers as `to`.
 /// True when any changed.
 fn rename_in(e: &mut Element, from: &str, to: &str) -> bool {
+    rename_where(e, from, to, |_| true)
+}
+
+/// As `rename_in`, in its handlers and the values `keys` takes.
+fn rename_where(e: &mut Element, from: &str, to: &str, keys: impl Fn(&str) -> bool) -> bool {
     let mut changed = false;
-    for value in e.props.iter_mut().filter(|(k, _)| k.as_str() != "name").map(|(_, v)| v) {
+    for value in e.props.iter_mut().filter(|(k, _)| k.as_str() != "name" && keys(k)).map(|(_, v)| v) {
         let renamed = js::rename(value, from, to);
         changed |= renamed != *value;
         *value = renamed;
@@ -1128,6 +1252,121 @@ fn rename_in(e: &mut Element, from: &str, to: &str) -> bool {
         *code = renamed;
     }
     changed
+}
+
+/// The key state is kept under, which no alias can be: `@page/name` for a page's and
+/// `@page/element/name` for an element's, then `#index` for each copy it sits in.
+fn key(page: &str, id: Option<&str>, name: &str) -> String {
+    match id {
+        Some(id) => format!("@{page}/{id}/{name}"),
+        None => format!("@{page}/{name}"),
+    }
+}
+
+/// Whether an element repeats, so each copy keeps its own state.
+fn repeats(e: &Element) -> bool {
+    e.props.get("repeat").is_some_and(|r| !r.trim().is_empty())
+}
+
+/// The elements from the page down to `id`, it last.
+fn chain<'a>(elements: &'a [Element], id: &str) -> Option<Vec<&'a Element>> {
+    elements.iter().find_map(|e| match e.id == id {
+        true => Some(vec![e]),
+        false => chain(&e.children, id).map(|mut below| {
+            below.insert(0, e);
+            below
+        }),
+    })
+}
+
+/// An element as the user knows it: its name, else its tag and id.
+fn called(e: &Element) -> String {
+    e.props.get("name").cloned().unwrap_or_else(|| format!("{} {}", e.word(), e.id))
+}
+
+/// What the page or its element `id` keeps, with how the user knows that.
+fn keeper<'a>(p: &'a Page, id: Option<&str>) -> Result<(String, &'a Vec<Variable>), String> {
+    match id {
+        None => Ok((p.name.clone(), &p.state)),
+        Some(id) => find(&p.children, id).map(|e| (called(e), &e.state)).ok_or_else(|| format!("{id} is not on {}", p.id)),
+    }
+}
+
+fn kept_mut<'a>(p: &'a mut Page, id: Option<&str>) -> Result<&'a mut Vec<Variable>, String> {
+    let page = p.id.clone();
+    match id {
+        None => Ok(&mut p.state),
+        Some(id) => find_mut(&mut p.children, id).map(|e| &mut e.state).ok_or_else(|| format!("{id} is not on {page}")),
+    }
+}
+
+fn reads(code: &str, name: &str) -> bool {
+    js::names(code).iter().any(|(_, n)| *n == name)
+}
+
+/// What on the page reads `name`, its fill as "" and an element by id, each with what keeps the
+/// one it reads, the nearest: None for the page, or nothing when nothing on the page keeps it.
+fn readers(page: &Page, name: &str) -> Vec<(String, Option<Option<String>>)> {
+    let top = page.state.iter().any(|v| v.name == name).then_some(None);
+    let mut out = Vec::new();
+    if reads(&page.fill, name) {
+        out.push((String::new(), top.clone()));
+    }
+    reading(&page.children, name, top, &mut out);
+    out
+}
+
+fn reading(elements: &[Element], name: &str, keeper: Option<Option<String>>, out: &mut Vec<(String, Option<Option<String>>)>) {
+    for e in elements {
+        // a repeat is read where the element sits, outside its copies
+        if e.props.get("repeat").is_some_and(|r| reads(r, name)) {
+            out.push((e.id.clone(), keeper.clone()));
+        }
+        let own = if e.state.iter().any(|v| v.name == name) { Some(Some(e.id.clone())) } else { keeper.clone() };
+        let props = e.props.iter().any(|(k, v)| k != "name" && k != "repeat" && reads(v, name));
+        if props || e.handlers.iter().any(|h| reads(&h.code, name) || h.attrs.values().any(|a| reads(a, name))) {
+            out.push((e.id.clone(), own.clone()));
+        }
+        reading(&e.children, name, own, out);
+    }
+}
+
+/// A reader as the user knows it, as `readers` gives it.
+fn reader(page: &Page, id: &str) -> String {
+    match find(&page.children, id) {
+        Some(e) => called(e),
+        None => format!("{}'s fill", page.name),
+    }
+}
+
+/// Writes `from` as `to` wherever it reads the state the page or its element `id` keeps, now
+/// called `to`.
+fn follow_state(page: &mut Page, id: Option<&str>, from: &str, to: &str) {
+    let below = match id {
+        None => {
+            page.fill = js::rename(&page.fill, from, to);
+            &mut page.children
+        }
+        Some(id) => {
+            let Some(e) = find_mut(&mut page.children, id) else { return };
+            rename_where(e, from, to, |k| k != "repeat");
+            &mut e.children
+        }
+    };
+    follow(below, from, to);
+}
+
+/// Writes `from` as `to` in these elements and all they hold, down to one that keeps a `from` of
+/// its own, whose repeat alone still reads the one above.
+fn follow(elements: &mut [Element], from: &str, to: &str) {
+    for e in elements {
+        if e.state.iter().all(|v| v.name != from) {
+            rename_in(e, from, to);
+            follow(&mut e.children, from, to);
+        } else if let Some(r) = e.props.get_mut("repeat") {
+            *r = js::rename(r, from, to);
+        }
+    }
 }
 
 /// Moves each instance of `component`'s value for the input `from` to `to`, or drops it
@@ -1288,7 +1527,7 @@ mod tests {
     }
 
     fn add(page: String, parent: Option<String>, tag: Tag, props: BTreeMap<String, String>) -> Edit {
-        Edit::AddElement { page, parent, index: None, element: Element { id: String::new(), tag, component: None, props, handlers: Vec::new(), children: Vec::new() } }
+        Edit::AddElement { page, parent, index: None, element: Element { id: String::new(), tag, component: None, props, handlers: Vec::new(), state: Vec::new(), children: Vec::new() } }
     }
 
     #[test]
@@ -1453,21 +1692,21 @@ mod tests {
         let o = || "overview".to_string();
         pages.apply(add(o(), None, Tag::Div, BTreeMap::new())).unwrap();
         pages.apply(add(o(), None, Tag::Div, BTreeMap::new())).unwrap();
-        let leaf = |id: &str, tag| Element { id: id.into(), tag, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: Vec::new() };
-        let copy = Element { id: "e1".into(), tag: Tag::Div, component: None, props: props(&[("x", "11")]), handlers: Vec::new(), children: vec![leaf("e2", Tag::Span), leaf("x", Tag::Div)] };
+        let leaf = |id: &str, tag| Element { id: id.into(), tag, component: None, props: BTreeMap::new(), handlers: Vec::new(), state: Vec::new(), children: Vec::new() };
+        let copy = Element { id: "e1".into(), tag: Tag::Div, component: None, props: props(&[("x", "11")]), handlers: Vec::new(), state: Vec::new(), children: vec![leaf("e2", Tag::Span), leaf("x", Tag::Div)] };
         let made = pages.apply(Edit::AddElement { page: o(), parent: None, index: Some(1), element: copy }).unwrap().made.unwrap().1;
         assert_eq!(made, "e3");
         let ids: Vec<_> = pages.list[0].children.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, ["e1", "e3", "e2"]);
         let kids: Vec<_> = pages.list[0].children[1].children.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(kids, ["e4", "e5"]);
-        let bad = Element { id: String::new(), tag: Tag::Span, component: None, props: BTreeMap::new(), handlers: Vec::new(), children: vec![leaf("", Tag::Span)] };
+        let bad = Element { id: String::new(), tag: Tag::Span, component: None, props: BTreeMap::new(), handlers: Vec::new(), state: Vec::new(), children: vec![leaf("", Tag::Span)] };
         assert_eq!(pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: bad }).err().unwrap(), "only a frame, a group, a diagram or a scene holds other elements");
         fs::remove_dir_all(&dir).unwrap();
     }
 
     fn instance(component: &str) -> Element {
-        Element { id: String::new(), tag: Tag::Use, component: Some(component.into()), props: props(&[("x", "0")]), handlers: Vec::new(), children: Vec::new() }
+        Element { id: String::new(), tag: Tag::Use, component: Some(component.into()), props: props(&[("x", "0")]), handlers: Vec::new(), state: Vec::new(), children: Vec::new() }
     }
 
     #[test]
@@ -1540,6 +1779,54 @@ mod tests {
         assert!(pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: typed("number,") }).unwrap_err().contains("is not a type"));
         pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: None }).unwrap();
         assert!(!pages.get("overview").unwrap().children[0].props.contains_key("value"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn state_renames_in_what_reads_it_and_moves_only_where_its_readers_see_it() {
+        let dir = scratch("state");
+        let mut pages = Pages::open(&dir).unwrap();
+        let o = || "overview".to_string();
+        let var = |name: &str| Some(Variable { name: name.into(), start: Value::Bool(false), per: project::Per::Screen });
+        // a card repeats over Lines, holding a text and a frame that keeps an lit of its own
+        let card = pages.apply(add(o(), None, Tag::Div, props(&[("name", "Card"), ("repeat", "lit ? Lines : []")]))).unwrap().made.unwrap().1;
+        let text = pages.apply(add(o(), Some(card.clone()), Tag::Span, props(&[("name", "Label"), ("text", "lit ? 'on' : 'off'")]))).unwrap().made.unwrap().1;
+        let inner = pages.apply(add(o(), Some(card.clone()), Tag::Div, props(&[("opacity", "lit ? 1 : 0")]))).unwrap().made.unwrap().1;
+        pages.apply(Edit::SetState { page: o(), id: Some(card.clone()), name: "lit".into(), var: var("lit") }).unwrap();
+        pages.apply(Edit::SetState { page: o(), id: Some(inner.clone()), name: "lit".into(), var: var("lit") }).unwrap();
+
+        // the card's own repeat reads outside it, and the inner frame reads its own
+        let applied = pages.apply(Edit::SetState { page: o(), id: Some(card.clone()), name: "lit".into(), var: var("glow") }).unwrap();
+        assert_eq!(applied.reset, [format!("@overview/{card}/lit")]);
+        let p = pages.get("overview").unwrap();
+        assert_eq!(p.children[0].props["repeat"], "lit ? Lines : []");
+        assert_eq!(p.children[0].children[0].props["text"], "glow ? 'on' : 'off'");
+        assert_eq!(p.children[0].children[1].props["opacity"], "lit ? 1 : 0");
+        assert!(Pages::open(&dir).unwrap().get("overview").unwrap().children[0].state.iter().any(|v| v.name == "glow"));
+        pages.apply(applied.undo).unwrap();
+        assert_eq!(pages.get("overview").unwrap().children[0].children[0].props["text"], "lit ? 'on' : 'off'");
+
+        // the label would lose it, and the card's repeat would read it in place of nothing
+        let to_page = Edit::MoveState { page: o(), from: Some(card.clone()), to: None, name: "lit".into() };
+        let to_text = Edit::MoveState { page: o(), from: Some(card.clone()), to: Some(text.clone()), name: "lit".into() };
+        assert_eq!(pages.apply(to_page).unwrap_err(), "Card reads another lit. Change that first.");
+        pages.apply(Edit::SetProps { page: o(), id: card.clone(), props: [("repeat".to_string(), Some("Lines".to_string()))].into() }).unwrap();
+        pages.apply(Edit::SetProps { page: o(), id: inner.clone(), props: [("opacity".to_string(), None)].into() }).unwrap();
+        pages.apply(Edit::SetState { page: o(), id: Some(inner.clone()), name: "lit".into(), var: None }).unwrap();
+        pages.apply(Edit::SetProps { page: o(), id: inner.clone(), props: [("opacity".to_string(), Some("lit ? 1 : 0".to_string()))].into() }).unwrap();
+        assert_eq!(pages.apply(to_text).unwrap_err(), format!("div {inner} reads lit. Change that first."));
+        let moved = pages.apply(Edit::MoveState { page: o(), from: Some(card.clone()), to: None, name: "lit".into() }).unwrap();
+        assert!(pages.get("overview").unwrap().state.iter().any(|v| v.name == "lit"));
+        pages.apply(moved.undo).unwrap();
+        assert!(pages.get("overview").unwrap().state.is_empty());
+
+        // a run on the label reads the card's lit, its copy's
+        let bound = pages.bound("overview", &text, &[3]);
+        assert_eq!(bound.iter().map(|(k, v)| (k.as_str(), v.name.as_str())).collect::<Vec<_>>(), [(format!("@overview/{card}/lit#3").as_str(), "lit")]);
+        assert_eq!(pages.state(&bound[0].0).map(|v| v.name.as_str()), Some("lit"));
+        assert!(pages.apply(Edit::SetState { page: o(), id: None, name: "index".into(), var: var("index") }).unwrap_err().contains("keep clear of p, index and item"));
+        // the HMI's own lit renamed leaves what reads the card's alone
+        assert!(pages.rename("lit", "shine", false).unwrap().is_empty());
         fs::remove_dir_all(&dir).unwrap();
     }
 

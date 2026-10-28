@@ -232,8 +232,8 @@ npx electron . http://host:6739
   a little, unless what it pressed takes drag. Safari's pinch on a trackpad zooms too.
 - A drag or scroll handler that takes a while to run misses no move: what comes meanwhile adds
   up, and a zoom's factors multiply.
-- A page's handler that touches only the screen's own variables, reading what its event brings,
-  tokens and the math, runs on the screen itself, so a view it pans follows the finger with no
+- A page's handler that touches only the screen's own variables and state each screen keeps,
+  reading what its event brings, tokens and the math, runs on the screen itself, so a view it pans follows the finger with no
   round trip. Any other runs on the system. Either way it does the same, and what a screen sets
   of its own shows at once.
 - `keydown`, `keyup` and `keyrepeat` hear the keyboard while the element shows on the top page
@@ -258,6 +258,10 @@ npx electron . http://host:6739
 - A screen whose page hides, as a tab behind another, is sent no values until it shows
   again, when it gets every value anew at once.
 - `repeat="6"` or `repeat="Jobs"` draws an element once per item, reading `index` and `item`.
+- `<var name="open" start="false"/>` first inside a page or an element keeps state there. The
+  element and all it holds read it by name, the nearest first, over any other name. Its start
+  is JSON. Each screen keeps its own, or with `per="hmi"` every screen shares one, and each copy
+  of a repeat keeps its own.
 - `<svg>` holds shapes, `<markup>` SVG made by code, `<canvas>` what its code draws,
   `<scene>` 3D parts such as `<box>` and `<anchor>`, `<media src="Camera"/>` a camera or a
   picture, and `<input>` a field to type in.

@@ -70,8 +70,8 @@ export function addElement(page: Page, parent: string | null, tag: Tag, props: R
     while (childrenOf(page, parent).some((e) => number(e.props.x) === n && number(e.props.y) === n)) n += 2 * GRID;
     spot = { x: n, y: n };
   }
-  const children = (HOLDS[tag] ?? []).map((c): Element => ({ id: "", component: null, handlers: [], children: [], tag: c.tag, props: { ...c.props } }));
-  const element: Element = { id: "", tag, component, props: { ...props, x: String(spot.x), y: String(spot.y) }, handlers: [], children };
+  const children = (HOLDS[tag] ?? []).map((c): Element => ({ id: "", component: null, handlers: [], state: [], children: [], tag: c.tag, props: { ...c.props } }));
+  const element: Element = { id: "", tag, component, props: { ...props, x: String(spot.x), y: String(spot.y) }, handlers: [], state: [], children };
   if (tag === "scene") return addScene(page, element, { kind: "add_element", page: page.id, parent, index: null, element });
   edit({ kind: "add_element", page: page.id, parent, index: null, element });
 }

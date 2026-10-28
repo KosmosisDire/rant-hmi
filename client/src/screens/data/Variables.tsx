@@ -3,9 +3,9 @@
 import { send } from "../../net/connection";
 import type { Per } from "../../protocol/Per";
 import type { Variable } from "../../protocol/Variable";
-import type { Value } from "../../protocol/Value";
 import { LOCAL } from "../../protocol/rules";
 import { change } from "../../state/change";
+import { literal } from "../../state/format";
 import { freeLocal } from "../../state/names";
 import { live, state } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
@@ -21,16 +21,6 @@ const PER: [Per, string][] = [
   ["hmi", "Shared"],
   ["screen", "Each screen"],
 ];
-
-/** A JSON literal that is not null, as a start value or a value typed in. */
-function literal(text: string): Value | undefined {
-  try {
-    const v = JSON.parse(text);
-    return v === null ? undefined : v;
-  } catch {
-    return undefined;
-  }
-}
 
 /** The HMI's variables, as the Data screen finds and changes them. */
 export const VARIABLES: Kind<Variable> = {
