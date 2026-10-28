@@ -80,6 +80,10 @@ dark = "#ff8800"
 light = "#0088ff"            # left out, worked out from dark
 ```
 
+A screen takes each token's dark or light value as its device is set, the editor as its own
+theme is. A handler switches its screen with `theme.toggle()` or `theme.set("light")`, and
+`theme.set("device")` follows the device again. The screen keeps the choice.
+
 ## Files a page loads
 
 A model, a picture or a font goes in `files`, and a page names it by its path from the

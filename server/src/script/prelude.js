@@ -1,6 +1,6 @@
 // What handler code sees, built in each run's context from the host's `__` functions: each
 // object with its members, an object's own code its members as plain names too, the mesh's
-// enums, `Pages`, open and close, notify, log and sleep.
+// enums, `Pages`, open and close, notify, log, sleep and the screen's `theme`.
 (imports, objects, pages, enums) => {
   class Unknown extends Error {
     constructor(alias) {
@@ -110,6 +110,13 @@
   // open waits for what the page closes with, close answers it
   globalThis.open = (page, options) => __open(String(page), options?.replace === true);
   globalThis.close = (answer) => __close(answer ?? null);
+  globalThis.theme = Object.freeze({
+    get mode() {
+      return __mode();
+    },
+    set: (mode) => __setMode(String(mode)),
+    toggle: () => __setMode(__mode() === "dark" ? "light" : "dark"),
+  });
 
   // How a run ended, in words for the person who wrote it. A call's failure comes from
   // another realm, so its message tells it apart, not its class.

@@ -318,7 +318,7 @@ function language(path: string[], place: Place): Suggestion[] | undefined {
   const a = apiIn(place).find((x) => x.name === path[0] && (x.fields || x.standard));
   if (!a) return undefined;
   if (path.length > 1) return [];
-  return a.fields ? a.fields.map((f): Suggestion => ({ label: f.name, insert: f.name, icon: "member", type: f.words })) : held((globalThis as Record<string, unknown>)[a.name]);
+  return a.fields ? a.fields.map((f): Suggestion => ({ label: f.name, insert: f.takes ? `${f.name}(` : f.name, icon: f.takes ? "api" : "member", type: f.words })) : held((globalThis as Record<string, unknown>)[a.name]);
 }
 
 /** What code may name first: its own object's members bare, then each object, then the enums. */

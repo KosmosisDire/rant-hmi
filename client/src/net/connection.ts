@@ -18,7 +18,7 @@ import { unwrap } from "solid-js/store";
 import type { ClientMsg } from "../protocol/ClientMsg";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import { faultOf } from "../state/caught";
-import { operator } from "../state/mode";
+import { mode, operator } from "../state/mode";
 import { problems, report } from "../state/problems";
 import { cameBack, notify, onReading, receive, setState, state, type WebrtcProblem } from "../state/store";
 import { countRead, previewing, watched, watchedNames, wholeNames } from "../state/watch";
@@ -235,6 +235,7 @@ function heard(bytes: Uint8Array, lane: number) {
       void offerVideos();
       // a session opened while the page hides is sent no values until it shows
       if (!shown()) send({ type: "shown", shown: false });
+      send({ type: "mode", mode: mode() });
     }
   }
 }
@@ -307,6 +308,8 @@ function tellProblems() {
   }, PROBLEMS_EVERY_MS);
 }
 createRoot(() => createEffect(on(() => JSON.stringify(problems), tellProblems)));
+// the mode it draws in, which code on the system reads as theme.mode
+createRoot(() => createEffect(on(mode, (m) => state.link === "open" && send({ type: "mode", mode: m }), { defer: true })));
 
 /** Tells the data worker the names read whole and those shown, once they changed. */
 function tellData() {

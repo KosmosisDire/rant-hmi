@@ -457,6 +457,10 @@ the whole. A handler sets a name by assignment: `Line.Speed = 0.5`, `jog[index] 
 | `link.path` | the way values, pings and actions go, "channel" on WebRTC or "socket" | what a screen draws and a component's handlers |
 | `link.pingMs` | the round trip in ms, smoothed, null before one | what a screen draws and a component's handlers |
 | `keys` | the keys held, each true by what it types or where it sits, as keys.a or keys.KeyA | what a screen draws and a component's handlers |
+| `theme` | this screen's light or dark mode, which picks each token's value | what a screen draws, a page's handlers and a component's handlers |
+| `theme.mode` | "dark" or "light", as the screen draws now | what a screen draws, a page's handlers and a component's handlers |
+| `theme.set` | draw in "dark" or "light", or "device" to follow the device's own, kept on the device | what a screen draws, a page's handlers and a component's handlers |
+| `theme.toggle` | draw in the other mode, kept on the device | what a screen draws, a page's handlers and a component's handlers |
 | `gamepads` | the gamepads, gamepads[0] the first, null where none is | what a screen draws and a component's handlers |
 
 JavaScript's own, read everywhere:

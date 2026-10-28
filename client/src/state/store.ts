@@ -19,6 +19,7 @@ import type { Sample } from "../protocol/Sample";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import type { Token } from "../protocol/Token";
 import { closeWith, follow, push } from "./stack";
+import { setMode } from "./mode";
 
 export interface Live {
   value: Value | null;
@@ -239,6 +240,9 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
       break;
     case "close":
       closeWith(msg.answer);
+      break;
+    case "mode":
+      setMode(msg.mode);
       break;
     case "pong":
     case "video":
