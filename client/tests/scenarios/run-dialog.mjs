@@ -9,7 +9,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
     await hmi.setHandler(pageId, id, "tap", code);
     return id;
   };
-  const run = await button(cell, "Run", 4, 'if (!await open(Pages.Confirm)) {\n  notify("Not run");\n  return;\n}\nSpeed = 2;\nnotify("Running");');
+  const run = await button(cell, "Run", 4, 'if (!await open(Pages.Confirm)) {\n  notify("Not run");\n  return;\n}\nLine.Speed = 2;\nnotify("Running");');
   const yes = await button(confirm, "Yes", 4, "close(true);");
   const no = await button(confirm, "No", 24, "close(false);");
 
@@ -25,8 +25,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.openPage("Cell");
   await d.tab("Run");
-  await hmi.set("Speed", 1);
-  await eventually(() => hmi.state.values.Speed?.value === 1, "the speed to start at 1");
+  await hmi.set("Line.Speed", 1);
+  await eventually(() => hmi.state.values["Line.Speed"]?.value === 1, "the speed to start at 1");
   const shown = () => page.locator(".run-layer:not([hidden])").evaluateAll((els) => els.map((e) => e.dataset.page).join());
   const tap = (pageId, id) => page.locator(`.run-layer[data-page="${pageId}"] .el[data-id="${id}"]`).click();
   const notice = (text) => page.locator(".notice", { hasText: text }).last().waitFor({ timeout: 4000 });
@@ -41,13 +41,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await tap(confirm, no);
   await notice("Not run");
   await eventually(async () => (await shown()) === cell, "No to close Confirm");
-  check(hmi.state.values.Speed?.value === 1, "No ran the job");
+  check(hmi.state.values["Line.Speed"]?.value === 1, "No ran the job");
   await dismiss();
 
   await ask();
   await tap(confirm, yes);
   await notice("Running");
-  await eventually(() => hmi.state.values.Speed?.value === 2, "Yes to run the job");
+  await eventually(() => hmi.state.values["Line.Speed"]?.value === 2, "Yes to run the job");
   await dismiss();
 
   await ask();

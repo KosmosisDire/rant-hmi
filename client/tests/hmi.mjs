@@ -8,17 +8,17 @@ const decoder = new Decoder({ mapsAsObjects: true, useRecords: false, int64AsNum
 
 export class Hmi {
   /** Connects and waits until the backend has sent everything a screen starts from, of which
-   *  its rules come last. */
+   *  its pages come last. */
   static async connect(url, timeoutMs = 5000) {
     const hmi = new Hmi(new WebSocket(url));
-    await hmi.next((m) => m.type === "rules", timeoutMs);
+    await hmi.next((m) => m.type === "pages", timeoutMs);
     return hmi;
   }
 
   constructor(ws) {
     this.ws = ws;
     this.ws.binaryType = "arraybuffer";
-    this.state = { imports: [], variables: [], records: [], computed: [], enums: [], rules: [], pages: [], entities: [], values: {}, tokens: [] };
+    this.state = { objects: [], ...members([]), enums: [], pages: [], entities: [], values: {}, tokens: [] };
     this.waiters = [];
     // each message comes in pieces, `[u16 lane][u8 more]` then its share, joined per lane
     this.parts = new Map();
@@ -43,12 +43,8 @@ export class Hmi {
 
   receive(msg) {
     const s = this.state;
-    if (msg.type === "imports") s.imports = msg.imports;
-    if (msg.type === "variables") s.variables = msg.variables;
-    if (msg.type === "records") s.records = msg.records;
-    if (msg.type === "computed") s.computed = msg.computed;
+    if (msg.type === "objects") Object.assign(s, { objects: msg.objects }, members(msg.objects));
     if (msg.type === "enums") s.enums = msg.enums;
-    if (msg.type === "rules") s.rules = msg.rules;
     if (msg.type === "pages") s.pages = msg.pages;
     if (msg.type === "mesh") s.entities = msg.entities;
     if (msg.type === "theme") s.tokens = msg.tokens;
@@ -105,19 +101,57 @@ export class Hmi {
     return n;
   }
 
-  async import(alias, entity, intent = "read") {
+  /** Makes the mesh entity `entity`, a whole path, the member `key` names, as `Line.Speed`. Its
+   *  object is made first when missing, rooted at the entity's top folder. */
+  async import(key, entity, intent = "read") {
     await this.until((s) => s.entities.some((e) => e.name === entity), `${entity} on the mesh`);
     const kind = this.state.entities.find((e) => e.name === entity).kind;
-    if (this.state.imports.some((i) => i.alias === alias && i.entity === entity && i.intent === intent)) return;
-    // an entity takes one alias and an alias one entity, so an earlier scenario's import goes first
-    for (const i of this.state.imports.filter((i) => i.entity === entity || i.alias === alias)) await this.unimport(i.alias);
-    this.send({ type: "import", import: { alias, entity, kind, intent } });
-    await this.next((m) => m.type === "imports" && m.imports.some((i) => i.alias === alias));
+    if (this.state.imports.some((i) => i.alias === key && i.entity === entity && i.intent === intent)) return;
+    // an entity takes one member and a key one entity, so an earlier scenario's member goes first
+    for (const i of this.state.imports.filter((i) => i.entity === entity || i.alias === key)) await this.unimport(i.alias);
+    const [object, alias] = split(key);
+    if (!this.object(object)) await this.addObject(object, entity.split("/")[0]);
+    const mesh = this.object(object).mesh;
+    const path = !mesh ? entity : entity.startsWith(`${mesh}/`) ? entity.slice(mesh.length + 1) : `/${entity}`;
+    this.send({ type: "import", object, import: { alias, entity: path, kind, intent } });
+    await this.next((m) => m.type === "objects" && this.state.imports.some((i) => i.alias === key));
   }
 
-  async unimport(alias) {
-    this.send({ type: "unimport", alias });
-    await this.next((m) => m.type === "imports" && !m.imports.some((i) => i.alias === alias));
+  async unimport(key) {
+    const [object, alias] = split(key);
+    this.send({ type: "unimport", object, alias });
+    await this.next((m) => m.type === "objects" && !this.state.imports.some((i) => i.alias === key));
+  }
+
+  object(name) {
+    return this.state.objects.find((o) => o.name === name);
+  }
+
+  async addObject(name, mesh = "") {
+    this.send({ type: "set_object", name: "", object: { name, mesh } });
+    await this.next((m) => m.type === "objects" && !!this.object(name));
+  }
+
+  /** Sets the state `key` names, as `Hmi.count`, adding it when new. With no start it goes. */
+  setVariable(key, start, per = "hmi") {
+    const [object, name] = split(key);
+    this.send({ type: "set_variable", object, name, variable: start === undefined ? null : { name, start, per } });
+  }
+
+  setComputed(key, computed) {
+    const [object, name] = split(key);
+    this.send({ type: "set_computed", object, name, computed: computed && { name, ...computed } });
+  }
+
+  setRecord(key, record) {
+    const [object, name] = split(key);
+    this.send({ type: "set_record", object, name, record: record && { name, ...record } });
+  }
+
+  /** Adds, with no id, changes or with no rule removes a rule of `object`'s logic. */
+  async setRule(object, id, rule) {
+    this.send({ type: "set_rule", object, id, rule });
+    await this.next((m) => m.type === "objects");
   }
 
   set(alias, value, path = "") {
@@ -154,11 +188,6 @@ export class Hmi {
     await this.next((m) => m.type === "page" && m.page.id === page);
   }
 
-  async setRule(id, rule) {
-    this.send({ type: "edit", edit: { kind: "set_rule", id, rule } });
-    await this.next((m) => m.type === "rules");
-  }
-
   async removeElement(page, id) {
     this.send({ type: "edit", edit: { kind: "remove_element", page, id } });
     await this.next((m) => m.type === "page" && m.page.id === page);
@@ -180,4 +209,22 @@ export class Hmi {
     clearInterval(this.beat);
     this.ws.close();
   }
+}
+
+/** The object and the member's name a key names, `Line` and `Speed` of `Line.Speed`. */
+const split = (key) => [key.slice(0, key.indexOf(".")), key.slice(key.indexOf(".") + 1)];
+
+/** Every object's members as lists, each named by its key and each mesh member with its whole
+ *  entity path, as screens and the engine see them. A rule names its object. */
+function members(objects) {
+  const keyed = (list, o) => list.map((m) => ({ ...m, name: `${o.name}.${m.name}` }));
+  const entity = (o, path) => (path.startsWith("/") ? path.slice(1) : o.mesh ? `${o.mesh}/${path}` : path);
+  return {
+    imports: objects.flatMap((o) => o.imports.map((i) => ({ ...i, alias: `${o.name}.${i.alias}`, entity: entity(o, i.entity) }))),
+    variables: objects.flatMap((o) => keyed(o.variables, o)),
+    records: objects.flatMap((o) => keyed(o.records, o)),
+    computed: objects.flatMap((o) => keyed(o.computed, o)),
+    functions: objects.flatMap((o) => keyed(o.functions, o)),
+    rules: objects.flatMap((o) => o.logic.map((r) => ({ ...r, object: o.name }))),
+  };
 }

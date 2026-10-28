@@ -6,23 +6,23 @@
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const vars = { wvPuckX: 4, wvPuckY: 30, wvTurnX: 2, wvTurnY: 2, wvDotX: 10, wvScrollX: 0, wvScrollY: 0, wvInner: false, wvInnerHits: 0, wvZoom: 1, wvZoomAt: 0, wvMapZoom: 1 };
-  for (const [name, start] of Object.entries(vars)) hmi.send({ type: "set_variable", name, variable: { name, start, per: "hmi" } });
+  for (const [name, start] of Object.entries(vars)) hmi.setVariable(`Hmi.${name}`, start);
   const pageId = await hmi.addPage("Wheel View");
-  const puck = await hmi.addElement(pageId, "div", { name: "Puck", x: "wvPuckX", y: "wvPuckY", w: "6", h: "6", background: "#4a8fd6" });
-  await hmi.setHandler(pageId, puck, "drag", "await sleep(120);\nwvPuckX = wvPuckX + p.dx;\nwvPuckY = wvPuckY + p.dy;");
+  const puck = await hmi.addElement(pageId, "div", { name: "Puck", x: "Hmi.wvPuckX", y: "Hmi.wvPuckY", w: "6", h: "6", background: "#4a8fd6" });
+  await hmi.setHandler(pageId, puck, "drag", "await sleep(120);\nHmi.wvPuckX = Hmi.wvPuckX + p.dx;\nHmi.wvPuckY = Hmi.wvPuckY + p.dy;");
   const turned = await hmi.addElement(pageId, "div", { name: "Turned", x: "60", y: "30", w: "20", h: "20", rotate: "90", scale: "1.5", background: "#2a2f35" });
-  const puck2 = await hmi.addElement(pageId, "div", { name: "Puck2", x: "wvTurnX", y: "wvTurnY", w: "4", h: "4", background: "#e5484d" }, turned);
-  await hmi.setHandler(pageId, puck2, "drag", "wvTurnX = wvTurnX + p.dx;\nwvTurnY = wvTurnY + p.dy;");
+  const puck2 = await hmi.addElement(pageId, "div", { name: "Puck2", x: "Hmi.wvTurnX", y: "Hmi.wvTurnY", w: "4", h: "4", background: "#e5484d" }, turned);
+  await hmi.setHandler(pageId, puck2, "drag", "Hmi.wvTurnX = Hmi.wvTurnX + p.dx;\nHmi.wvTurnY = Hmi.wvTurnY + p.dy;");
   const plot = await hmi.addElement(pageId, "svg", { name: "Plot", x: "4", y: "50", w: "20", h: "20", viewbox: '"0 0 50 50"', background: "#2a2f35" });
-  const dot = await hmi.addElement(pageId, "circle", { name: "Dot", cx: "wvDotX", cy: "25", r: "4", fill: '"#30a46c"' }, plot);
-  await hmi.setHandler(pageId, dot, "drag", "wvDotX = wvDotX + p.dx;");
+  const dot = await hmi.addElement(pageId, "circle", { name: "Dot", cx: "Hmi.wvDotX", cy: "25", r: "4", fill: '"#30a46c"' }, plot);
+  await hmi.setHandler(pageId, dot, "drag", "Hmi.wvDotX = Hmi.wvDotX + p.dx;");
   const view = await hmi.addElement(pageId, "div", { name: "Viewport", x: "30", y: "4", w: "30", h: "20", overflow: '"hidden"', background: "#2a2f35" });
-  const content = await hmi.addElement(pageId, "div", { name: "Content", x: "wvScrollX", y: "wvScrollY", w: "200", h: "200", background: "#30363d" }, view);
-  await hmi.setHandler(pageId, view, "scroll", "await sleep(150);\nwvScrollX = wvScrollX + p.dx;\nwvScrollY = wvScrollY + p.dy;");
-  await hmi.setHandler(pageId, view, "zoom", "wvZoom = wvZoom * p.factor;\nwvZoomAt = p.x;");
-  await hmi.setHandler(pageId, content, "scroll", "wvInnerHits = wvInnerHits + 1;", { while: "wvInner" });
+  const content = await hmi.addElement(pageId, "div", { name: "Content", x: "Hmi.wvScrollX", y: "Hmi.wvScrollY", w: "200", h: "200", background: "#30363d" }, view);
+  await hmi.setHandler(pageId, view, "scroll", "await sleep(150);\nHmi.wvScrollX = Hmi.wvScrollX + p.dx;\nHmi.wvScrollY = Hmi.wvScrollY + p.dy;");
+  await hmi.setHandler(pageId, view, "zoom", "Hmi.wvZoom = Hmi.wvZoom * p.factor;\nHmi.wvZoomAt = p.x;");
+  await hmi.setHandler(pageId, content, "scroll", "Hmi.wvInnerHits = Hmi.wvInnerHits + 1;", { while: "Hmi.wvInner" });
   const map = await hmi.addElement(pageId, "div", { name: "Map", x: "90", y: "4", w: "20", h: "20", background: "#2a2f35" });
-  await hmi.setHandler(pageId, map, "zoom", "wvMapZoom = wvMapZoom * p.factor;");
+  await hmi.setHandler(pageId, map, "zoom", "Hmi.wvMapZoom = Hmi.wvMapZoom * p.factor;");
   const value = (name) => hmi.state.values[name]?.value;
 
   await d.openPage("Wheel View");
@@ -72,23 +72,23 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.up("Shift");
   await eventually(async () => near((now = await box(content)).x - start.x, -100), () => `a turn with Shift to scroll across, not ${now.x - start.x}`);
 
-  hmi.set("wvInner", true);
-  await eventually(() => value("wvInner") === true, "the inner element to hear");
-  const before = value("wvScrollY");
+  hmi.set("Hmi.wvInner", true);
+  await eventually(() => value("Hmi.wvInner") === true, "the inner element to hear");
+  const before = value("Hmi.wvScrollY");
   await page.mouse.wheel(0, 100);
-  await eventually(() => value("wvInnerHits") === 1, "the inner element to take the turn");
+  await eventually(() => value("Hmi.wvInnerHits") === 1, "the inner element to take the turn");
   await page.waitForTimeout(300);
-  check(value("wvScrollY") === before, `a turn the inner element took to scroll nothing around it, not ${value("wvScrollY")} from ${before}`);
+  check(value("Hmi.wvScrollY") === before, `a turn the inner element took to scroll nothing around it, not ${value("Hmi.wvScrollY")} from ${before}`);
 
   // Ctrl makes it a zoom, which the inner element does not take
   await page.keyboard.down("Control");
   await page.mouse.wheel(0, 100);
   await page.keyboard.up("Control");
-  await eventually(() => Math.abs(value("wvZoom") - Math.exp(-0.2)) < 1e-6, () => `a notch with Ctrl to zoom out to ${Math.exp(-0.2)}, not ${value("wvZoom")}`);
-  check(Math.abs(value("wvZoomAt") - 0.5) < 0.02, `the zoom to say where, not ${value("wvZoomAt")}`);
+  await eventually(() => Math.abs(value("Hmi.wvZoom") - Math.exp(-0.2)) < 1e-6, () => `a notch with Ctrl to zoom out to ${Math.exp(-0.2)}, not ${value("Hmi.wvZoom")}`);
+  check(Math.abs(value("Hmi.wvZoomAt") - 0.5) < 0.02, `the zoom to say where, not ${value("Hmi.wvZoomAt")}`);
 
   const m = await box(map);
   await page.mouse.move(m.x + m.width / 2, m.y + m.height / 2);
   await page.mouse.wheel(0, -100);
-  await eventually(() => Math.abs(value("wvMapZoom") - Math.exp(0.2)) < 1e-6, () => `a plain wheel on what only zooms to zoom in, not ${value("wvMapZoom")}`);
+  await eventually(() => Math.abs(value("Hmi.wvMapZoom") - Math.exp(0.2)) < 1e-6, () => `a plain wheel on what only zooms to zoom in, not ${value("Hmi.wvMapZoom")}`);
 }

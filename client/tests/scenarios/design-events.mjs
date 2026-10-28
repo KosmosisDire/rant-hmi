@@ -11,18 +11,18 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addEvent("press");
   await eventually(() => handlers().length === 1 && handlers()[0].event === "press", "a press handler");
   await d.code("press").click();
-  await page.keyboard.type("if (Running) {\n  Speed = Speed + 0.1;\n}");
+  await page.keyboard.type("if (Line.Running) {\n  Line.Speed = Line.Speed + 0.1;\n}");
   await page.keyboard.press("Control+Enter");
-  await eventually(() => handlers()[0].code === "if (Running) {\n  Speed = Speed + 0.1;\n}", "the code as typed");
+  await eventually(() => handlers()[0].code === "if (Line.Running) {\n  Line.Speed = Line.Speed + 0.1;\n}", "the code as typed");
 
   await d.addEvent("tap");
   await eventually(() => handlers().map((h) => h.event).join() === "tap,press", "a tap handler listed first");
-  check(handlers()[1].code.includes("Speed"), "adding a tap lost the press code");
+  check(handlers()[1].code.includes("Line.Speed"), "adding a tap lost the press code");
 
   await page.locator('.screen:not([hidden]) button[title="Remove the press handler"]').click();
   await eventually(() => handlers().length === 1 && handlers()[0].event === "tap", "the press handler to go");
   await page.keyboard.press("Control+z");
-  await eventually(() => handlers().length === 2 && handlers()[1].code.includes("Speed"), "undo to bring it back");
+  await eventually(() => handlers().length === 2 && handlers()[1].code.includes("Line.Speed"), "undo to bring it back");
   await eventually(async () => (await page.locator(".screen:not([hidden]) .sidebar.right .event").count()) === 2, "the inspector to show both handlers");
   await page.locator(".screen:not([hidden]) .sidebar.right .ghost", { hasText: "Add event" }).click();
   const offered = (await page.locator(".popover .menu-item .mono").allTextContents()).join();

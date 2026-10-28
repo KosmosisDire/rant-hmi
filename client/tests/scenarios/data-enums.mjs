@@ -1,9 +1,9 @@
 // An enum a mesh import's type holds reads in code by its name, an anonymous one by its
 // field's, its options a list: a text shows them, completion offers the enum and then its
-// options, and a handler on the backend reads them too. An import of the same name hides it.
+// options, and a handler on the backend reads them too. An object of the same name hides it.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await hmi.import("EnumJob", "Cage/Gp12/RunJob", "write");
+  await hmi.import("Cage.EnumJob", "Cage/Gp12/RunJob", "write");
   const job = () => hmi.state.enums.find((e) => e.name === "JobName");
   await eventually(() => hmi.state.entities.some((e) => e.name === "Cage/Gp12/RunJob"), "RunJob");
   await eventually(() => job()?.options.join() === "None,Home249,Jog,Pick,Place", () => `the JobName enum, the enums are ${JSON.stringify(hmi.state.enums)}`);
@@ -31,8 +31,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.locator(`.run-layer:not([hidden]) .el[data-id="${ask}"]`).click();
   await page.locator(".notice.info", { hasText: /^Place$/ }).waitFor({ timeout: 4000 });
 
-  await hmi.import("JobName", "Cage/Gp12/RobotState", "read");
-  await eventually(() => !job(), "the import named JobName to hide the enum");
-  await hmi.unimport("JobName");
-  await eventually(() => !!job(), "the enum back once the import goes");
+  await hmi.addObject("JobName");
+  await eventually(() => !job(), "the object named JobName to hide the enum");
+  hmi.send({ type: "set_object", name: "JobName", object: null });
+  await eventually(() => !!job(), "the enum back once the object goes");
 }

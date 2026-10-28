@@ -8,20 +8,20 @@ export const fresh = true;
 
 export default async function ({ hmi, d, eventually }) {
   // this client reads only what it checks, so it has the backend decode nothing more
-  hmi.send({ type: "watch", reads: [["moving"]] });
-  await hmi.import("Settings", "Line1/Settings");
-  await hmi.import("Conveyor", "Line1/Conveyor");
-  hmi.send({ type: "set_variable", name: "partSeen", variable: { name: "partSeen", start: "", per: "hmi" } });
-  hmi.send({ type: "set_computed", name: "moving", computed: { name: "moving", get: "Conveyor.running" } });
-  await hmi.setRule("", { id: "", name: "Part seen", when: { kind: "every", ms: 100 }, code: "partSeen = Conveyor.part;" });
+  hmi.send({ type: "watch", reads: [["Hmi.moving"]] });
+  await hmi.import("Line.Settings", "Line1/Settings");
+  await hmi.import("Line.Conveyor", "Line1/Conveyor");
+  hmi.setVariable("Hmi.partSeen", "");
+  hmi.setComputed("Hmi.moving", { get: "Line.Conveyor.running" });
+  await hmi.setRule("Hmi", "", { id: "", name: "Part seen", when: { kind: "every", ms: 100 }, code: "Hmi.partSeen = Line.Conveyor.part;" });
   const value = (name) => hmi.state.values[name]?.value;
-  await eventually(() => /^\S+$/.test(value("partSeen") ?? ""), () => `the rule to read the part, not ${JSON.stringify(value("partSeen"))}`);
-  await eventually(() => typeof value("moving") === "boolean", () => `the computed value to read running, not ${JSON.stringify(value("moving"))}`);
+  await eventually(() => /^\S+$/.test(value("Hmi.partSeen") ?? ""), () => `the rule to read the part, not ${JSON.stringify(value("Hmi.partSeen"))}`);
+  await eventually(() => typeof value("Hmi.moving") === "boolean", () => `the computed value to read running, not ${JSON.stringify(value("Hmi.moving"))}`);
 
   const mode = await hmi.addPage("Mode");
-  const modeText = await hmi.addElement(mode, "span", { name: "mode", x: "2", y: "2", w: "20", h: "4", text: "Settings.mode" });
+  const modeText = await hmi.addElement(mode, "span", { name: "mode", x: "2", y: "2", w: "20", h: "4", text: "Line.Settings.mode" });
   const target = await hmi.addPage("Target");
-  const targetText = await hmi.addElement(target, "span", { name: "target", x: "2", y: "2", w: "20", h: "4", text: "String(Settings.target)" });
+  const targetText = await hmi.addElement(target, "span", { name: "target", x: "2", y: "2", w: "20", h: "4", text: "String(Line.Settings.target)" });
   const text = async (id) => ((await d.el(id).textContent()) ?? "").trim();
   await d.openPage("Mode");
   await eventually(async () => (await text(modeText)) === "Auto", async () => `the mode shown, not "${await text(modeText)}"`);

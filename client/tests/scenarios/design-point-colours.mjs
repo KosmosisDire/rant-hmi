@@ -3,7 +3,7 @@
 // list as long as no points says so on the scene.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await hmi.import("HeatC", "Cell/Heat");
+  await hmi.import("Cell.HeatC", "Cell/Heat");
   await d.addPage("Coloured points");
   const pageId = hmi.state.pages.find((p) => p.name === "Coloured points").id;
   // seen from above, x to the right
@@ -26,7 +26,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await says("dots: color: 1 colours for 2 points");
 
   // a thermal cloud's colours and sizes, beside its points, drawn by the worker from the mesh
-  await hmi.setProps(pageId, dots, { points: "HeatC.points", color: "HeatC.colors", size: "HeatC.sizes" });
+  await hmi.setProps(pageId, dots, { points: "Cell.HeatC.points", color: "Cell.HeatC.colors", size: "Cell.HeatC.sizes" });
   const count = async () => {
     const png = (await el.screenshot()).toString("base64");
     return page.evaluate(async (png) => {

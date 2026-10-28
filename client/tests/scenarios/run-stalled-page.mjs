@@ -4,10 +4,10 @@
 // buffers at most, and a count the page shows jumps to the system's within a moment.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  hmi.send({ type: "set_variable", name: "stallCount", variable: { name: "stallCount", start: 0, per: "hmi" } });
-  await hmi.setRule("", { id: "", name: "Stall count", when: { kind: "every", ms: 50 }, code: "stallCount = stallCount + 1;" });
+  hmi.setVariable("Hmi.stallCount", 0);
+  await hmi.setRule("Hmi", "", { id: "", name: "Stall count", when: { kind: "every", ms: 50 }, code: "Hmi.stallCount = Hmi.stallCount + 1;" });
   const pageId = await hmi.addPage("Stall");
-  const shown = await hmi.addElement(pageId, "span", { name: "Shown", x: "4", y: "4", w: "40", h: "4", text: "String(stallCount)", color: "#e4e6e8" });
+  const shown = await hmi.addElement(pageId, "span", { name: "Shown", x: "4", y: "4", w: "40", h: "4", text: "String(Hmi.stallCount)", color: "#e4e6e8" });
   await d.openPage("Stall");
   await d.tab("Run");
   const at = `.run-layer:not([hidden]) .el[data-id="${shown}"]`;
@@ -27,7 +27,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
     return end;
   });
   await page.waitForTimeout(400);
-  const current = hmi.state.values.stallCount?.value;
+  const current = hmi.state.values["Hmi.stallCount"]?.value;
   const after = await page.evaluate((stalled) => window.__shown.filter(([, t]) => t >= stalled), stalled);
   check(after.length > 0, "the count to show again after the stall");
   // the counts of the stall's seconds, about 60, mostly never show
@@ -36,5 +36,5 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // and the newest shows within a moment of the stall's end
   const caught = after.find(([n]) => n >= current - 20);
   check(caught !== undefined && caught[1] - stalled < 500, `the page took ${caught ? Math.round(caught[1] - stalled) : "more than 400"} ms after the stall to show a current count`);
-  await hmi.setRule(hmi.state.rules.find((r) => r.name === "Stall count").id, null);
+  await hmi.setRule("Hmi", hmi.state.rules.find((r) => r.name === "Stall count").id, null);
 }

@@ -2,9 +2,9 @@
 // to save it, and the device gets a PNG of the frame. Elsewhere the browser keeps its menu.
 
 export default async function ({ page, hmi, check, eventually }) {
-  if (!hmi.state.imports.some((i) => i.alias === "Camera")) await hmi.import("Camera", "Cell/Camera");
+  if (!hmi.state.imports.some((i) => i.alias === "Cell.Camera")) await hmi.import("Cell.Camera", "Cell/Camera");
   const pageId = await hmi.addPage("Snapshot");
-  const shot = await hmi.addElement(pageId, "media", { name: "camera", x: "4", y: "4", w: "32", h: "24", src: "Camera", fit: '"meet"' });
+  const shot = await hmi.addElement(pageId, "media", { name: "camera", x: "4", y: "4", w: "32", h: "24", src: "Cell.Camera", fit: '"meet"' });
   await page.locator(".tab", { hasText: "Design" }).click();
   await page.locator(".screen:not([hidden]) .page-row", { hasText: "Snapshot" }).click();
   await page.locator(".tab", { hasText: "Run" }).click();

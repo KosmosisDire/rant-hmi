@@ -42,7 +42,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check((await page.locator(".signature .sign-at").textContent()) === "low", "the hint marks the wrong value");
   // after a dot, JavaScript's own: a number's methods and Math's
   await field.fill("");
-  await page.keyboard.type("Speed.");
+  await page.keyboard.type("Line.Speed.");
   await eventually(async () => (await names()).includes("toPrecision"), "a number's methods");
   await field.fill("");
   await page.keyboard.type("Math.ro");

@@ -27,23 +27,23 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.css('box-shadow: "0 1px 4px #0008"');
 
   await d.addPage("Sliders");
-  const speed = await d.place("Slider", { x: "4", y: "4", w: "27", h: "4", value: "Speed", max: "2", step: "0.1" });
-  const long = await d.place("Slider", { x: "4", y: "12", w: "60", h: "6", value: "Speed", max: "2", step: "0.1" });
-  await d.add("text", { Name: "Speed", x: "34", y: "4", w: "12", h: "4", Text: 'Speed.toFixed(1) + " m/s"', Colour: "$text", Size: "2" });
+  const speed = await d.place("Slider", { x: "4", y: "4", w: "27", h: "4", value: "Line.Speed", max: "2", step: "0.1" });
+  const long = await d.place("Slider", { x: "4", y: "12", w: "60", h: "6", value: "Line.Speed", max: "2", step: "0.1" });
+  await d.add("text", { Name: "Speed", x: "34", y: "4", w: "12", h: "4", Text: 'Line.Speed.toFixed(1) + " m/s"', Colour: "$text", Size: "2" });
 
-  await hmi.set("Speed", 0);
+  await hmi.set("Line.Speed", 0);
   await d.tab("Run");
   const inst = page.locator(`.run-layer:not([hidden]) .el[data-id="${speed}"]`);
   const b = await inst.boundingBox();
   await page.mouse.click(b.x + b.width * 0.5, b.y + b.height / 2);
-  await eventually(() => Math.abs((hmi.state.values.Speed?.value ?? 0) - 1) < 0.01, () => `a press half way to set Speed to 1, not ${hmi.state.values.Speed?.value}`);
+  await eventually(() => Math.abs((hmi.state.values["Line.Speed"]?.value ?? 0) - 1) < 0.01, () => `a press half way to set Speed to 1, not ${hmi.state.values["Line.Speed"]?.value}`);
   await page.mouse.move(b.x + 2, b.y + b.height / 2);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width * 0.75, b.y + b.height / 2, { steps: 8 });
-  await eventually(() => Math.abs((hmi.state.values.Speed?.value ?? 0) - 1.5) < 0.01, "a drag to three quarters to set Speed to 1.5");
+  await eventually(() => Math.abs((hmi.state.values["Line.Speed"]?.value ?? 0) - 1.5) < 0.01, "a drag to three quarters to set Speed to 1.5");
   await page.mouse.move(b.x + b.width * 0.25, b.y + b.height / 2, { steps: 8 });
   await page.mouse.up();
-  await eventually(() => Math.abs((hmi.state.values.Speed?.value ?? 0) - 0.5) < 0.01, "a drag back to set it to 0.5");
+  await eventually(() => Math.abs((hmi.state.values["Line.Speed"]?.value ?? 0) - 0.5) < 0.01, "a drag back to set it to 0.5");
   // the page draws the value a moment after this test hears it
   let middle = 0;
   const under = async () => {

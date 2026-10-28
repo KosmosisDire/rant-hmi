@@ -5,7 +5,7 @@
 // repeats a segment per option, sharing its width. Both pick a mode for the page.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  hmi.send({ type: "set_variable", name: "mode", variable: { name: "mode", start: "Auto", per: "hmi" } });
+  hmi.setVariable("Hmi.mode", "Auto");
 
   await d.addComponent("Dropdown", 20, 4);
   await d.sizing("Fill");
@@ -63,9 +63,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.add("text", { Name: "segmentLabel", w: "hug", h: "hug", Text: "item", Colour: "item === value ? pickedTextColour : textColour", Size: "textSize" });
 
   await d.addPage("Modes");
-  const drop = await d.place("Dropdown", { x: "4", y: "4", w: "20", h: "4", value: "mode" });
-  const swap = await d.place("ModeSwitch", { x: "28", y: "4", w: "24", h: "4", value: "mode", options: '["Auto", "Manual", "Off"]' });
-  const wide = await d.place("ModeSwitch", { x: "28", y: "12", w: "48", h: "6", value: "mode", options: '["Auto", "Manual", "Off"]' });
+  const drop = await d.place("Dropdown", { x: "4", y: "4", w: "20", h: "4", value: "Hmi.mode" });
+  const swap = await d.place("ModeSwitch", { x: "28", y: "4", w: "24", h: "4", value: "Hmi.mode", options: '["Auto", "Manual", "Off"]' });
+  const wide = await d.place("ModeSwitch", { x: "28", y: "12", w: "48", h: "6", value: "Hmi.mode", options: '["Auto", "Manual", "Off"]' });
   // a card placed after the dropdown, which its open list must cover
   const card = await d.add("frame", { Name: "card", x: "4", y: "9", w: "24", h: "12", Fill: "$panel3" });
 
@@ -84,7 +84,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const [face, under] = [await inst(drop).locator('.el[data-name="face"]').boundingBox(), await list.boundingBox()];
   check(Math.abs(under.width - face.width) < 1 && under.y > face.y + face.height, "the list is not under the face, as wide as it");
   await manual.click();
-  await eventually(() => hmi.state.values.mode?.value === "Manual", "picking Manual to set the mode");
+  await eventually(() => hmi.state.values["Hmi.mode"]?.value === "Manual", "picking Manual to set the mode");
   await eventually(async () => !(await list.isVisible()), "the list to close on a pick");
 
   // the switch follows, and a press outside closes an open dropdown
@@ -98,13 +98,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.mouse.click(900, 600);
   await eventually(async () => !(await list.isVisible()), "a press outside to close it");
   await segment(2).click();
-  await eventually(() => hmi.state.values.mode?.value === "Off", "the switch to set the mode");
+  await eventually(() => hmi.state.values["Hmi.mode"]?.value === "Off", "the switch to set the mode");
   await eventually(async () => (await inst(drop).locator('.el[data-name="label"]').textContent()) === "Off", "the dropdown to follow");
   check(card !== drop, "the card is the dropdown");
 
   // a long one shows its rows, its padding above and below, and scrolls to the rest
   await d.tab("Design");
-  const long = await d.place("Dropdown", { x: "4", y: "24", w: "20", h: "4", value: "mode", options: '["Auto", "Manual", "Off", "Jog", "Home", "Teach", "Test", "Service"]', rows: "4" });
+  const long = await d.place("Dropdown", { x: "4", y: "24", w: "20", h: "4", value: "Hmi.mode", options: '["Auto", "Manual", "Off", "Jog", "Home", "Teach", "Test", "Service"]', rows: "4" });
   await d.tab("Run");
   const longList = inst(long).locator('.el[data-name="list"]');
   await inst(long).locator('.el[data-name="face"]').click();
@@ -119,5 +119,5 @@ export default async function ({ page, hmi, d, check, eventually }) {
     return s.y >= box.y - 1 && s.y + s.height <= box.y + box.height + 1;
   }, "a wheel to scroll the last option into the list");
   await service.click();
-  await eventually(() => hmi.state.values.mode?.value === "Service", "picking the last option to set the mode");
+  await eventually(() => hmi.state.values["Hmi.mode"]?.value === "Service", "picking the last option to set the mode");
 }

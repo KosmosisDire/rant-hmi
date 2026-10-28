@@ -17,11 +17,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(held().map((e) => e.tag).join() === "grid,axes", `a new scene holds ${held().map((e) => e.tag).join()}, not a grid and axes`);
 
   // the box sits where the value puts it, in the middle of the view where the camera aims
-  const box = await d.addPart("box", { Pose: "{ position: vec(Speed * 10, 0, 0.5) }", Colour: '"#ff0000"' });
+  const box = await d.addPart("box", { Pose: "{ position: vec(Line.Speed * 10, 0, 0.5) }", Colour: '"#ff0000"' });
   const red = ([r, g, b]) => r > 120 && g < 60 && b < 60;
-  hmi.set("Speed", 1);
+  hmi.set("Line.Speed", 1);
   await d.shows(d.el(scene), 0.5, 0.5, red, "the box in the middle with Speed 1");
-  hmi.set("Speed", 0);
+  hmi.set("Line.Speed", 0);
   await d.shows(d.el(scene), 0.5, 0.5, (c) => !red(c), "the box out of the middle with Speed 0");
   const kept = held().find((e) => e.id === box);
   check(kept?.tag === "box" && kept.props.color === '"#ff0000"', "the box was not kept in the scene");
@@ -32,7 +32,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(!!ring && !!own && Math.abs(ring.x - own.x) <= 2 && Math.abs(ring.width - own.width) <= 2, `the picked box rings ${JSON.stringify(ring)}, not its scene ${JSON.stringify(own)}`);
 
   // a size that is no vector says why on the scene, and the box draws at its default size
-  hmi.set("Speed", 1);
+  hmi.set("Line.Speed", 1);
   await d.setField("Size", "2");
   await eventually(async () => (await d.el(scene).getAttribute("title"))?.includes("Box: size: 2 is not a 3D vector"), "the scene to say the box's size is no vector");
   await d.shows(d.el(scene), 0.5, 0.5, red, "the box still drawn with its default size");

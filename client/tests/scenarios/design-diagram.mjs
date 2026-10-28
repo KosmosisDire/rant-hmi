@@ -22,8 +22,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const line = await addShape("line");
   const layer = (name) => page.locator(".screen:not([hidden]) .sidebar.left .list-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
   await layer("Line").click();
-  await d.setField("Transform", "`rotate(${Speed * 90} 88 88)`");
-  await eventually(() => diagram().children.find((s) => s.id === line)?.props.transform === "`rotate(${Speed * 90} 88 88)`", "the line's transform");
+  await d.setField("Transform", "`rotate(${Line.Speed * 90} 88 88)`");
+  await eventually(() => diagram().children.find((s) => s.id === line)?.props.transform === "`rotate(${Line.Speed * 90} 88 88)`", "the line's transform");
 
   // the ring sits on the shape as drawn
   await layer("Circle").click();
@@ -51,15 +51,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await layer("Circle").click();
   await d.addEvent("tap");
   await d.code("tap").click();
-  await page.keyboard.type("Speed = 1;");
+  await page.keyboard.type("Line.Speed = 1;");
   await page.keyboard.press("Control+Enter");
-  await eventually(() => diagram().children.find((s) => s.id === circle)?.handlers[0]?.code === "Speed = 1;", "the circle's tap");
+  await eventually(() => diagram().children.find((s) => s.id === circle)?.handlers[0]?.code === "Line.Speed = 1;", "the circle's tap");
 
-  await hmi.set("Speed", 0.5);
+  await hmi.set("Line.Speed", 0.5);
   await d.tab("Run");
   const run = (id) => page.locator(`.run-layer:not([hidden]) [data-id="${id}"]`);
   await eventually(async () => (await run(line).getAttribute("transform")) === "rotate(45 88 88)", "the needle at Speed's angle");
   await run(circle).click({ position: { x: 10, y: 50 } });
-  await eventually(() => hmi.state.values.Speed?.value === 1, "a tap on the circle to set Speed");
+  await eventually(() => hmi.state.values["Line.Speed"]?.value === 1, "a tap on the circle to set Speed");
   await eventually(async () => (await run(line).getAttribute("transform")) === "rotate(90 88 88)", "the needle to follow");
 }

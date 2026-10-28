@@ -4,12 +4,16 @@
 // run on the system and of another screen say where they came from, and an agent reads them
 // all at /problems and on the mesh as Hmi/Problems.
 
+// a system of its own, so no other scenario's page on the board adds its faults to the count
+export const fresh = true;
+
 export default async function ({ page, hmi, d, sys, check, eventually }) {
   const pageId = await hmi.addPage("Trouble");
   const card = await hmi.addElement(pageId, "div", { name: "Card", x: "4", y: "4", w: "16", h: "8", background: "#2a2f35", opacity: "1 +" });
   await hmi.setHandler(pageId, card, "tap", 'throw new Error("the belt jammed");');
   const belt = await hmi.addElement(pageId, "div", { name: "Belt", x: "24", y: "4", w: "16", h: "8", background: "#2a2f35" });
-  await hmi.setHandler(pageId, belt, "tap", "Speed = Sped;");
+  hmi.setVariable("Hmi.beltSpeed", 0);
+  await hmi.setHandler(pageId, belt, "tap", "Hmi.beltSpeed = Sped;");
   const panel = page.locator(".problems");
   const row = (text) => panel.locator(".problem-row", { hasText: text });
   const tags = async (r) => (await r.locator(".tag").allTextContents()).join(" ");
@@ -26,7 +30,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const shown = await faults();
   check(shown >= 1 && (await page.locator(".problems-count .bad").count()) === 1, "the count shows no fault");
 
-  await d.tab("Data");
+  await d.tab("Objects");
   await fault.click();
   await eventually(async () => (await page.locator(".tab.on", { hasText: "Design" }).count()) === 1 && (await selected()) === card, "the row to open Card in Design");
 
@@ -75,8 +79,8 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const all = await served();
   check(all.some((p) => p.text.startsWith("Belt tap: ") && p.screen === null && p.source === "run"), "/problems lacks the system's handler fault");
   check(all.some((p) => p.text === "the floor screen saw something" && p.screen > 0 && p.level === "warn"), "/problems lacks the other screen's warning");
-  await hmi.import("HmiProblems", "Hmi/Problems");
-  await eventually(() => hmi.state.values.HmiProblems?.value?.some?.((p) => p.text === "Card tap: the belt jammed" && p.count === 2 && p.screen > 0), "Hmi/Problems to hold the handler's fault");
+  await hmi.import("Hmi.HmiProblems", "Hmi/Problems");
+  await eventually(() => hmi.state.values["Hmi.HmiProblems"]?.value?.some?.((p) => p.text === "Card tap: the belt jammed" && p.count === 2 && p.screen > 0), "Hmi/Problems to hold the handler's fault");
   await floor.close();
   await eventually(async () => (await far.count()) === 0, "a screen that went to take its problems with it");
 

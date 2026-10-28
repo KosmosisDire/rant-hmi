@@ -1,4 +1,4 @@
-// A designer records Speed on the Data tab and builds a Plot in the editor alone: a diagram in
+// A designer records Line's Speed on the Objects tab and builds a Plot in the editor alone: a diagram in
 // units of 0 to 100 stretched over its box, clipping what falls outside, and a line through the
 // record's samples, the newest at the right edge. As Speed changes, the line grows and ends at
 // its value, and a window shorter than the record keeps the older samples inside the card. The
@@ -6,11 +6,9 @@
 // theme's tokens.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await d.tab("Data");
-  await page.locator("button", { hasText: "Add a record" }).click();
-  await page.locator(".screen:not([hidden]) .sidebar.right .tag", { hasText: /^record$/ }).waitFor();
-  await d.set({ Name: "speedHistory", Records: "Speed", "Every ms": "100", "Keeps s": "10" });
-  await eventually(() => hmi.state.records?.some((r) => r.name === "speedHistory" && r.source === "Speed" && r.keep_s === 10), "the record");
+  await d.openObject("Line");
+  await d.addMember("Add a record", "speedHistory", { Source: "Speed", "Every ms": "100", "Keep s": "10" });
+  await eventually(() => hmi.state.records.some((r) => r.name === "Line.speedHistory" && r.source === "Speed" && r.keep_s === 10), "the record");
 
   await d.addComponent("Plot", 40, 16);
   await d.sizing("Fill");
@@ -35,12 +33,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.css('vector-effect: "non-scaling-stroke"\nstroke-linejoin: "round"');
 
   await d.addPage("Trend");
-  const plot = await d.place("Plot", { x: "4", y: "4", w: "40", h: "16", values: "speedHistory", max: "2" });
-  const big = await d.place("Plot", { x: "4", y: "24", w: "80", h: "30", values: "speedHistory", max: "2" });
+  const plot = await d.place("Plot", { x: "4", y: "4", w: "40", h: "16", values: "Line.speedHistory", max: "2" });
+  const big = await d.place("Plot", { x: "4", y: "24", w: "80", h: "30", values: "Line.speedHistory", max: "2" });
 
   await d.tab("Run");
   for (const v of [0.2, 0.8, 1.4, 1.9, 1.0]) {
-    await hmi.set("Speed", v);
+    await hmi.set("Line.Speed", v);
     await page.waitForTimeout(250);
   }
   const line = page.locator(`.run-layer:not([hidden]) .el[data-id="${plot}"] [data-name="line"]`);
@@ -64,8 +62,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   });
   check(shown.clips && shown.past, `the chart does not clip a line reaching past it: ${JSON.stringify(shown)}`);
 
-  // the Data tab shows the record filling
-  await d.tab("Data");
-  const row = page.locator(".screen:not([hidden]) tr", { has: page.getByText("speedHistory", { exact: true }) });
+  // its object's sheet shows the record filling
+  await d.openObject("Line");
+  const row = d.member("speedHistory");
   await eventually(async () => (await row.locator(".pv-bar").count()) > 5, "the record's latest values as bars");
 }

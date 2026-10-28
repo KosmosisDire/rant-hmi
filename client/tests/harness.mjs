@@ -53,8 +53,8 @@ function run(path, args, env = {}, { shown = false } = {}) {
   return child;
 }
 
-/** The project each scenario starts from: the demo line's imports in the library's theme, with
- *  no pages, as each scenario makes its own. */
+/** The project each scenario starts from: objects for the demo line and robot in the library's
+ *  theme, with no pages, as each scenario makes its own. */
 function testProject(into) {
   cpSync(join(here, "project"), into, { recursive: true });
   cpSync(join(ROOT, "server", "library", "theme.toml"), join(into, "data", "theme.toml"));

@@ -27,13 +27,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.addPage("Hold buttons");
   const start = await d.place("Button", { x: "4", y: "4", w: "20", h: "6", text: '"Start"' });
-  await d.handler("confirm", "Running = true;");
+  await d.handler("confirm", "Line.Running = true;");
   const stop = await d.place("Button", { x: "28", y: "4", w: "20", h: "6", text: '"Hold to stop"', holdMs: "600" });
-  await d.handler("confirm", "Running = false;");
+  await d.handler("confirm", "Line.Running = false;");
   const wide = await d.place("Button", { x: "4", y: "14", w: "48", h: "8", text: '"Wide"', fill: "$accent" });
   const tall = await d.place("Button", { x: "56", y: "4", w: "12", h: "18", text: '"Tall"' });
 
-  await hmi.set("Running", false);
+  await hmi.set("Line.Running", false);
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   const part = (id, name) => inst(id).locator(`.el[data-name="${name}"]`);
@@ -51,7 +51,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check((await colour(wide)) === "rgb(220, 56, 83)", `an instance's own fill shows as ${await colour(wide)}`);
 
   await inst(start).click();
-  await eventually(() => hmi.state.values.Running?.value === true, "a tap to start the line");
+  await eventually(() => hmi.state.values["Line.Running"]?.value === true, "a tap to start the line");
 
   // a short press on the hold button does nothing, a long one sweeps across and confirms
   const b = await inst(stop).boundingBox();
@@ -65,7 +65,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(lightness(held) < lightness(still), `the face does not darken while pressed: ${still} to ${held}`);
   await page.mouse.up();
   await page.waitForTimeout(500);
-  check(hmi.state.values.Running?.value === true, "a short press confirmed");
+  check(hmi.state.values["Line.Running"]?.value === true, "a short press confirmed");
   await page.mouse.down();
   let seen = 0;
   await eventually(async () => (seen = await sweep()) > 20 && seen < 180, () => `the sweep to go part way, it is ${seen} wide`, 550);
@@ -73,7 +73,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(Math.abs(face.y - along.y) < 1 && Math.abs(face.height - along.height) < 1, "the sweep does not cover the face from top to bottom");
   const over = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".el[data-name]")?.getAttribute("data-name"), [label.x + label.width / 2, label.y + label.height / 2]);
   check(over === "label", `the sweep hides the label under ${over}`);
-  await eventually(() => hmi.state.values.Running?.value === false, "a long hold to stop the line");
+  await eventually(() => hmi.state.values["Line.Running"]?.value === false, "a long hold to stop the line");
   await page.mouse.up();
   await eventually(async () => (await sweep()) === 0, "the sweep to go back");
 }

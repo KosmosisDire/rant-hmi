@@ -43,10 +43,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const rows = '[{ part: "P1", weight: 1.25, ok: true }, { part: "P2", weight: 0.8, ok: false }]';
   const parts = await d.place("Table", { x: "4", y: "4", w: "40", h: "12", rows });
   const chosen = await d.place("Table", { x: "48", y: "4", w: "30", h: "12", rows, columns: '["weight", "part"]' });
-  const matrix = await d.place("Table", { x: "4", y: "20", w: "30", h: "12", rows: "[[1, 2.5], [3, Speed]]" });
+  const matrix = await d.place("Table", { x: "4", y: "20", w: "30", h: "12", rows: "[[1, 2.5], [3, Line.Speed]]" });
   const long = await d.place("Table", { x: "48", y: "20", w: "30", h: "16", rows: "Array.from({ length: 40 }, (_, i) => ({ n: i }))" });
 
-  await hmi.set("Speed", 1);
+  await hmi.set("Line.Speed", 1);
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   const words = async (id, name) => (await inst(id).locator(`.el[data-name="${name}"]`).allTextContents()).join();

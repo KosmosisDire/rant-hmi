@@ -290,7 +290,35 @@ export function designer(page) {
       await page.locator(".popover.menu .menu-item", { has: page.locator(".menu-label", { hasText: new RegExp(`^${item}$`) }) }).click();
     },
 
-    /** An entity's row in the Data screen's mesh tree, found as a person finds one in a tree
+    /** Opens an object's sheet on the Objects tab, or the Theme's with "". */
+    async openObject(name) {
+      await d.tab("Objects");
+      await left().locator(`.list-row[data-object="${name}"]`).click();
+      await page.locator(".object-sheet .hero", { hasText: new RegExp(`^${name || "Theme"}$`) }).waitFor();
+    },
+
+    /** A member's row on the open object's sheet. */
+    member(name) {
+      return page.locator(`.object-sheet .list-row[data-member="${name}"]`);
+    },
+
+    /** Picks a member on the open object's sheet, once its inspector shows it. */
+    async pickMember(name) {
+      await d.member(name).click();
+      await right().locator(".pane-head .head-title", { hasText: new RegExp(`(^|\\.)${name}$`) }).waitFor();
+    },
+
+    /** Adds a member to the open object from its section's +, titled as "Add state", names it
+     *  and sets its fields. */
+    async addMember(title, name, fields = {}) {
+      await page.locator(`.object-sheet button[title="${title}"]`).click();
+      await right().locator(".field", { has: page.locator("label", { hasText: /^Name$/ }) }).locator("input:focus").waitFor();
+      await d.setField("Name", name);
+      await d.member(name).waitFor();
+      await d.set(fields);
+    },
+
+    /** An entity's row in the Objects screen's mesh tree, found as a person finds one in a tree
      *  that starts closed: by its name in the filter. */
     async meshRow(entity) {
       await left().locator(".filter input").fill(entity);

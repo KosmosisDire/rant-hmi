@@ -10,11 +10,11 @@ const red = ([r, g, b]) => r > 120 && g < 60 && b < 60;
 const NOT_POINTS = "not a list of points";
 
 export default async function ({ page, hmi, sys, d, check, eventually }) {
-  await hmi.import("ScanE", "Cell/Scan");
+  await hmi.import("Cell.ScanE", "Cell/Scan");
   const pageId = await hmi.addPage("Import edit");
   // seen from above, the floor filling the middle
   const scene = await hmi.addElement(pageId, "scene", { name: "cell", x: "2", y: "2", w: "60", h: "40", yaw: "-PI / 2", pitch: "1.5", distance: "4" });
-  const points = await hmi.addElement(pageId, "points", { name: "scan", points: "ScanE.points", size: "0.05", color: '"#ff0000"' }, scene);
+  const points = await hmi.addElement(pageId, "points", { name: "scan", points: "Cell.ScanE.points", size: "0.05", color: '"#ff0000"' }, scene);
   const started = hmi.next((m) => m.type === "project");
   hmi.send({ type: "set_start", page: pageId });
   await started;
@@ -43,32 +43,32 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
       const n = await got(2);
       check(n >= 7, `${what}, the screen got ${n} of the scan's values in 2 s`);
     };
-    const now = (alias) => hmi.state.imports.find((i) => i.alias === alias);
-    /** Changes import `alias` as the Data tab's inspector does. */
-    const change = async (alias, to) => {
-      const listed = hmi.next((m) => m.type === "imports");
-      hmi.send({ type: "change_import", alias, import: { ...now(alias), rate: undefined, ...to } });
+    /** Changes the mesh member `key` as the Objects tab's inspector does. */
+    const change = async (key, to) => {
+      const [object, alias] = key.split(".");
+      const listed = hmi.next((m) => m.type === "objects");
+      hmi.send({ type: "change_import", object, alias, import: { ...hmi.object(object).imports.find((i) => i.alias === alias), rate: undefined, ...to } });
       await listed;
     };
     const before = lapses();
     await draws("at first");
 
     // read without z its points are no points, until z is read again
-    await hmi.setProps(pageId, points, { points: "ScanE.points.map((p) => ({ x: p.x, y: p.y }))" });
+    await hmi.setProps(pageId, points, { points: "Cell.ScanE.points.map((p) => ({ x: p.x, y: p.y }))" });
     let last = "";
     await eventually(async () => (last = await said()).includes(NOT_POINTS), () => `the scene to say its points lack z, not "${last}"`, 10000);
-    await hmi.setProps(pageId, points, { points: "ScanE.points" });
+    await hmi.setProps(pageId, points, { points: "Cell.ScanE.points" });
     await draws("with its points' every field again");
 
     // renamed, the page reads it by its new name
-    await change("ScanE", { alias: "ScanR" });
-    await eventually(() => hmi.page(pageId).children.find((e) => e.id === scene)?.children.find((e) => e.id === points)?.props.points === "ScanR.points", "the page to read the scan by its new name");
+    await change("Cell.ScanE", { alias: "ScanR" });
+    await eventually(() => hmi.page(pageId).children.find((e) => e.id === scene)?.children.find((e) => e.id === points)?.props.points === "Cell.ScanR.points", "the page to read the scan by its new name");
     await draws("by its new name");
 
     // without the import the scene draws no points, and with it again draws them
-    await hmi.unimport("ScanR");
+    await hmi.unimport("Cell.ScanR");
     await d.shows(el, 0.5, 0.5, (c) => !red(c), "the scene without points once the import went");
-    await hmi.import("ScanR", "Cell/Scan");
+    await hmi.import("Cell.ScanR", "Cell/Scan");
     await draws("once it was imported again");
     check(lapses() === before, `the backend waited on word of a value taken ${lapses() - before} times`);
   } finally {

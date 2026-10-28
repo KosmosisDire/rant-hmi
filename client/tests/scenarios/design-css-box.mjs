@@ -28,10 +28,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await style("boxShadow")).includes("0px 2px 8px"), async () => `the shadow drawn in units, it is ${await style("boxShadow")}`);
 
   // an expression stays one, plain CSS becomes text, and a typo stays as typed with a note
-  await d.css("box-shadow: 0 0.2 0.8 $accent\nmargin: $space 0\noutline-offset: 0.2\ncursor: pointer\noutline: Running ?");
+  await d.css("box-shadow: 0 0.2 0.8 $accent\nmargin: $space 0\noutline-offset: 0.2\ncursor: pointer\noutline: Line.Running ?");
   await eventually(() => props(hmi, pageId, card).cursor === '"pointer"', "plain CSS kept as text");
   const now = props(hmi, pageId, card);
-  check(now.margin === "`${$space} 0`" && now["outline-offset"] === "0.2" && now.outline === "Running ?", `the values kept are ${JSON.stringify(now)}`);
+  check(now.margin === "`${$space} 0`" && now["outline-offset"] === "0.2" && now.outline === "Line.Running ?", `the values kept are ${JSON.stringify(now)}`);
   await eventually(async () => (await style("marginTop")) === "8px" && (await style("outlineOffset")) === "2px", "the token's number drawn in units");
   await right.locator(".field-note", { hasText: "outline:" }).waitFor();
   await d.css("");

@@ -5,11 +5,11 @@
 import { Hmi } from "../hmi.mjs";
 
 export default async function ({ hmi, sys, check, eventually }) {
-  await hmi.import("AgainScan", "Cell/Scan");
+  await hmi.import("Cell.AgainScan", "Cell/Scan");
   const screen = new Hmi(new WebSocket(sys.ws));
   let hello;
   screen.waiters.push((m) => (m.type === "hello" && (hello = m), false));
-  await screen.next((m) => m.type === "rules");
+  await screen.next((m) => m.type === "pages");
   /** A second way for the screen, keeping when each value came, never saying one was taken. */
   const second = () => {
     const ws = new WebSocket(`${sys.ws.replace(/\/ws$/, "")}/bulk?session=${hello.session}&key=${hello.key}`);

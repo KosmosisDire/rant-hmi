@@ -22,10 +22,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check((await drawn(".artboard").getAttribute("viewBox")) === "0 0 100 100", "the markup's own root was not the one drawn");
 
   // a value the code reads redraws it
-  await write(ticks("Math.round(Speed * 10)", "#4a8fd6"));
-  hmi.set("Speed", 0.5);
+  await write(ticks("Math.round(Line.Speed * 10)", "#4a8fd6"));
+  hmi.set("Line.Speed", 0.5);
   await eventually(async () => (await lines()) === 5, "five ticks at Speed 0.5");
-  hmi.set("Speed", 0.8);
+  hmi.set("Line.Speed", 0.8);
   await eventually(async () => (await lines()) === 8, "eight ticks at Speed 0.8");
 
   // a file pastes in as it is, its size made a view box so it scales to the box

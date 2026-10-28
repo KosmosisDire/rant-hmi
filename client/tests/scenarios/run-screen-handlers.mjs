@@ -11,19 +11,19 @@ import net from "node:net";
 const DELAY = 1000;
 
 export default async function ({ page, hmi, check, eventually, sys }) {
-  hmi.send({ type: "set_variable", name: "hereX", variable: { name: "hereX", start: 0, per: "screen" } });
-  hmi.send({ type: "set_variable", name: "thereX", variable: { name: "thereX", start: 0, per: "hmi" } });
-  hmi.send({ type: "set_variable", name: "hereSeen", variable: { name: "hereSeen", start: -1, per: "hmi" } });
+  hmi.setVariable("Hmi.hereX", 0, "screen");
+  hmi.setVariable("Hmi.thereX", 0);
+  hmi.setVariable("Hmi.hereSeen", -1);
   const pageId = await hmi.addPage("Here View");
-  const near = await hmi.addElement(pageId, "div", { name: "Near", x: "4 + hereX", y: "4", w: "10", h: "10", background: "#4a8fd6" });
-  await hmi.setHandler(pageId, near, "drag", "hereX = hereX + p.dx;");
-  const far = await hmi.addElement(pageId, "div", { name: "Far", x: "4 + thereX", y: "20", w: "10", h: "10", background: "#e5484d" });
-  await hmi.setHandler(pageId, far, "drag", "thereX = thereX + p.dx;");
+  const near = await hmi.addElement(pageId, "div", { name: "Near", x: "4 + Hmi.hereX", y: "4", w: "10", h: "10", background: "#4a8fd6" });
+  await hmi.setHandler(pageId, near, "drag", "Hmi.hereX = Hmi.hereX + p.dx;");
+  const far = await hmi.addElement(pageId, "div", { name: "Far", x: "4 + Hmi.thereX", y: "20", w: "10", h: "10", background: "#e5484d" });
+  await hmi.setHandler(pageId, far, "drag", "Hmi.thereX = Hmi.thereX + p.dx;");
   // reading what the system holds of this screen's own, so it runs there
   const ask = await hmi.addElement(pageId, "div", { name: "Ask", x: "4", y: "36", w: "10", h: "6", background: "#30363d" });
-  await hmi.setHandler(pageId, ask, "tap", "hereSeen = hereX;");
+  await hmi.setHandler(pageId, ask, "tap", "Hmi.hereSeen = Hmi.hereX;");
   hmi.send({ type: "set_start", page: pageId });
-  await eventually(() => hmi.state.variables.some((v) => v.name === "hereSeen"), "the variables made");
+  await eventually(() => hmi.state.variables.some((v) => v.name === "Hmi.hereSeen"), "the variables made");
 
   const port = Number(new URL(sys.url).port);
   const links = new Set();
@@ -90,7 +90,7 @@ export default async function ({ page, hmi, check, eventually, sys }) {
     const a = await el(ask).boundingBox();
     await screen.mouse.click(a.x + a.width / 2, a.y + a.height / 2);
     const units = (await el(near).boundingBox()).width / 10;
-    await eventually(() => Math.abs(hmi.state.values.hereSeen?.value - 100 / units) < 1e-3, () => `the system to hold ${100 / units}, not ${hmi.state.values.hereSeen?.value}`, 5000);
+    await eventually(() => Math.abs(hmi.state.values["Hmi.hereSeen"]?.value - 100 / units) < 1e-3, () => `the system to hold ${100 / units}, not ${hmi.state.values["Hmi.hereSeen"]?.value}`, 5000);
 
     const there = await dragged(far);
     check(there.first !== null && there.first >= 2 * DELAY, `a view a handler on the system drags to wait for the round trip, but it moved after ${there.first} ms`);

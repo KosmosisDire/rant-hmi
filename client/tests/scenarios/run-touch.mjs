@@ -6,8 +6,8 @@
 export default async function ({ page, hmi, sys, check, eventually }) {
   const pageId = await hmi.addPage("Touch");
   const pad = await hmi.addElement(pageId, "div", { name: "pad", x: "4", y: "4", w: "24", h: "12", background: "#2a2f35" });
-  await hmi.setHandler(pageId, pad, "press", "Speed = 1.25;");
-  await hmi.setHandler(pageId, pad, "release", "Speed = 0;");
+  await hmi.setHandler(pageId, pad, "press", "Line.Speed = 1.25;");
+  await hmi.setHandler(pageId, pad, "release", "Line.Speed = 0;");
 
   // no right click anywhere reaches the browser's own menu
   const kept = await page.evaluate(() =>
@@ -48,13 +48,13 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   const button = touch.locator(`.run-layer:not([hidden]) .el[data-id="${pad}"]`);
   const b = await button.boundingBox();
   await finger("touchStart", b.x + b.width / 2, b.y + b.height / 2);
-  await eventually(() => hmi.state.values.Speed?.value === 1.25, "the press to set Speed");
+  await eventually(() => hmi.state.values["Line.Speed"]?.value === 1.25, "the press to set Speed");
   check(!(await longPress(button)), "a long press reached the browser's menu");
   await touch.waitForTimeout(800);
   check((await touch.locator(".popover.menu").count()) === 0, "a long press opened a menu");
-  check(hmi.state.values.Speed?.value === 1.25, "the press let go before the finger lifted");
+  check(hmi.state.values["Line.Speed"]?.value === 1.25, "the press let go before the finger lifted");
   await finger("touchEnd");
-  await eventually(() => hmi.state.values.Speed?.value === 0, "lifting the finger to release");
+  await eventually(() => hmi.state.values["Line.Speed"]?.value === 0, "lifting the finger to release");
   check((await button.evaluate((el) => getComputedStyle(el).filter)) === "none", "the button stayed lit as if hovered");
   const flash = await touch.evaluate(() => [...document.querySelectorAll("button, .el, .list-row")].map((el) => getComputedStyle(el).webkitTapHighlightColor).find((c) => c !== "rgba(0, 0, 0, 0)"));
   check(flash === undefined, `a tap flashes ${flash}`);

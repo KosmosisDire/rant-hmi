@@ -2,10 +2,10 @@
 // runs are skipped, but where the drag ends always lands.
 
 export default async function ({ page, hmi, d, eventually }) {
-  hmi.send({ type: "set_variable", name: "slowX", variable: { name: "slowX", start: 0, per: "hmi" } });
+  hmi.setVariable("Hmi.slowX", 0);
   const pageId = await hmi.addPage("Slow strip");
   const strip = await hmi.addElement(pageId, "div", { name: "Strip", x: "4", y: "4", w: "64", h: "8", background: "#2a2f35" });
-  await hmi.setHandler(pageId, strip, "drag", "await sleep(150);\nslowX = Math.round(p.x * 100);");
+  await hmi.setHandler(pageId, strip, "drag", "await sleep(150);\nHmi.slowX = Math.round(p.x * 100);");
   await d.openPage("Slow strip");
   await d.tab("Run");
   const el = page.locator(`.run-layer:not([hidden]) .el[data-id="${strip}"]`);
@@ -17,5 +17,5 @@ export default async function ({ page, hmi, d, eventually }) {
     await page.waitForTimeout(20);
   }
   await page.mouse.up();
-  await eventually(() => hmi.state.values.slowX?.value === 70, () => `where the drag ended to land, slowX is ${hmi.state.values.slowX?.value}`, 3000);
+  await eventually(() => hmi.state.values["Hmi.slowX"]?.value === 70, () => `where the drag ended to land, slowX is ${hmi.state.values["Hmi.slowX"]?.value}`, 3000);
 }

@@ -1,5 +1,5 @@
-// A new user types expressions with the list's help: names, fields, a number's format, picked
-// by keys or a click. Enter with nothing picked keeps the text, and handlers offer send.
+// A new user types expressions with the list's help: objects, their members, fields, a number's
+// format, picked by keys or a click. Enter with nothing picked keeps the text, and handlers offer send.
 
 import { props } from "../designer.mjs";
 
@@ -21,9 +21,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await text.click();
   check((await list.count()) === 0, "a filled field opened the list on focus");
   await text.fill("");
-  await page.keyboard.type("Jo");
-  await eventually(async () => (await names()).includes("Joints"), "Joints in the list");
+  await page.keyboard.type("Rob");
+  await eventually(async () => (await names()).includes("Robot"), "Robot in the list");
   check((await page.locator(".suggest-row.chosen").count()) === 0, "the list picked a row by itself");
+  await pick("Robot");
+  await page.keyboard.type(".");
+  await eventually(async () => (await names()).includes("Joints"), "Robot's members in the list");
   await pick("Joints");
   await page.keyboard.type(".");
   await eventually(async () => (await names()).join() === "position,velocity,effort", "the fields of Joints in schema order");
@@ -33,7 +36,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await names()).includes("toFixed"), "a number's format");
   await pick("toFixed");
   await page.keyboard.press("Enter");
-  await eventually(() => props(hmi, pageId, id).text === "Joints.position[0].toFixed(1)", "the expression built from picks");
+  await eventually(() => props(hmi, pageId, id).text === "Robot.Joints.position[0].toFixed(1)", "the expression built from picks");
   await eventually(async () => /^-?\d+\.\d$/.test(await d.el(id).textContent()), "the live joint on the canvas");
 
   await text.click();
@@ -44,25 +47,28 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addEvent("tap");
   const code = d.code("tap");
   await code.click();
-  await page.keyboard.type("Sp");
-  await page.locator(".suggest-row", { has: page.locator(".suggest-name", { hasText: /^Speed$/ }) }).click();
+  const click = (name) => page.locator(".suggest-row", { has: page.locator(".suggest-name", { hasText: new RegExp(`^${name}$`) }) }).click();
+  await page.keyboard.type("Li");
+  await click("Line");
+  await page.keyboard.type(".Sp");
+  await click("Speed");
   await page.keyboard.type(" = 1;");
   await page.keyboard.press("Control+Enter");
-  await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code === "Speed = 1;", "the handler typed with a click on the list");
+  await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code === "Line.Speed = 1;", "the handler typed with a click on the list");
 
   // a handler sends on a topic imported to write, which a property never offers
-  await hmi.import("JogOut", "Line1/Jog", "write");
+  await hmi.import("Line.JogOut", "Line1/Jog", "write");
   await code.click();
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
-  await page.keyboard.type("JogO");
+  await page.keyboard.type("Line.JogO");
   await pick("JogOut");
   await page.keyboard.type(".");
   await eventually(async () => (await names())[0] === "send", "send on the topic");
   await page.keyboard.press("Escape");
   await text.click();
   await text.fill("");
-  await page.keyboard.type("JogO");
+  await page.keyboard.type("Line.JogO");
   await eventually(async () => (await names()).includes("JogOut"), "the topic to read in a property");
   await page.keyboard.press("Escape");
 }

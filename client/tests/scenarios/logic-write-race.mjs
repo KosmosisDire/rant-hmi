@@ -3,17 +3,17 @@
 // earlier one, though the mesh has not echoed that back yet, so neither undoes the other.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await hmi.import("SafetyCmd", "Cage/Plc/gSafetyCmd", "write");
-  const cmd = () => hmi.state.values.SafetyCmd?.value;
+  await hmi.import("Cage.SafetyCmd", "Cage/Plc/gSafetyCmd", "write");
+  const cmd = () => hmi.state.values["Cage.SafetyCmd"]?.value;
   await eventually(() => cmd() !== undefined && cmd() !== null, "the safety command on the mesh");
-  hmi.set("SafetyCmd", { ...cmd(), stop: false, reset: false, slow_mode: false, chirp: false });
+  hmi.set("Cage.SafetyCmd", { ...cmd(), stop: false, reset: false, slow_mode: false, chirp: false });
   await eventually(() => cmd()?.slow_mode === false && cmd()?.stop === false, "the safety command at rest");
 
   const pageId = await hmi.addPage("Write race");
   const pulse = await hmi.addElement(pageId, "div", { name: "Pulse", x: "4", y: "4", w: "20", h: "20", background: "#4a8fd6" });
   const flip = await hmi.addElement(pageId, "div", { name: "Flip", x: "40", y: "4", w: "20", h: "20", background: "#d64a4a" });
-  await hmi.setHandler(pageId, pulse, "tap", "SafetyCmd.reset = true;\nawait sleep(100);\nSafetyCmd.reset = false;");
-  await hmi.setHandler(pageId, flip, "tap", "SafetyCmd.slow_mode = !SafetyCmd.slow_mode;");
+  await hmi.setHandler(pageId, pulse, "tap", "Cage.SafetyCmd.reset = true;\nawait sleep(100);\nCage.SafetyCmd.reset = false;");
+  await hmi.setHandler(pageId, flip, "tap", "Cage.SafetyCmd.slow_mode = !Cage.SafetyCmd.slow_mode;");
   await d.openPage("Write race");
   await d.tab("Run");
   const middle = async (id) => {
@@ -32,6 +32,6 @@ export default async function ({ page, hmi, d, check, eventually }) {
     await page.waitForTimeout(150);
     check(cmd()?.slow_mode === slow, `round ${round + 1}: the pulse's last write undid the flip`);
   }
-  hmi.set("SafetyCmd", { ...cmd(), reset: false, slow_mode: false });
+  hmi.set("Cage.SafetyCmd", { ...cmd(), reset: false, slow_mode: false });
   await eventually(() => cmd()?.slow_mode === false, "the safety command back at rest");
 }

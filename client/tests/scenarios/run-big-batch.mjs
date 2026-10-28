@@ -8,13 +8,13 @@ import { between } from "../links.mjs";
 
 export default async function ({ page, hmi, sys, check, eventually }) {
   const names = ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8"];
-  for (const name of ["pad", ...names]) hmi.send({ type: "set_variable", name, variable: { name, start: "", per: "hmi" } });
-  await hmi.set("pad", "x".repeat(15000));
-  await hmi.import("BatchScan", "Cell/Scan");
+  for (const name of ["pad", ...names]) hmi.setVariable(`Hmi.${name}`, "");
+  await hmi.set("Hmi.pad", "x".repeat(15000));
+  await hmi.import("Cell.BatchScan", "Cell/Scan");
   // eight values of 15 KB change together, a batch of 120 KB in eight pieces
-  await hmi.setRule("", { id: "", name: "Big batch", when: { kind: "every", ms: 50 }, code: names.map((n) => `${n} = pad + String(time.now);`).join("\n") });
+  await hmi.setRule("Hmi", "", { id: "", name: "Big batch", when: { kind: "every", ms: 50 }, code: names.map((n) => `${n} = pad + String(time.now);`).join("\n") });
   const pageId = await hmi.addPage("Big batch");
-  const shown = await hmi.addElement(pageId, "span", { name: "Shown", x: "4", y: "4", w: "60", h: "4", text: '[link.path, b1.slice(15000), b8.slice(15000), BatchScan.points.length].join(" ")', color: "#e4e6e8" });
+  const shown = await hmi.addElement(pageId, "span", { name: "Shown", x: "4", y: "4", w: "60", h: "4", text: '[link.path, Hmi.b1.slice(15000), Hmi.b8.slice(15000), Cell.BatchScan.points.length].join(" ")', color: "#e4e6e8" });
   const started = hmi.next((m) => m.type === "project");
   hmi.send({ type: "set_start", page: pageId });
   await started;
@@ -35,5 +35,5 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     await far.close();
     way.close();
   }
-  await hmi.setRule(hmi.state.rules.find((r) => r.name === "Big batch").id, null);
+  await hmi.setRule("Hmi", hmi.state.rules.find((r) => r.name === "Big batch").id, null);
 }

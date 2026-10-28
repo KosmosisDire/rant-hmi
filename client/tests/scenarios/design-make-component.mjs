@@ -4,10 +4,10 @@
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Card page");
   const card = await hmi.addElement(pageId, "div", { name: "Speed card", x: "88", y: "88", w: "264", h: "132", background: "#1e2125" });
-  await hmi.addElement(pageId, "span", { name: "Value", x: "11", y: "11", w: "242", h: "33", text: 'Speed.toFixed(1) + " m/s"', color: "#e4e6e8" }, card);
-  await hmi.addElement(pageId, "input", { name: "Entry", x: "11", y: "55", w: "110", h: "33", value: "Speed" }, card);
-  const button = await hmi.addElement(pageId, "div", { name: "Button", x: "132", y: "55", w: "121", h: "66", background: 'Running ? "#2e7d32" : "#c62828"' }, card);
-  await hmi.setHandler(pageId, button, "tap", "Running = !Running;");
+  await hmi.addElement(pageId, "span", { name: "Value", x: "11", y: "11", w: "242", h: "33", text: 'Line.Speed.toFixed(1) + " m/s"', color: "#e4e6e8" }, card);
+  await hmi.addElement(pageId, "input", { name: "Entry", x: "11", y: "55", w: "110", h: "33", value: "Line.Speed" }, card);
+  const button = await hmi.addElement(pageId, "div", { name: "Button", x: "132", y: "55", w: "121", h: "66", background: 'Line.Running ? "#2e7d32" : "#c62828"' }, card);
+  await hmi.setHandler(pageId, button, "tap", "Line.Running = !Line.Running;");
 
   await d.openPage("Card page");
   await d.layers();
@@ -25,14 +25,14 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await eventually(() => hmi.page(pageId).children[0]?.tag === "use", "the instance in the card's place");
   const instance = hmi.page(pageId).children[0];
-  check(instance.props.x === "88" && instance.props.speed === "Speed" && instance.props.running === "Running", "the instance does not bind what the card read");
-  check(instance.handlers[0]?.code === "Running = !Running;", "the instance lost the button's handler");
+  check(instance.props.x === "88" && instance.props.speed === "Line.Speed" && instance.props.running === "Line.Running", "the instance does not bind what the card read");
+  check(instance.handlers[0]?.code === "Line.Running = !Line.Running;", "the instance lost the button's handler");
 
-  hmi.set("Running", true);
-  await eventually(() => hmi.state.values.Running?.value === true, "the line running");
+  hmi.set("Line.Running", true);
+  await eventually(() => hmi.state.values["Line.Running"]?.value === true, "the line running");
   await d.tab("Run");
   await page.locator(`.run-layer:not([hidden]) .el[data-id="${instance.id}"] .el[data-name="Button"]`).click();
-  await eventually(() => hmi.state.values.Running?.value === false, "the component's button to stop the line");
+  await eventually(() => hmi.state.values["Line.Running"]?.value === false, "the component's button to stop the line");
   await d.tab("Design");
 
   await page.keyboard.press("Control+z");

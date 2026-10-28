@@ -14,10 +14,10 @@ import { join } from "node:path";
 import { driveApp, openApp, ROOT } from "../harness.mjs";
 
 const PAGE = `<page name="main" size="64x36">
-  <span id="e1" name="reading" x="1" y="1" w="30" h="4">Speed.toFixed(2)</span>
+  <span id="e1" name="reading" x="1" y="1" w="30" h="4">Line.Speed.toFixed(2)</span>
   <div id="e2" name="slower" x="1" y="6" w="20" h="6" style="background: $panel">
     <on event="tap">
-      Speed = 0.25;
+      Line.Speed = 0.25;
     </on>
   </div>
 </page>
@@ -45,7 +45,7 @@ export default async function ({ sys, check, eventually }) {
   mkdirSync(join(project, "data"), { recursive: true });
   mkdirSync(join(project, "pages"));
   writeFileSync(join(project, "hmi.toml"), 'name = "App line"\nstart = "main"\nice = []\n');
-  cpSync(join(ROOT, "client", "tests", "project", "data", "imports.toml"), join(project, "data", "imports.toml"));
+  cpSync(join(ROOT, "client", "tests", "project", "objects"), join(project, "objects"), { recursive: true });
   cpSync(join(ROOT, "server", "library", "theme.toml"), join(project, "data", "theme.toml"));
   writeFileSync(join(project, "pages", "main.html"), PAGE);
   try {

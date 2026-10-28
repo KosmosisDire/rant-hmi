@@ -12,7 +12,7 @@ export const fresh = true;
 const red = ([r, g, b]) => r > 120 && g < 60 && b < 60;
 
 export default async function ({ page, hmi, sys, d, check, eventually }) {
-  await hmi.import("ScanT", "Cell/Scan");
+  await hmi.import("Cell.ScanT", "Cell/Scan");
   const home = await hmi.addPage("TurnsHome");
   const scanned = await hmi.addPage("TurnsScan");
   const button = async (pageId, name, code) => {
@@ -24,7 +24,7 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   const back = await button(scanned, "Back", "await open(Pages.TurnsHome);");
   // seen from above, the floor filling the middle
   const scene = await hmi.addElement(scanned, "scene", { name: "cell", x: "2", y: "2", w: "60", h: "40", yaw: "-PI / 2", pitch: "1.5", distance: "4" });
-  await hmi.addElement(scanned, "points", { name: "scan", points: "ScanT.points", size: "0.05", color: '"#ff0000"' }, scene);
+  await hmi.addElement(scanned, "points", { name: "scan", points: "Cell.ScanT.points", size: "0.05", color: '"#ff0000"' }, scene);
   const started = hmi.next((m) => m.type === "project");
   hmi.send({ type: "set_start", page: home });
   await started;
@@ -97,7 +97,7 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
       await page.waitForTimeout(Math.random() * 200);
     }
     await d.shows(d.el(scene), 0.5, 0.5, red, "the scan drawn in the Design tab after its pages switched");
-    for (const tab of ["Run", "Data", "Logic", "Design"]) {
+    for (const tab of ["Run", "Objects", "Design"]) {
       await d.tab(tab);
       await page.waitForTimeout(300);
     }

@@ -46,10 +46,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addShape("line", { Name: "pointer", "From x": "6", "From y": "4.5", "To x": "6", "To y": "2.5", Stroke: "pointerColour", Thickness: "0.5", Transform: "`rotate(${-135 + (value - min) / (max - min) * 270} 6 6)`" });
 
   await d.addPage("Dials");
-  const gauge = await d.place("Gauge", { x: "4", y: "4", w: "16", h: "16", value: "Speed", max: "2", unit: '"m/s"' });
-  const knob = await d.place("Knob", { x: "24", y: "6", w: "12", h: "12", value: "Speed", max: "2" });
+  const gauge = await d.place("Gauge", { x: "4", y: "4", w: "16", h: "16", value: "Line.Speed", max: "2", unit: '"m/s"' });
+  const knob = await d.place("Knob", { x: "24", y: "6", w: "12", h: "12", value: "Line.Speed", max: "2" });
 
-  await hmi.set("Speed", 1);
+  await hmi.set("Line.Speed", 1);
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   await eventually(async () => (await inst(gauge).locator("text").first().textContent()) === "1.0", "the gauge to read 1.0");
@@ -65,7 +65,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.mouse.move(cx + 50, cy, { steps: 5 });
   await page.mouse.up();
   // straight right is 90 degrees, so (90 + 135) / 270 of the way to 2
-  await eventually(() => Math.abs((hmi.state.values.Speed?.value ?? 0) - (225 / 270) * 2) < 0.02, "the knob to set Speed");
+  await eventually(() => Math.abs((hmi.state.values["Line.Speed"]?.value ?? 0) - (225 / 270) * 2) < 0.02, "the knob to set Speed");
   await eventually(async () => (await inst(gauge).locator("text").first().textContent()) === "1.7", "the gauge to follow the knob");
   // past its alarm share the gauge's level turns red
   const level = () => inst(gauge).locator('[data-name="level"]').evaluate((e) => getComputedStyle(e).stroke);

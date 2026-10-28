@@ -146,7 +146,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
 
   // another tab puts the drawer away
   await toggle.first().tap();
-  await screen.locator(".tab", { hasText: "Logic" }).tap();
+  await screen.locator(".tab", { hasText: "Objects" }).tap();
   await eventually(async () => (await screen.locator(".app.drawer-open").count()) === 0, "another tab to put the drawer away");
   await phone.close();
 }

@@ -1,19 +1,19 @@
-// A user reads code in colour: an import in its kind's colour, the HMI's own names blue, text
+// A user reads code in colour: a mesh member in its kind's colour, the HMI's own names blue, text
 // green and comments faint, the colours follow a long line as it scrolls, and a template's code
 // reads as code.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  hmi.send({ type: "set_variable", name: "presses", variable: { name: "presses", start: 0, per: "hmi" } });
-  hmi.send({ type: "set_computed", name: "step", computed: { name: "step", get: "1" } });
+  hmi.setVariable("Hmi.presses", 0);
+  hmi.setComputed("Hmi.step", { get: "1" });
   const pageId = await hmi.addPage("Colours");
-  const id = await hmi.addElement(pageId, "span", { name: "Speed", x: "44", y: "44", w: "264", h: "44", text: 'Running ? Speed.toFixed(1) + " m/s, going steady on the line" : "Stopped"' });
-  await hmi.setHandler(pageId, id, "tap", "// count\npresses = presses + step;");
+  const id = await hmi.addElement(pageId, "span", { name: "Speed", x: "44", y: "44", w: "264", h: "44", text: 'Line.Running ? Line.Speed.toFixed(1) + " m/s, going steady on the line" : "Stopped"' });
+  await hmi.setHandler(pageId, id, "tap", "// count\nHmi.presses = Hmi.presses + Hmi.step;");
   await d.openPage("Colours");
   await d.el(id).click();
 
   const runs = (sel) => page.locator(`.screen:not([hidden]) .sidebar.right ${sel} .hl span`).evaluateAll((s) => s.map((e) => `${e.className}:${e.textContent}`));
   const text = await runs(".field:has(label:text-is('Text'))");
-  check(text.includes("hl-variable:Running") && text.includes("hl-variable:Speed"), `the imports are not in their colour: ${text}`);
+  check(text.includes("hl-local:Line") && text.includes("hl-variable:Running") && text.includes("hl-variable:Speed"), `the members are not in their colour: ${text}`);
   check(text.includes('hl-str:" m/s, going steady on the line"'), "the text is not green");
   check(!text.some((r) => r.endsWith(":toFixed")), "a field after a dot took a name's colour");
   const code = await runs(".event");
@@ -30,7 +30,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Escape");
 
   // a template's code is coloured as code, a backtick inside its ${ } included
-  await d.setField("Text", '`${Running ? `on ${Speed}` : "off"} m/s`');
+  await d.setField("Text", '`${Line.Running ? `on ${Line.Speed}` : "off"} m/s`');
   let t = [];
   const coloured = async () => {
     t = await runs(".field:has(label:text-is('Text'))");

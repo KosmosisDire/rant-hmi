@@ -13,7 +13,7 @@ export default async function ({ page, d, check, eventually }) {
     await page.mouse.up();
   };
 
-  await d.tab("Data");
+  await d.tab("Objects");
   const start = await width("left");
   await drag("left", 100);
   check((await width("left")) === start + 100, `the left sidebar is ${await width("left")} wide, not ${start + 100}`);
@@ -26,7 +26,7 @@ export default async function ({ page, d, check, eventually }) {
 
   await page.reload();
   await page.locator(".statusbar", { hasText: "System" }).waitFor();
-  await d.tab("Logic");
+  await d.tab("Objects");
   check((await width("left")) === start + 100 && (await width("right")) === right + 60, "the widths did not last a reload");
 
   await drag("left", -1000);

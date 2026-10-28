@@ -6,19 +6,19 @@ import { countBig } from "../links.mjs";
 
 export default async function ({ page, hmi, d, sys, check, eventually }) {
   check(sys.transcoder, "rant-transcoder is not built: build transcoder-rant or set HMI_TRANSCODER");
-  for (const [alias, entity] of [["Camera", "Cell/Camera"], ["LabelCam", "Line1/LabelCam"]]) {
+  for (const [alias, entity] of [["Cell.Camera", "Cell/Camera"], ["Line.LabelCam", "Line1/LabelCam"]]) {
     if (!hmi.state.imports.some((i) => i.alias === alias)) await hmi.import(alias, entity);
   }
-  hmi.set("Running", true);
+  hmi.set("Line.Running", true);
 
   await d.addComponent("Feed", 32, 24);
   await d.addInput("camera", "null");
   await d.add("media", { Name: "view", x: "0", y: "0", w: "32", h: "24", Source: "camera" });
 
   await d.addPage("Camera pick");
-  const picked = await d.add("media", { Name: "picked", x: "4", y: "4", w: "32", h: "24", Source: "Running ? Camera : LabelCam" });
+  const picked = await d.add("media", { Name: "picked", x: "4", y: "4", w: "32", h: "24", Source: "Line.Running ? Cell.Camera : Line.LabelCam" });
   await d.deselect();
-  const feed = await d.place("Feed", { x: "40", y: "4", camera: "Camera" });
+  const feed = await d.place("Feed", { x: "40", y: "4", camera: "Cell.Camera" });
   const pageId = hmi.state.pages.find((p) => p.name === "Camera pick").id;
 
   await d.tab("Run");
@@ -27,7 +27,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   // the transcoder probes a new camera for 3 s, and the first frame waits for a keyframe
   await eventually(async () => (await width(picked)) === 160, "Camera's video, as Running is true", 20000);
   await eventually(async () => (await width(feed)) === 160, "Camera's video through the component's input", 20000);
-  hmi.set("Running", false);
+  hmi.set("Line.Running", false);
   await eventually(async () => (await width(picked)) === 960, "LabelCam's video once Running is false", 20000);
 
   // an operator on the page plays both cameras, which never needs their pictures

@@ -37,10 +37,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await d.field("y").inputValue()) === "44", "the field to show y as it was");
 
   // an expression is never scrubbed over
-  await d.setField("w", "Speed * 100");
+  await d.setField("w", "Line.Speed * 100");
   await scrub("w", 40);
   await page.waitForTimeout(200);
-  check(now().w === "Speed * 100", `a drag wrote over an expression: ${now().w}`);
+  check(now().w === "Line.Speed * 100", `a drag wrote over an expression: ${now().w}`);
   await d.setField("w", "220");
 
   // a colour from the picker, then a theme token
@@ -59,8 +59,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.locator('button[title="Edit the border"]').click();
   await d.setField("Width", "2");
   await eventually(() => now()["border-width"] === "2" && now()["border-style"] === '"solid"', "a width to bring a solid style");
-  await d.setField("Colour", 'Running ? "#2e7d32" : "#c62828"');
-  await eventually(() => now()["border-color"] === 'Running ? "#2e7d32" : "#c62828"', "the colour alone to be bound");
+  await d.setField("Colour", 'Line.Running ? "#2e7d32" : "#c62828"');
+  await eventually(() => now()["border-color"] === 'Line.Running ? "#2e7d32" : "#c62828"', "the colour alone to be bound");
   check(now()["border-width"] === "2", "binding the colour changed the width");
   const drawn = await d.el(card).evaluate((el) => getComputedStyle(el).borderTopStyle + " " + getComputedStyle(el).borderTopWidth);
   check(drawn === "solid 20px", `the border is drawn as ${drawn}`);

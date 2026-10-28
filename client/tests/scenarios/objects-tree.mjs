@@ -2,7 +2,7 @@
 // by its caret, with what it holds beneath it, never a folder of its own beside it.
 
 export default async function ({ page, d, check, eventually }) {
-  await d.tab("Data");
+  await d.tab("Objects");
   const left = page.locator(".screen:not([hidden]) .sidebar.left");
   await left.locator(".list-row.branch", { hasText: /^Cell\/$/ }).click();
   const camera = left.locator('.list-row[title="Cell/Camera"]');
