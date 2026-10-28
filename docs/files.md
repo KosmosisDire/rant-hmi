@@ -242,7 +242,7 @@ npx electron . http://host:6739
   `key`, `code`, `shift`, `ctrl` and `alt`, and a keyrepeat runs `every="ms"`, 100.
 - `buttondown` and `buttonup` hear a gamepad's buttons the same way. `button="south"` takes
   one by where it sits, whatever its maker prints on it, as
-  [reference.md](reference.md#the-button-filter) lists them. `pad="1"` takes only the second
+  [reference.md](reference.md#the-button-filter-of-a-gamepad) lists them. `pad="1"` takes only the second
   pad. `p` holds `button` and `pad`.
 - `axes` hears the sticks and triggers once a frame while they move, then once at rest with
   zeros. `p` holds `lx`, `ly`, `rx`, `ry` from -1 to 1, each y up, `lt` and `rt` from 0 to 1,
@@ -318,4 +318,4 @@ An agent reads the same list three ways:
   since 1970.
 - The log names each new one a screen finds, with its stack, as `screen 3 found a page's problem
   on main e4: width: Speedd names no mesh import, variable or record`.
-- `Hmi/Problems` on the mesh ([status.md](status.md#hmiproblems)).
+- `Hmi/Problems` on the mesh ([status.md](status.md#hmi-problems)).
