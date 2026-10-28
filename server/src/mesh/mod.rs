@@ -125,9 +125,9 @@ impl Mesh {
         }
         let node = Node::new(&options.name, o)?;
         let own = Own {
-            clients: node.variable_definition(status::CLIENTS, VariableOptions::new().read_only(true))?,
-            status: node.variable_definition(status::STATUS, VariableOptions::new().read_only(true))?,
-            problems: node.variable_definition(status::PROBLEMS, VariableOptions::new().read_only(true))?,
+            clients: node.variable_definition(&absolute(status::CLIENTS), VariableOptions::new().read_only(true))?,
+            status: node.variable_definition(&absolute(status::STATUS), VariableOptions::new().read_only(true))?,
+            problems: node.variable_definition(&absolute(status::PROBLEMS), VariableOptions::new().read_only(true))?,
             values: HashMap::new(),
         };
         Ok(Mesh { node, deliveries, attached: HashMap::new(), frames, videos: HashMap::new(), own, keeps: HashMap::new(), count: Arc::default() })
@@ -328,9 +328,9 @@ impl Mesh {
                     Some(hz) => qos.clone().reliable(false).max_rate_hz(hz),
                     None => qos.clone(),
                 };
-                let sub = self.node.subscriber::<Bytes>(&import.entity, read, move |m| deliver(&m));
+                let sub = self.node.subscriber::<Bytes>(&absolute(&import.entity), read, move |m| deliver(&m));
                 let publisher = match import.intent {
-                    Intent::Write => Some(self.node.publisher::<Bytes>(&import.entity, qos).map_err(|e| e.to_string())?),
+                    Intent::Write => Some(self.node.publisher::<Bytes>(&absolute(&import.entity), qos).map_err(|e| e.to_string())?),
                     Intent::Read => None,
                 };
                 Handle::Topic { _subscription: sub.map_err(|e| e.to_string())?, publisher }
@@ -338,7 +338,7 @@ impl Mesh {
             Kind::Variable => {
                 let var = self
                     .node
-                    .remote_variable::<Bytes>(&import.entity, VariableOptions::new().schema(typed()?))
+                    .remote_variable::<Bytes>(&absolute(&import.entity), VariableOptions::new().schema(typed()?))
                     .map_err(|e| e.to_string())?;
                 var.on_change(move |u| deliver(&u.into_inner())).map_err(|e| e.to_string())?;
                 Handle::Variable(var)
@@ -351,7 +351,7 @@ impl Mesh {
                 if let Some(answer) = &entity.response_schema {
                     o = o.response_schema(answer);
                 }
-                let remote = self.node.remote_function::<Bytes, Bytes>(&import.entity, o).map_err(|e| e.to_string())?;
+                let remote = self.node.remote_function::<Bytes, Bytes>(&absolute(&import.entity), o).map_err(|e| e.to_string())?;
                 Handle::Function { remote, answer: reading(&entity.response_schema) }
             }
             Kind::Task => {
@@ -365,7 +365,7 @@ impl Mesh {
                 if let Some(answer) = &entity.response_schema {
                     o = o.response_schema(answer);
                 }
-                let remote = self.node.remote_task::<Bytes, Bytes, Bytes>(&import.entity, o).map_err(|e| e.to_string())?;
+                let remote = self.node.remote_task::<Bytes, Bytes, Bytes>(&absolute(&import.entity), o).map_err(|e| e.to_string())?;
                 Handle::Task { remote, progress: reading(&entity.progress_schema), answer: reading(&entity.response_schema), running: Arc::default() }
             }
         };
@@ -387,7 +387,7 @@ impl Mesh {
         }
         self.videos.remove(&import.alias);
         let (alias, tx) = (import.alias.clone(), self.frames.clone());
-        let sub = self.node.subscriber::<VideoFrame>(&source.name, Qos::new().reliable(source.reliable), move |m| {
+        let sub = self.node.subscriber::<VideoFrame>(&absolute(&source.name), Qos::new().reliable(source.reliable), move |m| {
             if m.codec == VideoCodec::H264 {
                 let f = m.into_inner();
                 let _ = tx.send(Frame { alias: alias.clone(), keyframe: f.keyframe, pts: f.pts.us, data: f.data.into(), at: Instant::now() });
@@ -531,6 +531,12 @@ fn status_word(s: CallStatus) -> &'static str {
         CallStatus::NoProvider => "no_provider",
         _ => "unknown",
     }
+}
+
+/// A mesh name as the mesh shows it. The leading `/` keeps Rant from putting the prefix a
+/// launcher gave the node, such as a workspace's, in front of it.
+fn absolute(name: &str) -> String {
+    format!("/{name}")
 }
 
 fn entity_kind(kind: Kind) -> EntityKind {
