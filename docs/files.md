@@ -6,18 +6,59 @@ change reaches every screen, and a file with a mistake leaves the last good one 
 
 ```
 hmi.toml                 its name, the page screens open on, and its WebRTC servers
-data/imports.toml        the mesh entities it uses, each under an alias
-data/variables.toml      its own state
-data/computed.toml       values worked out from others
-data/records.toml        a value's history
+objects/<name>.html      an object: what it uses on the mesh, its state and its logic
 data/theme.toml          design tokens, read as $name
 pages/<name>.html        a page
 components/<name>.html   a component
-logic/handlers.html      handlers that belong to no screen
 files/                   models, pictures and anything else a page loads
 ```
 
-## Data
+## Objects
+
+One object per thing the HMI controls, each in its own file:
+
+```html
+<object name="Line" mesh="Line1" note="The packing line">
+  <variable name="Speed" entity="Speed" intent="write"/>
+  <topic name="Lidar" entity="/Lab/Lidar" rate="5"/>
+  <function name="Reset" entity="Reset"/>
+  <var name="mode" start='"Auto"' per="hmi"/>
+  <var name="target" start="1" local="true"/>
+  <computed name="speedPercent" get="Speed * 100" target="Speed" set="v / 100" unit="%"/>
+  <record name="speedHistory" source="Speed" every="100" keep="600"/>
+  <fn name="restart" takes="speed">
+    await Reset();
+    Speed = speed;
+  </fn>
+  <on id="h1" name="Too fast" when="Speed > 1.5" for="2000">
+    notify("The line runs too fast");
+  </on>
+</object>
+```
+
+- A mesh member's entity counts from the object's `mesh`, or from the mesh's own root when it
+  starts with `/`. It is a `topic`, `variable`, `function` or `task`, read only unless
+  `intent="write"`. A topic it reads may take a `rate`.
+- Code outside the object reads `Line.Speed` and calls `await Line.restart(1)`. The object's
+  own code reads its members bare.
+- `local="true"` keeps a member for its object's own code. Pages and other objects read the
+  rest, and a page never sets a local one.
+- A `<var>` starts from JSON. Each screen keeps its own, or with `per="hmi"` every screen
+  shares one.
+- A `<record>` samples its `source` every so many ms and keeps each sample `keep` seconds,
+  read as a list of `{ t, v }`, oldest first.
+- An `<fn>` runs on the system when called and gives back what it returns.
+- An `<on>` is logic, as [reference.md](reference.md#logic) lists.
+- Mesh members are named in PascalCase, the rest in camelCase, objects in PascalCase.
+- Every project has `Hmi`, which never goes. Only it holds logic on the HMI starting or a
+  screen coming or going, and it holds what is about the HMI as a whole.
+
+Code sets a member by assignment (`Line.Speed = 0.5`), calls a function with
+`await Line.Reset()` and publishes on a topic with `Line.Jog.send({ x: 1, y: 0 })`. A task is
+called as a function is, with a last function for each progress update:
+`await Line.Fill(5, (p) => { filled = p })`. `Line.Fill.cancel()` stops it.
+
+## Settings and theme
 
 ```toml
 # hmi.toml
@@ -30,49 +71,12 @@ urls = "turn:turn.example.com:3478"
 username = "user"
 credential = "secret"
 
-# data/imports.toml
-[[import]]
-alias = "Speed"
-entity = "Line1/Speed"
-kind = "variable"            # topic, variable, function or task
-intent = "write"             # or read
-[[import]]
-alias = "Lidar"
-entity = "Lab/Lidar"
-kind = "topic"
-intent = "read"
-rate = 5                     # at most 5 values a second, all it sends when left out
-
-# data/variables.toml
-[[variable]]
-name = "mode"
-start = "Auto"
-per = "hmi"                  # one for every screen, or "screen" for each its own
-
-# data/computed.toml
-[[computed]]
-name = "speedPercent"
-get = "Speed * 100"
-set = { target = "Speed", value = "v / 100" }
-
-# data/records.toml, read as a list of { t, v }
-[[record]]
-name = "speedHistory"
-source = "Speed"
-every_ms = 100
-keep_s = 600
-
 # data/theme.toml
 [[token]]
 name = "accent"
 dark = "#ff8800"
 light = "#0088ff"            # left out, worked out from dark
 ```
-
-Code sets a variable by assignment (`Speed = 0.5`), calls a function with `await Reset()` and
-publishes on a topic with `Jog.send({ x: 1, y: 0 })`. A task is called as a function is, with a
-last function for each progress update: `await Fill(5, (p) => { filled = p })`.
-`Fill.cancel()` stops it.
 
 ## Files a page loads
 
@@ -84,20 +88,20 @@ screen shows a changed file once it loads the page again.
 
 ## How screens get their values
 
-- A screen gets the values of only the imports and computed values its pages show. The
-  editor's Data tab gets every one as the HMI brings it, its big values 250 KB a second at most,
-  so they leave the link to the screens that show them.
-- The Data tab says which fields of an import come and what reads each. A field picked there
-  comes while it stays picked, though nothing else reads it.
+- A screen gets the values of only the members its pages show. The editor's Objects tab gets
+  every one as the HMI brings it, its big values 250 KB a second at most, so they leave the
+  link to the screens that show them.
+- The Objects tab says which fields of a mesh member come and what reads each. A field picked
+  there comes while it stays picked, though nothing else reads it.
 - A screen gets only the fields its pages read of each value, and the HMI decodes only those a
   screen or its own code reads, found from the code without running it. A page that shows a
   camera's width never brings its pictures. Code that hands a value on whole, or that the HMI
-  cannot follow, reads all of it, and an import to write is read whole.
+  cannot follow, reads all of it, and a mesh member to write is read whole.
 - A topic it reads may take a rate: each publisher then sends it that many a second at most,
   best effort, the newest at each turn. A value waits for its turn, up to the time between two
   its source sends: up to 100 ms for a source sending 10 a second.
 - Small values, replies and what a screen sends go on its socket. A value over 16 KiB goes on a
-  second socket, read off the page's main thread, two at a time per import at most: a third
+  second socket, read off the page's main thread, two at a time per member at most: a third
   waits until the screen has shown the first, and only the newest waits.
 - A page on https takes those big values over WebTransport instead, on the HMI's port over
   UDP, and over the second socket where WebTransport does not open within 5 s.
@@ -202,11 +206,11 @@ npx electron . http://host:6739
 <page name="Overview" size="128x72">
   <div id="e1" name="Card" x="4" y="4" w="24" h="12" style="background: $panel; border-radius: $radius">
     <on event="tap">
-      Speed = Speed + 0.1;
+      Line.Speed = Line.Speed + 0.1;
     </on>
-    <span id="e2" name="Reading" x="2" y="2" w="20" h="4">Speed.toFixed(2)</span>
+    <span id="e2" name="Reading" x="2" y="2" w="20" h="4">Line.Speed.toFixed(2)</span>
   </div>
-  <Gauge id="e3" name="Dial" x="32" y="4" w="16" h="16" value="Speed * 10"/>
+  <Gauge id="e3" name="Dial" x="32" y="4" w="16" h="16" value="Line.Speed * 10"/>
 </page>
 ```
 
@@ -232,8 +236,8 @@ npx electron . http://host:6739
   a little, unless what it pressed takes drag. Safari's pinch on a trackpad zooms too.
 - A drag or scroll handler that takes a while to run misses no move: what comes meanwhile adds
   up, and a zoom's factors multiply.
-- A page's handler that touches only the screen's own variables and state each screen keeps,
-  reading what its event brings, tokens and the math, runs on the screen itself, so a view it pans follows the finger with no
+- A page's handler that touches only state each screen keeps, reading what its event brings,
+  tokens and the math, runs on the screen itself, so a view it pans follows the finger with no
   round trip. Any other runs on the system. Either way it does the same, and what a screen sets
   of its own shows at once.
 - `keydown`, `keyup` and `keyrepeat` hear the keyboard while the element shows on the top page
@@ -257,14 +261,15 @@ npx electron . http://host:6739
   is true, as on a release a lost screen leaves.
 - A screen whose page hides, as a tab behind another, is sent no values until it shows
   again, when it gets every value anew at once.
-- `repeat="6"` or `repeat="Jobs"` draws an element once per item, reading `index` and `item`.
+- `repeat="6"` or `repeat="Line.Jobs"` draws an element once per item, reading `index` and
+  `item`.
 - `<var name="open" start="false"/>` first inside a page or an element keeps state there. The
   element and all it holds read it by name, the nearest first, over any other name. Its start
   is JSON. Each screen keeps its own, or with `per="hmi"` every screen shares one, and each copy
   of a repeat keeps its own.
 - `<svg>` holds shapes, `<markup>` SVG made by code, `<canvas>` what its code draws,
-  `<scene>` 3D parts such as `<box>` and `<anchor>`, `<media src="Camera"/>` a camera or a
-  picture, and `<input>` a field to type in.
+  `<scene>` 3D parts such as `<box>` and `<anchor>`, `<media src="Cell.Camera"/>` a camera or
+  a picture, and `<input>` a field to type in.
 - `shows="over"` opens a page over another, as a dialog: `await open(Pages.Confirm)`.
 
 ## Components
@@ -285,19 +290,6 @@ npx electron . http://host:6739
 - A `<var>` is each instance's own state on each screen.
 - `sizing="fill"` lays it out in each instance's box. Without it an instance scales it whole.
 - Code reads a part's `pressed`, `hovered` and `heldFor` by its name, `root` for the whole.
-
-## Logic
-
-```html
-<logic>
-  <on id="h1" name="Too fast" when="Speed > 1.5" for="2000">
-    notify("The line runs too fast");
-  </on>
-</logic>
-```
-
-A handler runs on one of `every="ms"`, `when="condition"` with an optional `for="ms"`,
-`change="name"`, `start=""`, `screen="connects"` or `screen="leaves"`.
 
 ## Problems
 
@@ -321,5 +313,5 @@ An agent reads the same list three ways:
   `source`, `level`, `text`, `detail` (the stack), `page`, `element`, `count` and `at`, in ms
   since 1970.
 - The log names each new one a screen finds, with its stack, as `screen 3 found a page's problem
-  on main e4: width: Speedd names no mesh import, variable or record`.
+  on main e4: width: Speedd names no object, member or state`.
 - `Hmi/Problems` on the mesh ([status.md](status.md#hmi-problems)).

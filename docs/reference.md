@@ -69,7 +69,8 @@ What a page or an element keeps comes first inside its tag:
 
 An input's `type` lists the types it takes, apart by spaces, as `type="Pose"` or
 `type="number string"`. The editor's Show an import, beside Place a component, then offers the
-component for each import and field of one of those types, placed with that input set to it.
+component for each mesh member and field of one of those types, placed with that input set to
+it.
 
 | Name | Takes |
 | --- | --- |
@@ -79,9 +80,9 @@ component for each import and field of one of those types, placed with that inpu
 | `Pose`, `Color`, an enum's name | that type, by its name on the mesh |
 | any of these with `[]` | a list of it, as `number[]` or `Pose[]` |
 
-- An input with no type takes any value, but is offered for no import.
-- The first input whose type fits takes the import.
-- A bindable input is offered only for a variable imported to write.
+- An input with no type takes any value, but is offered for no member.
+- The first input whose type fits takes the member.
+- A bindable input is offered only for a variable member to write.
 
 ### Standard components
 
@@ -166,7 +167,7 @@ nothing.
 | --- | --- | --- |
 | `text` | `span`, the shape `text` | its words, written as the tag's body: `<span ...>Speed.toFixed(1) + " m/s"</span>` |
 | `value` | `input` | what it shows. A name there, as `value="Speed"`, is set to what is typed: a number while it holds one, true or false while it holds those |
-| `src` | `media` | what it shows. An import plays its video, or shows its pictures while it has none, named bare as `Camera` or given by an expression, as `wide ? Camera : LabelCam` or a component's input. A picture, as `{ ...Camera }`, shows as it is, and text as a URL |
+| `src` | `media` | what it shows. A mesh member plays its video, or shows its pictures while it has none, named as `Cell.Camera` or given by an expression, as `wide ? Cell.Camera : Line.LabelCam` or a component's input. A picture, as `{ ...Cell.Camera }`, shows as it is, and text as a URL |
 | `fit` | `media`, `svg` | how it fits its box: `"meet"` whole, the default, `"slice"` filling it cut to size, or `"stretch"` |
 | `viewbox` | `svg` | the box its shapes draw in, `"x y width height"`. Left out, they draw in units from its corner |
 | `markup` | `markup` | SVG as text, or a list of texts, written as the tag's body |
@@ -212,7 +213,7 @@ each an expression.
 | `yaw` | `scene` | how far round from x the camera is, in radians, `-2` when left out |
 | `pitch` | `scene` | how far up the camera is, in radians, `0.5` when left out |
 | `distance` | `scene` | how far the camera is from `target`, `5` when left out |
-| `pose` | every part | where it sits and how it turns from what holds it: a Pose, as `Arm` for a Pose import, or `{ position: vec(0, 0, 1) }`, each half optional |
+| `pose` | every part | where it sits and how it turns from what holds it: a Pose, as `Robot.Arm` for a Pose member, or `{ position: vec(0, 0, 1) }`, each half optional |
 | `size` | `box` | its edges, a vector, `vec(1, 1, 1)` |
 | `size` | `axes` | how long its arrows are, `1` |
 | `size` | `points` | how wide each dot is in metres, `0.05`, or a list of sizes one per point |
@@ -389,21 +390,22 @@ A component's own events, which its code sends with `emit`, take `while="true"`.
 
 Code reads the project's names:
 
-- each import by its alias. A topic sends with `Alias.send(...)`, and a function is called
-  as `await Alias(...)`. A task is called as a function is, with a last function that takes
-  each progress update: `await Fill(5, (p) => { filled = p })`. What a task call gives stops
-  that call with `.cancel()`, and `Alias.cancel()` stops every call of it. A stopped call
-  fails with `e.status` `"cancelled"`.
-- each variable, computed value and record by its name, a record as a list of `{ t, v }`,
-  oldest first.
-- a mesh enum by its type's name, its `options` the names it takes.
+- each object by its name, and each member it does not keep local as `Line.Speed`. A topic
+  sends with `Line.Jog.send(...)`, and a mesh function or an object's own is called as
+  `await Line.Reset(...)`. A task is called as a function is, with a last function that takes
+  each progress update: `await Line.Fill(5, (p) => { filled = p })`. What a task call gives
+  stops that call with `.cancel()`, and `Line.Fill.cancel()` stops every call of it. A stopped
+  call fails with `e.status` `"cancelled"`. A record reads as a list of `{ t, v }`, oldest
+  first.
+- a mesh enum by its type's name, its `options` the names it takes. An object of that name
+  hides it.
 - a theme token as `$name`.
 
-A handler reads `p`, and what a repeat draws reads `index` and `item`. Code on a page reads the
-state its element and what holds it keep by name, the nearest first. A component's code
-reads its inputs and `<var>` by name, and each part's `pressed`, `hovered` and `heldFor` in ms
-by the part's name, `root` for the whole. A handler sets a name by assignment:
-`Speed = 0.5`, `jog[index] = 1`.
+An object's own code reads its members bare, local ones too. A handler reads `p`, and what a
+repeat draws reads `index` and `item`. Code on a page reads the state its element and what
+holds it keep by name, the nearest first. A component's code reads its inputs and `<var>` by
+name, and each part's `pressed`, `hovered` and `heldFor` in ms by the part's name, `root` for
+the whole. A handler sets a name by assignment: `Line.Speed = 0.5`, `jog[index] = 1`.
 
 <!-- names: written by the backend's tests from client/src/lang/api.js -->
 
@@ -486,42 +488,25 @@ by its path, as `"files/arm.glb"`. Screens load nothing else of the project.
 | `start` | the page screens open on, else the first |
 | `[[ice]]` | a STUN or TURN server: `urls`, and a TURN server's `username` and `credential`. Two public STUN servers when left out, `ice = []` for none |
 
-Each `[[import]]` in `data/imports.toml`:
+Each `objects/<name>.html` holds one `<object>`:
 
-| Key | Takes |
+| Attribute | Takes |
 | --- | --- |
-| `alias` | the name code reads it by |
-| `entity` | its path on the mesh, as `Line1/Speed` |
-| `kind` | `topic`, `variable`, `function` or `task` |
-| `intent` | `read`, or `write` to set, send or call it. A function or a task is always `write` |
-| `rate` | for a topic it reads, the most values a second, sent best effort. Left out for all it sends |
+| `name` | its name, in PascalCase. `Hmi` is every project's own |
+| `mesh` | the mesh path its members' entities count from, as `Line1`. Left out for the mesh's own root |
+| `note` | what it is, for the editor |
 
-Each `[[variable]]` in `data/variables.toml`:
+Its members, each named once in it. Any takes `local="true"`, which only the object's own code
+then reads:
 
-| Key | Takes |
+| Member | Attributes |
 | --- | --- |
-| `name` | its name, in camelCase |
-| `start` | the value it starts from |
-| `per` | `hmi` for one every screen shares, or `screen` for one per screen |
-
-Each `[[computed]]` in `data/computed.toml`:
-
-| Key | Takes |
-| --- | --- |
-| `name` | its name, in camelCase |
-| `get` | an expression over imports, variables and other computed values |
-| `set` | `{ target, value }`: a write to it sets `target` to `value`, an expression of the new value `v` |
-| `unit` | what the editor shows after its value, as `%` |
-| `note` | what it means, for the editor |
-
-Each `[[record]]` in `data/records.toml`:
-
-| Key | Takes |
-| --- | --- |
-| `name` | its name, in camelCase |
-| `source` | an expression over imports and variables, sampled |
-| `every_ms` | how often it is sampled |
-| `keep_s` | how long each sample is kept, in seconds |
+| `<topic>`, `<variable>`, `<function>`, `<task>` | `name` in PascalCase, `entity` from the object's `mesh` or from the root when it starts with `/`, `intent="write"` to set or send a topic or a variable (a function or a task is always called), and for a topic it reads `rate`, the most values a second, sent best effort |
+| `<var>` | `name` in camelCase, `start` as JSON, `per="hmi"` for one every screen shares, else one per screen |
+| `<computed>` | `name`, `get` an expression with no writes, and a setter: `target` the member a write sets, to `set`, an expression of the new value `v`. `unit` shows after its value, `note` says what it means |
+| `<record>` | `name`, `source` an expression sampled `every` so many ms, each sample kept `keep` seconds |
+| `<fn>` | `name`, `takes` the names a call passes, in order. Its body runs on the system and gives back what it returns |
+| `<on>` | logic, below |
 
 Each `[[token]]` in `data/theme.toml`:
 
@@ -533,14 +518,14 @@ Each `[[token]]` in `data/theme.toml`:
 
 ## Logic
 
-`logic/handlers.html` holds the HMI's own handlers, run on the system. Each is an
-`<on id="..." name="...">` with one of:
+An object's logic runs on the system, reading its members bare. Each is an
+`<on id="..." name="...">`, its id unique across the objects, with one of:
 
 | Attribute | Runs its code | `p` holds |
 | --- | --- | --- |
 | `every="ms"` | every so many ms | nothing |
 | `when="condition"` | as the condition turns true, or with `for="ms"` once it has held that long | nothing |
-| `change="name"` | when an import or a variable changes | `value` and `previous` |
+| `change="name"` | when a member changes | `value` and `previous` |
 | `start=""` | once, as the HMI starts | nothing |
 | `screen="connects"` | when a screen connects | `screen`, its number |
 | `screen="leaves"` | when a screen is lost | `screen` |

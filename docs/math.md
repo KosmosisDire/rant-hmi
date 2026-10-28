@@ -8,7 +8,7 @@ backend runs the same file.
 [reference.md](reference.md#code) lists every function and name code reads, and where. Angles
 are in radians, and the natural log is `ln`, since `log` writes to the handler's log.
 
-A project's own name hides one of these, so no import or variable may take one. A
+A project's own name hides one of these, so no object or member may take one. A
 component's input may, as a knob's `min` and `max`: the plain name is the input, and a call
 such as `max(a, b)` is always the function.
 

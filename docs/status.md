@@ -1,9 +1,9 @@
 # Status
 
-The HMI publishes three read only variables about itself. Other nodes read them, and pages
-import them like any entity. Each is set only when it changed: the clients as each screen's
-round trip is measured, 20 times a second, the problems at most 4 times a second, and the
-status once a second.
+The HMI publishes three read only variables about itself. Other nodes read them, and an object
+takes them as members like any entity, as the `Hmi` object does with its mesh at `Hmi`. Each is
+set only when it changed: the clients as each screen's round trip is measured, 20 times a
+second, the problems at most 4 times a second, and the status once a second.
 
 ## Hmi/Clients
 
@@ -39,10 +39,10 @@ The screens connected, a list. Each holds:
 - `project`: the project's name
 - `started_at`: when the HMI started, a Timestamp too
 - `clients`: how many screens are connected
-- `missing`: the entities imported but not on the mesh now
+- `missing`: the entities of mesh members not on the mesh now
 
 ```js
-`${Screens.length} screens, ${HmiStatus.missing.length} imports missing`
+`${Hmi.Clients.length} screens, ${Hmi.Status.missing.length} members missing`
 ```
 
 ## Hmi/Problems
@@ -60,7 +60,7 @@ What is wrong now, the newest 100, as the editor's problems list shows them
 - `at`: when it came last, a Timestamp
 
 ```js
-HmiProblems.filter((p) => p.level === "fault").length
+Hmi.Problems.filter((p) => p.level === "fault").length
 ```
 
 ## The node's status
