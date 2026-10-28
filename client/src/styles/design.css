@@ -382,32 +382,48 @@
   color: var(--accent);
 }
 
-/* What a layer repeats over and the events it handles, faint at the row's end. */
+/* What a layer handles, repeats over and keeps, at the row's end. */
 .marks {
   display: inline-flex;
-  gap: 4px;
+  align-items: center;
+  flex: none;
+  gap: 6px;
   margin-left: auto;
-  padding-left: 6px;
+  padding-left: 8px;
   color: var(--faint);
 }
 
 .mark {
   display: inline-flex;
+  align-items: center;
+}
+
+.mark-repeat {
+  gap: 3px;
+  max-width: 76px;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--panel3);
+  color: var(--dim);
+  font-size: 10.5px;
+}
+
+.mark-words {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* what a layer keeps, blue as the HMI's own names are */
 .mark-state {
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 7px;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
+  gap: 3px;
+  height: 17px;
+  padding: 0 7px;
+  border-radius: 99px;
+  background: var(--blue-bg);
   color: var(--blue);
-  background: color-mix(in srgb, var(--blue) 18%, transparent);
+  font: 600 10.5px var(--mono);
 }
 
 /* Layers are a tight tree, so a deep page still shows much of itself. */
@@ -1022,8 +1038,8 @@
   padding: 0 0 6px;
 }
 
-.input-default,
-.input-type {
+/* each field in a box lines up with the others, under its head */
+.handler > .field {
   padding: 0 6px 6px;
 }
 

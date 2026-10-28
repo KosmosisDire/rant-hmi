@@ -10,7 +10,7 @@ import { freeName } from "../../state/names";
 import { startPage, state } from "../../state/store";
 import { flyTo, openPage } from "../../state/view";
 import { chain, find } from "../../state/elements";
-import { ChevronDown, ChevronRight, Component, CopyPlus, File, FilePlus, Plus, Repeat, Star, Trash, Zap } from "../../ui/icons";
+import { ChevronDown, ChevronRight, CircleDot, Component, CopyPlus, File, FilePlus, Plus, Repeat, Star, Trash, Zap } from "../../ui/icons";
 import { type MenuEntry, openMenu } from "../../ui/Menu";
 import { addElement } from "./add";
 import { ComponentCard } from "./ComponentCard";
@@ -237,16 +237,15 @@ function PageLayers(p: {
           </Show>
         </span>
         <span class="list-label">{p.page.name}</span>
-        <Show when={p.page.state.length > 0}>
-          <Kept state={p.page.state} />
-        </Show>
         <Show when={p.start}>
           <span class="tag" title="Operators' screens open on this page">
             start
           </span>
         </Show>
-        <span class="list-trail mono">
-          {p.page.width}x{p.page.height}
+        <span class="marks">
+          <Show when={p.page.state.length > 0}>
+            <Kept state={p.page.state} />
+          </Show>
         </span>
       </button>
       <Show when={p.page.children.length > 0 && !p.shut(p.page.id)}>
@@ -364,27 +363,32 @@ function LayerList(p: { page: Page; selected: string[]; shut: (id: string) => bo
 function Kept(p: { state: Variable[] }) {
   return (
     <span class="mark mark-state" title={`Keeps ${p.state.map((v) => v.name).join(", ")}`}>
+      <CircleDot size={10} />
       {p.state.length}
     </span>
   );
 }
 
+/** What a layer handles, what it repeats over and how much it keeps, at the row's end. */
 function Marks(p: { element: Element }) {
   const events = () => [...new Set(p.element.handlers.map((h) => h.event))];
   return (
     <span class="marks">
-      <Show when={p.element.state.length > 0}>
-        <Kept state={p.element.state} />
-      </Show>
-      <Show when={p.element.props.repeat?.trim()}>
-        <span class="mark" title={`Repeats over ${p.element.props.repeat}`}>
-          <Repeat size={11} />
-        </span>
-      </Show>
       <Show when={events().length > 0}>
         <span class="mark" title={`On ${events().join(", ")}`}>
           <Zap size={11} />
         </span>
+      </Show>
+      <Show when={p.element.props.repeat?.trim()}>
+        {(over) => (
+          <span class="mark mark-repeat" title={`Repeats over ${over()}`}>
+            <Repeat size={10} />
+            <span class="mark-words">{over()}</span>
+          </span>
+        )}
+      </Show>
+      <Show when={p.element.state.length > 0}>
+        <Kept state={p.element.state} />
       </Show>
     </span>
   );
