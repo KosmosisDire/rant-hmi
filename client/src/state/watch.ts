@@ -1,5 +1,5 @@
 // What this screen reads of the mesh members and computed values, which the backend sends it: the
-// paths its shown pages read, or while the editor's Data tab previews them, each as the HMI
+// paths its shown pages read, or while the editor's Objects tab previews them, each as the HMI
 // brings it and the field the tab peeks at.
 
 import { createMemo, createRoot, createSignal, getOwner, onCleanup } from "solid-js";
@@ -39,13 +39,13 @@ export function wholeNames(): string[] {
   return [...readers].flatMap(([name, r]) => (r.whole > 0 ? [name] : [])).sort();
 }
 
-/** Whether this screen previews every value, as the editor's Data tab does, which the backend
+/** Whether this screen previews every value, as the editor's Objects tab does, which the backend
  *  sends as the HMI brings it, its big ones slower. */
 export function previewing(): boolean {
-  return !operator && currentTab() === "data";
+  return !operator && currentTab() === "objects";
 }
 
-/** The field the Data tab peeks at, a path from its import's name, which comes while it does
+/** The field the Objects tab peeks at, a path from its import's name, which comes while it does
  *  though nothing else reads it. */
 export const [peeked, peek] = createSignal<Path | null>(null);
 
@@ -53,14 +53,7 @@ export const [peeked, peek] = createSignal<Path | null>(null);
 function shownPages(): (Page | undefined)[] {
   const stacked = () => stack().map((o) => page(o.id));
   if (operator) return stacked();
-  switch (currentTab()) {
-    case "logic":
-      return [];
-    case "design":
-      return boardPages().map(page);
-    default:
-      return stacked();
-  }
+  return currentTab() === "design" ? boardPages().map(page) : stacked();
 }
 
 /** What the shown pages read, worked out again only as they or their reads change, since every

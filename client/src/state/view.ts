@@ -6,7 +6,7 @@ import { createSignal } from "solid-js";
 import { remembered } from "./remember";
 import { onMoved, page, state } from "./store";
 
-export const TABS = ["data", "design", "logic", "run"] as const;
+export const TABS = ["objects", "design", "run"] as const;
 export type Tab = (typeof TABS)[number];
 
 const KEY = "rant-hmi.page";
@@ -37,7 +37,7 @@ const spotOf = (s: unknown) => (s as { hmi?: Spot } | null)?.hmi;
 
 // a reload shows what this tab's own history says it showed, before anything draws
 const reloaded = spotOf(window.history.state);
-const [tab, setTab] = remembered<Tab>("tab", "data", TABS);
+const [tab, setTab] = remembered<Tab>("tab", "objects", TABS);
 const [chosen, setChosen] = createSignal(saved());
 if (reloaded) show(reloaded);
 

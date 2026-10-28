@@ -452,23 +452,136 @@
   padding: 0 18px 18px;
 }
 
-/* The Data screen's tables scroll together. */
-.data-detail {
+/* The Objects screen's middle: the open object's sections, one under another. */
+.objects-detail {
   overflow-y: auto;
 }
 
-.data-detail .detail-body {
-  flex: none;
-  overflow: visible;
+.object-sheet {
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 18px 18px 40px;
 }
 
-.data-card {
-  flex: none;
+.object-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 6px;
 }
 
-/* A phone's strip that picks which table shows. */
-.data-cards {
-  display: none;
+.object-top .kind svg {
+  width: 22px;
+  height: 22px;
+}
+
+.object-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.object-title .faint {
+  font-size: 12px;
+}
+
+.object-sheet > .hint {
+  padding: 4px 0 10px;
+}
+
+.members {
+  margin-top: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.members-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--bar);
+  padding: 0 6px 0 12px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--border);
+}
+
+.members-head .section {
+  flex: 1;
+  margin: 0;
+}
+
+.members-rows {
+  padding: 4px 0;
+}
+
+.members-empty {
+  padding: 8px 12px;
+}
+
+/* A member's row: its name, then what it is, its value now and its marks. */
+.member-def {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.member-value {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.member-marks {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+}
+
+.member-uses {
+  min-width: 14px;
+  font-size: 11px;
+  text-align: right;
+}
+
+/* The line between the HMI's own and the user's objects. */
+.list-sep {
+  height: 1px;
+  margin: 5px 12px;
+  background: var(--border);
+}
+
+.mesh-filter {
+  flex: none;
+  margin: 0 var(--pad) 6px;
+}
+
+/* A folder's add shows under the pointer only, a finger sees it always. */
+:root:not([data-pointer="touch"]) .list-row:not(:hover) > .row-add.quiet {
+  visibility: hidden;
+}
+
+.pane-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.field-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
 }
 
 /* A screen that is not built yet says what comes there. */
@@ -606,57 +719,6 @@
     border: 0;
     box-shadow: none;
     transition: none;
-  }
-
-  /* one table at a time, picked from the strip or paged by a sideways swipe */
-  .data-detail {
-    touch-action: pan-y;
-    scroll-padding-bottom: var(--sheet, 0px);
-  }
-
-  .data-cards {
-    display: flex;
-    flex: none;
-    margin: 14px 18px 0;
-  }
-
-  .data-cards button {
-    flex: 1 1 0;
-    padding: 0 4px;
-  }
-
-  .data-card:not(.on) {
-    display: none;
-  }
-
-  .data-card.on {
-    transition: transform 0.2s ease-out;
-  }
-
-  .data-card.shifted {
-    transition: none;
-  }
-
-  .data-detail[data-enter="next"] .data-card.on {
-    animation: card-next 0.2s ease-out;
-  }
-
-  .data-detail[data-enter="back"] .data-card.on {
-    animation: card-back 0.2s ease-out;
-  }
-}
-
-@keyframes card-next {
-  from {
-    opacity: 0;
-    transform: translateX(30%);
-  }
-}
-
-@keyframes card-back {
-  from {
-    opacity: 0;
-    transform: translateX(-30%);
   }
 }
 
