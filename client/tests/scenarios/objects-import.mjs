@@ -1,6 +1,6 @@
 // A user adds the robot's pose to Robot with its mesh row's +, uses it, renames it so a page and
-// a handler follow, changes its intent, and finds a name code already uses refused. An entity
-// picked offers to join whichever object is open.
+// a handler follow, changes its intent, and finds a name code already uses and one another member
+// has refused. An entity picked offers to join whichever object is open.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   // the entities it adds start as no member, whatever scenarios ran on this system before
@@ -36,6 +36,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.setField("Name", "Math");
   await right.locator(".error-line", { hasText: "Math is a name code already uses" }).waitFor();
+  // a name another member has is refused, and the inspector stays on the member that kept its own
+  await d.setField("Name", "Joints");
+  await right.locator(".error-line", { hasText: "Joints is already an import of Robot" }).waitFor();
+  check((await right.locator(".head-title").first().textContent()) === "Robot.Place", "the inspector left the member refused its rename");
 
   // an entity picked offers to join the object open, under its own name
   await (await d.meshRow("Line1/Conveyor")).click();
