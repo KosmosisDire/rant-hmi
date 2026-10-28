@@ -1,6 +1,6 @@
 [package]
 name = "rant-hmi"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 description = "The Rant HMI backend: one Rant node on the system that serves the editor and every screen"
 publish = false
@@ -10,7 +10,7 @@ name = "rant-hmi"
 path = "src/main.rs"
 
 [dependencies]
-rant = { package = "rant-middleware", git = "https://github.com/KosmosisDire/Rant.git", tag = "crate-v0.0.35" }
+rant = { package = "rant-middleware", git = "https://github.com/KosmosisDire/Rant.git", tag = "crate-v0.0.36" }
 anyhow = "1"
 # the certificate's fingerprint, as an app built here trusts it
 base64 = "0.22"
