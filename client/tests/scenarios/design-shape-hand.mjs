@@ -28,7 +28,7 @@ export default async function ({ page, d, hmi, check, eventually }) {
   await eventually(() => props(path).d === '"M 140 80 l 20 0 L 180 90"', () => `the path to move left 10, not to ${props(path).d}`);
 
   await d.select("sketch");
-  const dot = await d.addShape("circle", { Name: "dot", "Centre x": "Speed * 100", "Centre y": "50", Radius: "8" });
+  const dot = await d.addShape("circle", { Name: "dot", "Centre x": "Line.Speed * 100", "Centre y": "50", Radius: "8" });
   // the fields go out as typed, so the last one must land before the snapshot
   await eventually(() => props(dot).r === "8", "the dot's radius");
   const before = { ...props(dot) };

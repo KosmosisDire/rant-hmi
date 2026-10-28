@@ -3,7 +3,7 @@
 // copy, and a press on the fourth copy tells its handler index 3.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  hmi.send({ type: "set_variable", name: "axis", variable: { name: "axis", start: -1, per: "hmi" } });
+  hmi.setVariable("Hmi.axis", -1);
   const pageId = await hmi.addPage("Axes");
   await d.openPage("Axes");
   await d.addRow("Frame");
@@ -20,13 +20,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await page.locator(".suggest .suggest-name").allTextContents()).includes("index"), "completion to offer index");
   await page.keyboard.type("ex * 132");
   await x.press("Enter");
-  await d.setField("Fill", 'index === axis ? "#4a8fd6" : "#2a2f35"');
+  await d.setField("Fill", 'index === Hmi.axis ? "#4a8fd6" : "#2a2f35"');
   await eventually(() => props().repeat === "6" && props().x === "44 + index * 132", "the repeat and its placement");
   await d.addEvent("press");
   await d.code("press").click();
-  await page.keyboard.type("axis = index;");
+  await page.keyboard.type("Hmi.axis = index;");
   await page.keyboard.press("Control+Enter");
-  await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code === "axis = index;", "the press handler");
+  await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code === "Hmi.axis = index;", "the press handler");
 
   const copies = d.el(id);
   await eventually(async () => (await copies.count()) === 6, "six copies on the artboard");
@@ -37,7 +37,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const run = page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   await eventually(async () => (await run.count()) === 6, "six copies running");
   await run.nth(3).click();
-  await eventually(() => hmi.state.values.axis?.value === 3, "the fourth copy's press to set axis to 3");
+  await eventually(() => hmi.state.values["Hmi.axis"]?.value === 3, "the fourth copy's press to set axis to 3");
   const fill = (n) => run.nth(n).evaluate((e) => getComputedStyle(e).backgroundColor);
   await eventually(async () => (await fill(3)) === "rgb(74, 143, 214)" && (await fill(2)) !== "rgb(74, 143, 214)", "only the pressed copy marked");
 }

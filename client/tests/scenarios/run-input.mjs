@@ -7,15 +7,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addRow("Input");
   await eventually(() => hmi.page(pageId).children.length === 1, "an input");
   const id = hmi.page(pageId).children[0].id;
-  await d.setField("Value", "Speed");
+  await d.setField("Value", "Line.Speed");
   await d.addEvent("change");
   await d.code("change").click();
   await page.keyboard.type('notify("Speed set to " + p.value);');
   await page.keyboard.press("Control+Enter");
   await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code.includes("Speed set"), "the change handler");
-  const double = await hmi.addElement(pageId, "input", { name: "Double", x: "264", y: "44", w: "176", h: "44", value: "Speed * 2" });
+  const double = await hmi.addElement(pageId, "input", { name: "Double", x: "264", y: "44", w: "176", h: "44", value: "Line.Speed * 2" });
 
-  hmi.set("Speed", 0.5);
+  hmi.set("Line.Speed", 0.5);
   await d.tab("Run");
   const field = (el) => page.locator(`.run-layer:not([hidden]) .el[data-id="${el}"] input`);
   await eventually(async () => (await field(id).inputValue()) === "0.5", "the input to show the speed");
@@ -23,10 +23,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await field(id).fill("abc");
   await field(id).press("Enter");
   check(await field(id).evaluate((e) => e.classList.contains("bad")), "text in a number field was not refused");
-  check(hmi.state.values.Speed?.value === 0.5, "text reached the speed");
+  check(hmi.state.values["Line.Speed"]?.value === 0.5, "text reached the speed");
   await field(id).fill("1.25");
   await field(id).press("Enter");
-  await eventually(() => hmi.state.values.Speed?.value === 1.25, "the entry to set the speed");
+  await eventually(() => hmi.state.values["Line.Speed"]?.value === 1.25, "the entry to set the speed");
   await page.locator(".notice", { hasText: "Speed set to 1.25" }).waitFor({ timeout: 4000 });
   await eventually(async () => (await field(double).inputValue()) === "2.5", "the derived input to follow");
   check(await field(double).evaluate((e) => e.readOnly), "an input showing Speed * 2 takes entries");

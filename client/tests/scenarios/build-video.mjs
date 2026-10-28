@@ -5,17 +5,19 @@
 
 export default async function ({ page, hmi, d, sys, check, eventually }) {
   check(sys.transcoder, "rant-transcoder is not built: build transcoder-rant or set HMI_TRANSCODER");
-  await d.tab("Data");
+  if (!hmi.object("Cell")) await hmi.addObject("Cell", "Cell");
+  await d.openObject("Cell");
   for (const name of ["Camera", "Detections"]) {
+    for (const i of hmi.state.imports.filter((x) => x.entity === `Cell/${name}` && x.alias !== `Cell.${name}`)) await hmi.unimport(i.alias);
     const row = await d.meshRow(`Cell/${name}`);
     if ((await row.locator(".row-add").count()) > 0) await row.locator(".row-add").click();
-    await eventually(() => hmi.state.imports.some((i) => i.alias === name), `${name} imported`);
+    await eventually(() => hmi.state.imports.some((i) => i.alias === `Cell.${name}`), `${name} added`);
   }
 
   await d.addPage("Camera video");
   const box = { x: "4", y: "4", w: "48", h: "36" };
-  const video = await d.add("media", { Name: "camera", ...box, Source: "Camera" });
-  await d.add("diagram", { Name: "overlay", ...box, "View box": "`0 0 ${Camera.width} ${Camera.height}`", Fit: '"meet"' });
+  const video = await d.add("media", { Name: "camera", ...box, Source: "Cell.Camera" });
+  await d.add("diagram", { Name: "overlay", ...box, "View box": "`0 0 ${Cell.Camera.width} ${Cell.Camera.height}`", Fit: '"meet"' });
   await d.addShape("rect", {
     Name: "found",
     x: "item.min.x",
@@ -26,7 +28,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
     Stroke: "#4a8fd6",
     Thickness: "2",
   });
-  await d.setField("Repeat", "Detections.boxes");
+  await d.setField("Repeat", "Cell.Detections.boxes");
 
   await d.tab("Run");
   const player = page.locator(`.run-layer:not([hidden]) .el[data-id="${video}"] video`);

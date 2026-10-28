@@ -6,19 +6,19 @@
 import { Hmi } from "../hmi.mjs";
 
 export default async function ({ page, hmi, d, sys, check, eventually }) {
-  hmi.send({ type: "set_variable", name: "keyedA", variable: { name: "keyedA", start: 0, per: "hmi" } });
-  hmi.send({ type: "set_variable", name: "keyedSpace", variable: { name: "keyedSpace", start: 0, per: "hmi" } });
-  hmi.send({ type: "set_variable", name: "keyedLost", variable: { name: "keyedLost", start: "", per: "hmi" } });
+  hmi.setVariable("Hmi.keyedA", 0);
+  hmi.setVariable("Hmi.keyedSpace", 0);
+  hmi.setVariable("Hmi.keyedLost", "");
   const pageId = await hmi.addPage("Keyed");
   const pad = await hmi.addElement(pageId, "div", { name: "Pad", x: "4", y: "4", w: "10", h: "6", background: "#2a2f35" });
 
   // the menu offers keydown again once the first takes a key of its own
   await d.openPage("Keyed");
   await d.select("Pad");
-  await d.handler("keydown", "keyedA = keyedA + 1;", { Key: "a" });
-  await d.handler("keydown", "keyedSpace = keyedSpace + 1;", { Key: " " });
+  await d.handler("keydown", "Hmi.keyedA = Hmi.keyedA + 1;", { Key: "a" });
+  await d.handler("keydown", "Hmi.keyedSpace = Hmi.keyedSpace + 1;", { Key: " " });
   await d.handler("keydown", "log(1);", { Key: "A" });
-  await d.handler("keyup", "if (p.lost) keyedLost = keyedLost + p.key;");
+  await d.handler("keyup", "if (p.lost) Hmi.keyedLost = Hmi.keyedLost + p.key;");
   const handlers = () => hmi.page(pageId).children.find((e) => e.id === pad).handlers;
   await eventually(() => handlers().map((h) => `${h.event}:${h.filter.key ?? ""}`).join() === "keydown:a,keydown: ,keydown:A,keyup:", () => `the handlers, not ${JSON.stringify(handlers())}`);
   const keycaps = await page.locator(".screen:not([hidden]) .sidebar.right .event .event-filter").allTextContents();
@@ -31,15 +31,15 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const screen = await Hmi.connect(sys.ws);
   const fire = (event, key, heard) => screen.send({ type: "fire", page: pageId, id: pad, event, payload: { key, code: key === " " ? "Space" : `Key${key.toUpperCase()}` }, heard });
   fire("keydown", "a", [{ key: "a" }]);
-  await eventually(() => hmi.state.values.keyedA?.value === 1, "the handler for a to run");
+  await eventually(() => hmi.state.values["Hmi.keyedA"]?.value === 1, "the handler for a to run");
   fire("keydown", " ", [{ key: " " }]);
-  await eventually(() => hmi.state.values.keyedSpace?.value === 1, "the handler for Space to run");
-  check(hmi.state.values.keyedA?.value === 1, "the handler for a to run once");
+  await eventually(() => hmi.state.values["Hmi.keyedSpace"]?.value === 1, "the handler for Space to run");
+  check(hmi.state.values["Hmi.keyedA"]?.value === 1, "the handler for a to run once");
   fire("keyup", "a", [{}]);
   fire("keyup", " ", [{}]);
   // heard by none of its handlers, b still tells the backend it is held
   fire("keydown", "b", []);
   await page.waitForTimeout(200);
   screen.ws.close();
-  await eventually(() => hmi.state.values.keyedLost?.value === "b", () => `only b's keyup to run lost, not "${hmi.state.values.keyedLost?.value}"`);
+  await eventually(() => hmi.state.values["Hmi.keyedLost"]?.value === "b", () => `only b's keyup to run lost, not "${hmi.state.values["Hmi.keyedLost"]?.value}"`);
 }

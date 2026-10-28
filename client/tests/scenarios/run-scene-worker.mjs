@@ -14,7 +14,7 @@ function count() {
     get: own.get,
     set(f) {
       own.set.call(this, (e) => {
-        const points = e.data?.msg?.values?.find((u) => u.alias === "ScanW")?.value?.points;
+        const points = e.data?.msg?.values?.find((u) => u.alias === "Cell.ScanW")?.value?.points;
         if (points) {
           const seen = (window.__scan ??= { far: 0, whole: 0, other: 0 });
           seen["far" in points ? "far" : "packed" in points ? "whole" : "other"]++;
@@ -26,11 +26,11 @@ function count() {
 }
 
 export default async function ({ page, hmi, sys, d, check, eventually }) {
-  await hmi.import("ScanW", "Cell/Scan");
+  await hmi.import("Cell.ScanW", "Cell/Scan");
   const pageId = await hmi.addPage("Scene worker");
   // seen from above, the floor filling the middle
   const scene = await hmi.addElement(pageId, "scene", { name: "cell", x: "2", y: "2", w: "60", h: "40", yaw: "-PI / 2", pitch: "1.5", distance: "4" });
-  const points = await hmi.addElement(pageId, "points", { name: "scan", points: "ScanW.points", size: "0.05", color: '"#ff0000"' }, scene);
+  const points = await hmi.addElement(pageId, "points", { name: "scan", points: "Cell.ScanW.points", size: "0.05", color: '"#ff0000"' }, scene);
   const started = hmi.next((m) => m.type === "project");
   hmi.send({ type: "set_start", page: pageId });
   await started;
@@ -67,7 +67,7 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
     }
 
     // a span reading its length reads it whole, and the scene draws on
-    const span = await hmi.addElement(pageId, "span", { name: "length", x: "2", y: "44", w: "20", h: "4", text: "String(ScanW.points.length)" });
+    const span = await hmi.addElement(pageId, "span", { name: "length", x: "2", y: "44", w: "20", h: "4", text: "String(Cell.ScanW.points.length)" });
     await el(span).filter({ hasText: /^20000$/ }).waitFor({ timeout: 10000 });
     got = await comes();
     check(got.whole >= 5 && got.far === 0, `with a span reading the scan whole it came to the page ${JSON.stringify(got)} in 2 s, not whole`);
@@ -79,7 +79,7 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
     await eventually(async () => (await comes()).far >= 5, "the scan to come far again once the span went", 10000);
 
     // points code picks from the scan need it whole: the part alone, never the floor
-    await hmi.setProps(pageId, points, { name: "scan", points: "ScanW.points.filter((p) => p.z > 0.1)", size: "0.05", color: '"#ff0000"' });
+    await hmi.setProps(pageId, points, { name: "scan", points: "Cell.ScanW.points.filter((p) => p.z > 0.1)", size: "0.05", color: '"#ff0000"' });
     await eventually(async () => (await comes()).whole >= 5, "the scan to come whole for the points picked from it", 10000);
     await d.shows(el(scene), 0.5, 0.05, (c) => !red(c), "the floor gone from the scene, the part alone drawn");
     check(!(await el(scene).getAttribute("title")), `the scene says ${await el(scene).getAttribute("title")}`);

@@ -17,13 +17,13 @@ import { driveApp, giveRuntime, ROOT, startDownloaded } from "../harness.mjs";
 export const fresh = true;
 
 const PAGE = `<page name="main" size="64x36">
-  <span id="e1" name="reading" x="1" y="1" w="30" h="4">Speed.toFixed(2)</span>
+  <span id="e1" name="reading" x="1" y="1" w="30" h="4">Line.Speed.toFixed(2)</span>
 </page>
 `;
 
 export default async function ({ page, sys, check, eventually }) {
   // a page reading the demo line, which a screen opens on
-  cpSync(join(ROOT, "client", "tests", "project", "data", "imports.toml"), join(sys.project, "data", "imports.toml"));
+  cpSync(join(ROOT, "client", "tests", "project", "objects"), join(sys.project, "objects"), { recursive: true });
   writeFileSync(join(sys.project, "pages", "main.html"), PAGE);
   writeFileSync(join(sys.project, "hmi.toml"), 'name = "Export line"\nstart = "main"\nice = []\n');
   await giveRuntime(sys.home);

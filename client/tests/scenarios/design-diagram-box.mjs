@@ -4,14 +4,14 @@
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Diagram box");
-  const plot = await hmi.addElement(pageId, "svg", { name: "Plot", x: "10", y: "10", w: "20", h: "20", viewbox: "`0 0 ${diagramSpan} ${diagramSpan}`" });
+  const plot = await hmi.addElement(pageId, "svg", { name: "Plot", x: "10", y: "10", w: "20", h: "20", viewbox: "`0 0 ${Hmi.diagramSpan} ${Hmi.diagramSpan}`" });
   const dot = await hmi.addElement(pageId, "circle", { name: "Dot", cx: "50", cy: "50", r: "40", fill: "$accent" }, plot);
   await d.openPage("Diagram box");
   await d.el(plot).waitFor();
   await page.waitForTimeout(300);
   check((await d.el(dot).count()) === 0, "a view box not worked out yet drew its shapes");
 
-  hmi.send({ type: "set_variable", name: "diagramSpan", variable: { name: "diagramSpan", start: 100, per: "screen" } });
+  hmi.setVariable("Hmi.diagramSpan", 100, "screen");
   await d.el(dot).waitFor();
   const [box, drawn] = [await d.box(plot), await d.box(dot)];
   check(Math.abs(drawn.width - box.width * 0.8) < 2 && Math.abs(drawn.x - box.x - box.width * 0.1) < 2, `the dot draws at ${JSON.stringify(drawn)} in the plot at ${JSON.stringify(box)}`);

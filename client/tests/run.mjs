@@ -1,5 +1,5 @@
-// Runs the scenarios in tests/scenarios, or those whose file name holds the argument, each on a
-// fresh page. `--workers n` runs them n at a time, 4 by default, each worker against its own
+// Runs the scenarios in tests/scenarios, or those whose file name holds one of the arguments, each
+// on a fresh page. `--workers n` runs them n at a time, 4 by default, each worker against its own
 // backend, demo line and cage cell. A console error fails one, as does a fault the HMI finds in
 // its own code.
 
@@ -31,8 +31,8 @@ export async function eventually(fn, what, timeoutMs = 4000) {
 
 const args = process.argv.slice(2);
 const value = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
-const only = args.find((a, n) => !a.startsWith("--") && !["--into", "--workers"].includes(args[n - 1])) ?? "";
-const files = readdirSync(join(here, "scenarios")).filter((f) => f.endsWith(".mjs") && f.includes(only));
+const only = args.filter((a, n) => !a.startsWith("--") && !["--into", "--workers"].includes(args[n - 1]));
+const files = readdirSync(join(here, "scenarios")).filter((f) => f.endsWith(".mjs") && (only.length === 0 || only.some((o) => f.includes(o))));
 // with --into a folder, the scenarios start on a new project and it becomes that folder
 const into = value("--into") ? resolve(ROOT, value("--into")) : null;
 // what keeps one system's project runs on one worker

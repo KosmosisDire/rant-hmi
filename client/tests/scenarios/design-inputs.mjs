@@ -39,8 +39,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await page.locator(".suggest .suggest-name").allTextContents()).join() === "now", "now offered after time. in a component");
   await page.keyboard.press("Escape");
 
-  await d.setField("Text", "Speed");
-  await page.locator(".field-note", { hasText: "Speed is no input, variable or part of Meter" }).waitFor();
+  await d.setField("Text", "Line.Speed");
+  await page.locator(".field-note", { hasText: "Line is no input, variable or part of Meter" }).waitFor();
   await d.setField("Text", 'level + "%"');
 
   const pageId = await hmi.addPage("Meters");
@@ -49,7 +49,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.el(inst).click();
   const level = d.field("level");
   check((await level.getAttribute("placeholder")) === "50", "the instance's input shows no default");
-  await d.setField("level", "Speed * 10");
+  await d.setField("level", "Line.Speed * 10");
   const shown = () => d.el(inst).locator(".instance .el").textContent();
   await eventually(async () => /^\d+(\.\d+)?%$/.test(await shown()) && (await shown()) !== "50%", "the instance to read live data through its input");
   const note = page.locator(".screen:not([hidden]) .sidebar.right .field", { has: page.locator("label", { hasText: /^level$/ }) }).locator(".field-note");
@@ -58,7 +58,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.openPage("Meter");
   await nameBox.fill("fill");
   await nameBox.press("Enter");
-  await eventually(() => hmi.page(pageId).children[0].props.fill === "Speed * 10", "the instance's value to follow the rename");
+  await eventually(() => hmi.page(pageId).children[0].props.fill === "Line.Speed * 10", "the instance's value to follow the rename");
   await eventually(() => hmi.page(meter).children[0].props.text === 'fill + "%"', "the component's code to follow the rename");
 
   // a rename left by clicking two way, before the backend answers, still makes one input

@@ -71,12 +71,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   });
 
   await d.addPage("Levels");
-  const bar = await d.place("Bar", { x: "4", y: "4", w: "24", h: "2", value: "Speed", max: "2" });
-  const signed = await d.place("Bar", { x: "4", y: "8", w: "24", h: "2", value: "Speed - 1.5", min: "-1", max: "1" });
-  const bars = await d.place("Bars", { x: "32", y: "4", w: "36", h: "12", values: "[0.25, Speed / 2, 1]", labels: '["A", "B", "C"]' });
-  const joints = await d.place("Joints", { x: "4", y: "20", w: "40", h: "20", state: "Joints" });
+  const bar = await d.place("Bar", { x: "4", y: "4", w: "24", h: "2", value: "Line.Speed", max: "2" });
+  const signed = await d.place("Bar", { x: "4", y: "8", w: "24", h: "2", value: "Line.Speed - 1.5", min: "-1", max: "1" });
+  const bars = await d.place("Bars", { x: "32", y: "4", w: "36", h: "12", values: "[0.25, Line.Speed / 2, 1]", labels: '["A", "B", "C"]' });
+  const joints = await d.place("Joints", { x: "4", y: "20", w: "40", h: "20", state: "Robot.Joints" });
 
-  await hmi.set("Speed", 1);
+  await hmi.set("Line.Speed", 1);
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   // where each bar's level sits along its track in an instance, as shares of it

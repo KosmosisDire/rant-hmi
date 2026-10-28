@@ -12,9 +12,9 @@ const WT = "Reached over the socket, big values over WebTransport";
 const SECOND = "Reached over the socket, big values over a second one";
 
 export default async function ({ page, hmi, sys, check, eventually }) {
-  await hmi.import("WtCam", "Line1/LabelCam");
+  await hmi.import("Line.WtCam", "Line1/LabelCam");
   const pageId = await hmi.addPage("WebTransport");
-  await hmi.addElement(pageId, "span", { name: "label", x: "2", y: "2", w: "30", h: "4", text: "String(WtCam.width)" });
+  await hmi.addElement(pageId, "span", { name: "label", x: "2", y: "2", w: "30", h: "4", text: "String(Line.WtCam.width)" });
   hmi.send({ type: "set_start", page: pageId });
   const port = Number(new URL(sys.url).port);
   const link = (p) => p.locator(".statusbar .stat").first();
@@ -27,13 +27,13 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     const secure = await context.newPage();
     await secure.goto(`https://127.0.0.1:${port}`);
     await eventually(async () => (await title(secure)) === WT, async () => `the status bar to say big values come over WebTransport, not "${await title(secure)}"`, 10000);
-    const over = await pictures(hmi, secure, "WtCam");
+    const over = await pictures(hmi, secure, "Line.WtCam");
     check(keptUp(over), `the screen got ${over.got} of the camera's ${over.sent} pictures in 1.5 s over WebTransport`);
 
     const fallen = await context.newPage();
     await fallen.goto(`https://127.0.0.1:${new URL(tcp.url).port}`);
     await eventually(async () => (await title(fallen)) === SECOND, async () => `the screen without WebTransport to take its big values over a second socket, not "${await title(fallen)}"`, 15000);
-    const without = await pictures(hmi, fallen, "WtCam");
+    const without = await pictures(hmi, fallen, "Line.WtCam");
     check(keptUp(without), `the screen without WebTransport got ${without.got} of the camera's ${without.sent} pictures in 1.5 s`);
   } finally {
     await context.close();

@@ -5,21 +5,23 @@
 // middle, the spot under them staying put.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await d.tab("Data");
+  for (const i of hmi.state.imports.filter((x) => x.entity === "Cell/Camera" && x.alias !== "Cell.Camera")) await hmi.unimport(i.alias);
+  if (!hmi.object("Cell")) await hmi.addObject("Cell", "Cell");
+  await d.openObject("Cell");
   const row = await d.meshRow("Cell/Camera");
   if ((await row.locator(".row-add").count()) > 0) await row.locator(".row-add").click();
-  await eventually(() => hmi.state.imports.some((i) => i.alias === "Camera"), "Camera imported");
-  for (const [name, start] of [["mapX", 0], ["mapY", 0], ["mapZoom", 1]]) hmi.send({ type: "set_variable", name, variable: { name, start, per: "screen" } });
-  await eventually(() => hmi.state.variables.some((v) => v.name === "mapZoom"), "the view's variables");
+  await eventually(() => hmi.state.imports.some((i) => i.alias === "Cell.Camera"), "Camera added");
+  for (const [name, start] of [["Hmi.mapX", 0], ["Hmi.mapY", 0], ["Hmi.mapZoom", 1]]) hmi.setVariable(name, start, "screen");
+  await eventually(() => hmi.state.variables.some((v) => v.name === "Hmi.mapZoom"), "the view's variables");
 
   await d.addPage("Map View");
   const view = await d.add("frame", { Name: "Viewport", x: "4", y: "4", w: "48", h: "36", Fill: "$panel", Overflow: '"hidden"' });
-  const map = await d.add("media", { Name: "Map", x: "mapX", y: "mapY", w: "48", h: "36", Source: "Camera" });
-  await d.css("scale: mapZoom");
+  const map = await d.add("media", { Name: "Map", x: "Hmi.mapX", y: "Hmi.mapY", w: "48", h: "36", Source: "Cell.Camera" });
+  await d.css("scale: Hmi.mapZoom");
   await d.select("Viewport");
-  await d.handler("drag", "mapX = mapX + p.dx;\nmapY = mapY + p.dy;");
-  await d.handler("scroll", "mapX = mapX + p.dx;\nmapY = mapY + p.dy;");
-  await d.handler("zoom", "// the spot under the pointer stays under it\nconst [cx, cy] = [p.x * 48, p.y * 36];\nconst k = clamp(mapZoom * p.factor, 1, 8) / mapZoom;\nmapX = cx - (cx - mapX) * k;\nmapY = cy - (cy - mapY) * k;\nmapZoom = mapZoom * k;");
+  await d.handler("drag", "Hmi.mapX = Hmi.mapX + p.dx;\nHmi.mapY = Hmi.mapY + p.dy;");
+  await d.handler("scroll", "Hmi.mapX = Hmi.mapX + p.dx;\nHmi.mapY = Hmi.mapY + p.dy;");
+  await d.handler("zoom", "// the spot under the pointer stays under it\nconst [cx, cy] = [p.x * 48, p.y * 36];\nconst k = clamp(Hmi.mapZoom * p.factor, 1, 8) / Hmi.mapZoom;\nHmi.mapX = cx - (cx - Hmi.mapX) * k;\nHmi.mapY = cy - (cy - Hmi.mapY) * k;\nHmi.mapZoom = Hmi.mapZoom * k;");
 
   await d.tab("Run");
   const el = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);

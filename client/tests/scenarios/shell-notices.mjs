@@ -10,7 +10,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
     return id;
   };
   const say = await button("Say", 4, 'notify("Said");');
-  const broken = await button("Broken", 24, "Speed = Sped;");
+  const broken = await button("Broken", 24, "Line.Speed = Sped;");
   await d.openPage("Notices");
   await d.tab("Run");
   const tap = (id) => page.locator(`.run-layer[data-page="${pageId}"] .el[data-id="${id}"]`).click();

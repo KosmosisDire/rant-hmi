@@ -20,8 +20,8 @@ export default async function ({ page, hmi, d, eventually }) {
   await d.el(field).dblclick();
   // it has failed twice in full runs and never alone, so a failure says where the typing went
   const focused = await page.evaluate(() => `${document.activeElement?.tagName}.${document.activeElement?.className} holding ${JSON.stringify(document.activeElement?.value)}`);
-  await type("Speed");
-  await eventually(() => props(hmi, pageId, field).value === "Speed", () => `the double clicked input to take its value, it holds ${JSON.stringify(props(hmi, pageId, field).value)} and the focus was on ${focused}`);
+  await type("Line.Speed");
+  await eventually(() => props(hmi, pageId, field).value === "Line.Speed", () => `the double clicked input to take its value, it holds ${JSON.stringify(props(hmi, pageId, field).value)} and the focus was on ${focused}`);
 
   await page.locator(".screen:not([hidden]) .sidebar.left .pane-body .list-row", { hasText: "Title" }).dblclick();
   await type("Heading");

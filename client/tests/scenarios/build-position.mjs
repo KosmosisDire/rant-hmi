@@ -47,10 +47,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   });
 
   await d.addPage("Plane");
-  const one = await d.place("Position", { x: "4", y: "4", w: "24", h: "26", value: "{ position: vec(Speed - 0.5, 0.5), angle: PI / 2 }" });
+  const one = await d.place("Position", { x: "4", y: "4", w: "24", h: "26", value: "{ position: vec(Line.Speed - 0.5, 0.5), angle: PI / 2 }" });
   const many = await d.place("Position", { x: "32", y: "4", w: "24", h: "26", value: "[vec(-0.5, -0.5), vec(0.5, 0.5)]" });
 
-  await hmi.set("Speed", 1);
+  await hmi.set("Line.Speed", 1);
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   // each dot's middle as shares of the plane drawn, from its top left

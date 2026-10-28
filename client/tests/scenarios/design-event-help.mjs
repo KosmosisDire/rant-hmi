@@ -1,6 +1,6 @@
 // A user writes event code with help: the add list sets a component's own events apart from the
 // pointer's and says what each sends, each card says what p brings, and p's fields come up in a
-// list that floats whole under the line typed, in the inspector and in the Logic tab alike.
+// list that floats whole under the line typed, in the inspector and in an object's logic alike.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const pad = await hmi.addComponent("Pad");
@@ -43,36 +43,19 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Control+Enter");
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === start).handlers[0]?.code === "p.x;", "the code typed");
 
-  await d.tab("Logic");
-  const logic = page.locator(".screen:not([hidden])");
-  // the card follows the handler picked, a pointer's marked apart from a component's
-  await logic.locator(".handler-list .list-row", { hasText: "Pad1" }).click();
-  await eventually(async () => (await logic.locator(".detail .event-icon .lucide-component").count()) === 1, "the move card marked as the component's");
-  await logic.locator(".handler-list .list-row", { hasText: "Start" }).click();
-  await eventually(async () => (await logic.locator(".detail .event-icon .lucide-zap").count()) === 1, "the tap card marked as the pointer's");
-  const big = logic.locator(".detail .editor.code");
+  // an object's rule on a change says it brings the new value and the old, and offers them
+  await d.openObject("Hmi");
+  const before = hmi.state.rules.length;
+  await page.locator('.object-sheet button[title="Add logic"]').click();
+  await eventually(() => hmi.state.rules.length === before + 1, "a new rule");
+  await right.locator(".field", { has: page.locator("label", { hasText: /^Runs$/ }) }).locator("select").selectOption("changes");
+  await eventually(async () => (await right.locator(".section .mono").textContent())?.trim() === "p = { value, previous }", "a change rule to say what p brings");
+  const big = right.locator(".editor.code");
   await big.click();
-  await page.keyboard.press("End");
-  await page.keyboard.press("Enter");
-  await page.keyboard.type("p.an");
-  await eventually(async () => (await names()).join() === "angle", "p's angle in the Logic tab");
-  const low = await whole("the Logic tab");
-  const tall = await big.boundingBox();
-  check(low.y > tall.y + 30 && low.y < tall.y + 80, `the list opens under the second line, at ${low.y - tall.y} px down the box`);
+  await page.keyboard.type("p.pr");
+  await eventually(async () => (await names()).join() === "previous", "p's previous in an object's rule");
+  await whole("an object's rule");
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
-
-  // Open in Design shows the element picked, with the caret in its handler
-  check((await logic.locator(".detail-head .tag").count()) === 0, "the handler's head shows tags");
-  await logic.locator(".detail-head button", { hasText: "Open in Design" }).click();
-  const typing = () => page.evaluate(() => document.activeElement?.closest(".screen:not([hidden]) .sidebar.right .event")?.querySelector(".event-name")?.textContent ?? "");
-  await eventually(async () => (await typing()) === "tap", "the caret in the tap handler");
-  const picked = await page.locator(".screen:not([hidden]) .sidebar.left .list-row.selected[data-id]").evaluateAll((rows) => rows.map((r) => r.dataset.id));
-  check(picked.join() === start, `the layers pick ${picked.join(", ")}`);
-  await d.tab("Logic");
-
-  // the HMI's own handler on a change brings the new value and the old
-  await logic.locator('button[title="Add a handler"]').click();
-  await logic.locator(".rule-kind").selectOption("changes");
-  await eventually(async () => (await logic.locator(".detail .event-meta").textContent())?.trim() === "p = { value, previous }", "a change rule to say what p brings");
+  await hmi.setRule("Hmi", hmi.state.rules.at(-1).id, null);
 }

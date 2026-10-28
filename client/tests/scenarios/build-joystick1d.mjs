@@ -5,8 +5,8 @@
 // each beat while held, and a last 0 when let go. Turned upright it works upright, up positive.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  hmi.send({ type: "set_variable", name: "lever", variable: { name: "lever", start: 0, per: "screen" } });
-  for (const name of ["leverBeats", "leverHeld"]) hmi.send({ type: "set_variable", name, variable: { name, start: 0, per: "hmi" } });
+  hmi.setVariable("Hmi.lever", 0, "screen");
+  for (const name of ["Hmi.leverBeats", "Hmi.leverHeld"]) hmi.setVariable(name, 0);
 
   await d.addComponent("Joystick1D", 24, 6);
   await d.sizing("Fill");
@@ -38,11 +38,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.addPage("Lever");
   const lying = await d.place("Joystick1D", { x: "4", y: "4", w: "24", h: "6" });
-  await d.handler("move", "lever = p.x;");
-  await d.handler("held", "leverBeats = leverBeats + 1;\nleverHeld = p.x;");
+  await d.handler("move", "Hmi.lever = p.x;");
+  await d.handler("held", "Hmi.leverBeats = Hmi.leverBeats + 1;\nHmi.leverHeld = p.x;");
   const upright = await d.place("Joystick1D", { Origin: '"50% 50%"', x: "16", y: "30", w: "24", h: "6", Rotate: "-90" });
-  await d.handler("move", "lever = p.x;");
-  await d.add("text", { Name: "readout", x: "32", y: "5", w: "20", h: "4", Text: '"x " + lever.toFixed(2)', Colour: "$text", Size: "2" });
+  await d.handler("move", "Hmi.lever = p.x;");
+  await d.add("text", { Name: "readout", x: "32", y: "5", w: "20", h: "4", Text: '"x " + Hmi.lever.toFixed(2)', Colour: "$text", Size: "2" });
 
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
@@ -60,13 +60,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   // a press in the box's corner, outside the rounded track, does nothing
   const box = await inst(lying).boundingBox();
-  const idle = shared("leverBeats");
+  const idle = shared("Hmi.leverBeats");
   await page.mouse.move(box.x + 0.7 * scale, box.y + 0.7 * scale);
   await page.mouse.down();
   await page.mouse.move(box.x + 5.5 * scale, box.y + 0.7 * scale, { steps: 4 });
   await page.waitForTimeout(300);
   const [ix] = await centre(knob);
-  check(Math.abs(ix - cx) < 2 && shared("leverBeats") === idle, "a press outside the track worked the lever");
+  check(Math.abs(ix - cx) < 2 && shared("Hmi.leverBeats") === idle, "a press outside the track worked the lever");
   await page.mouse.up();
 
   // along the track the knob sits under the finger, and a move across it moves nothing
@@ -81,11 +81,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const [fx] = await centre(knob);
   check(Math.abs(fx - (cx + 9 * scale)) < 3, `the knob went to ${fx - cx} past its travel`);
   await reads("x 1.00", "a full push right");
-  const from = shared("leverBeats");
+  const from = shared("Hmi.leverBeats");
   await page.waitForTimeout(600);
-  const counted = shared("leverBeats") - from;
+  const counted = shared("Hmi.leverBeats") - from;
   check(counted >= 3 && counted <= 9, `held still for 600 ms it sent held ${counted} times`);
-  check(shared("leverHeld") === 1, "held sends where the lever is");
+  check(shared("Hmi.leverHeld") === 1, "held sends where the lever is");
   await page.mouse.up();
   const [rx] = await centre(knob);
   check(Math.abs(rx - cx) < 2, "the knob did not spring back");

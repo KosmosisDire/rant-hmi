@@ -17,9 +17,9 @@ async function udp() {
 
 export default async function ({ page, hmi, sys, check, eventually }) {
   check(sys.transcoder, "rant-transcoder is not built: build transcoder-rant or set HMI_TRANSCODER");
-  if (!hmi.state.imports.some((i) => i.alias === "Camera")) await hmi.import("Camera", "Cell/Camera");
+  if (!hmi.state.imports.some((i) => i.alias === "Cell.Camera")) await hmi.import("Cell.Camera", "Cell/Camera");
   const pageId = await hmi.addPage("Through a NAT");
-  await hmi.addElement(pageId, "media", { name: "camera", x: "4", y: "4", w: "32", h: "24", src: "Camera" });
+  await hmi.addElement(pageId, "media", { name: "camera", x: "4", y: "4", w: "32", h: "24", src: "Cell.Camera" });
   const said = await hmi.addElement(pageId, "span", { name: "Said", x: "4", y: "30", w: "30", h: "4", text: 'link.webrtc ? "webrtc" : "socket"' });
   // its start page first, which the backend writes to hmi.toml, then the test's servers there
   const started = hmi.next((m) => m.type === "project");

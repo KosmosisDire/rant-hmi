@@ -20,11 +20,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.openPage("Hist one");
   await d.openPage("Hist two");
   await page.locator(".screen:not([hidden]) .sidebar.left .card", { hasText: /^HistPart$/ }).click();
-  await d.tab("Logic");
-  await at("Logic", "the last move");
+  await d.tab("Objects");
+  await at("Objects", "the last move");
 
   await page.goBack();
-  await at("Design HistPart", "back from Logic");
+  await at("Design HistPart", "back from Objects");
   await page.goBack();
   await at("Design Hist two", "back out of the component");
   await page.goBack();
@@ -42,9 +42,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await page.goBack();
   await at("Design Hist one", "back before a new move");
-  await d.tab("Data");
-  await at("Data", "a new move");
+  await d.tab("Run");
+  await at("Run", "a new move");
   await page.goForward();
   await page.waitForTimeout(300);
-  check((await where()) === "Data", `forward after a new move went to ${await where()}`);
+  check((await where()) === "Run", `forward after a new move went to ${await where()}`);
 }

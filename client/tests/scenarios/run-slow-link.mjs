@@ -8,13 +8,13 @@
 import { between, countBig } from "../links.mjs";
 
 export default async function ({ page, hmi, sys, check, eventually }) {
-  await hmi.import("SlowCam", "Line1/LabelCam");
-  await hmi.import("SlowClients", "Hmi/Clients");
-  hmi.send({ type: "set_variable", name: "slowNote", variable: { name: "slowNote", start: 0, per: "hmi" } });
+  await hmi.import("Line.SlowCam", "Line1/LabelCam");
+  await hmi.import("Hmi.SlowClients", "Hmi/Clients");
+  hmi.setVariable("Hmi.slowNote", 0);
   const pageId = await hmi.addPage("Slow link");
-  const note = await hmi.addElement(pageId, "span", { name: "note", x: "2", y: "2", w: "30", h: "4", text: "slowNote" });
+  const note = await hmi.addElement(pageId, "span", { name: "note", x: "2", y: "2", w: "30", h: "4", text: "Hmi.slowNote" });
   // the picture's bytes, so the screen reads its pictures even once the camera has a video
-  await hmi.addElement(pageId, "span", { name: "label", x: "2", y: "8", w: "30", h: "4", text: "String(SlowCam.data.length)" });
+  await hmi.addElement(pageId, "span", { name: "label", x: "2", y: "8", w: "30", h: "4", text: "String(Line.SlowCam.data.length)" });
   hmi.send({ type: "set_start", page: pageId });
   const port = Number(new URL(sys.url).port);
   // the link: 150 KB/s toward the screen in one queue every connection shares
@@ -22,11 +22,11 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   const context = await page.context().browser().newContext({ viewport: { width: 1280, height: 800 } });
   await context.addInitScript(countBig);
   try {
-    await eventually(() => (hmi.state.values.SlowClients?.value ?? []).length > 0, "the screens connected so far");
-    const before = new Set(hmi.state.values.SlowClients.value.map((c) => c.id));
+    await eventually(() => (hmi.state.values["Hmi.SlowClients"]?.value ?? []).length > 0, "the screens connected so far");
+    const before = new Set(hmi.state.values["Hmi.SlowClients"].value.map((c) => c.id));
     const screen = await context.newPage();
     await screen.goto(`${way.url}/run`);
-    const slow = () => (hmi.state.values.SlowClients?.value ?? []).find((c) => !before.has(c.id));
+    const slow = () => (hmi.state.values["Hmi.SlowClients"]?.value ?? []).find((c) => !before.has(c.id));
     await eventually(() => slow(), "the slow screen to connect", 10000);
     // the link fills for a while, then the round trip and the pictures are sampled
     await screen.waitForTimeout(3000);
@@ -48,7 +48,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     const took = [];
     for (let n = 1; n <= 7; n++) {
       const start = Date.now();
-      hmi.set("slowNote", n);
+      hmi.set("Hmi.slowNote", n);
       await el.filter({ hasText: new RegExp(`^${n}$`) }).waitFor({ timeout: 10000 });
       took.push(Date.now() - start);
       await screen.waitForTimeout(150);

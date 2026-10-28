@@ -1,4 +1,4 @@
-// A new scene comes with a view each screen keeps and the handlers that move it, the scene's own
+// A new scene comes with a view its page keeps for each screen and the handlers that move it, the scene's own
 // to change: a left drag turns round what it looks at, the middle button or two fingers slide
 // it, and a wheel or a pinch brings it nearer.
 
@@ -11,7 +11,7 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   await eventually(() => made()?.props.yaw, "the scene to reach the test client");
   const viewed = made().props.yaw.split(".")[0];
   check(/^sceneView\d*$/.test(viewed) && made().props.target === `${viewed}.target`, `the scene to look by its view, not ${JSON.stringify(made().props)}`);
-  await eventually(() => hmi.state.variables.some((v) => v.name === viewed && v.per === "screen"), "the scene's view, kept for each screen");
+  await eventually(() => hmi.page(pageId).state.some((v) => v.name === viewed && v.per === "screen"), "the scene's view, its page's state kept for each screen");
   const handlers = made().handlers.map((h) => `${h.event} ${JSON.stringify(h.filter)}`).join(", ");
   check(handlers === 'drag {"button":"any"}, scroll {"from":"fingers"}, zoom {}', `the scene's handlers are ${handlers}`);
   const text = await hmi.addElement(pageId, "span", { name: "Shown", x: "50", y: "4", w: "60", h: "4", text: `JSON.stringify(${viewed})` });

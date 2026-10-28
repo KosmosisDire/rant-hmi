@@ -31,11 +31,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await offers("width");
 
   // 2D draws in units over its box, again as a value it reads changes
-  await write('ctx.fillStyle = "#ff0000";\nctx.fillRect(0, 0, width * Speed, height);');
-  hmi.set("Speed", 0.25);
+  await write('ctx.fillStyle = "#ff0000";\nctx.fillRect(0, 0, width * Line.Speed, height);');
+  hmi.set("Line.Speed", 0.25);
   await d.shows(d.el(bar), 0.1, 0.5, red, "red at a tenth across with Speed 0.25");
   await d.shows(d.el(bar), 0.5, 0.5, (c) => !red(c), "nothing red half across with Speed 0.25");
-  hmi.set("Speed", 0.75);
+  hmi.set("Line.Speed", 0.75);
   await d.shows(d.el(bar), 0.6, 0.5, red, "red past half across with Speed 0.75");
   const canvas = d.el(bar).locator("canvas");
   const sharp = () => canvas.evaluate((c) => Math.abs(c.width - c.getBoundingClientRect().width * devicePixelRatio) <= 1);
@@ -49,18 +49,18 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   // what cannot draw says why, and drawing never sets a name
   const says = (words) => eventually(async () => (await d.el(bar).getAttribute("title"))?.includes(words), () => `the canvas to say ${words}`);
-  await write("Speed = 2;");
-  await says("draw: Speed cannot be set while drawing");
+  await write("Line.Speed = 2;");
+  await says("draw: Line.Speed cannot be set here, which only reads");
   await write("ctx.fillRect(0, 0, nowhere, 1);");
   await says("nowhere");
 
   // WebGL clears to a colour the value gives
   const gl = await d.add("canvas", { Name: "gl", x: "4", y: "20", w: "20", h: "10", Context: '"webgl2"' });
-  await write("gl.clearColor(0, Speed, 0, 1);\ngl.clear(gl.COLOR_BUFFER_BIT);");
+  await write("gl.clearColor(0, Line.Speed, 0, 1);\ngl.clear(gl.COLOR_BUFFER_BIT);");
   const green = (g) => ([r, gg, b]) => r < 30 && b < 30 && Math.abs(gg - g) < 30;
-  hmi.set("Speed", 1);
+  hmi.set("Line.Speed", 1);
   await d.shows(d.el(gl), 0.5, 0.5, green(255), "WebGL to clear to green at Speed 1");
-  hmi.set("Speed", 0.5);
+  hmi.set("Line.Speed", 0.5);
   await d.shows(d.el(gl), 0.5, 0.5, green(128), "WebGL to clear to half green at Speed 0.5");
   const pageId = hmi.state.pages.find((p) => p.name === "Canvas").id;
   check(hmi.page(pageId).children.find((e) => e.id === gl).props.context === '"webgl2"', "the context was not kept");

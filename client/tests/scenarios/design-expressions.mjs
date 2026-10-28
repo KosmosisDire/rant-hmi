@@ -14,7 +14,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check(at().text === '"Text"', `a new text starts as ${at().text}`);
   await eventually(async () => (await shown()) === "Text", "the new text to show its words");
 
-  await d.setField("Text", "Speed.toFixed(2)");
+  await d.setField("Text", "Line.Speed.toFixed(2)");
   await eventually(async () => /^\d+\.\d\d$/.test(await shown()), "the live speed");
   check(await d.field("Text").evaluate((f) => f.closest(".field").classList.contains("bound")), "a live value is not marked bound");
 

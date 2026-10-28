@@ -1,15 +1,15 @@
 // A designer says which types their components' inputs take, then shows imports from the layers
-// bar: each import and each field of a struct lists the components whose input takes its type,
+// bar: each mesh member and each field of a struct lists the components whose input takes its type,
 // one that writes back only for a variable imported to write, and the one picked reads the value.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const imports = [
-    ["Speed", "Line1/Speed", "write"],
-    ["Running", "Line1/Running", "write"],
-    ["Settings", "Line1/Settings", "write"],
-    ["Joints", "Robot/Joints", "read"],
-    ["Conveyor", "Line1/Conveyor", "read"],
-    ["Reset", "Line1/Reset", "read"],
+    ["Line.Speed", "Line1/Speed", "write"],
+    ["Line.Running", "Line1/Running", "write"],
+    ["Line.Settings", "Line1/Settings", "write"],
+    ["Robot.Joints", "Robot/Joints", "read"],
+    ["Line.Conveyor", "Line1/Conveyor", "read"],
+    ["Line.Reset", "Line1/Reset", "read"],
   ];
   for (const [alias, entity, intent] of imports) await hmi.import(alias, entity, intent);
   await eventually(() => imports.every(([, entity]) => hmi.state.entities.find((e) => e.name === entity)?.schema), "every import's type from the mesh");
@@ -54,29 +54,32 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addPage("Show page");
   const shown = () => hmi.state.pages.find((p) => p.name === "Show page");
   const props = (id) => shown().children.find((e) => e.id === id)?.props ?? {};
-  const speed = await d.show("Speed", "Figure");
-  check(props(speed).value === "Speed" && props(speed).w === "10" && props(speed).h === "4", `Figure for Speed is ${JSON.stringify(props(speed))}`);
+  const speed = await d.show("Line", "Speed", "Figure");
+  check(props(speed).value === "Line.Speed" && props(speed).w === "10" && props(speed).h === "4", `Figure for Speed is ${JSON.stringify(props(speed))}`);
   await eventually(async () => /^-?\d+\.\d\d$/.test(((await d.el(speed).textContent()) ?? "").trim()), "the Figure to read Speed");
   // a struct's fields after its own views, a u32 a number too
-  const target = await d.show("Settings", "target", "Figure");
-  check(props(target).value === "Settings.target", `Figure for the target reads ${props(target).value}`);
-  const latch = await d.show("Running", "Latch");
-  check(props(latch).on === "Running", `Latch for Running reads ${props(latch).on}`);
-  const spread = await d.show("Joints", "position", "Spread");
-  check(props(spread).values === "Joints.position" && props(spread).label === undefined, `Spread for the joints is ${JSON.stringify(props(spread))}`);
-  const glow = await d.show("Conveyor", "running", "Glow");
-  check(props(glow).lit === "Conveyor.running", `Glow for the conveyor reads ${props(glow).lit}`);
+  const target = await d.show("Line", "Settings", "target", "Figure");
+  check(props(target).value === "Line.Settings.target", `Figure for the target reads ${props(target).value}`);
+  const latch = await d.show("Line", "Running", "Latch");
+  check(props(latch).on === "Line.Running", `Latch for Running reads ${props(latch).on}`);
+  const spread = await d.show("Robot", "Joints", "position", "Spread");
+  check(props(spread).values === "Robot.Joints.position" && props(spread).label === undefined, `Spread for the joints is ${JSON.stringify(props(spread))}`);
+  const glow = await d.show("Line", "Conveyor", "running", "Glow");
+  check(props(glow).lit === "Line.Conveyor.running", `Glow for the conveyor reads ${props(glow).lit}`);
 
   // a topic read is never written, so what writes back is not offered, nor a function at all
   await page.locator('.screen:not([hidden]) .sidebar.left button[title="Add an element"]').click();
   const menus = page.locator(".popover.menu");
   const row = (n, words) => menus.nth(n).locator(".menu-item", { has: page.locator(".menu-label", { hasText: new RegExp(`^${words}$`) }) });
   await row(0, "Show an import").hover();
-  const aliases = await menus.nth(1).locator(".menu-label").allTextContents();
-  check(["Speed", "Running", "Settings", "Joints", "Conveyor"].every((a) => aliases.includes(a)) && !aliases.includes("Reset"), `Show an import lists ${aliases}`);
-  await row(1, "Conveyor").hover();
-  await row(2, "running").hover();
-  const views = await menus.nth(3).locator(".menu-label").allTextContents();
+  const objects = await menus.nth(1).locator(".menu-label").allTextContents();
+  check(["Line", "Robot"].every((o) => objects.includes(o)), `Show an import lists ${objects}`);
+  await row(1, "Line").hover();
+  const members = await menus.nth(2).locator(".menu-label").allTextContents();
+  check(["Speed", "Running", "Settings", "Conveyor"].every((a) => members.includes(a)) && !members.includes("Reset"), `Show an import lists Line's ${members}`);
+  await row(2, "Conveyor").hover();
+  await row(3, "running").hover();
+  const views = await menus.nth(4).locator(".menu-label").allTextContents();
   check(views.includes("Glow") && !views.includes("Latch"), `the conveyor's running offers ${views}`);
   await page.keyboard.press("Escape");
 }

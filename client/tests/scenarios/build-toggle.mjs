@@ -23,12 +23,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.css('aspect-ratio: 1\nbackground-clip: "padding-box"\ntransition: "left 120ms ease-out, translate 120ms ease-out"\nfilter: "drop-shadow(0 1px 2px #0006)"');
 
   await d.addPage("Toggles");
-  const line = await d.place("Toggle", { x: "4", y: "4", w: "8", h: "4", value: "Running" });
+  const line = await d.place("Toggle", { x: "4", y: "4", w: "8", h: "4", value: "Line.Running" });
   await d.handler("change", 'notify(p ? "Started" : "Stopped");');
-  const shown = await d.place("Toggle", { x: "16", y: "4", w: "8", h: "4", value: "!Running" });
-  const big = await d.place("Toggle", { x: "28", y: "4", w: "16", h: "6", value: "Running" });
+  const shown = await d.place("Toggle", { x: "16", y: "4", w: "8", h: "4", value: "!Line.Running" });
+  const big = await d.place("Toggle", { x: "28", y: "4", w: "16", h: "6", value: "Line.Running" });
 
-  await hmi.set("Running", true);
+  await hmi.set("Line.Running", true);
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   const knobX = async (id) => (await inst(id).locator('.el[data-name="knob"]').boundingBox()).x - (await inst(id).boundingBox()).x;
@@ -41,23 +41,23 @@ export default async function ({ page, hmi, d, check, eventually }) {
     return Math.abs(k.x + k.width - (box.x + box.width)) < 1;
   }, "the big knob to sit at the right end");
   await inst(line).click();
-  await eventually(() => hmi.state.values.Running?.value === false, "a tap to stop the line");
+  await eventually(() => hmi.state.values["Line.Running"]?.value === false, "a tap to stop the line");
   await page.locator(".notice", { hasText: "Stopped" }).waitFor({ timeout: 4000 });
   await eventually(async () => (await knobX(line)) < 10 && (await knobX(shown)) > 30, "both knobs to follow the line");
   check((await inst(shown).locator(".el.live").count()) === 0 && (await inst(line).locator(".el.live").count()) === 1, "only the bound toggle looks pressable");
   await inst(shown).click();
   await page.waitForTimeout(300);
-  check(hmi.state.values.Running?.value === false && (await knobX(shown)) > 30, "a toggle bound one way wrote or moved");
+  check(hmi.state.values["Line.Running"]?.value === false && (await knobX(shown)) > 30, "a toggle bound one way wrote or moved");
   await inst(line).click();
-  await eventually(() => hmi.state.values.Running?.value === true, "a second tap to start it");
+  await eventually(() => hmi.state.values["Line.Running"]?.value === true, "a second tap to start it");
 
   await d.tab("Design");
   await d.openPage("Toggle");
   await d.select("track");
-  await d.handler("tap", "Speed = 1;");
+  await d.handler("tap", "Line.Speed = 1;");
   await d.tab("Run");
   await inst(line).click();
-  await page.locator(".notice.fault", { hasText: "Speed is no input, variable or part of Toggle" }).waitFor({ timeout: 4000 });
+  await page.locator(".notice.fault", { hasText: "Line is no input, variable or part of Toggle" }).waitFor({ timeout: 4000 });
 
   // and back, so the Toggle ends as a person would leave it
   await d.tab("Design");

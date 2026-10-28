@@ -1,4 +1,4 @@
-// The editor on a phone: all four tabs fit the top bar and a tap opens each, buttons take a
+// The editor on a phone: all three tabs fit the top bar and a tap opens each, buttons take a
 // finger's room since the main pointer is touch, and the status bar fits. A desktop keeps the
 // mouse's sizes.
 
@@ -18,7 +18,7 @@ export default async function ({ page, sys, check, eventually }) {
     check(box.height >= 40 && box.x >= 0 && box.x + box.width <= 390, `a bar button is ${JSON.stringify(box)} on a phone`);
   }
 
-  for (const tab of ["Logic", "Run", "Data", "Design"]) {
+  for (const tab of ["Run", "Objects", "Design"]) {
     const button = screen.locator(".tab", { hasText: tab });
     const box = await button.boundingBox();
     check(box.x >= 0 && box.x + box.width <= 390 && box.height >= 40, `the ${tab} tab is ${JSON.stringify(box)} on a phone`);

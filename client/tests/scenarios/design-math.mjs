@@ -4,15 +4,15 @@
 // not parse.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  if (!hmi.state.imports.some((i) => i.alias === "Pose")) await hmi.import("Pose", "Robot/Pose");
+  if (!hmi.state.imports.some((i) => i.alias === "Robot.Pose")) await hmi.import("Robot.Pose", "Robot/Pose");
   const pageId = await hmi.addPage("Pose math");
   const shows = {
     // the demo's robot circles at 0.4 m, 0.3 m up, so it is always 0.5 m from the origin
-    reach: "Pose.position.length().toFixed(2)",
-    doubled: "(Pose.position * 2).length().toFixed(2)",
-    apart: "(Pose.position - vec(0, 0, 0.3)).length().toFixed(2)",
-    turned: "(Pose.orientation * vec(1, 0, 0)).equals(vec(1, 0, 0))",
-    placed: "(Pose * vec(0, 0, 1)).z.toFixed(2)",
+    reach: "Robot.Pose.position.length().toFixed(2)",
+    doubled: "(Robot.Pose.position * 2).length().toFixed(2)",
+    apart: "(Robot.Pose.position - vec(0, 0, 0.3)).length().toFixed(2)",
+    turned: "(Robot.Pose.orientation * vec(1, 0, 0)).equals(vec(1, 0, 0))",
+    placed: "(Robot.Pose * vec(0, 0, 1)).z.toFixed(2)",
     yaw: "degrees(fromEuler(0, 0, PI / 2).euler().yaw).toFixed(0)",
     plain: "sqrt(16) + clamp(5, 0, 3) + lerp(0, 10, 0.25) + floor(2.7) + max(1, 4)",
     words: '"at " + vec(1, 2)',
@@ -41,12 +41,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.type("sq");
   await eventually(async () => (await names()).includes("sqrt"), "sqrt in the list");
   await text.fill("");
-  await page.keyboard.type("Pose.position.");
+  await page.keyboard.type("Robot.Pose.position.");
   await eventually(async () => (await names()).join().startsWith("x,y,z,length,normalized"), "a vector's fields and then its methods");
   await page.keyboard.press("Escape");
   const note = page.locator(".screen:not([hidden]) .sidebar.right .field-note");
   await eventually(async () => (await note.textContent())?.includes("a 2D vector and a 3D vector cannot be added"), "the sum of a 2D and a 3D vector to say why it fails");
-  await d.setField("Text", "Speed +");
+  await d.setField("Text", "Line.Speed +");
   let said = "";
   await eventually(async () => (said = (await note.allTextContents()).join(" | ")).startsWith("Unexpected token"), () => `code that does not parse to say so, not ${said}`);
   check(!/\(\d+:\d+\)/.test(await note.textContent()), `the note gives the wrapper's position: ${await note.textContent()}`);

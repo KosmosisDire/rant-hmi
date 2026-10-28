@@ -72,15 +72,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.place("Readout", { w: "fill", h: "fill", Repeat: "Object.values(value.orientation.euler()).map(degrees)", label: '["Roll", "Pitch", "Yaw"][index]', value: "item", unit: '"°"', digits: "angleDigits", fill: "fill" });
 
   await d.addPage("Readings");
-  const readout = await d.place("Readout", { x: "4", y: "4", w: "20", h: "8", value: "Speed", unit: '"m/s"', digits: "2" });
-  const long = await d.place("Readout", { x: "28", y: "4", w: "40", h: "12", label: '"Line speed"', value: "Speed", unit: '"m/s"', digits: "2" });
-  const mode = await d.place("Readout", { x: "72", y: "4", w: "20", h: "8", label: '"Mode"', value: "Settings.mode" });
-  const lamp = await d.place("Lamp", { x: "4", y: "16", w: "12", h: "3", value: "Running", label: '"Running"' });
+  const readout = await d.place("Readout", { x: "4", y: "4", w: "20", h: "8", value: "Line.Speed", unit: '"m/s"', digits: "2" });
+  const long = await d.place("Readout", { x: "28", y: "4", w: "40", h: "12", label: '"Line speed"', value: "Line.Speed", unit: '"m/s"', digits: "2" });
+  const mode = await d.place("Readout", { x: "72", y: "4", w: "20", h: "8", label: '"Mode"', value: "Line.Settings.mode" });
+  const lamp = await d.place("Lamp", { x: "4", y: "16", w: "12", h: "3", value: "Line.Running", label: '"Running"' });
   const swatch = await d.place("Swatch", { x: "4", y: "22", w: "20", h: "8", value: "{ r: 255, g: 0, b: 0, a: 255 }" });
-  const pose = await d.place("Pose", { x: "28", y: "22", w: "48", h: "18", value: "{ position: vec(Speed, 0.5, 0.25), orientation: fromEuler(0, 0, PI / 2) }" });
+  const pose = await d.place("Pose", { x: "28", y: "22", w: "48", h: "18", value: "{ position: vec(Line.Speed, 0.5, 0.25), orientation: fromEuler(0, 0, PI / 2) }" });
 
-  await hmi.set("Speed", 1);
-  await hmi.set("Running", true);
+  await hmi.set("Line.Speed", 1);
+  await hmi.set("Line.Running", true);
   await d.tab("Run");
   const inst = (id) => page.locator(`.run-layer:not([hidden]) .el[data-id="${id}"]`);
   const words = (id) => inst(id).locator('.el[data-name="reading"]').allTextContents();
@@ -94,7 +94,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // the lamp lights with the line and goes dark when it stops
   const light = () => inst(lamp).locator('.el[data-name="light"]').evaluate((e) => getComputedStyle(e).backgroundColor);
   await eventually(async () => (await light()) === "rgb(55, 136, 95)", "the lamp lit green");
-  await hmi.set("Running", false);
+  await hmi.set("Line.Running", false);
   await eventually(async () => (await light()) === "rgb(40, 40, 40)", "the lamp dark");
 
   const chip = await inst(swatch).locator('.el[data-name="chip"]').evaluate((e) => getComputedStyle(e).backgroundColor);

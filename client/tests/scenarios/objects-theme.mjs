@@ -5,7 +5,7 @@
 // in units, and tokens that read each other in a ring say they cannot be worked out.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await d.tab("Data");
+  await d.openObject("");
   const right = page.locator(".screen:not([hidden]) .sidebar.right");
   const field = (label) => right.locator(".field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) }).locator("input");
   const set = async (label, text) => {
@@ -18,7 +18,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await right.locator(".head-title", { hasText: "$signal" }).waitFor();
   await set("Dark", "#ff8800");
   await set("Light", "#0088ff");
-  await page.locator(".data-detail tr", { hasText: "$signal" }).waitFor();
+  await page.locator(".object-sheet tr", { hasText: "$signal" }).waitFor();
 
   const pageId = await hmi.addPage("Themed");
   const frame = await hmi.addElement(pageId, "div", { name: "Box", x: "44", y: "44", w: "176", h: "88", background: "$signal" });
@@ -48,8 +48,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
-  await d.tab("Data");
-  await page.locator(".data-detail tr", { hasText: "$signal" }).click();
+  await d.openObject("");
+  await page.locator(".object-sheet tr", { hasText: "$signal" }).click();
   await set("Name", "brand");
   await eventually(() => hmi.page(pageId).children.find((e) => e.id === frame)?.props.background === "$brand", "the page to follow the rename");
   await eventually(() => hmi.page(badge).interface.inputs[0].default === "$brand", "the component's default to follow the rename");
@@ -72,8 +72,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.locator('button[title="Switch the theme"]').click();
   hmi.send({ type: "set_token", name: "ringA", token: { name: "ringA", dark: "$ringB", light: "" } });
   hmi.send({ type: "set_token", name: "ringB", token: { name: "ringB", dark: "$ringA", light: "" } });
-  await d.tab("Data");
-  await page.locator(".data-detail tr", { hasText: "$ringA" }).getByText("cannot be worked out").first().waitFor();
+  await d.openObject("");
+  await page.locator(".object-sheet tr", { hasText: "$ringA" }).getByText("cannot be worked out").first().waitFor();
 
   // a page's fill reads the theme too, so the ground follows light and dark, and a page with
   // none shows the theme's $ground
@@ -99,7 +99,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const find = (es) => es.flatMap((e) => (e.id === made ? [e] : (find(e.children) ?? [])))[0];
   const starts = () => find(hmi.page(pageId).children)?.props ?? {};
   await eventually(() => starts().background === "$panel" && starts()["border-radius"] === "$radius", `a new frame to start in the theme's tokens, not ${JSON.stringify(starts())}`);
-  await d.tab("Data");
+  await d.openObject("");
   await page.locator("button", { hasText: "Add a token" }).click();
   await right.locator(".head-title", { hasText: "$color" }).waitFor();
   await set("Name", "floor");

@@ -28,6 +28,6 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   // added to the theme, which the scenarios after this one still read
   const theme = join(sys.project, "data", "theme.toml");
   writeFileSync(theme, `${readFileSync(theme, "utf8")}\n[[token]]\nname = "outside"\ndark = "#123456"\nlight = "#abcdef"\n`);
-  await d.tab("Data");
-  await page.locator(".data-detail tr", { hasText: "$outside" }).waitFor({ timeout: 4000 });
+  await d.openObject("");
+  await page.locator(".object-sheet tr", { hasText: "$outside" }).waitFor({ timeout: 4000 });
 }

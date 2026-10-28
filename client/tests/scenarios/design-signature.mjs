@@ -3,8 +3,8 @@
 // offers the whole type as one value instead. It goes once the brackets close.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  await hmi.import("Belt", "Line1/Conveyor", "write");
-  await hmi.import("Clear", "Line1/Reset", "write");
+  await hmi.import("Line.Belt", "Line1/Conveyor", "write");
+  await hmi.import("Line.Clear", "Line1/Reset", "write");
   const pageId = await hmi.addPage("Calls");
   const id = await hmi.addElement(pageId, "div", { name: "Go", x: "44", y: "44", w: "176", h: "88", background: "#2a2f35" });
   await d.openPage("Calls");
@@ -15,8 +15,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const head = async () => (await hint.locator("div").first().textContent()).replace(/: [^,)]+/g, "");
   const marked = async () => (await hint.locator(".sign-at").textContent()).split(":")[0];
 
-  await page.keyboard.type("Belt.send(");
-  await eventually(async () => (await hint.count()) === 1 && (await head()) === "Belt.send(speed, running, part)", "the send's fields");
+  await page.keyboard.type("Line.Belt.send(");
+  await eventually(async () => (await hint.count()) === 1 && (await head()) === "Line.Belt.send(speed, running, part)", "the send's fields");
   check((await hint.locator(".sign-or").textContent()).includes("one Conveyor"), "the whole type is not offered");
   check((await marked()) === "speed", `the first value is not the one marked, ${await marked()} is`);
   await page.keyboard.type("1.5, ");
@@ -28,9 +28,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await hint.count()) === 0, "the hint to go once the brackets close");
 
   await page.keyboard.press("Enter");
-  await page.keyboard.type("const n = await Clear(");
-  await eventually(async () => (await hint.count()) === 1 && (await hint.textContent()).startsWith("Clear() gives"), "the call's answer");
+  await page.keyboard.type("const n = await Line.Clear(");
+  await eventually(async () => (await hint.count()) === 1 && (await hint.textContent()).startsWith("Line.Clear() gives"), "the call's answer");
   await page.keyboard.type(");");
   await page.keyboard.press("Control+Enter");
-  await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code === 'Belt.send(1.5, true, "A1")\nconst n = await Clear();', "the code typed");
+  await eventually(() => hmi.page(pageId).children[0].handlers[0]?.code === 'Line.Belt.send(1.5, true, "A1")\nconst n = await Line.Clear();', "the code typed");
 }

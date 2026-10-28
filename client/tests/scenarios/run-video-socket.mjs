@@ -12,9 +12,9 @@ function block(plain) {
 
 export default async function ({ page, hmi, sys, check, eventually }) {
   check(sys.transcoder, "rant-transcoder is not built: build transcoder-rant or set HMI_TRANSCODER");
-  if (!hmi.state.imports.some((i) => i.alias === "Camera")) await hmi.import("Camera", "Cell/Camera");
+  if (!hmi.state.imports.some((i) => i.alias === "Cell.Camera")) await hmi.import("Cell.Camera", "Cell/Camera");
   const pageId = await hmi.addPage("Socket video");
-  const media = await hmi.addElement(pageId, "media", { name: "camera", x: "4", y: "4", w: "32", h: "24", src: "Camera" });
+  const media = await hmi.addElement(pageId, "media", { name: "camera", x: "4", y: "4", w: "32", h: "24", src: "Cell.Camera" });
 
   const open = async (plain) => {
     const context = await page.context().browser().newContext();

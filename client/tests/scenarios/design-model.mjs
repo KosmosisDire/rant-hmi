@@ -43,8 +43,8 @@ export default async function ({ hmi, sys, d, eventually }) {
   await d.shows(d.el(scene), 0.35, 0.5, (c) => !red(c), "nothing left of the middle");
 
   // a half turn of Arm about its own z swings the square to the other side, a value driving it
-  await d.setField("Joints", "{ Arm: Speed * PI }");
-  hmi.set("Speed", 1);
+  await d.setField("Joints", "{ Arm: Line.Speed * PI }");
+  hmi.set("Line.Speed", 1);
   await d.shows(d.el(scene), 0.35, 0.5, red, "the square left of the middle with Arm turned half round");
   await d.shows(d.el(scene), 0.65, 0.5, (c) => !red(c), "nothing right of the middle with Arm turned");
 

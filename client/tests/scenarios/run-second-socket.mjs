@@ -12,27 +12,27 @@ const SECOND = "Reached over the socket, big values over a second one";
 const ALONE = "Reached over the socket alone";
 
 export default async function ({ page, hmi, sys, check, eventually }) {
-  await hmi.import("SecondCam", "Line1/LabelCam");
-  await hmi.import("SecondLinks", "Hmi/Clients");
+  await hmi.import("Line.SecondCam", "Line1/LabelCam");
+  await hmi.import("Hmi.SecondLinks", "Hmi/Clients");
   const pageId = await hmi.addPage("Second socket");
   // the picture's width, so the screen reads its pictures even once the camera has a video
-  await hmi.addElement(pageId, "span", { name: "label", x: "2", y: "2", w: "30", h: "4", text: "String(SecondCam.width)" });
+  await hmi.addElement(pageId, "span", { name: "label", x: "2", y: "2", w: "30", h: "4", text: "String(Line.SecondCam.width)" });
   hmi.send({ type: "set_start", page: pageId });
   const link = (p) => p.locator(".statusbar .stat").first();
-  const screens = () => hmi.state.values.SecondLinks?.value ?? [];
+  const screens = () => hmi.state.values["Hmi.SecondLinks"]?.value ?? [];
 
-  await eventually(() => (hmi.state.values.SecondLinks?.value ?? []).length > 0, "the screens connected so far");
+  await eventually(() => (hmi.state.values["Hmi.SecondLinks"]?.value ?? []).length > 0, "the screens connected so far");
   const before = new Set(screens().map((c) => c.id));
   const ours = () => screens().filter((c) => !before.has(c.id));
   const context = await page.context().browser().newContext();
   await context.addInitScript(countBig);
   const way = await refusing(Number(new URL(sys.url).port));
   try {
-    // the editor's page shows the status bar, and its Data tab every value
+    // the editor's page shows the status bar, and its Objects tab every value
     const editor = await context.newPage();
     await editor.goto(sys.url);
     await eventually(async () => (await link(editor).getAttribute("title")) === SECOND, "the status bar to say big values come over a second socket", 10000);
-    const second = await pictures(hmi, editor, "SecondCam");
+    const second = await pictures(hmi, editor, "Line.SecondCam");
     check(keptUp(second), `the editor got ${second.got} of the camera's ${second.sent} pictures in 1.5 s over its second socket`);
 
     const plain = await context.newPage();
@@ -40,7 +40,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     await eventually(async () => /^System/.test(await link(plain).innerText()), "the screen whose second socket is refused to connect", 10000);
     await plain.waitForTimeout(1000);
     check((await link(plain).getAttribute("title")) === ALONE, `the screen whose second socket is refused says "${await link(plain).getAttribute("title")}"`);
-    const alone = await pictures(hmi, plain, "SecondCam");
+    const alone = await pictures(hmi, plain, "Line.SecondCam");
     check(keptUp(alone), `the screen without a second socket got ${alone.got} of the camera's ${alone.sent} pictures in 1.5 s on its socket`);
 
     await eventually(() => ours().length === 2, "both screens listed");

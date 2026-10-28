@@ -5,9 +5,9 @@
 // the same on each beat while held, even a still one, and a last 0, 0 when let go.
 
 export default async function ({ page, hmi, d, check, eventually }) {
-  for (const name of ["jogX", "jogY"]) hmi.send({ type: "set_variable", name, variable: { name, start: 0, per: "screen" } });
+  for (const name of ["Hmi.jogX", "Hmi.jogY"]) hmi.setVariable(name, 0, "screen");
   // shared, so the test reads them as any screen would
-  for (const name of ["beats", "heldX"]) hmi.send({ type: "set_variable", name, variable: { name, start: 0, per: "hmi" } });
+  for (const name of ["Hmi.beats", "Hmi.heldX"]) hmi.setVariable(name, 0);
 
   await d.addComponent("Joystick", 20, 20);
   await d.addInput("travel", "6.5");
@@ -40,9 +40,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.addPage("Joystick");
   const stick = await d.place("Joystick", { x: "4", y: "4", w: "20", h: "20" });
-  await d.handler("move", "jogX = p.x;\njogY = p.y;");
-  await d.handler("held", "beats = beats + 1;\nheldX = p.x;");
-  await d.add("text", { Name: "readout", x: "28", y: "12", w: "24", h: "4", Text: '"x " + jogX.toFixed(2) + "  y " + jogY.toFixed(2)', Colour: "$text", Size: "2" });
+  await d.handler("move", "Hmi.jogX = p.x;\nHmi.jogY = p.y;");
+  await d.handler("held", "Hmi.beats = Hmi.beats + 1;\nHmi.heldX = p.x;");
+  await d.add("text", { Name: "readout", x: "28", y: "12", w: "24", h: "4", Text: '"x " + Hmi.jogX.toFixed(2) + "  y " + Hmi.jogY.toFixed(2)', Colour: "$text", Size: "2" });
 
   await d.tab("Run");
   const inst = page.locator(`.run-layer:not([hidden]) .el[data-id="${stick}"]`);
@@ -54,7 +54,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const [cx, cy] = await centre(inst);
   const scale = (await inst.boundingBox()).width / 20;
   const shared = (name) => hmi.state.values[name]?.value;
-  const beats = () => shared("beats");
+  const beats = () => shared("Hmi.beats");
 
   // a press in the box's corner, outside the base, does nothing
   const corner = await inst.boundingBox();
@@ -89,13 +89,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.waitForTimeout(600);
   const counted = beats() - from;
   check(counted >= 3 && counted <= 9, `held still for 600 ms it sent held ${counted} times`);
-  check(shared("heldX") === 1, "held sends where the stick is");
+  check(shared("Hmi.heldX") === 1, "held sends where the stick is");
 
   await page.mouse.up();
   const [rx, ry] = await centre(knob);
   check(Math.abs(rx - cx) < 2 && Math.abs(ry - cy) < 2, "the knob did not spring back");
   await reads("x 0.00  y 0.00", "the release to stop the jog");
-  await eventually(async () => shared("heldX") === 0, "the release to send a last held at 0");
+  await eventually(async () => shared("Hmi.heldX") === 0, "the release to send a last held at 0");
   const after = beats();
   await page.waitForTimeout(300);
   check(beats() === after, "held went on after the release");
