@@ -22,12 +22,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // the open page's band is the selected row, and it starts folded as every page does
   check((await band.getAttribute("class")).includes("selected"), "the open page's band is not selected");
   check((await left.locator(".page-group .layer-list").count()) === 0, "a page's layers show before its band is opened");
-  check((await band.locator(".list-trail").textContent()).trim() === "128x72", `the band shows the size ${await band.locator(".list-trail").textContent()}`);
+  check((await band.locator(".mark").count()) === 0, "the band is marked though its page keeps nothing");
   await band.locator(".open-caret").click();
   await eventually(async () => (await rows()).join() === "Each,Other,Outer", async () => `the band to open its top layers, they show ${(await rows()).join()}`);
   const tall = (await row(outer).boundingBox()).height;
   check(tall <= 26, `a layer row is ${tall} px tall`);
-  check((await row(each).locator('.mark[title^="Repeats over"]').count()) === 1, "Each is not marked as repeating");
+  check((await row(each).locator('.mark[title="Repeats over 2"]').textContent()) === "2", "Each is not marked as repeating over 2");
   check((await row(other).locator('.mark[title="On tap"]').count()) === 1, "Other is not marked as handling tap");
   check((await row(outer).locator(".mark").count()) === 0, "Outer is marked though it neither repeats nor handles");
 
