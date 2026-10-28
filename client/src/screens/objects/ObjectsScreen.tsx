@@ -127,7 +127,7 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
         if (!refused || !r) return;
         setRenamed(null);
         const now = picked();
-        if (open() === r.object && now.kind === "member" && now.name === r.to && !named(key(r.object, r.to))) setPicked({ kind: "member", name: r.from });
+        if (open() === r.object && now.kind === "member" && now.name === r.to && named(key(r.object, r.from))) setPicked({ kind: "member", name: r.from });
       },
       { defer: true },
     ),
