@@ -1,5 +1,6 @@
 // Values as short text for tables and value boxes.
 
+import { packed } from "../net/packed";
 import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Intent } from "../protocol/Intent";
 import type { Kind } from "../protocol/Kind";
@@ -24,11 +25,11 @@ export function number(n: number): string {
 /** Text with its first letter a capital, as a row or a button starts. */
 export const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
-/** What an import's intent allows, in words: reading is always allowed, and write adds a set
- *  or a send. A function or a task is only ever called. */
 /** Read and write, as a choice of them says each for `kind`. */
 export const intents = (kind: Kind) => (["read", "write"] as const).map((i) => [i, capital(intentWords(kind, i))] as const);
 
+/** What an import's intent allows, in words: reading is always allowed, and write adds a set
+ *  or a send. A function or a task is only ever called. */
 export function intentWords(kind: Kind, intent: Intent): string {
   if (kind === "function" || kind === "task") return "call";
   return intent === "read" ? "read only" : `read and ${kind === "topic" ? "send" : "set"}`;
@@ -50,6 +51,8 @@ export function short(v: Value | null | undefined): string {
   if (typeof v === "boolean" || typeof v === "bigint") return String(v);
   if (v instanceof Uint8Array) return `${v.length} bytes`;
   if (Array.isArray(v)) {
+    // a packed list may be kept far away, its items unread here
+    if (packed(v)) return `[${v.length}]`;
     const head = v.slice(0, 4).map(short).join(", ");
     return `[${v.length}] ${head}${v.length > 4 ? ", ..." : ""}`;
   }

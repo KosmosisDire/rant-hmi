@@ -1,4 +1,5 @@
 import { For, Match, Show, Switch } from "solid-js";
+import { packed } from "../net/packed";
 import type { Value } from "../protocol/Value";
 import { fields, number } from "../state/format";
 import { picture, PictureView } from "./Picture";
@@ -87,7 +88,8 @@ function numbers(v: Value | null): number[] | undefined {
 }
 
 function List(p: { items: Value[] }) {
-  const plain = () => p.items.every((x) => typeof x === "number");
+  // a packed list may be kept far away, its items unread here, so it shows by its length
+  const plain = () => !packed(p.items) && p.items.every((x) => typeof x === "number");
   const peak = () => Math.max(1e-9, ...p.items.slice(0, BARS).map((x) => Math.abs(x as number)));
   return (
     <Switch fallback={<span class="pv-none">{p.items.length === 1 ? "1 item" : `${p.items.length} items`}</span>}>
