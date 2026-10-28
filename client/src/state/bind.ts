@@ -9,15 +9,15 @@ import { LIBRARY, setClock } from "../lang/math.js";
 import { send } from "../net/connection";
 import { Far, packed } from "../net/packed";
 import type { Page } from "../protocol/Page";
-import { MISSING, TOKEN_FIXED, WHOLE } from "../protocol/rules";
+import { MISSING, OWN_ONLY, TOKEN_FIXED, WHOLE } from "../protocol/rules";
 import type { Token } from "../protocol/Token";
 import type { Value } from "../protocol/Value";
 import type { Variable } from "../protocol/Variable";
 import { held, pads } from "./input";
 import { mode } from "./mode";
-import { named, say } from "./names";
+import { imported, key, members, named, say } from "./names";
 import { type From, ranInto } from "./problems";
-import { entity, keptValue, live, promise, state } from "./store";
+import { entity, keptValue, live, promise, split, state } from "./store";
 import { bare } from "./types";
 
 /** One unit of every length, in CSS pixels: placement, sizes, diagrams, spacing, radii, borders
@@ -115,10 +115,11 @@ export interface Scope {
   has(name: string): boolean;
   /** The value now. It throws for one that is unknown. */
   get(name: string): unknown;
-  /** Writes a name, or a field of it along `path`, or throws why it cannot. */
+  /** Writes a name, or a field of it along `path`, or throws why it cannot. An object's path
+   *  starts with the member. */
   set(name: string, path: string, value: unknown): void;
-  /** True when `set` may write the name. */
-  writes(name: string): boolean;
+  /** True when `set` may write the name, or its field along `path`. */
+  writes(name: string, path?: string): boolean;
   /** What to say of a name it does not have. */
   missing(name: string): string;
   /** Where it reads state, on a page. */
@@ -216,7 +217,7 @@ function onScreen(s: Scope): Scope {
       if (screen(name)) throw new TypeError(`${name} is the screen's, so it cannot be set`);
       s.set(name, path, value);
     },
-    writes: (name) => !token(name) && !screen(name) && s.writes(name),
+    writes: (name, path) => !token(name) && !screen(name) && s.writes(name, path),
     missing: (name) => s.missing(name),
   };
 }
@@ -229,7 +230,7 @@ const itselves = new Map<string, object>();
 
 /** Whether an import's values are structs, as a camera's frames are, once its type is known. */
 function structs(alias: string): boolean {
-  const imp = state.imports.find((i) => i.alias === alias);
+  const imp = imported(alias);
   const fields = imp && entity(imp.entity)?.schema?.fields;
   return !!fields && !bare(fields);
 }
@@ -266,30 +267,79 @@ export function sourceOf(v: unknown): string | null {
   return typeof v === "object" && v !== null ? ((v as { [ALIAS]?: string })[ALIAS] ?? null) : null;
 }
 
-/** What the system's own expressions read: the mesh imports, variables, records and computed
- *  values, live, and the mesh's enums. It writes those it may on the backend. */
+/** A member's value now, as code outside its object reads it by its key. */
+function member(k: string): unknown {
+  const n = named(k);
+  if (!n || n.of === "object") throw new ReferenceError(say(MISSING, k));
+  if (n.local) throw new TypeError(say(OWN_ONLY, k));
+  if (sourcing && structs(k)) return itself(k);
+  const v = live(k);
+  if (!v.known) throw new Unknown(k);
+  return v.value;
+}
+
+const SPACE = Symbol("object");
+const spaces = new Map<string, object>();
+
+/** An object as code outside it reads it: each Global member live by its key, as `Line.Speed`. */
+function space(object: string): object {
+  let s = spaces.get(object);
+  if (!s) {
+    const shown = (m: string | symbol) => typeof m === "string" && named(key(object, m))?.local === false;
+    s = new Proxy(
+      {},
+      {
+        get: (_, m) => (m === SPACE ? object : typeof m === "string" ? member(key(object, m)) : undefined),
+        has: (_, m) => m === SPACE || shown(m),
+        ownKeys: () => members(object).map((n) => split(n.name)[1]),
+        getOwnPropertyDescriptor: (_, m) => (shown(m) ? { value: member(key(object, m as string)), enumerable: true, configurable: true } : undefined),
+      },
+    );
+    spaces.set(object, s);
+  }
+  return s;
+}
+
+/** The object a value read as one is, else null. */
+function spaceOf(v: unknown): string | null {
+  return typeof v === "object" && v !== null ? ((v as { [SPACE]?: string })[SPACE] ?? null) : null;
+}
+
+/** Writes the member `k`, or its field along `path`, as code outside its object may. */
+function setMember(k: string, path: string, value: unknown) {
+  const n = named(k);
+  if (!n || n.of === "object") throw new ReferenceError(say(MISSING, k));
+  if (n.local) throw new TypeError(say(OWN_ONLY, k));
+  if (n.fixed) throw new TypeError(n.fixed);
+  if (n.of === "computed" && path !== "") throw new TypeError(say(WHOLE, k));
+  // the screen's own shows what it is set to at once, as the system will have it
+  if (n.screen) promise(k, withField(live(k).value, path, value) as Value);
+  send({ type: "set", alias: k, path, value: value as Value });
+}
+
+/** What the system's own expressions read: each object, its Global members live, and the
+ *  mesh's enums. It writes those members it may on the backend. */
 export const systemScope: Scope = {
-  has: (name) => (named(name)?.of ?? "token") !== "token",
+  has: (name) => named(name)?.of === "object" || named(name)?.of === "enum",
   get: (name) => {
     // its options a fresh list at each read, as a value's are
     if (named(name)?.of === "enum") return { options: [...(state.enums.find((e) => e.name === name)?.options ?? [])] };
-    if (sourcing && structs(name)) return itself(name);
-    const v = live(name);
-    if (!v.known) throw new Unknown(name);
-    return v.value;
+    if (named(name)?.of !== "object") throw new ReferenceError(say(MISSING, name));
+    return space(name);
   },
   set: (name, path, value) => {
     const n = named(name);
-    if (!n || n.of === "token") throw new ReferenceError(systemScope.missing(name));
-    if (n.fixed) throw new TypeError(n.fixed);
-    if (n.of === "computed" && path !== "") throw new TypeError(say(WHOLE, name));
-    // the screen's own shows what it is set to at once, as the system will have it
-    if (n.screen) promise(name, withField(live(name).value, path, value) as Value);
-    send({ type: "set", alias: name, path, value: value as Value });
+    if (n?.of === "enum") throw new TypeError(n.fixed);
+    if (n?.of !== "object") throw new ReferenceError(systemScope.missing(name));
+    const [m, ...fields] = path.split(".");
+    if (!m) throw new TypeError(`${name} is an object, so code sets its members, not it`);
+    setMember(key(name, m), fields.join("."), value);
   },
-  writes: (name) => {
-    const n = named(name);
-    return !!n && n.of !== "token" && !n.fixed;
+  writes: (name, path = "") => {
+    if (named(name)?.of !== "object") return false;
+    const [m, ...fields] = path.split(".");
+    const n = named(key(name, m));
+    return !!n && n.of !== "object" && !n.local && !n.fixed && !(n.of === "computed" && fields.length > 0);
   },
   missing: (name) => say(MISSING, name),
 };
@@ -397,7 +447,7 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
     writes: (name) => {
       if (variable(name)) return true;
       const ref = bareRef(instance?.props[name]);
-      return !!input(name)?.bindable && !!ref && !!instance?.outer.writes(ref.name);
+      return !!input(name)?.bindable && !!ref && !!instance?.outer.writes(ref.name, ref.fields);
     },
     missing: (name) => `${name} is no input, variable or part of ${c.name}`,
   });
@@ -419,7 +469,7 @@ export function repeatScope(s: Scope, index: number, item: () => unknown): Scope
       if (own(name)) throw new TypeError(`${name} is the repeat's, so it cannot be set`);
       s.set(name, path, value);
     },
-    writes: (name) => !own(name) && s.writes(name),
+    writes: (name, path) => !own(name) && s.writes(name, path),
     missing: (name) => s.missing(name),
     place: s.place && { page: s.place.page, copies: [...s.place.copies, index] },
     state: s.state,
@@ -452,7 +502,7 @@ export function stateScope(outer: Scope, holder: string | null, kept: Variable[]
       if (v.per === "screen") promise(key, withField(get(v), path, value) as Value);
       send({ type: "set", alias: key, path, value: value as Value });
     },
-    writes: (name) => !!own(name) || outer.writes(name),
+    writes: (name, path) => !!own(name) || outer.writes(name, path),
     missing: (name) => outer.missing(name),
     place,
     state: (name) => own(name) ?? outer.state?.(name),
@@ -521,11 +571,18 @@ export function runHandler(code: string, scope: Scope, emit: ((name: string, pay
   }
   if (typeof fn === "string") return ranInto(from, fn, "fault");
   const own: Record<string, unknown> = emit ? { p, emit } : { p };
-  // the run reads back what it wrote, as the backend's runs do, before the binding catches up
+  // the run reads back what it wrote, as the backend's runs do, before the binding catches up.
+  // Each is by its key, a member's `Line.Speed` and its object's name before the dot.
   const written = new Map<string, unknown>();
-  const write = (key: string, value: unknown) => {
-    scope.set(key, "", value);
-    written.set(key, value);
+  const read = (k: string) => {
+    const [object, m] = split(k);
+    return m ? (scope.get(object) as Record<string, unknown>)[m] : scope.get(k);
+  };
+  const write = (k: string, value: unknown) => {
+    const [object, m] = split(k);
+    if (m) scope.set(object, m, value);
+    else scope.set(k, "", value);
+    written.set(k, value);
   };
   // as on the system, each read is a fresh copy whose fields take assignment by writing the
   // whole back with the field changed, so `jogVel[index] = 1` writes jogVel. What cannot be
@@ -542,11 +599,21 @@ export function runHandler(code: string, scope: Scope, emit: ((name: string, pay
       get: (target, k) => (typeof k === "symbol" ? Reflect.get(target, k) : wrap(key, Reflect.get(target, k), [...path, k])),
       set: (target, k, v) => {
         if (typeof k === "symbol") return false;
-        write(key, withField(written.has(key) ? written.get(key) : unwrap(scope.get(key)), [...path, k].join("."), v));
+        write(key, withField(written.has(key) ? written.get(key) : unwrap(read(key)), [...path, k].join("."), v));
         return Reflect.set(target, k, v);
       },
     });
   };
+  // an object's members read and written each by its key, as names on their own are
+  const objectHere = (object: string) =>
+    new Proxy(read(object) as object, {
+      get: (target, m) => (typeof m !== "string" ? Reflect.get(target, m) : written.has(key(object, m)) ? wrap(key(object, m), written.get(key(object, m))) : wrap(key(object, m), read(key(object, m)))),
+      set: (_, m, v) => {
+        if (typeof m !== "string") return false;
+        write(key(object, m), v);
+        return true;
+      },
+    });
   const names = new Proxy(
     {},
     {
@@ -556,8 +623,9 @@ export function runHandler(code: string, scope: Scope, emit: ((name: string, pay
         if (typeof key !== "string") return undefined;
         if (key in own) return own[key];
         if (written.has(key)) return wrap(key, written.get(key));
-        if (scope.has(key)) return wrap(key, scope.get(key));
-        throw new ReferenceError(scope.missing(key));
+        if (!scope.has(key)) throw new ReferenceError(scope.missing(key));
+        const v = scope.get(key);
+        return spaceOf(v) === key ? objectHere(key) : wrap(key, v);
       },
       set: (_, key, value) => {
         if (typeof key !== "string" || !scope.has(key)) throw new ReferenceError(scope.missing(String(key)));

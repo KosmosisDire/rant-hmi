@@ -6,11 +6,12 @@ import { homeOf } from "../../page/PageView";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
+import { entityOf, key } from "../../state/names";
 import { entity, state } from "../../state/store";
 import { find } from "../../state/elements";
 import { viewsOf, wholeType } from "../../state/types";
 import { type MenuEntry, type MenuItem, openMenu } from "../../ui/Menu";
-import { KindIcon } from "../../ui/marks";
+import { KindIcon, ObjectIcon } from "../../ui/marks";
 import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Dot, Download, Eye, Group, Plus, Rotate3d, Rows3, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash, Ungroup } from "../../ui/icons";
 import { savePicture, showsPicture } from "../../ui/Picture";
 import { addElement, KINDS, STARTS } from "./add";
@@ -47,8 +48,8 @@ function placeRow(page: Page, put: Put, label: string): MenuItem {
   return { label, icon: <Component size={13} />, disabled: components.length === 0, items: components.length === 0 ? undefined : components.map((c) => placing(c, put)) };
 }
 
-/** A row whose submenu walks each import whose type is known to the components that show it,
- *  its fields after its own, each placed showing the value at its path. */
+/** A row whose submenu walks each object's Global imports whose type is known to the
+ *  components that show it, its fields after its own, each placed showing the value at its path. */
 function showRow(page: Page, put: Put, label: string): MenuItem {
   const components = placeable(page);
   const shows = (path: string, f: FieldInfo, writable: boolean): MenuEntry[] => {
@@ -56,12 +57,18 @@ function showRow(page: Page, put: Put, label: string): MenuItem {
     const fields = f.kind === "struct" ? f.members.flatMap((m): MenuItem[] => submenu(m.name, <Dot size={13} />, shows(`${path}.${m.name}`, m, writable))) : [];
     return views.length > 0 && fields.length > 0 ? [...views, "-", ...fields] : [...views, ...fields];
   };
-  const imports = state.imports.flatMap((imp): MenuItem[] => {
-    const t = entity(imp.entity)?.schema;
-    // a function's or a task's type is what it is called with, not a value to show
-    if (!t || imp.kind === "function" || imp.kind === "task") return [];
-    return submenu(imp.alias, <KindIcon kind={imp.kind} size={13} />, shows(imp.alias, wholeType(t), imp.kind === "variable" && imp.intent === "write"));
-  });
+  const imports = state.objects.flatMap((o): MenuItem[] =>
+    submenu(
+      o.name,
+      <ObjectIcon size={13} />,
+      o.imports.flatMap((imp): MenuItem[] => {
+        const t = entity(entityOf(o, imp.entity))?.schema;
+        // a function's or a task's type is what it is called with, not a value to show
+        if (!t || imp.kind === "function" || imp.kind === "task" || o.local.includes(imp.alias)) return [];
+        return submenu(imp.alias, <KindIcon kind={imp.kind} size={13} />, shows(key(o.name, imp.alias), wholeType(t), imp.kind === "variable" && imp.intent === "write"));
+      }),
+    ),
+  );
   return { label, icon: <Eye size={13} />, disabled: imports.length === 0, items: imports.length === 0 ? undefined : imports };
 }
 

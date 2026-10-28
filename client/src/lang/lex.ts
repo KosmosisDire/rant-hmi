@@ -106,6 +106,18 @@ export function names(src: string): Set<string> {
   return new Set(all.flatMap((t, n) => (t.kind === "word" && !property(src, all, n) ? [src.slice(t.start, t.end)] : [])));
 }
 
+/** The names code reads, each with the name a dot after it gives, as `Line.Speed` gives Line
+ *  and Speed, and Line alone where no name follows. */
+export function heads(src: string): [string, string | undefined][] {
+  const all = tokens(src);
+  const word = (t: Token | undefined) => (t?.kind === "word" ? src.slice(t.start, t.end) : undefined);
+  return all.flatMap((t, n): [string, string | undefined][] => {
+    if (t.kind !== "word" || property(src, all, n)) return [];
+    const next = all[n + 2] && property(src, all, n + 2) ? word(all[n + 2]) : undefined;
+    return [[src.slice(t.start, t.end), next]];
+  });
+}
+
 /** Whether a literal's text is a #hex colour. */
 export const isHex = (text: string) => /^#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})$/i.test(text);
 

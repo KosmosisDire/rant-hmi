@@ -6,21 +6,18 @@ import { createStore, reconcile } from "solid-js/store";
 import type { Way } from "../net/data.worker";
 import { packed, samePacked } from "../net/packed";
 import type { Brought } from "../protocol/Brought";
-import type { Computed } from "../protocol/Computed";
 import type { EntityInfo } from "../protocol/EntityInfo";
 import type { EnumInfo } from "../protocol/EnumInfo";
 import type { Import } from "../protocol/Import";
+import type { Object as Thing } from "../protocol/Object";
 import type { Page } from "../protocol/Page";
 import type { Level } from "../protocol/Level";
 import type { Value } from "../protocol/Value";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
-import type { Record as History } from "../protocol/Record";
 import type { Reported } from "../protocol/Reported";
 import type { Sample } from "../protocol/Sample";
 import type { ServerMsg } from "../protocol/ServerMsg";
-import type { Rule } from "../protocol/Rule";
 import type { Token } from "../protocol/Token";
-import type { Variable } from "../protocol/Variable";
 import { closeWith, follow, push } from "./stack";
 
 export interface Live {
@@ -66,16 +63,10 @@ export interface State {
   project: ProjectInfo | null;
   node: string;
   version: string;
-  imports: Import[];
-  variables: Variable[];
-  /** Histories the backend samples, whose samples come as their values. */
-  records: History[];
-  /** Values the backend works out from others. */
-  computed: Computed[];
+  /** The project's objects, Hmi first, each with its members and logic. */
+  objects: Thing[];
   /** The mesh's enums code names, each by its type. */
   enums: EnumInfo[];
-  /** The HMI's own handlers. */
-  rules: Rule[];
   tokens: Token[];
   entities: EntityInfo[];
   pages: Page[];
@@ -104,12 +95,8 @@ export const [state, setState] = createStore<State>({
   project: null,
   node: "",
   version: "",
-  imports: [],
-  variables: [],
-  records: [],
-  computed: [],
+  objects: [],
   enums: [],
-  rules: [],
   tokens: [],
   entities: [],
   pages: [],
@@ -171,30 +158,19 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
     case "project":
       setState("project", msg.project);
       break;
-    case "imports":
-      setState("imports", reconcile(msg.imports, { key: "alias" }));
+    case "objects":
+      setState("objects", reconcile(msg.objects, { key: "name" }));
       break;
     case "theme":
       setState("tokens", reconcile(msg.tokens, { key: "name" }));
       break;
-    case "rules":
-      setState("rules", reconcile(msg.rules, { key: "id" }));
-      break;
-    case "variables":
-      setState("variables", reconcile(msg.variables, { key: "name" }));
-      break;
-    case "computed":
-      setState("computed", reconcile(msg.computed, { key: "name" }));
-      break;
     case "enums":
       setState("enums", reconcile(msg.enums, { key: "name" }));
       break;
-    case "records":
-      setState("records", reconcile(msg.records, { key: "name" }));
-      break;
     case "samples": {
       // a record's value is its samples, appended and pruned here as the backend keeps them
-      const keep = (state.records.find((r) => r.name === msg.name)?.keep_s ?? 0) * 1000;
+      const [object, member] = split(msg.name);
+      const keep = (state.objects.find((o) => o.name === object)?.records.find((r) => r.name === member)?.keep_s ?? 0) * 1000;
       const had = untrack(cell(values, msg.name)[0])?.value as Sample[] | undefined;
       if (msg.whole || !Array.isArray(had)) {
         give(msg.name, msg.samples as unknown as Value, true);
@@ -423,8 +399,10 @@ export function transcoded(imp: Import): boolean {
   return entity(`${imp.entity}/Video`)?.schema?.name === "VideoFrame";
 }
 
-export function importOf(entityName: string): Import | undefined {
-  return state.imports.find((i) => i.entity === entityName);
+/** The object and the member a key names: `Line.Speed` is Line's Speed. */
+export function split(key: string): [string, string] {
+  const at = key.indexOf(".");
+  return at < 0 ? [key, ""] : [key.slice(0, at), key.slice(at + 1)];
 }
 
 const movers = new Set<(from: string, to: string) => void>();

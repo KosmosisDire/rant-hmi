@@ -8,6 +8,7 @@ import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import { colours } from "./bind";
 import { fields } from "./format";
+import { imported, key, keyOf, members, named } from "./names";
 import { brought, component, state, transcoded } from "./store";
 
 /** What a part's property reads of the value it is given, where not all of it, as the scene's
@@ -68,7 +69,18 @@ function codec(alias: string): unknown {
  *  as a source gives it, with the Video child the transcoder makes or H264 frames of its own.
  *  Another shows its pictures, so reads all of them. */
 function plays(path: Path): boolean {
-  return path.length === 1 && state.imports.some((i) => i.alias === path[0] && (transcoded(i) || codec(i.alias) === "H264"));
+  const to = keyOf(path);
+  const imp = to?.rest.length === 0 ? imported(to.key) : undefined;
+  return !!imp && (transcoded(imp) || codec(imp.alias) === "H264");
+}
+
+/** A path as the backend follows it, from a member's key: `Line.Speed.x` is the key `Line.Speed`
+ *  and x. An object read whole reads each of its Global members whole. */
+function keyed(path: Path): Path[] {
+  const [root, member] = path;
+  if (named(root)?.of !== "object") return [path];
+  if (member === undefined || member === ITEM) return members(root).map((n) => [n.name]);
+  return [[key(root, member), ...path.slice(2)]];
 }
 
 class Collect {
@@ -127,7 +139,8 @@ class Collect {
   }
 }
 
-/** What each page reads of `name`, the steps after it of each path, for those that read it. */
+/** What each page reads of the member `name`, by its key, the steps after it of each path, for
+ *  those that read it. */
 export function pagesReading(name: string): { page: Page; paths: Path[] }[] {
   return state.pages.flatMap((page) => {
     const { paths, all } = pathsOf([page]);
@@ -143,8 +156,8 @@ export function touches(path: Path, field: Path): boolean {
   return true;
 }
 
-/** The paths `pages` read, each a name and the fields after it, and `all` when one may read any
- *  name. A component on its own reads only its defaults, so nothing. */
+/** The paths `pages` read, each a member's key or another name and the fields after it, and
+ *  `all` when one may read any name. A component on its own reads only its defaults, so nothing. */
 export function pathsOf(pages: Page[]): { paths: Path[]; all: boolean } {
   const c = new Collect();
   for (const p of pages) {
@@ -152,5 +165,7 @@ export function pathsOf(pages: Page[]): { paths: Path[]; all: boolean } {
     c.add(...c.code(p.fill, PAGE));
     c.elements(p.children, PAGE, []);
   }
-  return { paths: [...c.paths.values()], all: c.all };
+  const out = new Collect();
+  for (const p of c.paths.values()) out.add(...keyed(p));
+  return { paths: [...out.paths.values()], all: c.all };
 }

@@ -13,6 +13,7 @@ import { fields, short } from "../state/format";
 import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
 import type { Level } from "../protocol/Level";
 import { hold, ranInto } from "../state/problems";
+import { imported } from "../state/names";
 import { component, live, state, transcoded } from "../state/store";
 import { Guard } from "../ui/Guard";
 import { createSize, onResize } from "../ui/size";
@@ -684,7 +685,7 @@ function MediaView(p: { src: unknown; fit: string; element: string }) {
 
 /** Whether an import has H264 to play: the Video child rant-transcoder makes, or its own frames. */
 function plays(alias: string): boolean {
-  const imp = state.imports.find((i) => i.alias === alias);
+  const imp = imported(alias);
   if (imp && transcoded(imp)) return true;
   return fields(live(alias).value)?.codec === "H264";
 }
@@ -753,7 +754,7 @@ function InputBox(p: { element: Element; scope: Scope; value: unknown; act?: Act
   const [bad, setBad] = createSignal(false);
   const doc = useContext(Doc);
   const ref = () => bareRef(p.element.props.value);
-  const open = () => !!p.act && !!ref() && p.scope.writes(ref()!.name);
+  const open = () => !!p.act && !!ref() && p.scope.writes(ref()!.name, ref()!.fields);
   const read = (t: string): unknown => {
     if (typeof p.value === "number") return t.trim() !== "" && Number.isFinite(Number(t)) ? Number(t) : undefined;
     if (typeof p.value === "boolean") return t.trim() === "true" ? true : t.trim() === "false" ? false : undefined;

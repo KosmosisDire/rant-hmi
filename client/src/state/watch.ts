@@ -1,4 +1,4 @@
-// What this screen reads of the imports and computed values, which the backend sends it: the
+// What this screen reads of the mesh members and computed values, which the backend sends it: the
 // paths its shown pages read, or while the editor's Data tab previews them, each as the HMI
 // brings it and the field the tab peeks at.
 
@@ -8,7 +8,8 @@ import type { Page } from "../protocol/Page";
 import { operator } from "./mode";
 import { pathsOf } from "./paths";
 import { stack } from "./stack";
-import { page, state } from "./store";
+import { names } from "./names";
+import { page } from "./store";
 import { boardPages, currentTab } from "./view";
 
 /** How many of what is drawn now read each name, and how many of those read it whole: each read
@@ -73,12 +74,12 @@ export function watched(): Path[] | null {
     const p = peeked();
     return p ? [p] : [];
   }
-  const names = new Set([...state.imports.map((i) => i.alias), ...state.computed.map((c) => c.name)]);
+  const sent = new Set(names("import", "computed").map((n) => n.name));
   const { paths, all } = shownPaths();
   if (all) return null;
-  const out = paths.filter((p) => names.has(p[0]));
+  const out = paths.filter((p) => sent.has(p[0]));
   const seen = new Set(out.map((p) => p[0]));
-  for (const n of readers.keys()) if (names.has(n) && !seen.has(n)) out.push([n]);
+  for (const n of readers.keys()) if (sent.has(n) && !seen.has(n)) out.push([n]);
   return out.sort((a, b) => (a.join(".") < b.join(".") ? -1 : 1));
 }
 

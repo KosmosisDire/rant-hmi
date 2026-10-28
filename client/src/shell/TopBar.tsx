@@ -28,7 +28,7 @@ export function TopBar(p: { tab: Tab; onTab: (t: Tab) => void }) {
               <Dynamic component={LOOK[t].icon} size={15} />
               <span>{LOOK[t].label}</span>
               <Show when={t === "data"}>
-                <span class="count">{state.imports.length}</span>
+                <span class="count">{state.objects.length}</span>
               </Show>
             </button>
           )}
