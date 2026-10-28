@@ -944,11 +944,6 @@
   cursor: pointer;
 }
 
-.rule-kind {
-  justify-self: start;
-  width: 220px;
-}
-
 /* A dashed row that adds what is not there yet, naming what it could add. */
 .ghost {
   display: flex;
@@ -979,53 +974,6 @@
   font-size: 10px;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-/* The Logic tab: the picked handler large in the middle, what it uses on the right. */
-.logic .pane-head .filter {
-  flex: 1;
-}
-
-.handler-list {
-  padding: 0 6px 12px;
-}
-
-.handler-wrap .event {
-  max-width: 760px;
-}
-
-.handler-wrap .editor.code {
-  min-height: 180px;
-  padding-top: 12px;
-  font-size: 13px;
-}
-
-.hero-name {
-  width: 320px;
-  height: 32px;
-  font: 700 19px var(--mono);
-  background: none;
-  border-color: transparent;
-}
-
-.uses-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: var(--item);
-  font: 12px var(--mono);
-}
-
-.uses-what {
-  margin-left: auto;
-  font: 11px var(--sans);
-  color: var(--faint);
-  white-space: nowrap;
-}
-
-.where-runs {
-  line-height: 1.5;
-  color: var(--dim);
 }
 
 .sends-row {

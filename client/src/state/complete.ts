@@ -11,7 +11,7 @@ import type { TypeInfo } from "../protocol/TypeInfo";
 import type { Value } from "../protocol/Value";
 import { partNames, tokenValue } from "./bind";
 import { chain as path } from "./elements";
-import { fields, typeLabel } from "./format";
+import { bareType, fields, typeLabel } from "./format";
 import { imported, key, keyOf, members, type Named, named, names, object } from "./names";
 import { entity, live, split, state } from "./store";
 import { KIND_WORDS, typesIn } from "./types";
@@ -360,10 +360,6 @@ function member(n: Named, place: Place, bare: boolean): Suggestion[] {
 /** What an enum offers after a dot: its option names, as a list. */
 function options(names: string[]): Suggestion {
   return { label: "options", insert: "options", icon: "member", type: "its names, a list", value: [...names], known: true };
-}
-
-function bareType(fields: FieldInfo[] | undefined): string | undefined {
-  return fields?.length === 1 && fields[0].name === "" ? typeLabel(fields[0]) : undefined;
 }
 
 /** True when the text ends inside a string or a comment, where names are only words. */

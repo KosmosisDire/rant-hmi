@@ -344,6 +344,29 @@ export const systemScope: Scope = {
   missing: (name) => say(MISSING, name),
 };
 
+/** What an object's own expressions read: its members bare, Local ones too, nearer than what
+ *  the system reads. The editor works them out to check them, and writes none. */
+export function objectScope(object: string): Scope {
+  const mine = (name: string) => {
+    const n = named(key(object, name));
+    return n && n.of !== "object" ? n : undefined;
+  };
+  return {
+    has: (name) => !!mine(name) || systemScope.has(name),
+    get: (name) => {
+      if (!mine(name)) return systemScope.get(name);
+      const v = live(key(object, name));
+      if (!v.known) throw new Unknown(key(object, name));
+      return v.value;
+    },
+    set: (name) => {
+      throw new TypeError(`only the system writes ${name}`);
+    },
+    writes: () => false,
+    missing: systemScope.missing,
+  };
+}
+
 /** `whole` with its field at `path`, as `a.b`, made `value`, or `value` for no path. */
 function withField(whole: unknown, path: string, value: unknown): unknown {
   if (path === "") return value;
@@ -482,25 +505,32 @@ export function stateKey(place: Place, holder: string | null, name: string): str
   return `@${place.page}/${holder === null ? "" : `${holder}/`}${name}${place.copies.map((i) => `#${i}`).join("")}`;
 }
 
+/** State `v` as kept under `key`: what was written, else its start. */
+export const keptOf = (key: string, v: Variable) => keptValue(key) ?? v.start;
+
+/** Writes state `v` kept under `key`, or its field along `path`. One kept each screen shows
+ *  this screen's write at once, as the system will have it. */
+export function setKept(key: string, v: Variable, path: string, value: unknown) {
+  if (v.per === "screen") promise(key, withField(keptOf(key, v), path, value) as Value);
+  send({ type: "set", alias: key, path, value: value as Value });
+}
+
 /** What a page, or its element `holder`, keeps, read over what `outer` has. A value reads its
- *  start until it is written, and one kept each screen shows this screen's write at once. */
+ *  start until it is written. */
 export function stateScope(outer: Scope, holder: string | null, kept: Variable[]): Scope {
   const place = outer.place;
   if (!place || kept.length === 0) return outer;
   const own = (name: string) => kept.find((v) => v.name === name);
-  const get = (v: Variable) => keptValue(stateKey(place, holder, v.name)) ?? v.start;
   return {
     has: (name) => !!own(name) || outer.has(name),
     get: (name) => {
       const v = own(name);
-      return v ? get(v) : outer.get(name);
+      return v ? keptOf(stateKey(place, holder, name), v) : outer.get(name);
     },
     set: (name, path, value) => {
       const v = own(name);
       if (!v) return outer.set(name, path, value);
-      const key = stateKey(place, holder, name);
-      if (v.per === "screen") promise(key, withField(get(v), path, value) as Value);
-      send({ type: "set", alias: key, path, value: value as Value });
+      setKept(stateKey(place, holder, name), v, path, value);
     },
     writes: (name, path) => !!own(name) || outer.writes(name, path),
     missing: (name) => outer.missing(name),

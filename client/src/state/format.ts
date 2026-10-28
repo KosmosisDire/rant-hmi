@@ -69,5 +69,10 @@ export function typeLabel(f: FieldInfo): string {
   return f.type_name ?? f.kind;
 }
 
+/** A lone unnamed value's type, as a plain f64 variable's, else undefined. */
+export function bareType(fields: FieldInfo[] | undefined): string | undefined {
+  return fields?.length === 1 && fields[0].name === "" ? typeLabel(fields[0]) : undefined;
+}
+
 export const SCALARS = new Set(["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "f32", "f64", "bool", "string", "enum"]);
 export const INTEGERS = new Set(["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"]);

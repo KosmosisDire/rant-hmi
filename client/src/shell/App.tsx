@@ -1,8 +1,7 @@
 import { createEffect, on, onCleanup, onMount } from "solid-js";
 import { send } from "../net/connection";
-import { DataScreen } from "../screens/data/DataScreen";
 import { DesignScreen } from "../screens/design/DesignScreen";
-import { LogicScreen } from "../screens/logic/LogicScreen";
+import { ObjectsScreen } from "../screens/objects/ObjectsScreen";
 import { RunScreen } from "../screens/run/RunScreen";
 import { currentTab, followHistory, openPage, openTab } from "../state/view";
 import { putAway, sidebarsClosed, sidebarWidths } from "../ui/Sidebars";
@@ -16,11 +15,11 @@ import { TopBar } from "./TopBar";
 export function App() {
   const tab = currentTab;
   const openInDesign = (page: string) => openPage(page, "design");
-  // the tabs that edit the pages and handlers undo them, while a field keeps its own keys
+  // Design undoes its edits of the pages, while a field keeps its own keys
   const undo = (e: KeyboardEvent) => {
     const letter = e.key.toLowerCase();
     if (!(e.ctrlKey || e.metaKey) || (letter !== "z" && letter !== "y")) return;
-    if ((tab() !== "design" && tab() !== "logic") || (e.target as HTMLElement).closest("input, textarea, select")) return;
+    if (tab() !== "design" || (e.target as HTMLElement).closest("input, textarea, select")) return;
     e.preventDefault();
     send({ type: letter === "z" && !e.shiftKey ? "undo" : "redo" });
   };
@@ -35,16 +34,13 @@ export function App() {
     <div class="app" classList={sidebarsClosed()} style={sidebarWidths()}>
       <TopBar tab={tab()} onTab={openTab} />
       <main class="content">
-        <Guard hidden={tab() !== "data"}>
-          <div class="screen" hidden={tab() !== "data"}>
-            <DataScreen onOpen={openInDesign} />
+        <Guard hidden={tab() !== "objects"}>
+          <div class="screen" hidden={tab() !== "objects"}>
+            <ObjectsScreen onPage={openInDesign} />
           </div>
         </Guard>
         <Guard hidden={tab() !== "design"}>
           <DesignScreen shown={tab() === "design"} />
-        </Guard>
-        <Guard hidden={tab() !== "logic"}>
-          <LogicScreen shown={tab() === "logic"} />
         </Guard>
         <Guard hidden={tab() !== "run"}>
           <RunScreen shown={tab() === "run"} />

@@ -207,6 +207,9 @@
 }
 
 .choice button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   height: calc(var(--hit) - 2px);
   padding: 0 10px;
   font-size: 12px;

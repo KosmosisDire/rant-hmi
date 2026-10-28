@@ -1,4 +1,4 @@
-import { Code, Database, ExternalLink, Moon, PenTool, Play, Sun } from "../ui/icons";
+import { Boxes, ExternalLink, Moon, PenTool, Play, Sun } from "../ui/icons";
 import { For, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { state } from "../state/store";
@@ -10,9 +10,8 @@ import { inApp } from "../net/link";
 import { GetApp } from "./GetApp";
 
 const LOOK = {
-  data: { label: "Data", icon: Database },
+  objects: { label: "Objects", icon: Boxes },
   design: { label: "Design", icon: PenTool },
-  logic: { label: "Logic", icon: Code },
   run: { label: "Run", icon: Play },
 };
 
@@ -27,7 +26,7 @@ export function TopBar(p: { tab: Tab; onTab: (t: Tab) => void }) {
             <button class="tab" classList={{ on: p.tab === t }} onClick={() => p.onTab(t)}>
               <Dynamic component={LOOK[t].icon} size={15} />
               <span>{LOOK[t].label}</span>
-              <Show when={t === "data"}>
+              <Show when={t === "objects"}>
                 <span class="count">{state.objects.length}</span>
               </Show>
             </button>

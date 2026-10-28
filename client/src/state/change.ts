@@ -28,9 +28,16 @@ const ALONE = new Set<Edit["kind"]>(["set_props", "set_handler", "set_input", "s
 function mirror(s: State, msg: ClientMsg) {
   if (msg.type === "set_token") return putIn(s.tokens, msg.name, msg.token, (t) => t.name);
   if (msg.type === "edit") return edited(s, msg.edit);
+  // a rename shows at once, so what shows it keeps its object
+  if (msg.type === "set_object") {
+    const o = s.objects.find((x) => x.name === msg.name);
+    return o && msg.object && Object.assign(o, msg.object);
+  }
   const o = "object" in msg ? s.objects.find((x) => x.name === msg.object) : undefined;
   if (!o) return;
   switch (msg.type) {
+    case "set_local":
+      return (o.local = msg.local ? [...o.local, msg.name] : o.local.filter((m) => m !== msg.name));
     case "set_variable":
       return putIn(o.variables, msg.name, msg.variable, (v) => v.name);
     case "set_computed":

@@ -1,13 +1,11 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
-import { importOf, setState, state } from "../../state/store";
-import { ChevronDown, ChevronRight, Copy, Plus, Search, Trash, X } from "../../ui/icons";
+import { importOf } from "../../state/names";
+import { split, state } from "../../state/store";
+import { ChevronDown, ChevronRight, Copy, Plus, Search, X } from "../../ui/icons";
 import { KindIcon } from "../../ui/marks";
 import { copyText, openMenu } from "../../ui/Menu";
-import type { Picking } from "./DataScreen";
-import { suggest } from "./ImportForm";
-import { IMPORTS } from "./Inspector";
+import type { Picking } from "./ObjectsScreen";
 
 /** One step of a name: the entity there, if any, and the names under it. An entity may hold
  *  others, as a camera holds its `Video`. */
@@ -46,8 +44,9 @@ function grow(entities: EntityInfo[], filter: string): Branch {
 
 const INDENT = 14;
 
-/** Everything on the mesh a user can import, as a tree. */
-export function MeshTree(p: Picking) {
+/** Everything on the mesh, as a tree. An entity a member brings names that member, any other
+ *  adds to the open object with its +, and a folder's + makes an object rooted there. */
+export function MeshTree(p: { picking: Picking; onAdd: (e: EntityInfo) => void; onMake: (path: string) => void }) {
   const [filter, setFilter] = createSignal("");
   // folders start closed, and a filter opens every one it leaves, so each match shows
   const [opened, setOpened] = createSignal(new Set<string>());
@@ -60,27 +59,23 @@ export function MeshTree(p: Picking) {
   };
 
   const pick = (e: EntityInfo) => {
-    const imported = importOf(e.name);
-    p.onSelect(imported ? { kind: "import", name: imported.alias } : { kind: "entity", name: e.name });
-  };
-  // one click imports to read under the suggested alias, both can be changed after
-  const quick = (e: EntityInfo) => {
-    p.onSelect({ kind: "entity", name: e.name });
-    setState("refused", null);
-    send({ type: "import", import: { alias: suggest(e.name), entity: e.name, kind: e.kind, intent: "read" } });
+    const i = importOf(e.name);
+    if (!i) return p.picking.onPick({ kind: "entity", name: e.name });
+    const [o, name] = split(i.alias);
+    p.picking.onOpen(o, { kind: "member", name });
   };
   const menu = (ev: MouseEvent, e: EntityInfo) => {
     pick(e);
-    const imported = importOf(e.name);
+    const to = p.picking.open;
     openMenu(ev, [
-      imported ? { label: `Remove ${imported.alias}`, icon: <Trash size={13} />, run: () => IMPORTS.put(imported.alias, null) } : { label: "Import to read", icon: <Plus size={13} />, run: () => quick(e) },
+      ...(to !== null && !importOf(e.name) ? [{ label: `Add to ${to}`, icon: <Plus size={13} />, run: () => p.onAdd(e) }, "-" as const] : []),
       { label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(e.name) },
     ]);
   };
   const picked = (e: EntityInfo) => {
-    const s = p.selection;
-    if (s?.kind === "entity") return s.name === e.name;
-    return s?.kind === "import" && importOf(e.name)?.alias === s.name;
+    const s = p.picking.picked;
+    if (s.kind === "entity") return s.name === e.name;
+    return s.kind === "member" && importOf(e.name)?.alias === `${p.picking.open}.${s.name}`;
   };
 
   const Caret = (c: { branch: Branch }) => (
@@ -96,13 +91,23 @@ export function MeshTree(p: Picking) {
           <Show
             when={b.entity}
             fallback={
-              <button class="list-row branch" onClick={() => toggle(b.path)}>
+              <div class="list-row branch" role="button" tabIndex={0} onClick={() => toggle(b.path)} onKeyDown={(k) => k.key === "Enter" && toggle(b.path)}>
                 <span style={{ width: `${l.depth * INDENT}px` }} />
                 <span class="caret">
                   <Caret branch={b} />
                 </span>
                 <span class="list-label mono">{b.name}/</span>
-              </button>
+                <button
+                  class="row-add quiet"
+                  title={`Make an object for ${b.path}`}
+                  onClick={(c) => {
+                    c.stopPropagation();
+                    p.onMake(b.path);
+                  }}
+                >
+                  <Plus size={15} />
+                </button>
+              </div>
             }
           >
             {(e) => (
@@ -132,20 +137,24 @@ export function MeshTree(p: Picking) {
                 </Show>
                 <KindIcon kind={e().kind} />
                 <span class="list-label mono">{b.name}</span>
-                {/* the alias it is imported as, else in the same place a + that imports it */}
+                {/* the member it is, else in the same place a + that adds it to the open object */}
                 <Show
                   when={importOf(e().name)}
                   fallback={
-                    <button
-                      class="row-add"
-                      title={`Import ${e().name}`}
-                      onClick={(c) => {
-                        c.stopPropagation();
-                        quick(e());
-                      }}
-                    >
-                      <Plus size={15} />
-                    </button>
+                    <Show when={p.picking.open}>
+                      {(to) => (
+                        <button
+                          class="row-add"
+                          title={`Add to ${to()}`}
+                          onClick={(c) => {
+                            c.stopPropagation();
+                            p.onAdd(e());
+                          }}
+                        >
+                          <Plus size={15} />
+                        </button>
+                      )}
+                    </Show>
                   }
                 >
                   {(i) => <span class="list-trail mono">{i().alias}</span>}
@@ -163,28 +172,19 @@ export function MeshTree(p: Picking) {
 
   return (
     <>
-      <div class="pane-head">
-        <div class="filter">
-          <Search size={14} />
-          <input placeholder="Filter the mesh..." value={filter()} onInput={(e) => setFilter(e.currentTarget.value)} aria-label="Filter the mesh" />
-          <Show when={filter() !== ""}>
-            <button class="icon-btn" title="Clear the filter" onClick={() => setFilter("")}>
-              <X size={13} />
-            </button>
-          </Show>
-        </div>
-      </div>
-      <div class="pane-body">
-        <div class="list-group">Mesh</div>
-        <Show when={state.entities.length > 0} fallback={<div class="placeholder">Nothing on the mesh yet.</div>}>
-          <Level branch={tree()} depth={0} />
+      <div class="list-group">Mesh</div>
+      <div class="filter mesh-filter">
+        <Search size={14} />
+        <input placeholder="Filter the mesh..." value={filter()} onInput={(e) => setFilter(e.currentTarget.value)} aria-label="Filter the mesh" />
+        <Show when={filter() !== ""}>
+          <button class="icon-btn" title="Clear the filter" onClick={() => setFilter("")}>
+            <X size={13} />
+          </button>
         </Show>
       </div>
-      <div class="pane-foot">
-        <span class="section" style={{ margin: 0 }}>
-          {state.entities.length === 1 ? "1 entity" : `${state.entities.length} entities`}
-        </span>
-      </div>
+      <Show when={state.entities.length > 0} fallback={<div class="placeholder">Nothing on the mesh yet.</div>}>
+        <Level branch={tree()} depth={0} />
+      </Show>
     </>
   );
 }
