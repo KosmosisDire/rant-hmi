@@ -1,0 +1,7 @@
+<object name="Hmi" mesh="Hmi">
+  <variable name="Status" entity="Status"/>
+  <var name="visits" start="0" per="hmi"/>
+  <on id="h5" name="Count visits" screen="connects">
+    visits = visits + 1;
+  </on>
+</object>

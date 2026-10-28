@@ -3,6 +3,6 @@ import type { Per } from "./Per";
 import type { Value } from "./Value";
 
 /**
- * HMI state, named in camelCase, with the value it starts from.
+ * State, named in camelCase, with the value it starts from.
  */
 export type Variable = { name: string, start: Value, per: Per, };

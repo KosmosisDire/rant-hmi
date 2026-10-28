@@ -1,6 +1,7 @@
-// What handler code sees, built in each run's context from the host's `__` functions: the
-// imports as plain names, the mesh's enums, `Pages`, open and close, notify, log and sleep.
-(imports, pages, enums) => {
+// What handler code sees, built in each run's context from the host's `__` functions: each
+// object with its members, an object's own code its members as plain names too, the mesh's
+// enums, `Pages`, open and close, notify, log and sleep.
+(imports, objects, pages, enums) => {
   class Unknown extends Error {
     constructor(alias) {
       super(`${alias} is unknown`);
@@ -65,10 +66,23 @@
       },
     );
 
-  // each by the name code gives it, read and written under its alias, as state is by its key
-  for (const { name, alias, kind } of imports) {
+  // a later name of a kind hides an earlier one, so the nearest is defined last
+  const define = (at, name, how) => Object.defineProperty(at, name, { ...how, enumerable: true, configurable: true });
+
+  // an enum by its type's name, its options a fresh list at each read as a value's are
+  for (const { name, options } of enums) {
+    define(globalThis, name, { value: Object.freeze({ get options() { return [...options]; } }) });
+  }
+
+  // each object, which holds the members code outside it reads
+  const spaces = Object.fromEntries(objects.map((name) => [name, {}]));
+  for (const [name, space] of Object.entries(spaces)) define(globalThis, name, { value: space });
+
+  // each by the name code gives it, on its object or bare, read and written under its key
+  for (const { name, alias, kind, object } of imports) {
+    const at = object === undefined ? globalThis : spaces[object];
     if (kind === "topic") {
-      Object.defineProperty(globalThis, name, { get: () => topic(alias), set: (v) => write(alias, v), enumerable: true });
+      define(at, name, { get: () => topic(alias), set: (v) => write(alias, v) });
     } else if (kind === "function" || kind === "task") {
       // none is an empty request. A task's last function takes each progress update, and
       // its own cancel stops every call of it, as what a call gives stops that one.
@@ -77,20 +91,14 @@
         return __call(alias, args.length === 0 ? {} : shape(alias, alias, args), progress);
       };
       if (kind === "task") call.cancel = () => __cancel(alias);
-      Object.defineProperty(globalThis, name, { value: call, enumerable: true });
+      define(at, name, { value: call });
+    } else if (kind === "fn") {
+      define(at, name, { value: (...args) => __run(alias, args) });
     } else {
-      Object.defineProperty(globalThis, name, {
-        get: () => wrap(alias, read(alias), []),
-        set: (v) => write(alias, v),
-        enumerable: true,
-      });
+      define(at, name, { get: () => wrap(alias, read(alias), []), set: (v) => write(alias, v) });
     }
   }
-
-  // an enum by its type's name, its options a fresh list at each read as a value's are
-  for (const { name, options } of enums) {
-    Object.defineProperty(globalThis, name, { value: Object.freeze({ get options() { return [...options]; } }), enumerable: true });
-  }
+  for (const space of Object.values(spaces)) Object.freeze(space);
 
   // a value as words for a notice or the log: bytes by their count, the rest as code writes it
   const shown = (_, x) => (x instanceof Uint8Array ? `${x.length} bytes` : typeof x === "bigint" ? String(x) : x);
@@ -110,7 +118,7 @@
     if (e.message === "interrupted") return `it ran ${__budget()} ms without waiting, so it was stopped`;
     if (e.name === "CallError") return `${e.message} (${e.status.replaceAll("_", " ")})`;
     const line = /handler:(\d+)/.exec(e.stack ?? "");
-    const message = e.message.replace(/^'?([\w$]+)'? is not defined$/, "$1 names no mesh import, variable or record");
+    const message = e.message.replace(/^'?([\w$]+)'? is not defined$/, "$1 names no object, member or state");
     return line ? `${message} (line ${Number(line[1]) - 1})` : message;
   };
   globalThis.__finish = (e) => (e instanceof Unknown ? __end("unknown", e.alias) : __end("fault", describe(e)));

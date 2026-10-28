@@ -7,6 +7,6 @@ import type { Setter } from "./Setter";
  */
 export type Computed = { name: string, 
 /**
- * An expression over imports, variables and other computed values, with no writes.
+ * An expression over members, with no writes.
  */
 get: string, set?: Setter, unit?: string, note?: string, };

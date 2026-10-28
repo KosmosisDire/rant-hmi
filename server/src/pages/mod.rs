@@ -1,9 +1,7 @@
-//! The pages and components, one file each, the HMI's own handlers, and the edits that change
-//! them. A component is a page with an interface, so every edit works on both.
+//! The pages and components, one file each, and the edits that change them. A component is a page with an interface, so every edit works on both.
 
 pub mod format;
 pub mod js;
-pub mod logic;
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -19,7 +17,6 @@ use crate::list::{self, by_name};
 use crate::project::{self, Variable};
 use crate::rules;
 use crate::value::Value;
-use logic::Rule;
 
 /// A page: an artboard of `width` by `height` pixels holding elements. With an interface it
 /// is a component, placed on pages as instances.
@@ -440,9 +437,6 @@ pub enum Edit {
     /// Moves the state `name` from the page or an element to another. It is refused while
     /// something that reads it would no longer see it, or would see it in place of another.
     MoveState { page: String, from: Option<String>, to: Option<String>, name: String },
-    /// Sets the rule `id`, puts it back under that id when it is gone, gives it a new id when
-    /// `id` is empty, or with null removes it.
-    SetRule { id: String, rule: Option<Rule> },
     /// Several edits as one: all apply or none do, and one undo takes them all back.
     Batch { edits: Vec<Edit> },
 }
@@ -453,8 +447,6 @@ pub enum Edit {
 #[derive(Debug)]
 pub struct Applied {
     pub pages: Vec<String>,
-    /// The rules changed.
-    pub rules: bool,
     pub made: Option<(String, String)>,
     pub moved: Vec<(String, String)>,
     /// The keys of state whose values start over, as `key` gives them without a copy's index.
@@ -494,7 +486,7 @@ impl Edit {
     /// its id. The id a rename's undo puts back stays.
     pub fn repage(&mut self, from: &str, to: &str) {
         let page = match self {
-            Edit::AddPage { .. } | Edit::AddComponent { .. } | Edit::SetRule { .. } => return,
+            Edit::AddPage { .. } | Edit::AddComponent { .. } => return,
             Edit::Batch { edits } => return edits.iter_mut().for_each(|e| e.repage(from, to)),
             Edit::PutPage { page } => &mut page.id,
             on_page!(page) => page,
@@ -507,7 +499,7 @@ impl Edit {
     /// The ids of the pages and components the edit names, a batch's all.
     pub fn pages(&self) -> Vec<&str> {
         match self {
-            Edit::AddPage { .. } | Edit::AddComponent { .. } | Edit::SetRule { .. } => vec![],
+            Edit::AddPage { .. } | Edit::AddComponent { .. } => vec![],
             Edit::Batch { edits } => edits.iter().flat_map(Edit::pages).collect(),
             Edit::PutPage { page } => vec![&page.id],
             on_page!(page) => vec![page],
@@ -519,10 +511,6 @@ pub struct Pages {
     root: PathBuf,
     /// Pages and components in id order, as the files list.
     pub list: Vec<Page>,
-    /// The HMI's own handlers, in the order they were made.
-    pub rules: Vec<Rule>,
-    /// Set by an edit that changed the rules, until it is saved.
-    rules_changed: bool,
     /// The ids renames moved during an edit, until it is applied.
     moved: Vec<(String, String)>,
     /// The state an edit changed, until it is applied.
@@ -562,12 +550,7 @@ impl Pages {
         if let Some(twice) = list.windows(2).find(|w| w[0].id == w[1].id) {
             anyhow::bail!("pages/{0}.html and components/{0}.html share a name, which must be one of a kind", twice[0].id);
         }
-        let file = root.join("logic").join("handlers.html");
-        let rules = match file.exists() {
-            true => logic::parse(&fs::read_to_string(&file).context("reading logic/handlers.html")?).map_err(|e| anyhow::anyhow!("logic/handlers.html, {e}"))?,
-            false => Vec::new(),
-        };
-        let mut pages = Pages { root: root.to_path_buf(), list, rules, rules_changed: false, moved: Vec::new(), reset: Vec::new() };
+        let mut pages = Pages { root: root.to_path_buf(), list, moved: Vec::new(), reset: Vec::new() };
         if !pages.list.iter().any(|p| p.interface.is_none()) {
             pages.apply(Edit::AddPage { name: "Overview".into() }).map_err(anyhow::Error::msg)?;
         }
@@ -685,6 +668,24 @@ impl Pages {
         Ok(touched)
     }
 
+    /// The first page, or element on one, whose code or values read `name`, by its name.
+    pub fn reader(&self, name: &str) -> Option<String> {
+        let reads = |code: &String| js::reads(code, name);
+        for p in self.list.iter().filter(|p| p.interface.is_none()) {
+            if reads(&p.fill) {
+                return Some(p.name.clone());
+            }
+            for e in all(&p.children) {
+                let values = e.props.iter().filter(|(k, _)| k.as_str() != "name").map(|(_, v)| v);
+                let code = e.handlers.iter().flat_map(|h| std::iter::once(&h.code).chain(h.attrs.values()));
+                if values.chain(code).any(reads) {
+                    return Some(e.props.get("name").cloned().unwrap_or_else(|| e.id.clone()));
+                }
+            }
+        }
+        None
+    }
+
     /// Each page's name as handler code spells it, `Pages.RobotCell` for "Robot cell", and
     /// its id. A name spelled like an earlier one gets a number.
     pub fn keys(&self) -> Vec<(String, String)> {
@@ -717,11 +718,7 @@ impl Pages {
         for page in &pages {
             self.save(page)?;
         }
-        let rules = std::mem::take(&mut self.rules_changed);
-        if rules {
-            self.save_rules()?;
-        }
-        Ok(Applied { pages, rules, made, moved: std::mem::take(&mut self.moved), reset: std::mem::take(&mut self.reset), undo })
+        Ok(Applied { pages, made, moved: std::mem::take(&mut self.moved), reset: std::mem::take(&mut self.reset), undo })
     }
 
     fn change(&mut self, edit: Edit, touched: &mut Vec<String>, made: &mut Option<(String, String)>) -> Result<Edit, String> {
@@ -1124,16 +1121,6 @@ impl Pages {
                 ];
                 return self.change(Edit::Batch { edits }, touched, made);
             }
-            Edit::SetRule { id, mut rule } => {
-                self.rules_changed = true;
-                if let Some(rule) = &mut rule {
-                    logic::check(rule)?;
-                    rule.id = if id.is_empty() { self.free_rule_id() } else { id.clone() };
-                }
-                let made = rule.as_ref().map(|r| r.id.clone());
-                let old = list::put(&mut self.rules, &id, rule, || format!("there is no handler {id}"))?;
-                return Ok(Edit::SetRule { id: made.unwrap_or(id), rule: old });
-            }
             Edit::Batch { .. } => unreachable!("taken above"),
         };
         let on_page!(page) = &undo else { unreachable!("the edits of no one page return early") };
@@ -1150,15 +1137,6 @@ impl Pages {
             return Err(format!("{name} is already a component"));
         }
         Ok(name.to_owned())
-    }
-
-    fn free_rule_id(&self) -> String {
-        let highest = self.rules.iter().filter_map(|r| r.id.strip_prefix('h')?.parse::<u32>().ok()).max().unwrap_or(0);
-        format!("h{}", highest + 1)
-    }
-
-    fn save_rules(&self) -> Result<(), String> {
-        files::write(&self.root.join("logic").join("handlers.html"), &logic::write(&self.rules))
     }
 
     fn insert_page(&mut self, page: Page) {
@@ -2039,23 +2017,6 @@ mod tests {
         assert_eq!(pages.get(&toggle).unwrap().interface.as_ref().unwrap().events, ["change"]);
         assert_eq!(pages.apply(event("nope", None)).err().unwrap(), "Toggle sends no nope");
         assert!(pages.apply(Edit::SetHandler { page: "overview".into(), id, event: "On Off".into(), filter: None, code: None, attrs: None }).is_err());
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn rules_are_made_changed_and_undone_and_survive_a_reopen() {
-        let dir = scratch("rules");
-        let mut pages = Pages::open(&dir).unwrap();
-        let rule = |name: &str| Rule { id: String::new(), name: name.into(), when: logic::When::Every { ms: 500 }, code: "x = 1;".into() };
-        let made = pages.apply(Edit::SetRule { id: String::new(), rule: Some(rule("Blink")) }).unwrap();
-        assert!(made.rules);
-        assert_eq!(pages.rules[0].id, "h1");
-        let undo = pages.apply(Edit::SetRule { id: "h1".into(), rule: None }).unwrap().undo;
-        assert!(pages.rules.is_empty());
-        pages.apply(undo).unwrap();
-        assert_eq!(Pages::open(&dir).unwrap().rules, [Rule { id: "h1".into(), ..rule("Blink") }]);
-        let fast = Rule { when: logic::When::Every { ms: 5 }, ..rule("Fast") };
-        assert!(pages.apply(Edit::SetRule { id: String::new(), rule: Some(fast) }).unwrap_err().contains("50 ms"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

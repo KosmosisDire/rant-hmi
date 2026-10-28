@@ -6,6 +6,6 @@
  */
 export type Record = { name: string, 
 /**
- * An expression over mesh imports and variables.
+ * An expression over its object's members and other objects'.
  */
 source: string, every_ms: number, keep_s: number, };

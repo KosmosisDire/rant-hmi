@@ -3,7 +3,8 @@ import type { Intent } from "./Intent";
 import type { Kind } from "./Kind";
 
 /**
- * One mesh entity under an alias. Pages and handlers see only imports, never the mesh.
+ * One mesh entity as a member of an object, its alias the member's name. Pages and handlers
+ * see only members, never the mesh.
  */
 export type Import = { alias: string, entity: string, kind: Kind, intent: Intent, 
 /**

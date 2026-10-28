@@ -71,7 +71,7 @@ pub fn write(page: &Page, components: &[Page]) -> String {
         out.push_str(&format!("  <var name={} start={}/>\n", quote(&v.name), quote(&v.start)));
     }
     for v in &page.state {
-        var(&mut out, "  ", v);
+        var(&mut out, "  ", v, "");
     }
     for e in &page.children {
         element(&mut out, e, 1, components);
@@ -131,7 +131,7 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
             out.push_str(">\n");
             let inner = "  ".repeat(depth + 1);
             for v in &e.state {
-                var(out, &inner, v);
+                var(out, &inner, v, "");
             }
             for h in &e.handlers {
                 // settings in the order the event lists them
@@ -153,11 +153,12 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
     }
 }
 
-/// A `<var>` line of state, its start as JSON. Kept for each screen unless it says otherwise.
-fn var(out: &mut String, indent: &str, v: &Variable) {
+/// A `<var>` line of state, its start as JSON, then `more` attributes. Kept for each screen
+/// unless it says otherwise.
+pub(crate) fn var(out: &mut String, indent: &str, v: &Variable, more: &str) {
     let start = serde_json::to_string(&v.start).expect("a value is JSON");
     let per = if v.per == Per::Hmi { " per=\"hmi\"" } else { "" };
-    out.push_str(&format!("{indent}<var name={} start={}{per}/>\n", quote(&v.name), quote(&start)));
+    out.push_str(&format!("{indent}<var name={} start={}{per}{more}/>\n", quote(&v.name), quote(&start)));
 }
 
 /// Code between its opening and closing tags, a step further in, blank lines left bare.
@@ -168,7 +169,7 @@ fn block(out: &mut String, inner: &str, open: &str, code: &str, close: &str) {
 }
 
 /// Code at `indent`, blank lines left bare.
-pub(super) fn lines(out: &mut String, indent: &str, code: &str) {
+pub(crate) fn lines(out: &mut String, indent: &str, code: &str) {
     for line in code.lines() {
         if !line.trim().is_empty() {
             out.push_str(&format!("{indent}{line}"));
@@ -189,7 +190,7 @@ pub fn dedent(code: &str) -> String {
 
 /// Double quotes, or single ones when the value holds a double quote. A value holding both,
 /// or text an escape would misread, is escaped.
-pub(super) fn quote(v: &str) -> String {
+pub(crate) fn quote(v: &str) -> String {
     if v.contains("&quot;") || v.contains("&amp;") || (v.contains('"') && v.contains('\'')) {
         format!("\"{}\"", v.replace('&', "&amp;").replace('"', "&quot;"))
     } else if v.contains('"') {
@@ -275,30 +276,30 @@ fn block_end(s: &str, closing: &str, block: bool) -> Option<usize> {
 }
 
 /// Reads an HTML like file from the start, saying the line of any mistake.
-pub(super) struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     s: &'a str,
     at: usize,
     ids: HashSet<String>,
 }
 
 impl<'a> Reader<'a> {
-    pub(super) fn new(s: &'a str) -> Reader<'a> {
+    pub(crate) fn new(s: &'a str) -> Reader<'a> {
         Reader { s, at: 0, ids: HashSet::new() }
     }
 }
 
 impl Reader<'_> {
-    pub(super) fn rest(&self) -> &str {
+    pub(crate) fn rest(&self) -> &str {
         &self.s[self.at..]
     }
 
-    pub(super) fn error(&self, what: &str) -> String {
+    pub(crate) fn error(&self, what: &str) -> String {
         let line = self.s[..self.at].matches('\n').count() + 1;
         format!("line {line}: {what}")
     }
 
     /// Skips white space and comments.
-    pub(super) fn gap(&mut self) {
+    pub(crate) fn gap(&mut self) {
         let s = self.s;
         loop {
             let trimmed = s[self.at..].trim_start();
@@ -313,11 +314,7 @@ impl Reader<'_> {
         }
     }
 
-    pub(super) fn skip(&mut self, n: usize) {
-        self.at += n;
-    }
-
-    pub(super) fn eat(&mut self, lit: &str) -> bool {
+    pub(crate) fn eat(&mut self, lit: &str) -> bool {
         let found = self.rest().starts_with(lit);
         if found {
             self.at += lit.len();
@@ -330,11 +327,11 @@ impl Reader<'_> {
         self.rest().trim_start_matches([' ', '\t']).starts_with(['\n', '\r'])
     }
 
-    pub(super) fn expect(&mut self, lit: &str) -> Result<(), String> {
+    pub(crate) fn expect(&mut self, lit: &str) -> Result<(), String> {
         if self.eat(lit) { Ok(()) } else { Err(self.error(&format!("expected {lit}"))) }
     }
 
-    fn word(&mut self) -> Result<String, String> {
+    pub(crate) fn word(&mut self) -> Result<String, String> {
         let n = self.rest().find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')).unwrap_or(self.rest().len());
         if n == 0 {
             return Err(self.error("expected a name"));
@@ -345,7 +342,7 @@ impl Reader<'_> {
     }
 
     /// Attributes up to the closing `>` or `/>`, which stays unread.
-    pub(super) fn attrs(&mut self) -> Result<Vec<(String, String)>, String> {
+    pub(crate) fn attrs(&mut self) -> Result<Vec<(String, String)>, String> {
         let mut out = Vec::new();
         loop {
             self.gap();
@@ -442,27 +439,43 @@ impl Reader<'_> {
             if !self.eat("<var") {
                 return Ok(out);
             }
-            let mut v = Variable { name: String::new(), start: Value::Null, per: Per::Screen };
-            for (k, value) in self.attrs()? {
-                match k.as_str() {
-                    "name" => v.name = value,
-                    "start" => v.start = serde_json::from_str(&value).map_err(|_| self.error(&format!("{value} is no start: write it as JSON, as 0, true or \"text\"")))?,
-                    "per" => {
-                        v.per = match value.as_str() {
-                            "screen" => Per::Screen,
-                            "hmi" => Per::Hmi,
-                            _ => return Err(self.error("per is screen or hmi")),
-                        }
-                    }
-                    other => return Err(self.error(&format!("<var> takes no attribute {other}"))),
-                }
-            }
+            let attrs = self.attrs()?;
+            out.push(self.variable(&attrs)?);
             self.expect("/>")?;
-            if v.name.is_empty() || v.start.is_null() {
-                return Err(self.error("<var> needs a name and a start"));
-            }
-            out.push(v);
         }
+    }
+
+    /// The state a `<var>` line's attributes say. Kept for each screen unless it says otherwise.
+    pub(crate) fn variable(&self, attrs: &[(String, String)]) -> Result<Variable, String> {
+        let mut v = Variable { name: String::new(), start: Value::Null, per: Per::Screen };
+        for (k, value) in attrs {
+            match k.as_str() {
+                "name" => v.name = value.clone(),
+                "start" => v.start = serde_json::from_str(value).map_err(|_| self.error(&format!("{value} is no start: write it as JSON, as 0, true or \"text\"")))?,
+                "per" => {
+                    v.per = match value.as_str() {
+                        "screen" => Per::Screen,
+                        "hmi" => Per::Hmi,
+                        _ => return Err(self.error("per is screen or hmi")),
+                    }
+                }
+                other => return Err(self.error(&format!("<var> takes no attribute {other}"))),
+            }
+        }
+        if v.name.is_empty() || v.start.is_null() {
+            return Err(self.error("<var> needs a name and a start"));
+        }
+        Ok(v)
+    }
+
+    /// Code up to `</word>`, as a handler's is kept.
+    pub(crate) fn code(&mut self, word: &str) -> Result<String, String> {
+        let closing = format!("</{word}>");
+        let n = block_end(self.rest(), &closing, self.opens_block()).ok_or_else(|| self.error(&format!("<{word}> never closes")))?;
+        let code = dedent(&self.rest()[..n]);
+        self.at += n;
+        self.expect(&closing)?;
+        Ok(code)
     }
 
     /// The `<on>` blocks at the reading point.
@@ -477,13 +490,10 @@ impl Reader<'_> {
             let mut attrs: BTreeMap<String, String> = self.attrs()?.into_iter().collect();
             let event = attrs.remove("event").ok_or_else(|| self.error("<on> needs an event"))?;
             self.expect(">")?;
-            let n = block_end(self.rest(), "</on>", self.opens_block()).ok_or_else(|| self.error("<on> never closes"))?;
-            let mut h = Handler { code: dedent(&self.rest()[..n]), ..Handler::new(&event, BTreeMap::new()) };
+            let mut h = Handler { code: self.code("on")?, ..Handler::new(&event, BTreeMap::new()) };
             attrs.iter().for_each(|(k, v)| h.set(k, Some(v)));
             check_handler(&out, &h).map_err(|e| self.error(&e))?;
             out.push(h);
-            self.at += n;
-            self.expect("</on>")?;
             out.sort_by(|a, b| rank(&a.event).cmp(&rank(&b.event)));
         }
     }

@@ -174,15 +174,40 @@ pub fn names(src: &str) -> Vec<(usize, &str)> {
     out
 }
 
+/// The property read right after a name, as `Speed` in `Line.Speed`.
+pub fn member_after(rest: &str) -> Option<&str> {
+    let rest = rest.strip_prefix('.')?;
+    let n = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')).unwrap_or(rest.len());
+    (n > 0).then(|| &rest[..n])
+}
+
+/// Whether `src` reads the name `name`, or with `name` written `Line.Speed` that member of `Line`.
+pub fn reads(src: &str, name: &str) -> bool {
+    let (root, member) = match name.split_once('.') {
+        Some((root, member)) => (root, Some(member)),
+        None => (name, None),
+    };
+    names(src).into_iter().any(|(at, n)| n == root && member.is_none_or(|m| member_after(&src[at + root.len()..]) == Some(m)))
+}
+
 /// `src` with each use of the name `from` written `to`. Strings, comments and a property
-/// name after a dot keep it.
+/// name after a dot keep it. A `from` written `Line.Speed` is that member of `Line` alone.
 pub fn rename(src: &str, from: &str, to: &str) -> String {
+    let (root, member) = match from.split_once('.') {
+        Some((root, member)) => (root, Some(member)),
+        None => (from, None),
+    };
     let mut out = String::with_capacity(src.len());
     let mut at = 0;
-    for (start, _) in names(src).into_iter().filter(|(_, n)| *n == from) {
+    for (start, _) in names(src).into_iter().filter(|(_, n)| *n == root) {
+        let len = match member {
+            None => root.len(),
+            Some(m) if member_after(&src[start + root.len()..]) == Some(m) => root.len() + 1 + m.len(),
+            Some(_) => continue,
+        };
         out.push_str(&src[at..start]);
         out.push_str(to);
-        at = start + from.len();
+        at = start + len;
     }
     out.push_str(&src[at..]);
     out
@@ -208,6 +233,9 @@ mod tests {
         for (src, want) in cases {
             assert_eq!(rename(src, "Speed", "LineSpeed"), want, "{src}");
         }
+        // a member is renamed where its object reads it, and nowhere else
+        let member = rename("Line.Speed + Line.SpeedLimit + Speed + Robot.Speed + Line.Speed.x", "Line.Speed", "Line.Pace");
+        assert_eq!(member, "Line.Pace + Line.SpeedLimit + Speed + Robot.Speed + Line.Pace.x");
     }
 
     #[test]

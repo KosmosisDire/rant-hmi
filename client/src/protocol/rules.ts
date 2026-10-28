@@ -15,7 +15,7 @@ export const TYPE_WORD = /^[A-Za-z][A-Za-z0-9_]*(\[\])*$/;
 export const EVERY_MS = [50, 86400000] as const;
 export const KEEP_S = [1, 86400] as const;
 
-export const MISSING = "{name} names no mesh import, variable or record";
+export const MISSING = "{name} names no object, member or state";
 export const NO_SETTER = "{name} is worked out from other values, and has no setter to write it";
 export const WHOLE = "{name} is worked out whole, so it is set whole";
 export const NO_SCREEN = "{name} is each screen's own, and this handler runs for no screen";
