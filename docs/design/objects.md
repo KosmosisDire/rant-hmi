@@ -213,6 +213,36 @@ handlers, with no second model beside them. In two parts:
 - Members of one object share one space of names. Mesh members are PascalCase, the rest
   camelCase, objects PascalCase.
 
+### Step 3 as built
+
+- `objects/<name>.html` replaces `data/imports.toml`, `variables.toml`, `computed.toml`,
+  `records.toml` and `logic/handlers.html`, which nothing reads now. The format is in
+  [files.md](../files.md#objects). `Hmi`, its mesh at `Hmi`, is in every project and keeps
+  its name.
+- The backend keeps the objects and a flat view by key for the wire, the engine and screens.
+  A rename of an object or a member follows every reference in objects and pages, its values
+  and history going along.
+- An object read from outside only reads: a set through it says so. A screen's write of a
+  Local member is refused. An object's name hides an enum of that name.
+- The Objects tab: the left sidebar holds the objects (Hmi and Theme first) and the mesh, each
+  folding by its head and scrolling apart, as the user asked on 2026-10-28. The sheet shows a
+  section per kind with each member's value now, a lock for Local, whose value it is and how
+  many places name it. Member and object inspectors, Visibility, Used by, Remove refused while
+  something names it. A mesh row's + adds it to the open object, a folder's + makes an object
+  rooted there. The Data tab's right click items carried over: intent, Reset to its start,
+  Remove from a mesh row, Copy the name.
+- Design, asked mid build: page and element state are rows with their value now, each
+  opening a view of its own with Kept, the value of each copy, Used by, Move to, and Remove
+  refused while something reads it.
+- Gone with the Logic tab: undo of logic, and its list of the open page's handlers with what
+  each reads and writes. Element handlers stay in Design's inspector.
+- A new scene's view is its page's state.
+- The browser scenarios speak objects: the test client's `import(key, entity)`,
+  `setVariable(key, start)` and `setRule(object, id, rule)`, and the Data and Logic scenarios
+  became `objects-*`.
+- Step 4: renames of objects, members and state already follow every reference. Left from it:
+  a page renamed starts its state over, as the state's key holds the page.
+
 ## Open for the user
 
 - Several instances of an object type later?
