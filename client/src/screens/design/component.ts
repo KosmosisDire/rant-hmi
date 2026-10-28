@@ -6,9 +6,9 @@ import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Page } from "../../protocol/Page";
 import { isPercent } from "../../state/bind";
-import { freeName } from "../../state/names";
+import { freeName, named } from "../../state/names";
 import { notify, state } from "../../state/store";
-import { paint } from "../../ui/highlight";
+import { type Paint, paint } from "../../ui/highlight";
 import { leaves } from "../../page/PageView";
 import { boxOf, boxText, childrenOf, literal, parentOf, roomOf, sendEdits, tops } from "./tree";
 
@@ -21,6 +21,17 @@ function joined(text: string, first: (w: string) => string): string {
 /** As the backend spells a page's id from its name. */
 function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/** Painted runs with each object, its dot and its member joined, so `Line.Speed` reads as one. */
+function keyed(runs: [string, Paint][]): [string, Paint][] {
+  const out: [string, Paint][] = [];
+  for (const run of runs) {
+    const [object, dot] = [out.at(-2), out.at(-1)];
+    if (run[1] !== null && dot?.[0] === "." && object && named(object[0])?.of === "object") out.splice(-2, 2, [`${object[0]}.${run[0]}`, run[1]]);
+    else out.push(run);
+  }
+  return out;
 }
 
 /** Every element in the trees, outermost first. */
@@ -63,12 +74,13 @@ export function makeComponent(page: Page, ids: string[]) {
   for (const e of each(parts)) {
     for (const [key, value] of Object.entries(e.props)) {
       if (key === "name" || value === undefined) continue;
-      e.props[key] = paint(value)
+      e.props[key] = keyed(paint(value))
         .map(([text, kind]) => {
           if (kind === null || kind === "kw" || kind === "str" || kind === "com" || text.startsWith("$")) return text;
           let to = renamed.get(text);
           if (!to) {
-            to = freeName(joined(text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "x", "y", "w", "h", "origin", "rotate", "text"].includes(n) || inputs.some((i) => i.name === n));
+            // a member's input is named for the member alone
+            to = freeName(joined(text.split(".").at(-1) ?? text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "x", "y", "w", "h", "origin", "rotate", "text"].includes(n) || inputs.some((i) => i.name === n));
             renamed.set(text, to);
             inputs.push({ name: to, default: "0", bindable: false, type: "" });
           }
