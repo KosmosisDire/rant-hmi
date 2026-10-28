@@ -70,7 +70,12 @@ const LOOK: Spec[] = [
   ["Opacity", "opacity", { kind: "number", min: 0, max: 1, step: 0.01, placeholder: "1" }],
   // hidden clips what it holds to its box, as a card or a chart wants
   ["Overflow", "overflow", { kind: "choice", options: ['"visible"', '"hidden"'], placeholder: '"visible"' }],
+  ["Shadow", "box-shadow", { kind: "shadow", placeholder: '"0 0.2 0.8 0 #00000066"' }],
+  // false dims it, and it and all it holds take no events
+  ["Enabled", "enabled", { kind: "flag", placeholder: "true" }],
 ];
+/** What an instance's box takes of the look, the rest being its component's. */
+const BOX_LOOK = LOOK.filter(([, key]) => key === "opacity" || key === "box-shadow" || key === "enabled");
 const TEXT_LOOK: Spec[] = [
   ["Colour", "color", { kind: "colour", placeholder: "#e4e6e8" }],
   ["Size", "font-size", { kind: "number", min: 0.1, step: 0.1, placeholder: "1.6" }],
@@ -91,6 +96,7 @@ const ANIMATES: Record<string, string> = {
   color: "color",
   "font-size": "font-size",
   "border-radius": "border-radius",
+  "box-shadow": "box-shadow",
 };
 /** What of an instance animates: its box, never its inputs. */
 const BOX = new Set(["x", "y", "w", "h", "rotate"]);
@@ -103,8 +109,9 @@ const LIMITS: [string, string, "w" | "h", string][] = [
   ["max h", "max-height", "h", "Max height"],
 ];
 const NAMED = new Set([...[...LOOK, ...TEXT_LOOK, ...TURN].map(([, key]) => key), "border-width", "border-style", "border-color", ...keysOf(RADIUS), ...keysOf(PADDING), "gap", "position", ...LIMITS.map(([, key]) => key)]);
-/** What an instance's own fields show of its box: its turn, its place out of a flow, its size's bounds. */
-const BOX_NAMED = new Set(["rotate", "position", ...LIMITS.map(([, key]) => key)]);
+/** What an instance's own fields show of its box: its turn, its place out of a flow, its size's
+ *  bounds and its look. */
+const BOX_NAMED = new Set(["rotate", "position", ...LIMITS.map(([, key]) => key), ...BOX_LOOK.map(([, key]) => key)]);
 
 /** The right sidebar: the selected element's properties, a word on several, or the page's
  *  when none is selected. */
@@ -513,6 +520,8 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         </Show>
         {/* CSS on the instance's box, as dimming or hiding it whole */}
         <Show when={instance() && component(p.element.component ?? "")}>
+          <div class="section">Look</div>
+          <For each={BOX_LOOK}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
           <LooseProps page={p.page} element={p.element} loose={loose} placeholder="opacity: Running ? 1 : 0.4" css />
         </Show>
@@ -851,7 +860,7 @@ function Inputs(p: { page: string; inputs: Input[] }) {
                 class="editor input-name"
                 value={i.name}
                 accept={localName}
-                title="camelCase, and none of name, repeat, x, y, w or h"
+                title="camelCase, and none an instance takes itself, as name, x, origin or enabled"
                 onCommit={(name) => write(i.name, { ...i, name: name.trim() })}
               />
               <label class="check" title="The component may write it back to what the instance binds it to">
@@ -902,7 +911,7 @@ function Variables(p: { page: string; variables: Local[] }) {
                 class="editor input-name"
                 value={v.name}
                 accept={localName}
-                title="camelCase, and none of name, repeat, x, y, w or h"
+                title="camelCase, and none an instance takes itself, as name, x, origin or enabled"
                 onCommit={(name) => write(v.name, { ...v, name: name.trim() })}
               />
               <button class="icon-btn" title={`Remove the variable ${v.name}`} onClick={() => write(v.name, null)}>

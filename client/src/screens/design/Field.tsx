@@ -37,7 +37,7 @@ export interface Where {
 export const WhereContext = createContext<() => Where>((): Where => ({ scope: pageScope, handlers: "handler", expressions: "expression" }));
 
 /** What a field holds, which says what its lead does. */
-export type Kind = "number" | "colour" | "choice" | "point" | "flag" | "text" | "any";
+export type Kind = "number" | "colour" | "choice" | "point" | "flag" | "shadow" | "text" | "any";
 
 /** The kind a value's text is now, for fields whose kind comes from what they hold. */
 export function kindOf(text: string): Kind {
@@ -301,7 +301,8 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   const where = useContext(WhereContext);
   const kind = () => p.kind ?? "any";
   const percent = () => !!p.percent && isPercent(p.value);
-  const literal = () => p.value.trim() === "" || isConstant(p.value) || percent() || (!!p.percent && !!sizeWord(p.value));
+  // a shadow's parts may each be code, so its panel takes any shadow it can split
+  const literal = () => (kind() === "shadow" ? !!shadowParts(p.value) : p.value.trim() === "" || isConstant(p.value) || percent() || (!!p.percent && !!sizeWord(p.value)));
   const scrubs = () => plainNumber(p);
   const [opened, setOpened] = createSignal(false);
   let lead!: HTMLButtonElement;
@@ -318,7 +319,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
   const click = () => {
     if (scrubs()) return;
     if (p.lead?.onClick) p.lead.onClick(lead);
-    else if (kind() === "colour" || kind() === "choice" || kind() === "point") setOpened(!opened());
+    else if (kind() === "colour" || kind() === "choice" || kind() === "point" || (kind() === "shadow" && literal())) setOpened(!opened());
     else if (kind() === "flag" && literal()) p.onWrite(p.value.trim() === "true" ? "false" : "true");
     else focusText();
   };
@@ -366,6 +367,7 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
     if (kind() === "choice") return "Pick one";
     if (kind() === "point") return "Pick a point of its box";
     if (kind() === "flag") return literal() ? "Click to flip it" : "An expression gives it";
+    if (kind() === "shadow") return literal() ? "Edit the shadow" : "An expression gives it";
     return undefined;
   };
   // the tokens that work out to a colour, in the screen's mode
@@ -411,14 +413,27 @@ function Lead(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => void
             <Grid3x3 size={12} />
           </Match>
           <Match when={kind() === "flag"}>{p.value.trim() === "true" ? <ToggleRight size={13} /> : <ToggleLeft size={13} />}</Match>
+          <Match when={kind() === "shadow"}>
+            <span class="shadow-look" classList={{ none: p.value.trim() === "" }} />
+          </Match>
           <Match when={kind() === "text"}>
             <Type size={12} />
           </Match>
         </Switch>
       </button>
       <Show when={opened()}>
-        <Popover anchor={lead} onClose={() => setOpened(false)} class={kind() === "choice" ? "choice-list" : undefined}>
+        <Popover anchor={lead} onClose={() => setOpened(false)} class={kind() === "choice" ? "choice-list" : kind() === "shadow" ? "parts" : undefined}>
           <Switch>
+            <Match when={kind() === "shadow" && shadowParts(p.value)}>
+              {(parts) => (
+                <For each={SHADOW}>
+                  {([label, kind, more], i) => {
+                    const text = (t: string | null) => shadowText(parts().map((x, j) => (j === i() ? (t ?? "") : x)));
+                    return <Field label={label} kind={kind} {...more} value={parts()[i()]} onWrite={(t) => p.onWrite(text(t))} onShow={(t) => p.onShow?.(text(t))} />;
+                  }}
+                </For>
+              )}
+            </Match>
             <Match when={kind() === "colour"}>
               <ColourPicker
                 value={shown()}
@@ -479,6 +494,56 @@ export function Points(p: { values: string[]; on: string | undefined; pick: (val
       </For>
     </div>
   );
+}
+
+/** The parts of a drop shadow in CSS's order, each an expression. A first part written fills the
+ *  others with their placeholders, so it shows. */
+const SHADOW: [string, Kind, Partial<FieldProps>][] = [
+  ["X", "number", { step: 0.1, placeholder: "0" }],
+  ["Y", "number", { step: 0.1, placeholder: "0.2" }],
+  ["Blur", "number", { min: 0, step: 0.1, placeholder: "0.8" }],
+  ["Spread", "number", { step: 0.1, placeholder: "0" }],
+  ["Colour", "colour", { placeholder: "#00000066" }],
+];
+
+const HEX = /^#[0-9a-f]{3,8}$/i;
+
+/** A word of CSS as a part's expression: a number or a hex colour as it is, other words as text. */
+const cssPart = (word: string) => (isNumber(word) || HEX.test(word) ? word : JSON.stringify(word));
+
+/** A shadow's parts: none for an empty value, else from CSS text, or a template whose `${}`
+ *  each give one part. Null for code that is not one shadow, which only its text box edits. */
+export function shadowParts(value: string): string[] | null {
+  const v = value.trim();
+  if (v === "") return SHADOW.map(() => "");
+  let words: string[];
+  if (/^"(?:[^"\\]|\\.)*"$/.test(v)) words = (JSON.parse(v) as string).trim().split(/\s+/).map(cssPart);
+  else if (/^`[^`\\]*`$/.test(v)) {
+    // a word is CSS, or one `${}` alone
+    const pieces = v.slice(1, -1).match(/(?:\$\{[^{}]*\}|\S)+/g) ?? [];
+    if (pieces.some((w) => !/^\$\{[^{}]*\}$/.test(w) && /[${}]/.test(w))) return null;
+    words = pieces.map((w) => (w.startsWith("${") ? w.slice(2, -1).trim() : cssPart(w)));
+  } else return null;
+  if (words.length === 0 || words.some((w) => w === "" || w === '"inset"' || w.includes(","))) return null;
+  // the colour comes last, or not at all, after two to four lengths
+  const last = words.at(-1)!;
+  const colour = words.length === 5 || !isNumber(last) ? last : "";
+  const lengths = colour ? words.slice(0, -1) : words;
+  if (lengths.length < 2 || lengths.length > 4) return null;
+  return [...lengths, ...Array(4 - lengths.length).fill("0"), colour];
+}
+
+/** A shadow from its parts, as CSS text, or as a template when a part is code. */
+export function shadowText(parts: string[]): string {
+  if (parts.every((x) => x.trim() === "")) return "";
+  const words = parts.map((x, i) => {
+    const t = x.trim() || String(SHADOW[i][2].placeholder);
+    if (isNumber(t) || HEX.test(t)) return { text: t };
+    if (/^"(?:[^"\\]|\\.)*"$/.test(t)) return { text: JSON.parse(t) as string };
+    return { code: t };
+  });
+  if (words.every((w) => w.text !== undefined)) return JSON.stringify(words.map((w) => w.text).join(" "));
+  return `\`${words.map((w) => (w.code !== undefined ? `\${${w.code}}` : w.text)).join(" ")}\``;
 }
 
 /** The parts of a border, each its own property and expression, so one may be bound alone. */

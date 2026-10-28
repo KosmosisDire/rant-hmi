@@ -37,6 +37,8 @@ export const PAINT: Spec[] = [
   ["Dashes", "stroke-dasharray", { placeholder: '"4 4"' }],
   ["Ends", "stroke-linecap", { kind: "choice", options: ['"butt"', '"round"', '"square"'], placeholder: '"butt"' }],
   ["Transform", "transform", { placeholder: '`rotate(${angle} 50 50)`' }],
+  // false dims it, and it and all it holds take no events
+  ["Enabled", "enabled", { kind: "flag", placeholder: "true" }],
 ];
 
 /** The points of a box an origin may name at once, row by row. */
