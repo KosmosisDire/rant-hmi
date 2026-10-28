@@ -59,13 +59,11 @@ A page is a file of the elements it draws. This page lists every element and pro
 | `w`, `h` | its size: units, a percent, `hug` to fit what it holds, or `fill` for the room its frame leaves it |
 | `origin` | the point of its own box that `x` and `y` place and it turns about, as `'"50% 50%"'`. Its top left corner when left out |
 | `repeat` | a number or a list, to draw a copy per item ([Repeat](#repeat)) |
-| `enabled` | `false` to take no events, in it and all it holds, and to draw it dimmed. A value not known yet counts as false |
+| `enabled` | `false` to take no events, in it and all it holds, and to draw it dimmed |
 
 ## Layout
 
-A frame with `layout` sets what it holds in a row or a column, so the parts keep their spacing
-when a text grows, an item comes or the screen is narrower. Keep `x` and `y` for what sits on
-its own, as a marker over a picture.
+A frame with `layout` sets what it holds in a row or a column.
 
 ```html
 <div id="e1" name="Header" x="0" y="0" w="fill" h="hug" style='layout: "right"; align: "center left"; gap: 1; padding: 1'>
@@ -78,7 +76,7 @@ its own, as a marker over a picture.
 
 | Property | Takes |
 | --- | --- |
-| `layout` | `"right"`, `"down"`, `"left"` or `"up"`: the way its parts follow one another. Their `x` and `y` then go unused |
+| `layout` | `"right"`, `"down"`, `"left"` or `"up"`: the way its parts follow one another |
 | `align` | where the parts sit, one of nine points, as `"top left"`, `"center left"` or `"center"`. Top left when left out |
 | `gap` | the units between the parts, or `"auto"` to spread them over its length |
 | `wrap` | `true` to go on in a new row or column when one is full |
@@ -86,33 +84,18 @@ its own, as a marker over a picture.
 | `padding` | the units between its edge and its parts |
 | `overflow`, `overflow-x`, `overflow-y` | `"auto"` or `"scroll"` to scroll what spills past it, by wheel and by finger |
 
-- `w="fill"` along the layout takes the room left, shared by every part that fills. Across
-  it, a part that fills stretches to the frame.
-- `h="hug"` makes a frame as tall as what it holds.
 - A part with `position: "absolute"` keeps the place its `x` and `y` give.
 - A list is a frame holding one part with [repeat](#repeat).
-
-### On a phone
-
-A phone held upright shows a page wider than tall laid out again for its width, never
-zoomed. It reads the page in bands from the top, each band from the left.
-
-- A frame keeps its parts together. One laid out in a row wraps, and a part that fills goes
-  to the next line rather than narrow past what it holds.
-- What overlaps stays whole, scaled down if too wide.
-- A repeat's copies keep to a row of their own.
-
-So give each panel its own top level frame. The phone button under the editor's page shows
-the page as a phone lays it out.
+- The phone button under the editor's page shows the page as a phone held upright lays it out.
 
 ## Text, fields and media
 
 | Property | Of | Takes |
 | --- | --- | --- |
 | `text` | `span`, the shape `text` | its words, written as the tag's body: `<span ...>Speed.toFixed(1) + " m/s"</span>` |
-| `align` | `span`, `input` | where its lines sit in its box, one of the nine points a frame's `align` takes. An input's one line stays in the middle, so only left, center or right counts |
-| `value` | `input` | what it shows. A name there, as `value="target"`, is set to what is typed: a number while it holds one, true or false while it holds those |
-| `src` | `media` | a camera or picture member, as `Cell.Camera`, any expression giving one, or text as a URL. A member plays its video, or shows its pictures while it has none |
+| `align` | `span`, `input` | where its lines sit in its box, one of the nine points a frame's `align` takes. An input takes `"left"`, `"center"` or `"right"` |
+| `value` | `input` | what it shows. A name there, as `value="target"`, is set to what is typed |
+| `src` | `media` | a camera or picture member, as `Cell.Camera`, any expression giving one, or text as a URL |
 | `fit` | `media`, `svg` | `"meet"` to show it whole, the default, `"slice"` to fill the box cut to size, or `"stretch"` |
 | `viewbox` | `svg` | the box its shapes draw in, `"x y width height"`. Left out, they draw in units from its corner |
 | `markup` | `markup` | SVG as text, or a list of texts, written as the tag's body |
@@ -143,9 +126,7 @@ letters, each an expression: `cx`, `r`, `fill`, `stroke`, `d`, `points`, `pathle
   `height` in units, and `keep`, an object kept between draws for what it makes once:
   `keep.points ??= gl.createBuffer()`.
 - In 2D one unit is one, and each draw starts clear. With WebGL the code clears it.
-- It draws again when its box or anything it reads changes, and every frame while it reads
-  `time.now`.
-- It may not set anything.
+- It draws every frame while it reads `time.now`.
 
 ## Scenes
 
@@ -158,8 +139,7 @@ letters, each an expression: `cx`, `r`, `fill`, `stroke`, `d`, `points`, `pathle
 </scene>
 ```
 
-A scene draws its parts in metres with z up. Its `background` shows behind them. Every
-property of a part is an attribute.
+A scene draws its parts in metres with z up. Every property of a part is an attribute.
 
 | Property | Of | Takes |
 | --- | --- | --- |
@@ -184,14 +164,8 @@ property of a part is an attribute.
 | `joints` | `model` | its named nodes moved from where the file puts them: `{ Elbow: 0.5 }` turns one by radians about its z, `{ Slide: { position: vec(0, 0, 0.2) } }` moves one by a pose |
 
 - An `anchor` draws nothing. It places what it holds by its pose, as a frame of a TF tree.
-- `axes` shows x, y and z in red, green and blue. A `grid` lies on its xy plane.
-- A box, a sphere, a cylinder and a grid sit centred on their pose.
-- A part whose values are not known yet draws nothing.
-- Points straight from the mesh, as `Scan.points`, draw fastest. Points code makes, as
-  `Scan.points.filter((p) => p.z > 0)`, cost more.
 - The camera moves only by its properties. A scene added in the editor comes with a `<var>`
-  its camera reads, and handlers that move it: a left drag turns it, another button, Shift or
-  two fingers slide it, and a wheel or a pinch zooms. Change or remove them as you like.
+  its camera reads and handlers that move it.
 
 ## Style
 
@@ -203,7 +177,6 @@ Any CSS property goes in `style`, each value an expression:
   `backdrop-filter`, and as it is for the rest, as `opacity: 0.5`.
 - CSS text is taken as written: `box-shadow: "0 2px 8px #0008"`. Bare numbers in it that CSS
   would refuse read as units: `"0 0.2 0.8 #0008"`.
-- `transition` runs on screens only, so the editor follows a drag at once.
 
 ## State
 
@@ -218,10 +191,9 @@ A `<var>` first inside a page or an element keeps state there:
 </div>
 ```
 
-- The element and all it holds read it by name, the nearest first, over any other name.
+- The element and all it holds read it by name.
 - `start` is its first value, as JSON.
 - Each screen keeps its own, or with `per="hmi"` every screen shares one.
-- Each copy of a repeat keeps its own.
 
 ## Repeat
 

@@ -14,6 +14,9 @@ what the event brings as `p`.
 </div>
 ```
 
+A drag's `p.dx` and `p.dy` count as the element's own `x` and `y` do, so
+`puckX = puckX + p.dx` makes an element at `x="puckX"` follow the pointer.
+
 ## Settings
 
 A setting is an attribute of the `<on>`, an expression, as `after="800"` on a `hold`. The
@@ -21,38 +24,9 @@ tables below show each with its default.
 
 - A filter takes only the events that bring its value, as `key="a"` or `button="right"`. One
   with no default takes any.
-- `while="condition"` on any handler but an end hears its event only while the condition is
-  true.
-- An element holds one handler per event and filter: a `keydown` for `key="a"` and another
-  for `key="b"`.
-
-## How handlers run
-
-- What begins always ends: a `press` gets its `release`, a `keydown` its `keyup`, a
-  `buttondown` its `buttonup`, and moving `axes` come to rest. That holds however it ends: let
-  go, the window losing focus, the pad unplugged, the page closed, the `while` turning false,
-  or the screen silent for half a second. Then `p.lost` is true.
-- While a handler runs, the same event again is skipped. A `drag`, `scroll`, `zoom`, `change`
-  or `axes` that comes meanwhile runs after it instead, with its moves added up.
-- Keys and gamepads are heard while the element shows on the top page and no field is typed
-  in. A key a handler takes does nothing else on the screen, so Space never presses a button.
-
-## Moving and touch
-
-- A drag's `p.dx` and `p.dy` count as the element's own `x` and `y` do, so
-  `puckX = puckX + p.dx` makes an element at `x="puckX"` follow the pointer.
-- A scroll moves what it shows as a finger dragging it would, so a wheel turned down gives
-  `p.dy` below 0.
-- An element with a `zoom` handler but no `scroll` handler zooms by any wheel.
-- On a touch screen two fingers scroll by their middle and zoom by their spread. The press
-  they began ends with a `release` but no `tap`.
-- One finger scrolls what takes `scroll` once it moves a little, unless what it pressed takes
-  `drag`.
-
-## Component events
-
-A component's own events, which its code sends with `emit`, are heard on its instance, as
-`<on event="change">`. `p` holds the value sent. They take `while`.
+- `while="condition"` hears its event only while the condition is true.
+- A `release`, `keyup`, `buttonup` or last `axes` that comes some other way than a let go, as
+  the page closing, has `p.lost` true.
 
 ## All events
 

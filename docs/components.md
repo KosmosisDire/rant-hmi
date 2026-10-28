@@ -35,9 +35,8 @@ Inside it, code reads its inputs and vars by name, and each part's `pressed`, `h
 </Meter>
 ```
 
-- Its inputs are attributes. One left out takes its default.
+- Its inputs are attributes.
 - The rest is CSS on its box, in `style`.
-- `w="hug"` and `h="hug"` take the component's own size.
 - A bindable input given a name, as `value="target"`, writes to that name when the component
   sets it.
 - `<on event="change">` hears what the component sends, with the value in `p`.
@@ -56,13 +55,10 @@ those types.
 | `Pose`, `Color`, an enum's name | that type, by its name on the mesh |
 | any of these with `[]` | a list of it, as `number[]` or `Pose[]` |
 
-- An input with no type takes any value, but is offered for no member.
-- A bindable input is offered only for a member to write.
-
 ## Standard components
 
 A new project starts with these in `components/`. Each is a component like any other, so open,
-restyle or copy it. Changing one changes every instance of it.
+restyle or copy it.
 
 Views show a value:
 

@@ -43,7 +43,7 @@ A list, one per screen connected:
 
 ## Hmi/Problems
 
-What is wrong now, the newest 100, as the editor's list shows them:
+What is wrong now, as the editor's list shows them:
 
 | Field | Is |
 | --- | --- |

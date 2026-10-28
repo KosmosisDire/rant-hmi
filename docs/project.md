@@ -1,7 +1,6 @@
 # Project
 
-A project is a folder of plain text files. A saved change reaches every screen, and a file with
-a mistake is refused while the last good one stays.
+A project is a folder of plain text files.
 
 ```
 hmi.toml                 settings
@@ -72,7 +71,7 @@ rest in camelCase.
 | `rate` | topics | the most values a second it takes, best effort |
 | `start` | `<var>` | its first value, as JSON: `'"Auto"'`, `0`, `[]` |
 | `per` | `<var>` | `hmi` for one value every screen shares. Left out, each screen keeps its own |
-| `get` | `<computed>` | an expression, as `Speed * 100`. It may not set anything |
+| `get` | `<computed>` | an expression, as `Speed * 100` |
 | `target`, `set` | `<computed>` | the member a write to it sets, and to what: an expression of the new value `v`. Left out, it is read only |
 | `unit`, `note` | `<computed>` | the unit shown after its value, and what it means |
 | `source` | `<record>` | the expression it samples |
@@ -82,8 +81,8 @@ rest in camelCase.
 
 ### Logic
 
-An `<on>` in an object runs its code on its own, whether or not a screen is open. Each has an
-`id` unique across the project, a `name`, and one of these:
+An `<on>` in an object runs its code whether or not a screen is open. Each has an `id` unique
+across the project, a `name`, and one of these:
 
 | Attribute | Runs its code | `p` holds |
 | --- | --- | --- |
@@ -98,7 +97,7 @@ An `<on>` in an object runs its code on its own, whether or not a screen is open
 
 ### The Hmi object
 
-Every project has `Hmi`, which cannot be removed. It holds what is about the HMI as a whole:
+Every project has `Hmi`. It holds what is about the HMI as a whole:
 logic on starting and on screens, state for the whole HMI, and the HMI's own status as
 `Hmi.Clients`, `Hmi.Status` and `Hmi.Problems` ([Status](status.md)).
 
@@ -134,9 +133,7 @@ light = "#0088ff"
 | `dark` | its value in dark mode: a colour, a number or text. It may read other tokens and the [math](code.md#colours), as `$accent.alpha(0.15)` |
 | `light` | its value in light mode. Left out, the dark value is used, worked out with the light tokens |
 
-Each screen shows light or dark as its device is set. A handler switches its screen with
-`theme.toggle()` or `theme.set("light")`, and `theme.set("device")` follows the device again.
-The screen keeps the choice.
+A handler switches its screen between them with `theme.toggle()` or `theme.set("light")`.
 
 A new project starts with these tokens:
 
@@ -156,8 +153,3 @@ A new project starts with these tokens:
 A model, a picture or a font goes in `files/`, and a page names it by its path from the
 project: `src="files/cell/arm.glb"` on a model, `src="files/logo.png"` on media,
 `background: "url(files/plan.png)"`.
-
-- Screens load nothing else of the project.
-- A path that steps out of `files/`, a name that starts with a dot and a link that leads out
-  are refused.
-- A screen shows a changed file once it loads the page again.

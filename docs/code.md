@@ -10,15 +10,12 @@ object's `<fn>` and logic, and a canvas's draw are statements.
 | `Line` | an object, by its name |
 | `Line.Speed` | a member of it. The object's own code reads it bare, as `Speed` |
 | `$accent` | a theme token |
-| `JobState` | a mesh enum, by its type's name, unless an object takes that name. `JobState.options` lists the names it takes |
+| `JobState` | a mesh enum, by its type's name. `JobState.options` lists the names it takes |
 | `p` | in a handler, what its event brings ([Events](events.md)) |
 | `index`, `item` | in an element with `repeat`, its copy's number and item |
-| `expanded` | a `<var>` on the element or what holds it, the nearest first |
+| `expanded` | a `<var>` on the element or what holds it |
 | `value` | in a component, an input or a `<var>` |
 | `thumb.pressed` | in a component, a part's `pressed`, `hovered` and `heldFor` in ms, by the part's name. `root` is the whole |
-
-A project name may not take the name of a function below. A component's input may, as a knob's
-`min` and `max`: the plain name is the input, and a call such as `max(a, b)` is the function.
 
 ## Actions
 
@@ -142,9 +139,6 @@ Math.floor(time.now / 500) % 2 ? $red : $panel     // on and off each half secon
 new Date(time.now).toLocaleTimeString()            // the screen's clock
 ```
 
-Every value drawn in one frame reads the same time, so things move together. Logic and
-computed values read the time when they run, and never run by the clock alone.
-
 ## Keys, gamepads and the link
 
 What a screen draws reads its own keys, gamepads and link:
@@ -155,11 +149,8 @@ gamepads[0] ? gamepads[0].lx * 10 : 0             // follows the left stick
 link.open ? "" : "No link to the system"          // a banner's text
 ```
 
-- `keys` holds each key held, true by what it types and by where it sits: `keys.a`,
-  `keys.KeyA`, `keys.Space`, `keys.Shift`.
-- `gamepads[0]` holds `name`, `lx`, `ly`, `rx`, `ry` from -1 to 1 with each y up, `lt` and
-  `rt` from 0 to 1, every axis in `axes`, and `buttons`, each true while down, as
-  `buttons.south`. They have no deadband.
+`gamepads[0]` holds `name`, `lx`, `ly`, `rx`, `ry` from -1 to 1 with each y up, `lt` and `rt`
+from 0 to 1, every axis in `axes`, and `buttons`, each true while down, as `buttons.south`.
 
 ## Vectors, quaternions and poses
 
@@ -183,9 +174,7 @@ Robot.Pose * Tool                        // poses combine
 "at " + vec(1, 2)                        // "at (1, 2)"
 ```
 
-- Vectors add and subtract one of their own size. They multiply and divide by a number, or
-  part by part by a vector of their size.
-- A 2D and a 3D vector never mix: the code stops and says so.
+Vectors multiply and divide by a number, or part by part by a vector of their size.
 
 ## Colours
 
@@ -201,8 +190,6 @@ $accent.mix($red, 0.5)         // halfway to another colour
 #229834 * 1.2                  // brighter, and * 0.8 darker
 ```
 
-`lighten`, `darken` and `mix` take even steps as the eye sees them, and keep the hue.
-
 ## Methods
 
 | Value | Methods |
@@ -214,9 +201,4 @@ $accent.mix($red, 0.5)         // halfway to another colour
 
 - `euler()` gives `{ roll, pitch, yaw }` in radians.
 - A 2D `cross` is a number: how far the second turns from the first.
-
-## Good to know
-
-- Angles are in radians. The natural log is `ln`, since `log` writes to the log.
-- `==` is true for two vectors only when they are the same value. Use `a.equals(b)`.
-- After `?.`, wrap the chain before a method: `(Ft?.force).length()`.
+- `a.equals(b)` compares two vectors or quaternions.
