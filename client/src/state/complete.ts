@@ -12,15 +12,15 @@ import type { Value } from "../protocol/Value";
 import { partNames, tokenValue } from "./bind";
 import { chain as path } from "./elements";
 import { fields, typeLabel } from "./format";
-import { names } from "./names";
-import { entity, live, state } from "./store";
+import { imported, key, keyOf, members, type Named, named, names, object } from "./names";
+import { entity, live, split, state } from "./store";
 import { KIND_WORDS, typesIn } from "./types";
 
 export interface Suggestion {
   label: string;
   /** What replaces the word being typed. */
   insert: string;
-  icon: Kind | "local" | "api" | "member" | "token" | "enum";
+  icon: Kind | "local" | "api" | "member" | "token" | "enum" | "object";
   type?: string;
   value?: Value | null;
   known?: boolean;
@@ -56,7 +56,7 @@ function tokens(): Suggestion[] {
 
 /** The language's own names in `place`, from the one list of them, a function's typed with
  *  its bracket. */
-const own = (place: Place): Suggestion[] => apiIn(place).map((a) => ({ label: a.name, insert: a.insert ?? (a.takes ? `${a.name}(` : a.name), icon: "api", type: a.words }));
+const api = (place: Place): Suggestion[] => apiIn(place).map((a) => ({ label: a.name, insert: a.insert ?? (a.takes ? `${a.name}(` : a.name), icon: "api", type: a.words }));
 
 /** How each math method is typed in, and what it gives. */
 const METHOD_WORDS: Record<string, [string, string]> = {
@@ -125,9 +125,10 @@ export function drawing(context: "2d" | "webgl2"): Suggestion[] {
 }
 
 /** The completion at `caret`, or null where none fits, such as inside a string. `names` stand
- *  for the mesh imports where code reads something else, as a component reads its own, and
- *  `also` comes before them, the nearest names, as a repeat's `index` and `item`. */
-export function complete(text: string, caret: number, place: Place, names?: Suggestion[], also?: Suggestion[]): Completion | null {
+ *  for the objects where code reads something else, as a component reads its own, and `also`
+ *  comes before them, the nearest names, as a repeat's `index` and `item`. Code of the object
+ *  `own` reads its members bare too. */
+export function complete(text: string, caret: number, place: Place, names?: Suggestion[], also?: Suggestion[], own?: string): Completion | null {
   const before = text.slice(0, caret);
   if (inWords(before)) return null;
   let from = caret;
@@ -136,8 +137,8 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   if (/^\d/.test(word)) return null;
   // a nearer name hides one further out, which is not offered
   const near = also ?? [];
-  const far = (names ?? top(place)).filter((n) => !near.some((a) => a.label === n.label));
-  const items = before[from - 1] === "." ? given(chain(before.slice(0, from - 1)), place, names, also) : [...near, ...far, ...(THEMED.includes(place) ? tokens() : []), ...own(place)];
+  const far = (names ?? top(place, own)).filter((n) => !near.some((a) => a.label === n.label));
+  const items = before[from - 1] === "." ? given(chain(before.slice(0, from - 1)), place, names, also, own) : [...near, ...far, ...(THEMED.includes(place) ? tokens() : []), ...api(place)];
   return matching(items, word, from);
 }
 
@@ -220,9 +221,9 @@ export interface Signature {
   unknown?: string;
 }
 
-/** The call the caret is inside: one of the language's own functions, or in a handler that
- *  reaches the mesh a send or a function or task import. */
-export function signature(text: string, caret: number, place: Place): Signature | null {
+/** The call the caret is inside: one of the language's own functions, or in a handler a call
+ *  of an object's function, or a send or a function or task import. */
+export function signature(text: string, caret: number, place: Place, own?: string): Signature | null {
   const open = opened(text.slice(0, caret));
   if (!open) return null;
   const head = text.slice(0, open.at).trimEnd();
@@ -236,10 +237,17 @@ export function signature(text: string, caret: number, place: Place): Signature 
     return { from, call, params: fn.takes.map((name) => ({ name, type: "" })), at: Math.min(open.commas, rest) };
   }
   if (place !== "handler") return null;
-  const imp = state.imports.find((i) => i.alias === path[0]);
-  const sends = imp?.kind === "topic" && path.length === 2 && path[1] === "send";
-  const calls = (imp?.kind === "function" || imp?.kind === "task") && path.length === 1;
-  if (!imp || !(sends || calls)) return null;
+  const to = keyOf(path, own);
+  if (to && to.rest.length === 0 && named(to.key)?.of === "function") {
+    const [o, name] = split(to.key);
+    const f = object(o)?.functions.find((x) => x.name === name);
+    return { from, call, params: (f?.takes ?? []).map((name) => ({ name, type: "" })), at: open.commas };
+  }
+  const imp = to && imported(to.key);
+  if (!to || !imp) return null;
+  const sends = imp.kind === "topic" && to.rest.length === 1 && to.rest[0] === "send";
+  const calls = (imp.kind === "function" || imp.kind === "task") && to.rest.length === 0;
+  if (!(sends || calls)) return null;
   const e = entity(imp.entity);
   if (!e || (sends && !e.schema)) return { from, call, params: [], at: open.commas, unknown: `its type is not known while ${imp.entity} is off the mesh` };
   // an untyped call takes nothing, and a task's last value takes each progress update
@@ -293,15 +301,15 @@ export function componentNames(c: Page): Suggestion[] {
   ];
 }
 
-/** After a dot, what the name before it offers: one given its members, else an import's or
- *  variable's fields where code reads those. */
-function given(path: string[], place: Place, names?: Suggestion[], also?: Suggestion[]): Suggestion[] {
+/** After a dot, what the name before it offers: one given its members, else an object's
+ *  members or a member's fields where code reads those. */
+function given(path: string[], place: Place, names?: Suggestion[], also?: Suggestion[], own?: string): Suggestion[] {
   const token = path[0].startsWith("$") && THEMED.includes(place) ? tokens().find((t) => t.label === path[0]) : undefined;
   if (token) return path.length === 1 ? (token.members ?? []) : [];
-  const own = [...(also ?? []), ...(names ?? [])].find((n) => n.label === path[0]);
-  if (own) return path.length === 1 ? (own.members ?? []) : [];
+  const near = [...(also ?? []), ...(names ?? [])].find((n) => n.label === path[0]);
+  if (near) return path.length === 1 ? (near.members ?? []) : [];
   // the language's names read in every place, the mesh's only where code names nothing else
-  return language(path, place) ?? (names ? [] : members(path, place));
+  return language(path, place) ?? (names ? [] : after(path, place, own));
 }
 
 /** What one of the language's own names offers after a dot: the fields of a value it lists,
@@ -313,28 +321,40 @@ function language(path: string[], place: Place): Suggestion[] | undefined {
   return a.fields ? a.fields.map((f): Suggestion => ({ label: f.name, insert: f.name, icon: "member", type: f.words })) : held((globalThis as Record<string, unknown>)[a.name]);
 }
 
-function top(place: Place): Suggestion[] {
-  return names("import", "variable", "computed", "record", "enum").flatMap((n): Suggestion[] => {
-    const v = live(n.name);
-    switch (n.of) {
-      case "import": {
-        // only a handler calls, so nothing it could call is offered elsewhere
-        if (place !== "handler" && (n.kind === "function" || n.kind === "task")) return [];
-        const t = entity(state.imports.find((i) => i.alias === n.name)?.entity ?? "")?.schema;
-        const insert = n.kind === "function" || n.kind === "task" ? `await ${n.name}(` : n.name;
-        return [{ label: n.name, insert, icon: n.kind!, type: t?.name || bareType(t?.fields) || n.kind, value: v.value, known: v.known }];
-      }
-      case "record": {
-        // a record shows its latest value, the list being too long to preview
-        const last = Array.isArray(v.value) ? (v.value.at(-1) as { v?: Value } | undefined)?.v : undefined;
-        return [{ label: n.name, insert: n.name, icon: "local", type: n.words, value: last ?? null, known: last !== undefined }];
-      }
-      case "enum":
-        return [{ label: n.name, insert: n.name, icon: "enum", type: n.words, members: [options(state.enums.find((e) => e.name === n.name)?.options ?? [])] }];
-      default:
-        return [{ label: n.name, insert: n.name, icon: "local", type: n.words, value: v.value, known: v.known }];
+/** What code may name first: its own object's members bare, then each object, then the enums. */
+function top(place: Place, own?: string): Suggestion[] {
+  const mine = own === undefined ? [] : members(own, true).flatMap((n) => member(n, place, true));
+  const objects = names("object")
+    .filter((n) => !mine.some((m) => m.label === n.name))
+    .map((n): Suggestion => ({ label: n.name, insert: n.name, icon: "object", type: n.words }));
+  const enums = names("enum").map((n): Suggestion => ({ label: n.name, insert: n.name, icon: "enum", type: n.words, members: [options(state.enums.find((e) => e.name === n.name)?.options ?? [])] }));
+  return [...mine, ...objects, ...enums];
+}
+
+/** A member as completion offers it: bare in its own object's code, where a call is awaited,
+ *  else after its object's name and a dot. */
+function member(n: Named, place: Place, bare: boolean): Suggestion[] {
+  const label = split(n.name)[1];
+  const calls = n.of === "function" || n.kind === "function" || n.kind === "task";
+  // only a handler calls, so nothing it could call is offered elsewhere
+  if (calls && place !== "handler") return [];
+  const v = live(n.name);
+  switch (n.of) {
+    case "function":
+      return [{ label, insert: bare ? `await ${label}(` : `${label}(`, icon: "function", type: n.words }];
+    case "import": {
+      const t = entity(imported(n.name)?.entity ?? "")?.schema;
+      const insert = calls ? (bare ? `await ${label}(` : `${label}(`) : label;
+      return [{ label, insert, icon: n.kind!, type: t?.name || bareType(t?.fields) || n.kind, value: v.value, known: v.known }];
     }
-  });
+    case "record": {
+      // a record shows its latest value, the list being too long to preview
+      const last = Array.isArray(v.value) ? (v.value.at(-1) as { v?: Value } | undefined)?.v : undefined;
+      return [{ label, insert: label, icon: "local", type: n.words, value: last ?? null, known: last !== undefined }];
+    }
+    default:
+      return [{ label, insert: label, icon: "local", type: n.words, value: v.value, known: v.known }];
+  }
 }
 
 /** What an enum offers after a dot: its option names, as a list. */
@@ -377,16 +397,23 @@ function chain(before: string): string[] {
 const SEND: Suggestion = { label: "send", insert: "send(", icon: "api", type: "publish a message" };
 const CANCEL: Suggestion = { label: "cancel", insert: "cancel()", icon: "api", type: "stop every call of it" };
 
-/** A value's fields, from its schema where the root is an import, else from the value. A
- *  handler's topic imported to write offers send first, a task its cancel, and one of
- *  JavaScript's own, such as Math, what it holds. */
-function members(path: string[], place: Place): Suggestion[] {
+/** What a path offers after a dot: an object its members, a member its fields, from its schema
+ *  where it is an import, else from the value. A handler's topic imported to write offers send
+ *  first, a task its cancel. */
+function after(path: string[], place: Place, own?: string): Suggestion[] {
   if (path.length === 0) return [];
-  const [root, ...rest] = path;
-  const kind = state.enums.find((e) => e.name === root);
-  if (kind) return rest.length === 0 ? [options(kind.options)] : rest.join() === "options" ? methods([...kind.options], true) : [];
-  const imp = state.imports.find((i) => i.alias === root);
-  if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && rest.length === 0) return [SEND, ...members(path, "expression")];
+  const whole = path.length === 1 && named(path[0])?.of === "object" && !(own !== undefined && named(key(own, path[0])));
+  if (whole) return members(path[0], path[0] === own).flatMap((n) => member(n, place, false));
+  const to = keyOf(path, own);
+  if (!to) {
+    const kind = state.enums.find((e) => e.name === path[0]);
+    if (!kind) return [];
+    const rest = path.slice(1);
+    return rest.length === 0 ? [options(kind.options)] : rest.join() === "options" ? methods([...kind.options], true) : [];
+  }
+  const { key: root, rest } = to;
+  const imp = imported(root);
+  if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && rest.length === 0) return [SEND, ...after(path, "expression", own)];
   if (imp?.kind === "task") return place === "handler" && rest.length === 0 ? [CANCEL] : [];
   let value: Value | null = live(root).value;
   const known = live(root).known;
@@ -410,8 +437,8 @@ function members(path: string[], place: Place): Suggestion[] {
     if (field?.kind === "array") return [{ label: "length", insert: "length", icon: "member", type: "number", value: Array.isArray(value) ? value.length : null, known }];
     return methods(value, known);
   }
-  const named = fields(value);
-  if (named) return [...Object.keys(named).map((k): Suggestion => ({ label: k, insert: k, icon: "member", value: at(value, k), known })), ...mathMethods(value, known)];
+  const keyed = fields(value);
+  if (keyed) return [...Object.keys(keyed).map((k): Suggestion => ({ label: k, insert: k, icon: "member", value: at(value, k), known })), ...mathMethods(value, known)];
   return methods(value, known);
 }
 

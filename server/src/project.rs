@@ -251,6 +251,11 @@ impl Project {
         self.objects.iter().find(|o| o.name == name)
     }
 
+    /// Whether `key` names a member only its object's own code reads.
+    pub fn local(&self, key: &str) -> bool {
+        key.split_once('.').is_some_and(|(o, m)| self.object(o).is_some_and(|o| o.has(m) && !o.global(m)))
+    }
+
     /// Adds, changes or with None removes the token called `name`, and saves. A change may
     /// rename it. The error is for the user.
     pub fn set_token(&mut self, name: &str, to: Option<Token>) -> Result<(), String> {

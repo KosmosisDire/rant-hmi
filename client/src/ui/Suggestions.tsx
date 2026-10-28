@@ -2,7 +2,7 @@ import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switc
 import { Portal } from "solid-js/web";
 import type { Signature, Suggestion } from "../state/complete";
 import { Dot, List, Parentheses } from "./icons";
-import { KindIcon, LocalIcon } from "./marks";
+import { KindIcon, LocalIcon, ObjectIcon } from "./marks";
 import { Preview } from "./Preview";
 
 /** Where the list opens: under the line from `top` to `bottom`, at `left`, as wide as `width`
@@ -72,6 +72,9 @@ export function Suggestions(p: { items: Suggestion[]; chosen: number; onTake: (s
               <Switch fallback={<KindIcon kind={s.icon as never} size={13} />}>
                 <Match when={s.icon === "local"}>
                   <LocalIcon size={13} />
+                </Match>
+                <Match when={s.icon === "object"}>
+                  <ObjectIcon size={13} />
                 </Match>
                 <Match when={s.icon === "api"}>
                   <span class="kind kind-local">

@@ -3,7 +3,7 @@
 // to the instance. Where a handler runs is never the designer's choice, and it does the same.
 
 import { API, apiIn } from "../lang/api.js";
-import { names } from "../lang/lex";
+import { heads } from "../lang/lex";
 import { send } from "../net/connection";
 import type { Element } from "../protocol/Element";
 import type { Handler } from "../protocol/Handler";
@@ -11,7 +11,7 @@ import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { resolve, runHandler, type Scope } from "../state/bind";
 import { endOf, eventInfo, handlerKey, rests, settingsOf, takes } from "../state/events";
-import { named } from "../state/names";
+import { key, named } from "../state/names";
 
 export interface Act {
   /** `scope` is what the element reads, its copy's in a repeat, and `only` the one handler a
@@ -53,12 +53,12 @@ function hearing(e: Element, event: string, p: unknown, scope: Scope, only?: Han
  *  it is the system's alone, or no page handler's, so one naming it runs on the system. */
 const BOTH = new Set(apiIn("handler").filter((a) => apiIn("component").includes(a)).map((a) => a.name));
 
-/** Whether a page's handler runs here on the screen: every name in it the system holds is one
- *  of the screen's own variables or state each screen keeps, a token or an enum, and it names
- *  no part of the API only the system has. One reading a shared value runs there too, so it
- *  never reads a stale copy. */
+/** Whether a page's handler runs here on the screen: every member it names is a variable each
+ *  screen holds its own of, all state it names is kept each screen, and it names no part of
+ *  the API only the system has. One reading a shared value runs there too, so it never reads
+ *  a stale copy, and one calling an object's function runs it there. */
 export function runsHere(h: Handler, scope: Scope): boolean {
-  for (const name of names(h.code)) {
+  for (const [name, after] of heads(h.code)) {
     const kept = scope.state?.(name);
     if (kept) {
       if (kept.per !== "screen") return false;
@@ -66,7 +66,7 @@ export function runsHere(h: Handler, scope: Scope): boolean {
     }
     if (API.some((a) => a.name === name) && !BOTH.has(name)) return false;
     const n = named(name);
-    if (n && !(n.screen || n.of === "token" || n.of === "enum")) return false;
+    if (n?.of === "object" && !(after !== undefined && named(key(name, after))?.screen)) return false;
   }
   return true;
 }

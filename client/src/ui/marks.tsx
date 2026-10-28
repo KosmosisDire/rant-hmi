@@ -1,6 +1,6 @@
 // Small marks shared by every screen: the logo and the Rant kind glyphs.
 
-import { CircleDot, ListClock, Rss, SquareFunction, Variable } from "./icons";
+import { Box, CircleDot, ListClock, Rss, SquareFunction, Variable } from "./icons";
 import { Dynamic } from "solid-js/web";
 import type { Kind } from "../protocol/Kind";
 
@@ -20,6 +20,15 @@ export function LocalIcon(p: { size?: number }) {
   return (
     <span class="kind kind-local" title="variable">
       <CircleDot size={p.size ?? 14} />
+    </span>
+  );
+}
+
+/** An object, which holds members. */
+export function ObjectIcon(p: { size?: number }) {
+  return (
+    <span class="kind kind-local" title="object">
+      <Box size={p.size ?? 14} />
     </span>
   );
 }

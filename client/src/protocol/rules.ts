@@ -24,3 +24,4 @@ export const READ_ONLY = "{name} is imported to read. Import it to write to chan
 export const RECORD = "{name} is a record, which only its source fills";
 export const TOKEN_FIXED = "{name} is the theme's, so it cannot be set";
 export const ENUM_FIXED = "{name} is an enum of the mesh's, so it cannot be set";
+export const OWN_ONLY = "{name} is Local, so only its object's own code reads it";

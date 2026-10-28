@@ -1,9 +1,9 @@
 // Code split into coloured runs: keywords, strings, comments, and names in the colour of what
 // they name, an import by its kind and the HMI's own things blue. It never needs the code to parse.
 
-import { isHex, property, tokens } from "../lang/lex";
+import { isHex, property, type Token, tokens } from "../lang/lex";
 import type { Kind } from "../protocol/Kind";
-import { named } from "../state/names";
+import { key, named } from "../state/names";
 
 export type Paint = "kw" | "str" | "com" | Kind | "local" | "prop" | null;
 
@@ -13,14 +13,16 @@ const KEYWORDS = new Set([
 ]);
 
 
-/** A name's colour: an import's kind, else the HMI's own, else none. */
-function colour(word: string): Paint {
-  const n = named(word);
-  return !n ? null : (n.kind ?? "local");
+/** A name's colour: an import's kind, a function's, else the HMI's own, else none. Code of the
+ *  object `own` names its members bare. */
+function colour(word: string, own?: string): Paint {
+  const n = (own !== undefined ? named(key(own, word)) : undefined) ?? named(word);
+  return !n ? null : (n.kind ?? (n.of === "function" ? "function" : "local"));
 }
 
-/** The source as runs of text and how to colour each. */
-export function paint(src: string): [string, Paint][] {
+/** The source as runs of text and how to colour each. Code of the object `own` names its
+ *  members bare. */
+export function paint(src: string, own?: string): [string, Paint][] {
   const out: [string, Paint][] = [];
   const push = (text: string, p: Paint) => {
     const last = out.at(-1);
@@ -34,13 +36,22 @@ export function paint(src: string): [string, Paint][] {
     const text = src.slice(t.start, t.end);
     if (t.kind === "comment") push(text, "com");
     else if (t.kind === "text" || (t.kind === "literal" && isHex(text))) push(text, "str");
-    // a field after a dot is the value's own, whatever its name
-    else if (t.kind === "word" && !property(src, all, n)) push(text, KEYWORDS.has(text) ? "kw" : colour(text));
+    else if (t.kind === "word" && !property(src, all, n)) push(text, KEYWORDS.has(text) ? "kw" : colour(text, own));
+    // after a dot an object's member, else the value's own field whatever its name
+    else if (t.kind === "word" && objectAt(src, all, n - 2, own)) push(text, colour(key(src.slice(all[n - 2].start, all[n - 2].end), text)));
     else push(text, null);
     at = t.end;
   });
   if (at < src.length) push(src.slice(at), null);
   return out;
+}
+
+/** Whether the token at `n` names an object as code reads it there, not as a field. */
+function objectAt(src: string, all: Token[], n: number, own?: string): boolean {
+  const t = all[n];
+  if (t?.kind !== "word" || property(src, all, n)) return false;
+  const word = src.slice(t.start, t.end);
+  return named(word)?.of === "object" && !(own !== undefined && named(key(own, word)));
 }
 
 /** Lines of CSS as a box of them holds it, `key: value`: each key a property, each value code. */

@@ -1107,6 +1107,10 @@ impl App {
             }
             ClientMsg::SetToken { name, token } => self.set_token(session, name, token),
             ClientMsg::Set { alias, path, value } => {
+                // a screen writes only what code outside an object reads
+                if self.project.local(&alias) {
+                    return self.refuse(session, rules::say(rules::OWN_ONLY, &alias), Some(alias));
+                }
                 if let Err(text) = self.set(Some(session), &alias, &path, value) {
                     self.refuse(session, text, Some(alias));
                 }

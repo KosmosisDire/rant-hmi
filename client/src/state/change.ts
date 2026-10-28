@@ -16,36 +16,39 @@ export function change(msg: ClientMsg): boolean {
   return true;
 }
 
-/** Sends an edit of the pages or the rules, made here at once when the store can make it alone. */
+/** Sends an edit of the pages, made here at once when the store can make it alone. */
 export const edit = (e: Edit) => change({ type: "edit", edit: e });
 
 /** Makes an edit here only, as a gesture does before it lets go and keeps it with `edit`. */
 export const show = (e: Edit) => setState(produce((s: State) => edited(s, e)));
 
-/** The edits that change only what the page or rule they name holds. */
-const ALONE = new Set<Edit["kind"]>(["set_props", "set_handler", "set_input", "set_local", "set_event", "resize_page", "set_fill", "set_shows", "set_sizing", "set_rule"]);
+/** The edits that change only what the page they name holds. */
+const ALONE = new Set<Edit["kind"]>(["set_props", "set_handler", "set_input", "set_local", "set_event", "resize_page", "set_fill", "set_shows", "set_sizing"]);
 
 function mirror(s: State, msg: ClientMsg) {
+  if (msg.type === "set_token") return putIn(s.tokens, msg.name, msg.token, (t) => t.name);
+  if (msg.type === "edit") return edited(s, msg.edit);
+  const o = "object" in msg ? s.objects.find((x) => x.name === msg.object) : undefined;
+  if (!o) return;
   switch (msg.type) {
     case "set_variable":
-      return putIn(s.variables, msg.name, msg.variable, (v) => v.name);
+      return putIn(o.variables, msg.name, msg.variable, (v) => v.name);
     case "set_computed":
-      return putIn(s.computed, msg.name, msg.computed, (c) => c.name);
+      return putIn(o.computed, msg.name, msg.computed, (c) => c.name);
     case "set_record":
-      return putIn(s.records, msg.name, msg.record, (r) => r.name);
-    case "set_token":
-      return putIn(s.tokens, msg.name, msg.token, (t) => t.name);
+      return putIn(o.records, msg.name, msg.record, (r) => r.name);
+    case "set_function":
+      return putIn(o.functions, msg.name, msg.function, (f) => f.name);
+    case "set_rule":
+      return msg.id && putIn(o.logic, msg.id, msg.rule && { ...msg.rule, id: msg.id }, (r) => r.id);
     case "change_import":
-      return putIn(s.imports, msg.alias, msg.import, (i) => i.alias);
-    case "edit":
-      return edited(s, msg.edit);
+      return putIn(o.imports, msg.alias, msg.import, (i) => i.alias);
   }
 }
 
 /** Makes an edit in the store being produced. A batch is made whole or not at all. */
 function edited(s: State, e: Edit) {
   if (e.kind === "batch") return e.edits.every((x) => ALONE.has(x.kind)) && e.edits.forEach((x) => edited(s, x));
-  if (e.kind === "set_rule") return e.id && putIn(s.rules, e.id, e.rule && { ...e.rule, id: e.id }, (r) => r.id);
   const pg = "page" in e ? s.pages.find((p) => p.id === e.page) : undefined;
   if (!pg) return;
   switch (e.kind) {

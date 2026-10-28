@@ -43,6 +43,7 @@ pub const READ_ONLY: &str = "{name} is imported to read. Import it to write to c
 pub const RECORD: &str = "{name} is a record, which only its source fills";
 pub const TOKEN_FIXED: &str = "{name} is the theme's, so it cannot be set";
 pub const ENUM_FIXED: &str = "{name} is an enum of the mesh's, so it cannot be set";
+pub const OWN_ONLY: &str = "{name} is Local, so only its object's own code reads it";
 
 /// A reason with the name in it.
 pub fn say(why: &str, name: &str) -> String {
@@ -115,6 +116,7 @@ mod tests {
             ("RECORD", RECORD),
             ("TOKEN_FIXED", TOKEN_FIXED),
             ("ENUM_FIXED", ENUM_FIXED),
+            ("OWN_ONLY", OWN_ONLY),
         ];
         for (name, why) in reasons {
             ts += &format!("export const {name} = {why:?};\n");
