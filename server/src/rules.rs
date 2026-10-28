@@ -34,7 +34,7 @@ pub const EVERY_MS: (u32, u32) = (50, 86_400_000);
 pub const KEEP_S: (u32, u32) = (1, 86_400);
 
 /// Why code cannot write a name, `{name}` standing for it. The engine and the editor say the same.
-pub const MISSING: &str = "{name} names no mesh import, variable or record";
+pub const MISSING: &str = "{name} names no object, member or state";
 pub const NO_SETTER: &str = "{name} is worked out from other values, and has no setter to write it";
 pub const WHOLE: &str = "{name} is worked out whole, so it is set whole";
 pub const NO_SCREEN: &str = "{name} is each screen's own, and this handler runs for no screen";

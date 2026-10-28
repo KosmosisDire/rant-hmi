@@ -151,6 +151,68 @@ Kept across restarts does not exist yet and waits.
   naming that reader. Changing a state's name, start or kept starts its values over.
 - Not yet: renaming a page starts its state's values over, as its key changes.
 
+### Step 3 plan
+
+The user's choices on 2026-10-28:
+
+- 3a and 3b are built straight through, stopping once the Objects tab works.
+- The Logic tab goes. Logic about a thing lives in its object.
+- A built-in object `Hmi`, never removed, holds what is about the HMI itself: the only home of
+  logic on a screen connecting or leaving and on the HMI starting, and HMI-wide state such as
+  `Hmi.visits`. Timers, conditions and changes may go in any object.
+- The Theme moves into the Objects sidebar. Hmi and Theme sit at the top with icons of their
+  own, a separator under them, then the user's objects.
+- Claude converts `scratch/classic` and `scratch/demo` with a one-off script kept out of the
+  codebase, and never commits them.
+
+Objects replace the global imports, variables, records, computed values and the HMI's
+handlers, with no second model beside them. In two parts:
+
+3a. Model and engine. `objects/<name>.html` holds an object: its mesh root, its mesh members
+   (kind, entity, Intent, Visibility), state, computed values, records, functions with what
+   they take, and logic. The backend reads them in place of `data/imports.toml`,
+   `variables.toml`, `records.toml`, `computed.toml` and `logic/handlers.html`. Code reads
+   `Robot.State.servo_power` and calls `await Robot.run(job)`, an object's own code its members
+   bare, Local ones only there. Pages run, complete and check names as before.
+   `examples/packing-line` is converted by hand, and the scenarios that set data up move to
+   objects.
+3b. The Objects tab in place of Data, as design 1 shows: objects and the mesh in the left
+   sidebar, a mesh row's + adding a member or making an object, the object's sheet by section,
+   the member and object inspectors, Used by.
+
+```html
+<object name="Robot" mesh="Cage/Gp12">
+  <variable name="State" entity="RobotState"/>
+  <topic name="JogJoint" entity="Jog/Joint" intent="write" local="true"/>
+  <function name="SetServo" entity="SetServo"/>
+  <var name="selectedJob" start='"Home249"' per="hmi"/>
+  <computed name="busy" get="State.start"/>
+  <fn name="run" takes="job">
+    await SetServo(true);
+    await RunJob({ job_name: job });
+  </fn>
+  <on name="Alarm" when="State.alarm">
+    log("robot alarm", State.alarm_no[0]);
+  </on>
+</object>
+```
+
+### Step 3 design
+
+- Every member's value is kept under its key, `Robot.State`, which the wire, the engine and
+  screens use as they used an alias. An import's entity counts from its object's mesh root,
+  or from the mesh's own when it starts with `/`.
+- Code outside an object reads `Robot.State` and only Global members. An object's own code,
+  its computed values, setters, records, functions and logic, also reads its members bare,
+  Local ones too, nearest first: `p`, its own members, then objects, enums, the library.
+- A function runs on the system. A call starts a run of it in its object, for the caller's
+  screen, and gives back what it returns. It takes the names its `takes` lists.
+- Logic is `<on>` as the Logic tab wrote it, ids unique across objects. Start, connects and
+  leaves go only in Hmi.
+- Objects are edited as the Data tab's lists were, by messages outside undo.
+- Members of one object share one space of names. Mesh members are PascalCase, the rest
+  camelCase, objects PascalCase.
+
 ## Open for the user
 
 - Several instances of an object type later?

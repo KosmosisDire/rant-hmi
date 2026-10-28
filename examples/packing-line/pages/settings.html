@@ -3,11 +3,11 @@
     <span id="e2" name="Title" x="0" y="0" w="hug" h="hug" style="font-size: $textLarge; font-weight: 700">"Line settings"</span>
     <div id="e3" name="Mode row" x="0" y="0" w="fill" h="4.4" style='align: "center left"; gap: $space; layout: "right"'>
       <span id="e4" name="Mode label" x="0" y="0" w="fill" h="hug" style="color: $dim">"Mode"</span>
-      <Dropdown id="e5" name="Mode" x="0" y="0" w="20" h="4.4" options="Mode.options" value="Settings.mode"/>
+      <Dropdown id="e5" name="Mode" x="0" y="0" w="20" h="4.4" options="Mode.options" value="Line.Settings.mode"/>
     </div>
     <div id="e6" name="Target row" x="0" y="0" w="fill" h="4.4" style='align: "center left"; gap: $space; layout: "right"'>
       <span id="e7" name="Target label" x="0" y="0" w="fill" h="hug" style="color: $dim">"Target parts"</span>
-      <input id="e8" name="Target" x="0" y="0" w="20" h="4.4" value="Settings.target" style="background: $panel2; border-radius: $radius; color: $text; padding: 1">
+      <input id="e8" name="Target" x="0" y="0" w="20" h="4.4" value="Line.Settings.target" style="background: $panel2; border-radius: $radius; color: $text; padding: 1">
         <on event="change">
           notify("Target set to " + p.value);
         </on>

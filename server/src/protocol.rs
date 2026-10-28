@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::value::{Against, Value};
 use ts_rs::TS;
 
-use crate::pages::logic::Rule;
+use crate::logic::Rule;
+use crate::object::{Function, Object, ObjectInfo};
 use crate::pages::{Edit, Page};
 use crate::project::{Computed, Import, Kind, ProjectInfo, Record, Token, Variable};
 
@@ -25,16 +26,11 @@ pub enum ServerMsg {
     Hello { session: u32, project: ProjectInfo, version: String, node: String, build: String, key: String, wt: Option<String> },
     /// The project's settings, whole, after a change.
     Project { project: ProjectInfo },
-    /// Every import, whole, after any change.
-    Imports { imports: Vec<Import> },
-    /// Every variable, whole, after any change. Their values come as values.
-    Variables { variables: Vec<Variable> },
-    /// Every record, whole, after any change. Their samples come as samples.
-    Records { records: Vec<Record> },
-    /// A record's new samples, oldest first, or its whole history when `whole`.
+    /// Every object, whole, after any change. Members' values come as values under their
+    /// keys, records' samples as samples.
+    Objects { objects: Vec<Object> },
+    /// A record's new samples by its key, oldest first, or its whole history when `whole`.
     Samples { name: String, samples: Vec<Sample>, whole: bool },
-    /// The HMI's own handlers, whole, after any change.
-    Rules { rules: Vec<Rule> },
     /// The theme's tokens, whole, after any change.
     Theme { tokens: Vec<Token> },
     /// Every entity on the mesh, whole, after the mesh changed.
@@ -64,8 +60,6 @@ pub enum ServerMsg {
     /// An address of this host the screen's connection may reach it on, found after the answer,
     /// as an `a=candidate` line without its `a=`.
     Candidate { candidate: String },
-    /// The computed values, whole, after a change.
-    Computed { computed: Vec<Computed> },
     /// A rename moved a page's or component's id, so a screen holding the old one follows. It
     /// comes before the pages that show the new one.
     Moved { from: String, to: String },
@@ -218,22 +212,31 @@ pub enum ClientMsg {
     /// The imports whose video the screen decodes itself, their frames sent on its socket, in
     /// place of those it named before. It asks while their video does not come over WebRTC.
     Frames { aliases: Vec<String> },
-    /// Adds, changes or with None removes the computed value called `name`.
-    SetComputed { name: String, computed: Option<Computed> },
-    Import { import: Import },
-    Unimport { alias: String },
-    /// Renames an import or changes its intent. Every use of the old alias follows.
-    ChangeImport { alias: String, import: Import },
-    /// Adds, changes or with null removes the variable called `name`. A rename is followed
-    /// everywhere it is used.
-    SetVariable { name: String, variable: Option<Variable> },
+    /// Adds, renames, points elsewhere or with null removes the object called `name`, empty
+    /// for a new one. Code that reads it follows a rename.
+    SetObject { name: String, object: Option<ObjectInfo> },
+    /// Adds a mesh member to an object.
+    Import { object: String, import: Import },
+    Unimport { object: String, alias: String },
+    /// Renames a mesh member or changes its intent or rate. Code that reads it follows a rename.
+    ChangeImport { object: String, alias: String, import: Import },
+    /// Adds, changes or with null removes an object's variable called `name`. Code that reads
+    /// it follows a rename, as with each member below.
+    SetVariable { object: String, name: String, variable: Option<Variable> },
+    /// A new source starts a record's history over.
+    SetRecord { object: String, name: String, record: Option<Record> },
+    SetComputed { object: String, name: String, computed: Option<Computed> },
+    SetFunction { object: String, name: String, function: Option<Function> },
+    /// Adds a rule to an object's logic when `id` is empty, else changes it, or with null
+    /// removes it.
+    SetRule { object: String, id: String, rule: Option<Rule> },
+    /// Makes a member one only its object's own code reads, or one code outside reads too.
+    SetLocal { object: String, name: String, local: bool },
     /// Adds, changes or with null removes the theme token called `name`. A rename is followed
     /// everywhere it is used, components too.
     SetToken { name: String, token: Option<Token> },
-    /// Adds, changes or with null removes the record called `name`. A rename is followed
-    /// everywhere it is used, a new source starts its history over.
-    SetRecord { name: String, record: Option<Record> },
-    /// Writes a mesh import or a variable, or one of its fields when `path` names one.
+    /// Writes a member by its key, as a mesh import or a variable, or one of its fields when
+    /// `path` names one.
     Set { alias: String, path: String, value: Value },
     /// Changes the pages.
     Edit { edit: Edit },

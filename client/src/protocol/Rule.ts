@@ -2,10 +2,10 @@
 import type { When } from "./When";
 
 /**
- * One of the HMI's own handlers.
+ * One handler of an object's logic.
  */
 export type Rule = { 
 /**
- * `h` and a number, stable while it lives.
+ * `h` and a number, stable while it lives, and unique across the objects.
  */
 id: string, name: string, when: When, code: string, };

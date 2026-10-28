@@ -22,14 +22,16 @@ use crate::fields::Keep;
 use crate::lanes::{Lanes, PIECE};
 use crate::mesh::codec;
 use crate::mesh::{Delivery, Mesh};
-use crate::pages::logic::{Rule, When};
+use crate::logic::{Rule, When};
+use crate::object::{self, Flat, ObjectInfo};
 use crate::pages::{Edit, Element, Pages};
-use crate::project::{Computed, Import, Intent, Kind, Per, Project, Record, Target, Token, Variable};
+use crate::project::{Import, Intent, Kind, Per, Project, Target, Token, Variable};
 use crate::reads::Reads;
 use crate::rules;
 use crate::problems::Problems;
 use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Reader, Reported, Sample, ServerMsg, ValueUpdate, encode, encode_plain};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
+use crate::pages::js;
 use crate::status::{self, Client, HmiStatus};
 use crate::value::Value;
 use crate::rtc::{Connections, Frame, FromRtc, ToRtc};
@@ -489,16 +491,18 @@ enum Step {
     Redo,
 }
 
-/// A run going on: the screen that started it, none for a rule's, the handler it runs, and
-/// what the log calls it.
+/// A run going on: the screen that started it, none for a rule's, the handler it runs, what
+/// the log calls it, and for a function's the call it answers with what it returns.
 struct Running {
     session: Option<u32>,
     of: HandlerKey,
     label: String,
+    answers: Option<u64>,
 }
 
 /// A handler as it runs: an element's for an event and filter on the copy of a repeat it
-/// happened on, the index of each copy it sits in, or a rule's, which is its id alone.
+/// happened on, the index of each copy it sits in, or a rule's or a function's, which is its id
+/// or key alone.
 #[derive(Clone, PartialEq, Eq, Hash, Default)]
 struct HandlerKey {
     page: String,
@@ -537,13 +541,10 @@ struct Turned {
     of: Option<(When, String)>,
 }
 
-/// The project's named lists, each told to the engine and every screen whole.
+/// The project's named lists, each told to every screen whole.
 #[derive(Clone, Copy)]
 enum List {
-    Imports,
-    Variables,
-    Records,
-    Computed,
+    Objects,
     Theme,
 }
 
@@ -623,13 +624,10 @@ pub struct App {
 
 impl App {
     pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, rtc: Connections, node: String, build: String) -> App {
-        script.send(ToScript::Imports(project.imports.clone()));
+        script.send(ToScript::Objects(project.objects().to_vec()));
         script.send(ToScript::Pages(pages.keys()));
-        script.send(ToScript::Variables(project.variables.clone()));
-        let shared: HashMap<String, Value> = project.variables.iter().filter(|v| v.per == Per::Hmi).map(|v| (v.name.clone(), v.start.clone())).collect();
+        let shared: HashMap<String, Value> = project.flat().variables.iter().filter(|v| v.per == Per::Hmi).map(|v| (v.name.clone(), v.start.clone())).collect();
         script.send(ToScript::Values(shared.iter().map(|(k, v)| (k.clone(), Some(v.clone()))).collect()));
-        script.send(ToScript::Records(sources(&project.records)));
-        script.send(ToScript::Computed(project.computed.clone()));
         App {
             project,
             pages,
@@ -715,9 +713,9 @@ impl App {
         self.changed.insert(d.alias);
     }
 
-    /// Whether a rule runs when `name` changes.
-    fn waits(&self, name: &str) -> bool {
-        self.pages.rules.iter().any(|r| matches!(&r.when, When::Changes { name: n } if n == name))
+    /// Whether a rule runs when the member `key` changes.
+    fn waits(&self, key: &str) -> bool {
+        self.project.flat().rules.iter().any(|(_, r)| matches!(&r.when, When::Changes { name } if name == key))
     }
 
     /// Has the mesh decode only what is read of each import. The last value of one that now
@@ -726,7 +724,7 @@ impl App {
     /// changed its reads. Screens that preview hear what is brought once that changed.
     fn fields_changed(&mut self) {
         let own = self.own_reads();
-        let keeps: Vec<(String, Keep)> = self.project.imports.iter().filter_map(|i| Some((i.alias.clone(), self.keep_of(i, &own)?))).collect();
+        let keeps: Vec<(String, Keep)> = self.project.flat().imports.iter().filter_map(|i| Some((i.alias.clone(), self.keep_of(i, &own)?))).collect();
         let brings: Vec<Brought> = keeps.iter().filter_map(|(alias, keep)| Some(Brought { alias: alias.clone(), fields: keep.paths(self.mesh.shapes(alias)?), readers: readers_of(&own, alias) })).collect();
         let previewing: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.previews.is_some()).map(|(id, _)| *id).collect();
         if brings != self.brings {
@@ -773,38 +771,44 @@ impl App {
         Some(keep)
     }
 
-    /// What each piece of the HMI's own code reads: its rules, its pages' handlers, the computed
-    /// values and the records.
+    /// What each piece of the HMI's own code reads, by key: the objects' logic, functions,
+    /// computed values and records, and the pages' handlers.
     fn own_reads(&self) -> Vec<OwnRead> {
-        // each piece of code, who it is, whether it is a handler's body, and the name a rule's `p` changes
-        let mut code: Vec<(String, &str, bool, Option<&str>)> = Vec::new();
-        for r in &self.pages.rules {
-            let who = format!("the {} rule", r.name);
-            let changes = match &r.when {
-                When::Turns { condition, .. } => {
-                    code.push((who.clone(), condition, false, None));
-                    None
-                }
-                When::Changes { name } => Some(name.as_str()),
-                _ => None,
-            };
-            code.push((who, &r.code, true, changes));
+        // each piece of code, who it is, whether it is a handler's body, the object whose code it
+        // is, and the key a rule's `p` changes
+        let mut code: Vec<(String, &str, bool, Option<&object::Object>, Option<String>)> = Vec::new();
+        for o in self.project.objects() {
+            for r in &o.logic {
+                let who = format!("the {} rule", r.name);
+                let changes = match &r.when {
+                    When::Turns { condition, .. } => {
+                        code.push((who.clone(), condition, false, Some(o), None));
+                        None
+                    }
+                    When::Changes { name } => Some(o.key_of(name)),
+                    _ => None,
+                };
+                code.push((who, &r.code, true, Some(o), changes));
+            }
+            for f in &o.functions {
+                code.push((format!("the function {}", o.key(&f.name)), &f.code, true, Some(o), None));
+            }
+            for c in &o.computed {
+                let who = format!("the computed value {}", o.key(&c.name));
+                code.push((who.clone(), &c.get, false, Some(o), None));
+                code.extend(c.set.iter().map(|s| (who.clone(), s.value.as_str(), false, Some(o), None)));
+            }
+            code.extend(o.records.iter().map(|r| (format!("the record {}", o.key(&r.name)), r.source.as_str(), false, Some(o), None)));
         }
         for p in self.pages.list.iter().filter(|p| p.interface.is_none()) {
             let mut elements: Vec<&Element> = p.children.iter().collect();
             while let Some(e) = elements.pop() {
-                code.extend(e.handlers.iter().map(|h| (format!("handlers on {}", p.name), h.code.as_str(), true, None)));
+                code.extend(e.handlers.iter().map(|h| (format!("handlers on {}", p.name), h.code.as_str(), true, None, None)));
                 elements.extend(&e.children);
             }
         }
-        for c in &self.project.computed {
-            let who = format!("the computed value {}", c.name);
-            code.push((who.clone(), &c.get, false, None));
-            code.extend(c.set.iter().map(|s| (who.clone(), s.value.as_str(), false, None)));
-        }
-        code.extend(self.project.records.iter().map(|r| (format!("the record {}", r.name), r.source.as_str(), false, None)));
         let mut out = Vec::new();
-        for (who, src, body, changes) in code {
+        for (who, src, body, own, changes) in code {
             // code that does not parse never runs, so it reads nothing
             let Some(found) = self.reads.of(src, body) else { continue };
             if found.all {
@@ -812,17 +816,21 @@ impl App {
                 continue;
             }
             for path in found.paths.iter().chain(&found.values) {
-                let (name, steps) = match (changes, path.as_slice()) {
+                let (name, steps) = match (&changes, path.as_slice()) {
                     // a rule's `p.value` and `p.previous` are the value it waits on
-                    (Some(name), [p, rest @ ..]) if p == "p" => match rest {
-                        [] => (name, rest),
-                        [v, rest @ ..] if v == "value" || v == "previous" => (name, rest),
+                    (Some(key), [p, rest @ ..]) if p == "p" => match rest {
+                        [] => (key.clone(), rest),
+                        [v, rest @ ..] if v == "value" || v == "previous" => (key.clone(), rest),
                         _ => continue,
                     },
-                    (_, [root, rest @ ..]) => (root.as_str(), rest),
+                    // a member of the object whose code it is, by its name
+                    (_, [root, rest @ ..]) if own.is_some_and(|o| o.has(root)) => (own.expect("just checked").key(root), rest),
+                    // another object's member, as `Line.Speed`
+                    (_, [root, member, rest @ ..]) if self.project.object(root).is_some() => (object::key(root, member), rest),
+                    (_, [root, rest @ ..]) => (root.clone(), rest),
                     _ => continue,
                 };
-                out.push(OwnRead { who: who.clone(), name: Some(name.to_owned()), steps: steps.to_vec() });
+                out.push(OwnRead { who: who.clone(), name: Some(name), steps: steps.to_vec() });
             }
         }
         out
@@ -831,7 +839,7 @@ impl App {
     fn inbound(&mut self, i: Inbound) {
         match i {
             Inbound::Open { session, out, local, remote } => {
-                let vars: HashMap<String, Value> = self.project.variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
+                let vars: HashMap<String, Value> = self.project.flat().variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
                 let key = new_key();
                 self.sessions.insert(session, Session { out, channel: None, held: None, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), answered: Instant::now(), shown: true, undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
@@ -904,26 +912,23 @@ impl App {
         self.send(session, &hello);
         // every name a page reads comes before the pages, so a screen never draws one, nor
         // works out where its handlers run, without them
-        self.send(session, &self.whole(List::Imports));
+        self.send(session, &self.whole(List::Objects));
         self.send(session, &ServerMsg::Mesh { entities: self.mesh.entities() });
-        for list in [List::Variables, List::Records, List::Computed] {
-            self.send(session, &self.whole(list));
-        }
         self.send(session, &ServerMsg::Enums { enums: self.enums.clone() });
         self.send(session, &self.whole(List::Theme));
-        self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
-        for r in &self.project.records {
+        for r in &self.project.flat().records {
             let samples = self.history.get(&r.name).map(|h| h.iter().cloned().collect()).unwrap_or_default();
             self.send(session, &ServerMsg::Samples { name: r.name.clone(), samples, whole: true });
         }
-        // the rules end what is not values, so a test client waits for them as the welcome's end
-        self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
+        // the pages end what is not values, so a test client waits for them as the welcome's end
+        self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
         self.put_values(Some(session), self.all_values(session));
     }
 
-    /// The names a screen may leave out by what it shows: the imports and computed values.
+    /// The keys a screen may leave out by what it shows: the mesh members and computed values.
     fn watched(&self) -> impl Iterator<Item = &String> {
-        self.project.imports.iter().map(|i| &i.alias).chain(self.project.computed.iter().map(|c| &c.name))
+        let flat = self.project.flat();
+        flat.imports.iter().map(|i| &i.alias).chain(flat.computed.iter().map(|c| &c.name))
     }
 
     /// Every value a screen shows: the imports', the computed ones', the shared variables' and
@@ -1052,28 +1057,54 @@ impl App {
                 s.decodes = decodes;
                 self.watch(session);
             }
-            ClientMsg::Import { import } => match self.project.import(import.clone()) {
-                Ok(()) => {
-                    info!("imported {} as {}", import.entity, import.alias);
-                    self.mesh.attach(&import);
-                    self.list_changed(List::Imports);
+            ClientMsg::SetObject { name, object } => self.set_object(session, name, object),
+            ClientMsg::Import { object, import } => {
+                let key = object::key(&object, &import.alias);
+                self.change_objects(session, Some(key), None, |p| p.import(&object, import));
+            }
+            ClientMsg::Unimport { object, alias } => {
+                let key = object::key(&object, &alias);
+                self.change_objects(session, Some(key), None, |p| p.unimport(&object, &alias));
+            }
+            ClientMsg::ChangeImport { object, alias, import } => {
+                let moved = renamed(&object, &alias, Some(&import.alias));
+                self.change_objects(session, Some(object::key(&object, &alias)), moved, |p| p.change(&object, &alias, import));
+            }
+            ClientMsg::SetVariable { object, name, variable } => {
+                let moved = renamed(&object, &name, variable.as_ref().map(|v| v.name.as_str()));
+                self.change_objects(session, None, moved, |p| p.set_variable(&object, &name, variable));
+            }
+            ClientMsg::SetRecord { object, name, record } => {
+                let moved = renamed(&object, &name, record.as_ref().map(|r| r.name.as_str()));
+                self.change_objects(session, None, moved, |p| p.set_record(&object, &name, record));
+            }
+            ClientMsg::SetComputed { object, name, computed } => {
+                let moved = renamed(&object, &name, computed.as_ref().map(|c| c.name.as_str()));
+                let tried = computed.as_ref().filter(|c| c.set.is_some()).map(|c| object::key(&object, &c.name));
+                // worked out first, so the trial starts from what it reads now
+                if self.change_objects(session, None, moved, |p| p.set_computed(&object, &name, computed))
+                    && let Some(name) = tried
+                {
+                    self.script.send(ToScript::Try { session, name });
                 }
-                Err(text) => self.refuse(session, text, Some(import.alias)),
-            },
-            ClientMsg::Unimport { alias } => match self.project.unimport(&alias) {
-                Ok(()) => {
-                    info!("removed the import {alias}");
-                    self.mesh.detach(&alias);
-                    self.values.remove(&alias);
-                    self.changed.remove(&alias);
-                    self.list_changed(List::Imports);
+            }
+            ClientMsg::SetFunction { object, name, function } => {
+                let moved = renamed(&object, &name, function.as_ref().map(|f| f.name.as_str()));
+                self.change_objects(session, None, moved, |p| p.set_function(&object, &name, function));
+            }
+            ClientMsg::SetRule { object, id, rule } => {
+                self.change_objects(session, None, None, |p| p.set_rule(&object, &id, rule).map(drop));
+            }
+            ClientMsg::SetLocal { object, name, local } => {
+                let key = object::key(&object, &name);
+                match self.reader_outside(&key).filter(|_| local) {
+                    Some(reader) => {
+                        self.send(session, &self.whole(List::Objects));
+                        self.refuse(session, format!("{reader} reads it. Change that first."), Some(key));
+                    }
+                    None => drop(self.change_objects(session, Some(key), None, |p| p.set_local(&object, &name, local))),
                 }
-                Err(text) => self.refuse(session, text, Some(alias)),
-            },
-            ClientMsg::ChangeImport { alias, import } => self.change_import(session, alias, import),
-            ClientMsg::SetVariable { name, variable } => self.set_variable(session, name, variable),
-            ClientMsg::SetRecord { name, record } => self.set_record(session, name, record),
-            ClientMsg::SetComputed { name, computed } => self.set_computed(session, name, computed),
+            }
             ClientMsg::SetToken { name, token } => self.set_token(session, name, token),
             ClientMsg::Set { alias, path, value } => {
                 if let Err(text) = self.set(Some(session), &alias, &path, value) {
@@ -1116,70 +1147,128 @@ impl App {
         }
     }
 
-    /// Changes one of the project's lists by `change`, which checks it. A refusal sends the
-    /// screen the list as it stands, so what it showed goes back.
-    fn change_list(&mut self, session: u32, list: List, alias: Option<String>, change: impl FnOnce(&mut Project) -> Result<(), String>) -> bool {
-        let Err(text) = change(&mut self.project) else { return true };
-        self.send(session, &self.whole(list));
-        self.refuse(session, text, alias);
-        false
+    /// Changes the objects by `change`, which checks it, then takes in what changed. `moved` is
+    /// what a rename moved, from and to: an object's name or a member's key, which code follows
+    /// and whose values go along. A refusal sends the screen the objects as they stand, so what
+    /// it showed goes back.
+    fn change_objects(&mut self, session: u32, alias: Option<String>, moved: Option<(String, String)>, change: impl FnOnce(&mut Project) -> Result<(), String>) -> bool {
+        let old = self.project.flat().clone();
+        let before = moved.as_ref().and_then(|(from, _)| self.project.object(from).cloned());
+        if let Err(text) = change(&mut self.project) {
+            self.send(session, &self.whole(List::Objects));
+            self.refuse(session, text, alias);
+            return false;
+        }
+        // an object renamed moves the key of each of its members
+        let keys: Vec<(String, String)> = match (&moved, before) {
+            (Some((from, to)), Some(o)) => o.members().map(|(m, _)| (object::key(from, m), object::key(to, m))).collect(),
+            (Some(pair), None) => vec![pair.clone()],
+            (None, _) => Vec::new(),
+        };
+        if let Some((from, to)) = &moved {
+            self.follow_rename(session, from, to);
+        }
+        self.objects_changed(old, &keys);
+        true
+    }
+
+    /// Adds, renames, points elsewhere or removes an object.
+    fn set_object(&mut self, session: u32, name: String, to: Option<ObjectInfo>) {
+        let moved = to.as_ref().filter(|o| !name.is_empty() && o.name != name).map(|o| (name.clone(), o.name.clone()));
+        self.change_objects(session, None, moved, |p| p.set_object(&name, to));
+    }
+
+    /// The first thing outside its object that reads the member `key`: another object, or an
+    /// element or a page, by name.
+    fn reader_outside(&self, key: &str) -> Option<String> {
+        let own = object::owner(key);
+        let other = self.project.objects().iter().find(|o| o.name != own && o.code().any(|c| js::reads(c, key)));
+        other.map(|o| o.name.clone()).or_else(|| self.pages.reader(key))
     }
 
     /// A list as it stands, as every screen hears it.
     fn whole(&self, list: List) -> ServerMsg {
-        let p = &self.project;
         match list {
-            List::Imports => ServerMsg::Imports { imports: p.imports.clone() },
-            List::Variables => ServerMsg::Variables { variables: p.variables.clone() },
-            List::Records => ServerMsg::Records { records: p.records.clone() },
-            List::Computed => ServerMsg::Computed { computed: p.computed.clone() },
-            List::Theme => ServerMsg::Theme { tokens: p.tokens.clone() },
+            List::Objects => ServerMsg::Objects { objects: self.project.objects().to_vec() },
+            List::Theme => ServerMsg::Theme { tokens: self.project.tokens.clone() },
         }
     }
 
-    /// Tells the engine and every screen a list, whole, after it changed. A change to the
-    /// computed values works them out anew.
-    fn list_changed(&mut self, list: List) {
-        match list {
-            List::Imports => {
-                self.refresh_known();
-                self.script.send(ToScript::Imports(self.project.imports.clone()));
-                self.types_changed();
-                self.fields_changed();
-            }
-            List::Variables => self.script.send(ToScript::Variables(self.project.variables.clone())),
-            List::Records => {
-                self.fields_changed();
-                self.script.send(ToScript::Records(sources(&self.project.records)));
-            }
-            List::Computed => {
-                self.fields_changed();
-                self.script.send(ToScript::Computed(self.project.computed.clone()));
-                self.script.send(ToScript::Compute);
-            }
-            List::Theme => {}
+    /// Takes in a change of the objects, `old` what they held by key before and `moved` the
+    /// keys a rename moved: the mesh, the values held, the engine and every screen follow. A
+    /// value whose member changed only its name keeps going, one whose member changed starts
+    /// over, and a record keeps its history while its source stays.
+    fn objects_changed(&mut self, old: Flat, moved: &[(String, String)]) {
+        for (from, to) in moved {
+            self.move_key(from, to);
         }
-        self.broadcast(&self.whole(list));
+        let new = self.project.flat().clone();
+        if old.imports != new.imports {
+            for gone in old.imports.iter().filter(|i| !new.imports.iter().any(|n| n.alias == i.alias)) {
+                self.mesh.detach(&gone.alias);
+                self.values.remove(&gone.alias);
+                self.changed.remove(&gone.alias);
+            }
+            for import in &new.imports {
+                self.mesh.attach(import);
+            }
+            self.refresh_known();
+            self.types_changed();
+        }
+        let old = old.renamed(moved);
+        for v in old.variables.iter().filter(|v| !new.variables.contains(v)) {
+            self.take_variable(&v.name);
+        }
+        for v in new.variables.iter().filter(|v| !old.variables.contains(v)) {
+            self.start_variable(v, None, HashMap::new());
+        }
+        for r in old.records.iter().filter(|r| !new.records.contains(r)) {
+            self.take_history(&r.name);
+        }
+        for r in new.records.iter().filter(|r| !old.records.contains(r)) {
+            self.history.insert(r.name.clone(), VecDeque::new());
+            self.broadcast(&ServerMsg::Samples { name: r.name.clone(), samples: Vec::new(), whole: true });
+        }
+        for c in old.computed.iter().filter(|c| !new.computed.iter().any(|n| n.name == c.name)) {
+            self.unknown(&c.name);
+        }
+        self.script.send(ToScript::Objects(self.project.objects().to_vec()));
+        self.broadcast(&self.whole(List::Objects));
+        if old.rules != new.rules {
+            self.rules_changed();
+        } else {
+            self.fields_changed();
+        }
+        if old.computed != new.computed {
+            self.script.send(ToScript::Compute);
+        }
     }
 
-    /// Adds, changes or removes a variable. A rename carries its values and every use of its
-    /// name along, a new start or scope starts its values over.
-    fn set_variable(&mut self, session: u32, name: String, to: Option<Variable>) {
-        let old = self.project.variable(&name).cloned();
-        if !self.change_list(session, List::Variables, None, |p| p.set_variable(&name, to.clone())) {
-            return;
+    /// Moves what is held under `from` to `to`, a renamed member's key: its value, its shared
+    /// and each screen's, and its history, which the engine and every screen hear.
+    fn move_key(&mut self, from: &str, to: &str) {
+        if let Some(slot) = self.values.remove(from) {
+            self.values.insert(to.to_owned(), slot);
+            self.changed.remove(from);
+            self.changed.insert(to.to_owned());
         }
-        let (mut kept_shared, mut kept_own) = self.take_variable(&name);
-        if old.as_ref().zip(to.as_ref()).is_none_or(|(o, n)| o.start != n.start || o.per != n.per) {
-            kept_shared = None;
-            kept_own.clear();
+        if let Some(v) = self.shared.remove(from) {
+            self.shared.insert(to.to_owned(), v.clone());
+            self.script.send(ToScript::Values(vec![(to.to_owned(), Some(v.clone()))]));
+            self.put_values(None, vec![known(to, &v)]);
         }
-        self.list_changed(List::Variables);
-        let Some(v) = to else { return };
-        if v.name != name {
-            self.follow_rename(session, "variable", &name, &v.name, false);
+        let own: Vec<(u32, Value)> = self.sessions.iter_mut().filter_map(|(id, s)| s.vars.remove(from).map(|v| (*id, v))).collect();
+        for (id, v) in own {
+            if let Some(s) = self.sessions.get_mut(&id) {
+                s.vars.insert(to.to_owned(), v.clone());
+            }
+            self.script.send(ToScript::Screen { session: id, values: vec![(to.to_owned(), v.clone())] });
+            self.put_values(Some(id), vec![known(to, &v)]);
         }
-        self.start_variable(&v, kept_shared, kept_own);
+        if let Some(samples) = self.take_history(from) {
+            self.broadcast(&ServerMsg::Samples { name: to.to_owned(), samples: samples.iter().cloned().collect(), whole: true });
+            self.history.insert(to.to_owned(), samples);
+        }
     }
 
     /// Takes a variable's values off the HMI and every screen: the shared one and each screen's.
@@ -1207,45 +1296,10 @@ impl App {
         self.put_values(None, dropped.into_iter().map(|alias| ValueUpdate { alias, value: None, known: false, base: None }).collect());
     }
 
-    /// Adds, changes or removes a record. A rename carries its history and every use of its
-    /// name along, a new source starts the history over.
-    fn set_record(&mut self, session: u32, name: String, to: Option<Record>) {
-        let old = self.project.record(&name).cloned();
-        if !self.change_list(session, List::Records, None, |p| p.set_record(&name, to.clone())) {
-            return;
-        }
-        let kept = self.take_history(&name).filter(|_| old.as_ref().zip(to.as_ref()).is_some_and(|(o, n)| o.source == n.source));
-        self.list_changed(List::Records);
-        let Some(r) = to else { return };
-        if r.name != name {
-            self.follow_rename(session, "record", &name, &r.name, false);
-        }
-        let samples: VecDeque<Sample> = kept.unwrap_or_default();
-        self.broadcast(&ServerMsg::Samples { name: r.name.clone(), samples: samples.iter().cloned().collect(), whole: true });
-        self.history.insert(r.name, samples);
-    }
-
     /// Takes a record's samples, and forgets when it samples next.
     fn take_history(&mut self, name: &str) -> Option<VecDeque<Sample>> {
         self.sample_at.remove(name);
         self.history.remove(name)
-    }
-
-    fn set_computed(&mut self, session: u32, name: String, to: Option<Computed>) {
-        if !self.change_list(session, List::Computed, None, |p| p.set_computed(&name, to.clone())) {
-            return;
-        }
-        if to.as_ref().is_none_or(|c| c.name != name) {
-            self.unknown(&name);
-        }
-        if let Some(c) = to.as_ref().filter(|c| c.name != name) {
-            self.follow_rename(session, "computed value", &name, &c.name, false);
-        }
-        self.list_changed(List::Computed);
-        // worked out first, so the trial starts from what it reads now
-        if let Some(c) = to.filter(|c| c.set.is_some()) {
-            self.script.send(ToScript::Try { session, name: c.name });
-        }
     }
 
     /// A name no longer worked out reads as unknown on every screen.
@@ -1257,12 +1311,14 @@ impl App {
     /// Adds, changes or removes a token. Pages and components follow a rename.
     fn set_token(&mut self, session: u32, name: String, to: Option<Token>) {
         let renamed = to.as_ref().filter(|t| t.name != name).map(|t| t.name.clone());
-        if !self.change_list(session, List::Theme, None, |p| p.set_token(&name, to)) {
-            return;
+        if let Err(text) = self.project.set_token(&name, to) {
+            self.send(session, &self.whole(List::Theme));
+            return self.refuse(session, text, None);
         }
-        self.list_changed(List::Theme);
+        self.broadcast(&self.whole(List::Theme));
         if let Some(to) = renamed {
-            self.follow_rename(session, "token", &format!("${name}"), &format!("${to}"), true);
+            info!("renamed the token ${name} to ${to}");
+            self.rename_in_pages(session, &format!("${name}"), &format!("${to}"), true);
         }
     }
 
@@ -1270,7 +1326,7 @@ impl App {
     /// values it has now.
     fn rethink(&self) {
         self.script.send(ToScript::Judge);
-        if !self.project.computed.is_empty() {
+        if !self.project.flat().computed.is_empty() {
             self.script.send(ToScript::Compute);
         }
     }
@@ -1295,7 +1351,7 @@ impl App {
     fn sample(&mut self) {
         let now = Instant::now();
         let mut due = Vec::new();
-        for r in &self.project.records {
+        for r in &self.project.flat().records {
             let at = self.sample_at.entry(r.name.clone()).or_insert(now);
             if *at <= now {
                 // one that fell behind starts again from now, rather than catching up
@@ -1349,29 +1405,15 @@ impl App {
         }
     }
 
-    /// Renames an import or changes its intent. A rename moves its handle, its value and every
-    /// use of the alias in pages and handlers.
-    fn change_import(&mut self, session: u32, alias: String, import: Import) {
-        if !self.change_list(session, List::Imports, Some(alias.clone()), |p| p.change(&alias, import.clone())) {
-            return;
-        }
-        if import.alias != alias {
-            self.mesh.detach(&alias);
-            if let Some(slot) = self.values.remove(&alias) {
-                self.values.insert(import.alias.clone(), slot);
-            }
-            self.changed.remove(&alias);
-            self.changed.insert(import.alias.clone());
-            self.follow_rename(session, "import", &alias, &import.alias, false);
-        }
-        self.mesh.attach(&import);
-        self.list_changed(List::Imports);
+    /// Writes every use of what was renamed, an object or a member by its key, as `to` in the
+    /// pages, and sends the pages out when any changed.
+    fn follow_rename(&mut self, session: u32, from: &str, to: &str) {
+        info!("renamed {from} to {to}");
+        self.rename_in_pages(session, from, to, false);
     }
 
-    /// Writes every use of `from`, a renamed `what`, as `to` in the pages, components too where
-    /// they read it, and sends the pages out when any changed.
-    fn follow_rename(&mut self, session: u32, what: &str, from: &str, to: &str, components: bool) {
-        info!("renamed the {what} {from} to {to}");
+    /// Writes every use of `from` as `to` in the pages, components too where they read it.
+    fn rename_in_pages(&mut self, session: u32, from: &str, to: &str, components: bool) {
         match self.pages.rename(from, to, components) {
             Ok(touched) if !touched.is_empty() => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
             Ok(_) => {}
@@ -1401,7 +1443,7 @@ impl App {
         }
         let label = format!("{} {}", e.props.get("name").unwrap_or(&of.id), of.event);
         let code = h.code.clone();
-        self.start(Running { session: Some(session), of, label }, code, payload, item);
+        self.start(Running { session: Some(session), of, label, answers: None }, code, payload, item, None, Vec::new());
     }
 
     /// The filters of an element's handlers that take `event` bringing `p`.
@@ -1437,44 +1479,59 @@ impl App {
     }
 
     /// Starts `code` as the run `running` names, with `p` and the item of the copy it is for. It
-    /// reads the state its element sees, that copy's.
-    fn start(&mut self, running: Running, code: String, p: Value, item: Option<Value>) {
+    /// reads the state its element sees, that copy's, or as the code of the object `own` its
+    /// members, and what a function `takes`.
+    fn start(&mut self, running: Running, code: String, p: Value, item: Option<Value>, own: Option<String>, takes: Vec<(String, Value)>) {
         self.next_run += 1;
         let session = running.session;
         let of = &running.of;
         let at = of.copies.last().map(|i| (*i, item.unwrap_or_default()));
         let bound = self.pages.bound(&of.page, &of.id, &of.copies);
         self.runs.insert(self.next_run, running);
-        self.script.send(ToScript::Run { run: self.next_run, session, code, p, at, bound });
+        self.script.send(ToScript::Run { run: self.next_run, session, code, p, at, bound, own, takes });
     }
 
-    /// Runs each rule that `fits`, unless it still runs from before.
+    /// Runs each rule that `fits` in its object, unless it still runs from before.
     fn run_rules(&mut self, fits: impl Fn(&Rule) -> bool, p: Value) {
-        let due: Vec<Rule> = self.pages.rules.iter().filter(|r| fits(r)).cloned().collect();
-        for rule in due {
+        let due: Vec<(String, Rule)> = self.project.flat().rules.iter().filter(|(_, r)| fits(r)).cloned().collect();
+        for (own, rule) in due {
             let of = HandlerKey { id: rule.id, ..HandlerKey::default() };
             if self.runs.values().any(|r| r.session.is_none() && r.of == of) {
                 continue;
             }
-            self.start(Running { session: None, of, label: rule.name }, rule.code, p.clone(), None);
+            self.start(Running { session: None, of, label: rule.name, answers: None }, rule.code, p.clone(), None, Some(own), Vec::new());
         }
     }
 
-    /// Hands the conditions to the engine and keeps each timer's next time.
+    /// Runs an object's function, by its key, for the screen of the run that called it,
+    /// answering `call` with what it returns.
+    fn call_function(&mut self, run: u64, call: u64, function: String, args: Vec<Value>) {
+        let failed = |message: String| Err(CallFailure { status: "failed".into(), message });
+        let Some(f) = self.project.function(&function).cloned() else {
+            return self.script.send(ToScript::Answer { call, outcome: failed(format!("{function} is not a function")) });
+        };
+        if args.len() > f.takes.len() {
+            let takes = if f.takes.is_empty() { "nothing".to_owned() } else { f.takes.join(", ") };
+            return self.script.send(ToScript::Answer { call, outcome: failed(format!("{function} takes {takes}")) });
+        }
+        info!("{} runs {function}", self.label(run));
+        let session = self.runs.get(&run).and_then(|r| r.session);
+        let takes = f.takes.into_iter().zip(args.into_iter().chain(std::iter::repeat(Value::Null))).collect();
+        let of = HandlerKey { id: function.clone(), ..HandlerKey::default() };
+        let own = object::owner(&function).to_owned();
+        self.start(Running { session, of, label: function, answers: Some(call) }, f.code, Value::Null, None, Some(own), takes);
+    }
+
+    /// Keeps each timer's next time and which conditions are judged anew.
     fn rules_changed(&mut self) {
-        let conditions = self.pages.rules.iter().filter_map(|r| match &r.when {
-            When::Turns { condition, .. } => Some((r.id.clone(), condition.clone())),
-            _ => None,
-        });
-        self.script.send(ToScript::Conditions(conditions.collect()));
+        let rules: Vec<Rule> = self.project.flat().rules.iter().map(|(_, r)| r.clone()).collect();
         let now = Instant::now();
-        let every: HashMap<String, u32> = self.pages.rules.iter().filter_map(|r| if let When::Every { ms } = r.when { Some((r.id.clone(), ms)) } else { None }).collect();
+        let every: HashMap<String, u32> = rules.iter().filter_map(|r| if let When::Every { ms } = r.when { Some((r.id.clone(), ms)) } else { None }).collect();
         self.timers.retain(|id, _| every.contains_key(id));
         for (id, ms) in every {
             self.timers.entry(id).or_insert(now + Duration::from_millis(ms.into()));
         }
         // one edited since it was judged is judged anew, so its new condition or code fires
-        let rules = &self.pages.rules;
         self.turned.retain(|id, t| rules.iter().any(|r| &r.id == id && t.of.as_ref().is_some_and(|(w, c)| *w == r.when && *c == r.code)));
         for r in rules.iter().filter(|r| matches!(r.when, When::Turns { .. })) {
             self.turned.entry(r.id.clone()).or_insert_with(|| Turned { of: Some((r.when.clone(), r.code.clone())), ..Turned::default() });
@@ -1504,7 +1561,7 @@ impl App {
             (When::Turns { ms, .. }, Some(t)) => !t.fired && t.since.is_some_and(|s| now.duration_since(s) >= Duration::from_millis((*ms).into())),
             _ => false,
         };
-        let ready: Vec<String> = self.pages.rules.iter().filter(|r| held(r, self.turned.get(&r.id))).map(|r| r.id.clone()).collect();
+        let ready: Vec<String> = self.project.flat().rules.iter().filter(|(_, r)| held(r, self.turned.get(&r.id))).map(|(_, r)| r.id.clone()).collect();
         for id in ready {
             if let Some(t) = self.turned.get_mut(&id) {
                 t.fired = true;
@@ -1540,6 +1597,7 @@ impl App {
                     Err(message) => self.script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "no_provider".into(), message }) }),
                 }
             }
+            FromScript::Run { run, call, function, args } => self.call_function(run, call, function, args),
             FromScript::Cancel { run, alias, call } => {
                 info!("{} cancels {}{alias}", self.label(run), if call.is_some() { "a call of " } else { "every call of " });
                 if let Err(text) = self.mesh.cancel(&alias, call) {
@@ -1585,15 +1643,27 @@ impl App {
                 }
             }
             FromScript::Sampled(read) => self.sampled(read),
-            FromScript::Done { run, end } => {
+            FromScript::Done { run, end, value } => {
                 let text = match &end {
                     End::Ok => None,
                     End::Unknown(alias) => Some((Level::Warn, format!("stopped, since {alias} is unknown"))),
                     End::Fault(text) => Some((Level::Fault, text.clone())),
                 };
+                // a function's caller hears how it ended, and says so itself where it fails
+                let answers = self.runs.get(&run).and_then(|r| r.answers);
                 if let Some((level, text)) = text {
                     warn!("{}: {text}", self.label(run));
-                    self.tell(run, level, text);
+                    if answers.is_none() {
+                        self.tell(run, level, text);
+                    }
+                }
+                if let Some(call) = answers {
+                    let outcome = match end {
+                        End::Ok => Ok(value),
+                        End::Unknown(alias) => Err(CallFailure { status: "unknown".into(), message: format!("{alias} is unknown") }),
+                        End::Fault(message) => Err(CallFailure { status: "failed".into(), message }),
+                    };
+                    self.script.send(ToScript::Answer { call, outcome });
                 }
                 // the first of what waited for this run goes now, while its screen is here, and an
                 // end even once it went, as a held input never loses its end
@@ -1640,15 +1710,11 @@ impl App {
     /// Applies an edit, saves what it touched and sends that to every screen. The screen
     /// that asked keeps its undo, and hears what it made, so it can select it.
     fn edit(&mut self, session: u32, edit: Edit, step: Step) {
-        let rules = matches!(edit, Edit::SetRule { .. });
         let mut shown: Vec<String> = edit.pages().into_iter().map(str::to_owned).collect();
         let applied = match self.pages.apply(edit) {
             Ok(applied) => applied,
             Err(text) => {
                 // a screen shows a change at once, so a refused one gets back what it named
-                if rules {
-                    self.send(session, &ServerMsg::Rules { rules: self.pages.rules.clone() });
-                }
                 shown.sort();
                 shown.dedup();
                 for page in shown.iter().filter_map(|id| self.pages.get(id).cloned()).collect::<Vec<_>>() {
@@ -1695,12 +1761,7 @@ impl App {
         if let Some((page, id)) = applied.made {
             self.send(session, &ServerMsg::Made { page, id });
         }
-        if applied.rules {
-            self.broadcast(&ServerMsg::Rules { rules: self.pages.rules.clone() });
-            self.rules_changed();
-        } else {
-            self.fields_changed();
-        }
+        self.fields_changed();
         self.script.send(ToScript::Pages(self.pages.keys()));
     }
 
@@ -1775,63 +1836,21 @@ impl App {
         if old.info != self.project.info {
             self.broadcast(&ServerMsg::Project { project: self.project.info.clone() });
         }
-        if old.imports != self.project.imports {
-            for gone in old.imports.iter().filter(|i| !self.project.imports.contains(i)) {
-                self.mesh.detach(&gone.alias);
-                if self.project.find(&gone.alias).is_none() {
-                    self.values.remove(&gone.alias);
-                    self.changed.remove(&gone.alias);
-                }
-            }
-            for import in self.project.imports.clone() {
-                self.mesh.attach(&import);
-            }
-            self.list_changed(List::Imports);
-        }
-        if old.variables != self.project.variables {
-            for name in old.variables.iter().filter(|v| !self.project.variables.contains(v)).map(|v| v.name.clone()).collect::<Vec<_>>() {
-                self.take_variable(&name);
-            }
-            self.list_changed(List::Variables);
-            for v in self.project.variables.clone().iter().filter(|v| !old.variables.contains(v)) {
-                self.start_variable(v, None, HashMap::new());
-            }
-        }
-        if old.records != self.project.records {
-            for name in old.records.iter().filter(|r| !self.project.records.contains(r)).map(|r| r.name.clone()).collect::<Vec<_>>() {
-                self.take_history(&name);
-            }
-            self.list_changed(List::Records);
-            for r in self.project.records.iter().filter(|r| !old.records.contains(r)) {
-                self.broadcast(&ServerMsg::Samples { name: r.name.clone(), samples: Vec::new(), whole: true });
-            }
-        }
-        if old.computed != self.project.computed {
-            for name in old.computed.iter().filter(|c| self.project.computed(&c.name).is_none()).map(|c| c.name.clone()).collect::<Vec<_>>() {
-                self.unknown(&name);
-            }
-            self.list_changed(List::Computed);
+        if old.objects() != self.project.objects() {
+            self.objects_changed(old.flat().clone(), &[]);
         }
         if old.tokens != self.project.tokens {
-            self.list_changed(List::Theme);
+            self.broadcast(&self.whole(List::Theme));
         }
-        let (pages_moved, rules_moved) = (pages.list != self.pages.list, pages.rules != self.pages.rules);
-        if pages_moved || rules_moved {
+        if pages.list != self.pages.list {
             self.pages = pages;
             // what a screen could undo no longer matches the files
             self.sessions.values_mut().for_each(|s| {
                 s.undo.clear();
                 s.redo.clear();
             });
-        }
-        if pages_moved {
             self.script.send(ToScript::Pages(self.pages.keys()));
             self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() });
-        }
-        if rules_moved {
-            self.broadcast(&ServerMsg::Rules { rules: self.pages.rules.clone() });
-            self.rules_changed();
-        } else if pages_moved {
             self.fields_changed();
         }
     }
@@ -1844,7 +1863,7 @@ impl App {
         let epoch = self.mesh.epoch();
         if self.epoch != Some(epoch) {
             self.epoch = Some(epoch);
-            for import in self.project.imports.clone() {
+            for import in self.project.flat().imports.clone() {
                 self.mesh.attach(&import);
             }
             self.refresh_known();
@@ -1861,7 +1880,7 @@ impl App {
         let now = Instant::now();
         let due: Vec<String> = self.timers.iter().filter(|(_, at)| **at <= now).map(|(id, _)| id.clone()).collect();
         for id in due {
-            if let Some(When::Every { ms }) = self.pages.rules.iter().find(|r| r.id == id).map(|r| r.when.clone()) {
+            if let Some(When::Every { ms }) = self.project.flat().rules.iter().find(|(_, r)| r.id == id).map(|(_, r)| r.when.clone()) {
                 self.timers.insert(id.clone(), now + Duration::from_millis(ms.into()));
             }
             self.run_rules(|r| r.id == id, Value::Null);
@@ -1942,7 +1961,7 @@ impl App {
     /// A mesh import is known while its entity is live and, for one with a value, once that
     /// value arrived. The last value stays when it goes unknown.
     fn refresh_known(&mut self) {
-        for import in &self.project.imports {
+        for import in &self.project.flat().imports {
             let live = self.mesh.live(import);
             let slot = self.values.entry(import.alias.clone()).or_default();
             let watched = matches!(import.kind, Kind::Topic | Kind::Variable);
@@ -1997,7 +2016,7 @@ impl App {
 
     /// Publishes the HMI's own state on the mesh, once that changed.
     fn publish_status(&mut self) {
-        let missing = self.project.imports.iter().filter(|i| !self.mesh.live(i)).filter_map(|i| i.entity.as_str().try_into().ok()).collect();
+        let missing = self.project.flat().imports.iter().filter(|i| !self.mesh.live(i)).filter_map(|i| i.entity.as_str().try_into().ok()).collect();
         let status = HmiStatus { version: env!("CARGO_PKG_VERSION").into(), project: self.project.info.name.clone(), started_at: self.started_at, clients: self.sessions.len() as u32, missing };
         self.mesh.publish_status(status);
         self.warn_webrtc();
@@ -2020,7 +2039,8 @@ impl App {
     }
 
     /// Tells the engine what each import's message is made of, and it and every screen the
-    /// enums code names, once those changed. A name code already has hides an enum's.
+    /// enums code names, once those changed. An object's name or one code already has hides an
+    /// enum's.
     fn types_changed(&mut self) {
         let forms = self.mesh.forms();
         if forms != self.forms {
@@ -2028,7 +2048,7 @@ impl App {
             self.script.send(ToScript::Forms(forms));
         }
         let mut enums = self.mesh.enums();
-        enums.retain(|e| !self.project.imports.iter().any(|i| i.alias == e.name) && !crate::script::reserved(&e.name));
+        enums.retain(|e| self.project.object(&e.name).is_none() && !crate::script::reserved(&e.name));
         if enums != self.enums {
             self.enums = enums.clone();
             self.script.send(ToScript::Enums(enums.clone()));
@@ -2108,11 +2128,11 @@ impl App {
         }
     }
 
-    /// The imports among `aliases`, each other one refused, as only an import has video.
+    /// The mesh members among `aliases`, each other one refused, as only those have video.
     fn with_video(&mut self, session: u32, aliases: impl IntoIterator<Item = String>) -> HashSet<String> {
         let (known, unknown): (HashSet<String>, HashSet<String>) = aliases.into_iter().partition(|a| self.project.find(a).is_some());
         for alias in unknown {
-            self.refuse(session, format!("{alias} is not a mesh import, so it has no video"), None);
+            self.refuse(session, format!("{alias} is not a mesh member, so it has no video"), None);
         }
         known
     }
@@ -2357,9 +2377,9 @@ fn new_key() -> String {
     key.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Each record's source by name, as the engine reads them.
-fn sources(records: &[Record]) -> Vec<(String, String)> {
-    records.iter().map(|r| (r.name.clone(), r.source.clone())).collect()
+/// What a change of the member `name` of `object` to one named `to` renames, by key, if it does.
+fn renamed(object: &str, name: &str, to: Option<&str>) -> Option<(String, String)> {
+    to.filter(|to| !name.is_empty() && *to != name).map(|to| (object::key(object, name), object::key(object, to)))
 }
 
 /// Now, as Unix time.
