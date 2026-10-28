@@ -290,6 +290,10 @@ function space(object: string): object {
       {},
       {
         get: (_, m) => (m === SPACE ? object : typeof m === "string" ? member(key(object, m)) : undefined),
+        // what reads an object here only reads, as a handler sets through its own view of it
+        set: (_, m) => {
+          throw new TypeError(`${key(object, String(m))} cannot be set here, which only reads`);
+        },
         has: (_, m) => m === SPACE || shown(m),
         ownKeys: () => members(object).map((n) => split(n.name)[1]),
         getOwnPropertyDescriptor: (_, m) => (shown(m) ? { value: member(key(object, m as string)), enumerable: true, configurable: true } : undefined),
