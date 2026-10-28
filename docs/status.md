@@ -1,7 +1,8 @@
 # Status
 
 The HMI publishes three read only variables about itself. Other nodes read them, and an object
-takes them as members like any entity, as the `Hmi` object does with its mesh at `Hmi`. Each is
+takes them as members like any entity, as the `Hmi` object does with its mesh at `Hmi`. They sit
+at `Hmi/` whatever prefix the HMI starts under. Each is
 set only when it changed: the clients as each screen's round trip is measured, 20 times a
 second, the problems at most 4 times a second, and the status once a second.
 

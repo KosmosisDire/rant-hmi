@@ -62,8 +62,8 @@ function testProject(into) {
 
 /** With `empty` named, the backend starts a new project in a folder of that name, as it would
  *  anywhere, in place of the demo's copy. Systems in different slots run side by side. With
- *  `video` false no transcoder runs. */
-export async function startSystem({ empty, slot = 0, video: transcodes = true } = {}) {
+ *  `video` false no transcoder runs. With `prefix` the backend starts under it, as `RANT_PREFIX`. */
+export async function startSystem({ empty, slot = 0, video: transcodes = true, prefix } = {}) {
   const temp = mkdtempSync(join(tmpdir(), "rant-hmi-test-"));
   const project = empty ? join(temp, basename(empty)) : temp;
   if (!empty) testProject(project);
@@ -84,7 +84,7 @@ export async function startSystem({ empty, slot = 0, video: transcodes = true } 
       "--loopback",
       "--client", CLIENT,
       ...more,
-    ], { HOME: home, USERPROFILE: home });
+    ], { HOME: home, USERPROFILE: home, ...(prefix && { RANT_PREFIX: prefix }) });
     const start = Date.now();
     for (;;) {
       try {

@@ -39,6 +39,8 @@ One object per thing the HMI controls, each in its own file:
 - A mesh member's entity counts from the object's `mesh`, or from the mesh's own root when it
   starts with `/`. It is a `topic`, `variable`, `function` or `task`, read only unless
   `intent="write"`. A topic it reads may take a `rate`.
+- Entities are named as the mesh shows them. A prefix the HMI starts under, such as its
+  workspace's, never goes in front of them.
 - Code outside the object reads `Line.Speed` and calls `await Line.restart(1)`. The object's
   own code reads its members bare.
 - `local="true"` keeps a member for its object's own code. Pages and other objects read the
