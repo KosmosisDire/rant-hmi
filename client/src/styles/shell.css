@@ -562,9 +562,33 @@
   background: var(--border);
 }
 
+/* The objects over the mesh, sharing the sidebar: each scrolls apart, and one folded away
+   leaves the other its room. */
+.objects-list {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.objects-list.tall {
+  max-height: none;
+}
+
+.mesh-part {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mesh-part[hidden] {
+  display: none;
+}
+
 .mesh-filter {
   flex: none;
-  margin: 0 var(--pad) 6px;
+  margin: 6px var(--pad);
 }
 
 /* A folder's add shows under the pointer only, a finger sees it always. */
@@ -673,6 +697,11 @@
 
   .detail {
     padding-bottom: var(--sheet, 0px);
+  }
+
+  /* a row picked is kept in sight above the sheet over the detail's foot */
+  .objects-detail {
+    scroll-padding-bottom: var(--sheet, 0px);
   }
 
   /* hidden once it has slid away, so nothing in it takes a tap or a tab */

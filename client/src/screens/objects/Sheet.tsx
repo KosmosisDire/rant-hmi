@@ -5,15 +5,17 @@ import { createEffect, createSignal, For, type JSX, Show } from "solid-js";
 import type { Object as Thing } from "../../protocol/Object";
 import type { Rule } from "../../protocol/Rule";
 import type { Value } from "../../protocol/Value";
+import { send } from "../../net/connection";
 import { change } from "../../state/change";
-import { choosesIntent } from "../../state/format";
+import { choosesIntent, intents } from "../../state/format";
 import { freeMember, HMI, key, named } from "../../state/names";
 import { preview, unread } from "../../state/preview";
 import { usedBy } from "../../state/usage";
-import { Copy, Globe, Lock, Monitor, Plus, Trash } from "../../ui/icons";
+import { Copy, Globe, Lock, Monitor, Plus, RotateCcw, Trash } from "../../ui/icons";
 import { ObjectIcon } from "../../ui/marks";
-import { copyText, openMenu } from "../../ui/Menu";
+import { copyText, type MenuEntry, openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
+import { canWrite } from "./Imports";
 import { RuleIcon, triggerWords } from "./Logic";
 import { MemberIcon, removeMember } from "./Member";
 import type { Picking } from "./ObjectsScreen";
@@ -52,7 +54,22 @@ export function Sheet(p: { object: Thing; picking: Picking }) {
 
   const memberMenu = (e: MouseEvent, name: string) => {
     p.picking.onPick({ kind: "member", name });
+    const i = o().imports.find((x) => x.alias === name);
+    const v = o().variables.find((x) => x.name === name);
+    // what a mesh member may do, and state back to where it starts
+    const first: MenuEntry[] = [
+      ...(i && choosesIntent(i.kind)
+        ? intents(i.kind).map(([intent, words]) => ({
+            label: words,
+            disabled: i.intent === intent || (intent === "write" && !canWrite(o(), i)),
+            run: () => change({ type: "change_import", object: o().name, alias: name, import: { ...i, intent, rate: intent === "write" ? undefined : i.rate } }),
+          }))
+        : []),
+      ...(v && !local(name) ? [{ label: "Reset to its start", icon: <RotateCcw size={13} />, run: () => send({ type: "set", alias: k(name), path: "", value: v.start }) }] : []),
+    ];
     openMenu(e, [
+      ...first,
+      ...(first.length > 0 ? ["-" as const] : []),
       { label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(local(name) ? name : k(name)) },
       "-",
       { label: "Remove", icon: <Trash size={13} />, run: () => removeMember(o().name, name) },
@@ -63,6 +80,7 @@ export function Sheet(p: { object: Thing; picking: Picking }) {
   const Row = (r: { name: string; def: string; value?: JSX.Element; marks?: JSX.Element }) => (
     <div
       class="list-row member-row"
+      data-member={r.name}
       role="button"
       tabIndex={0}
       classList={{ selected: picked(r.name) }}
@@ -163,6 +181,7 @@ export function Sheet(p: { object: Thing; picking: Picking }) {
           {(r) => (
             <div
               class="list-row member-row"
+              data-rule={r.name}
               role="button"
               tabIndex={0}
               classList={{ selected: p.picking.picked.kind === "rule" && p.picking.picked.id === r.id }}

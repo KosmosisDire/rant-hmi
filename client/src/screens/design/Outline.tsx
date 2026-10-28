@@ -1,16 +1,17 @@
-import { createEffect, createSignal, For, type JSX, on, Show, untrack } from "solid-js";
+import { createEffect, createSignal, For, on, Show, untrack } from "solid-js";
 import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import type { Variable } from "../../protocol/Variable";
 import { edit } from "../../state/change";
-import { remembered, rememberedWords } from "../../state/remember";
+import { rememberedWords } from "../../state/remember";
 import { freeName } from "../../state/names";
 import { startPage, state } from "../../state/store";
 import { flyTo, openPage } from "../../state/view";
 import { isNumber } from "../../state/bind";
 import { chain, find } from "../../state/elements";
+import { fold, FoldHead } from "../../ui/Fold";
 import { ChevronDown, ChevronRight, CircleDot, Component, CopyPlus, File, FilePlus, Plus, Repeat, Star, Trash, Zap } from "../../ui/icons";
 import { type MenuEntry, openMenu } from "../../ui/Menu";
 import { addElement } from "./add";
@@ -22,29 +23,8 @@ import { childrenOf, holds, isHolder, moveAll, parentOf, tops } from "./tree";
 import { follow } from "../../ui/press";
 import { closeDrawer } from "../../ui/Sidebars";
 
-const FOLDS = ["open", "closed"] as const;
-
 /** Whether each pane of the sidebar shows its body, as this browser remembers it. */
-const folds = {
-  components: remembered("pane-components", "open", FOLDS),
-  layers: remembered("pane-layers", "open", FOLDS),
-};
-
-/** A pane's head whose word folds the body away and back, its actions on the right. */
-function FoldHead(p: { title: string; pane: keyof typeof folds; first?: boolean; children: JSX.Element }) {
-  const [fold, setFold] = folds[p.pane];
-  return (
-    <div class="pane-head" classList={{ "layers-head": !p.first }}>
-      <button class="head-title fold" aria-expanded={fold() === "open"} onClick={() => setFold(fold() === "open" ? "closed" : "open")}>
-        <Show when={fold() === "open"} fallback={<ChevronRight size={12} />}>
-          <ChevronDown size={12} />
-        </Show>
-        <span>{p.title}</span>
-      </button>
-      {p.children}
-    </div>
-  );
-}
+const folds = { components: fold("pane-components"), layers: fold("pane-layers") };
 
 const shown = (pane: keyof typeof folds) => folds[pane][0]() === "open";
 
@@ -156,7 +136,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
 
   return (
     <>
-      <FoldHead title="Components" pane="components" first>
+      <FoldHead title="Components" fold={folds.components}>
         <button class="icon-btn" title="Add a component" onClick={addComponent}>
           <Plus size={14} />
         </button>
@@ -166,7 +146,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
           {(c) => <ComponentCard component={c} open={c.id === p.page?.id} onMenu={(e) => cardMenu(e, c)} />}
         </For>
       </div>
-      <FoldHead title="Layers" pane="layers">
+      <FoldHead title="Layers" fold={folds.layers} below>
         <button class="icon-btn" title="Add a page" onClick={addPage}>
           <FilePlus size={14} />
         </button>

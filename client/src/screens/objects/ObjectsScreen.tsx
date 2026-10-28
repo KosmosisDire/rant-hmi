@@ -1,7 +1,7 @@
 // The Objects tab: the objects and the theme over the mesh on the left, the open one's sheet in
 // the middle, and on the right what is picked of it.
 
-import { batch, createEffect, createSignal, For, type JSX, Show } from "solid-js";
+import { batch, createEffect, createSignal, For, type JSX, on, onMount, Show } from "solid-js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import { freeMember, freeName, HMI, importOf, key, named, object } from "../../state/names";
@@ -9,8 +9,10 @@ import { notify, setState, split, state } from "../../state/store";
 import { usedBy } from "../../state/usage";
 import { Copy, Monitor, Palette, Plus, Trash } from "../../ui/icons";
 import { ObjectIcon } from "../../ui/marks";
+import { fold, FoldHead } from "../../ui/Fold";
 import { copyText, openMenu } from "../../ui/Menu";
 import { closeDrawer, Edge, reveal, Sidebar } from "../../ui/Sidebars";
+import { onResize } from "../../ui/size";
 import { Inspector } from "./Inspector";
 import { MeshTree } from "./MeshTree";
 import { Sheet } from "./Sheet";
@@ -27,6 +29,8 @@ export interface Picking {
   /** Shows the sheet of an object, or the theme's for null, with `pick` picked, else itself. */
   onOpen: (object: string | null, pick?: Pick) => void;
   onPick: (pick: Pick) => void;
+  /** Moves the pick with a member renamed from `from` to `to`, and back if that is refused. */
+  onRename: (from: string, to: string) => void;
   /** Opens a page in the Design tab. */
   onPage: (page: string) => void;
   /** Marks what was just added, by an id its inspector knows it by, to type its name. */
@@ -56,6 +60,11 @@ function relative(object: string, entity: string): string {
   if (!root) return entity;
   return entity.startsWith(`${root}/`) ? entity.slice(root.length + 1) : `/${entity}`;
 }
+
+/** Whether the objects and the mesh, which share the sidebar, each show, as this browser
+ *  remembers it. */
+const folds = { objects: fold("pane-objects"), mesh: fold("pane-mesh") };
+const shown = (part: keyof typeof folds) => folds[part][0]() === "open";
 
 /** The member just asked for from the mesh, by its key, whose refusal shows beside its entity. */
 const [adding, setAdding] = createSignal("");
@@ -94,10 +103,41 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
       });
       reveal();
     },
+    onRename: (from, to) => {
+      const o = open();
+      if (o === null) return;
+      batch(() => {
+        setRenamed({ object: o, from, to });
+        setPicked({ kind: "member", name: to });
+      });
+    },
     onPage: (page) => p.onPage(page),
     added: (id) => setFresh({ id, n: (fresh()?.n ?? 0) + 1 }),
     focus: (id) => (fresh()?.id === id ? fresh()!.n : undefined),
   };
+
+  // a rename shows at once, and the objects as they stand come back before its refusal, so a
+  // refused one takes the pick back to the name it kept
+  const [renamed, setRenamed] = createSignal<{ object: string; from: string; to: string } | null>(null);
+  createEffect(
+    on(
+      () => state.refused,
+      (refused) => {
+        const r = renamed();
+        if (!refused || !r) return;
+        setRenamed(null);
+        const now = picked();
+        if (open() === r.object && now.kind === "member" && now.name === r.to && !named(key(r.object, r.to))) setPicked({ kind: "member", name: r.from });
+      },
+      { defer: true },
+    ),
+  );
+
+  let detail!: HTMLElement;
+  // a picked row is kept in sight, on a phone above the sheet as that rises and measures
+  const keep = () => detail.querySelector(".member-row.selected")?.scrollIntoView({ block: "nearest" });
+  createEffect(on([open, picked], () => requestAnimationFrame(keep), { defer: true }));
+  onMount(() => onResize(detail, keep));
 
   /** Adds an object, its sheet open and its name ready to type. */
   const make = (base: string, mesh: string) => {
@@ -145,7 +185,7 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
   };
 
   const Row = (r: { name: string; icon: JSX.Element }) => (
-    <button class="list-row" classList={{ selected: open() === r.name }} onClick={() => picking.onOpen(r.name)} onContextMenu={(e) => menu(e, r.name)}>
+    <button class="list-row" data-object={r.name} classList={{ selected: open() === r.name }} onClick={() => picking.onOpen(r.name)} onContextMenu={(e) => menu(e, r.name)}>
       {r.icon}
       <span class="list-label mono">{r.name}</span>
       <span class="list-trail">{count(r.name)}</span>
@@ -155,13 +195,12 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
   return (
     <>
       <Sidebar side="left">
-        <div class="pane-head">
-          <span class="head-title">Objects</span>
+        <FoldHead title="Objects" fold={folds.objects}>
           <button class="icon-btn" title="Add an object" onClick={() => make("NewObject", "")}>
             <Plus size={14} />
           </button>
-        </div>
-        <div class="pane-body objects-side">
+        </FoldHead>
+        <div class="objects-list" classList={{ tall: !shown("mesh") }} hidden={!shown("objects")}>
           <Row
             name={HMI}
             icon={
@@ -170,7 +209,7 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
               </span>
             }
           />
-          <button class="list-row" classList={{ selected: open() === null }} onClick={() => picking.onOpen(null)}>
+          <button class="list-row" data-object="" classList={{ selected: open() === null }} onClick={() => picking.onOpen(null)}>
             <span class="kind kind-local" title="theme">
               <Palette size={14} />
             </span>
@@ -179,6 +218,9 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
           </button>
           <div class="list-sep" />
           <For each={state.objects.filter((o) => o.name !== HMI)}>{(o) => <Row name={o.name} icon={<ObjectIcon />} />}</For>
+        </div>
+        <FoldHead title="Mesh" fold={folds.mesh} below />
+        <div class="mesh-part" hidden={!shown("mesh")}>
           <MeshTree picking={picking} onAdd={add} onMake={(path) => make(pascal(path.split("/").at(-1) ?? "Object"), path)} />
         </div>
         <div class="pane-foot">
@@ -188,7 +230,7 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
         </div>
       </Sidebar>
       <Edge side="left" />
-      <section class="detail objects-detail">
+      <section class="detail objects-detail" ref={detail}>
         <Show when={open() !== null} fallback={<ThemeSheet picking={picking} />}>
           <Show when={object(open()!)}>{(o) => <Sheet object={o()} picking={picking} />}</Show>
         </Show>

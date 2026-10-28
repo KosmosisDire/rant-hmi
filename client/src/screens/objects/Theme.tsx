@@ -110,9 +110,11 @@ const WHERE = (): Where => ({ scope: tokenScope, names: [], handlers: "theme", e
 export function TokenView(p: { token: Token; picking: Picking }) {
   const change = (to: Partial<Token>) => {
     const next = { ...p.token, ...to };
+    // read before the put, which renames the token picked away under this pane
+    const renamed = next.name !== p.token.name;
     batch(() => {
       put(p.token.name, next);
-      if (next.name !== p.token.name) p.picking.onPick({ kind: "token", name: next.name });
+      if (renamed) p.picking.onPick({ kind: "token", name: next.name });
     });
   };
   const dark = createMemo(() => worked(p.token, "dark"));
