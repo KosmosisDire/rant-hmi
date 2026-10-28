@@ -103,7 +103,7 @@
         <div id="e60" name="Joint track" x="0" y="0" w="fill" h="1.2" style="background: $panel3; border-radius: $radiusPill">
           <div id="e61" name="Joint bar" x="50%" y="0" w="(abs(Robot.Joints.position[index]) * 45)%" h="100%" origin='Robot.Joints.position[index] < 0 ? "100% 0%" : "0% 0%"' style='background: Robot.Joints.position[index] < 0 ? $blue : $accent; border-radius: $radiusPill; transition: "width 120ms linear"'/>
         </div>
-        <span id="e62" name="Joint angle" x="0" y="0" w="7" h="hug" style='font-size: $textSmall; text-align: "right"'>degrees(Robot.Joints.position[index]).toFixed(0) + " deg"</span>
+        <span id="e62" name="Joint angle" x="0" y="0" w="7" h="hug" style='align: "top right"; font-size: $textSmall'>degrees(Robot.Joints.position[index]).toFixed(0) + " deg"</span>
       </div>
     </div>
     <markup id="e63" name="J1 dial" x="0" y="0" w="22" h="fill">

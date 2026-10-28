@@ -470,6 +470,12 @@ function ElementView(p: ElementProps & { at?: At }) {
     // where parts overlap, the first on top when its frame says so, a repeat's copies in turn
     if (p.room.first !== undefined && p.order !== undefined) style["z-index"] = String(p.room.first - p.order * COPIES - (p.at?.index ?? 0));
     if (flow) Object.assign(style, layoutCss(flow, take("wrap") === true, take("align"), spread));
+    // a text's lines sit at a point of its box, an input's only across
+    if ((p.element.tag === "span" || p.element.tag === "input") && p.element.props.align !== undefined) {
+      const { v, h } = pointOf(take("align"));
+      style["text-align"] = h;
+      if (p.element.tag === "span") style["align-content"] = { top: "start", center: "center", bottom: "end" }[v];
+    }
     const text = p.element.tag === "span" ? words(take("text")) : "";
     const value = p.element.tag === "input" ? take("value") : undefined;
     const diagram = p.element.tag === "svg" ? { box: diagramBox(), fit: take("fit") } : undefined;
@@ -558,14 +564,21 @@ function GroupView(p: ElementProps) {
   );
 }
 
+/** The point of a box words such as "center right" name, "top left" for none. */
+function pointOf(align: unknown): { v: "top" | "center" | "bottom"; h: "left" | "center" | "right" } {
+  const words = typeof align === "string" ? align.trim().split(/\s+/) : [];
+  const middle = words.includes("center") ? "center" : undefined;
+  return {
+    v: words.find((w): w is "top" | "bottom" => w === "top" || w === "bottom") ?? middle ?? "top",
+    h: words.find((w): w is "left" | "right" => w === "left" || w === "right") ?? middle ?? "left",
+  };
+}
+
 /** A layout frame as CSS: what it holds in a row or a column, wrapped or not, set at one of nine
  *  points such as "top left", or spread over its whole length. Its start is where the flow
  *  starts, so "left" stays left when it runs right to left. */
 function layoutCss(flow: Flow, wrap: boolean, align: unknown, spread: boolean): Record<string, string> {
-  const words = typeof align === "string" ? align.trim().split(/\s+/) : [];
-  const middle = words.includes("center") ? "center" : undefined;
-  const v = words.find((w) => w === "top" || w === "bottom") ?? middle ?? "top";
-  const h = words.find((w) => w === "left" || w === "right") ?? middle ?? "left";
+  const { v, h } = pointOf(align);
   const END: Record<string, string> = { top: "flex-start", left: "flex-start", center: "center", bottom: "flex-end", right: "flex-end" };
   const across = flow === "right" || flow === "left";
   const back = flow === "left" || flow === "up";

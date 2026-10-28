@@ -167,6 +167,7 @@ nothing.
 | Property | Of | Takes |
 | --- | --- | --- |
 | `text` | `span`, the shape `text` | its words, written as the tag's body: `<span ...>Speed.toFixed(1) + " m/s"</span>` |
+| `align` | `span`, `input` | where its lines sit in its box, one of the nine points a frame's `align` takes. An input's one line stays in the middle, so only left, center or right counts |
 | `value` | `input` | what it shows. A name there, as `value="Speed"`, is set to what is typed: a number while it holds one, true or false while it holds those |
 | `src` | `media` | what it shows. A mesh member plays its video, or shows its pictures while it has none, named as `Cell.Camera` or given by an expression, as `wide ? Cell.Camera : Line.LabelCam` or a component's input. A picture, as `{ ...Cell.Camera }`, shows as it is, and text as a URL |
 | `fit` | `media`, `svg` | how it fits its box: `"meet"` whole, the default, `"slice"` filling it cut to size, or `"stretch"` |

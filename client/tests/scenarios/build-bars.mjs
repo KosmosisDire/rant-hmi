@@ -35,16 +35,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("fill", "$panel");
   await d.addInput("radius", "$radius");
   await d.add("frame", { Name: "card", x: "0", y: "0", w: "100%", h: "100%", Fill: "fill", Radius: "radius" });
-  await d.layOut("Top to bottom", undefined, "0");
+  await d.layOut("down", undefined, "0");
   await d.setField("Padding", "1.5");
   await d.add("frame", { Name: "row", w: "fill", h: "fill", Fill: "", Radius: "" });
   await d.setField("Repeat", "values");
-  await d.layOut("Left to right", "Center left", "1");
+  await d.layOut("right", "Center left", "1");
   await d.add("text", { Name: "label", w: "8", h: "hug", Text: "labels[index] ?? String(index + 1)", Colour: "labelColour", Size: "textSize" });
   await d.select("row");
   await d.place("Bar", { w: "fill", h: "1", value: "item", min: "min", max: "max", colour: "colour", trackColour: "trackColour" });
   await d.select("row");
-  await d.add("text", { Name: "reading", w: "7", h: "hug", Text: 'item.toFixed(digits) + (unit ? " " + unit : "")', Colour: "textColour", Size: "textSize", Align: '"right"' });
+  await d.add("text", { Name: "reading", w: "7", h: "hug", Text: 'item.toFixed(digits) + (unit ? " " + unit : "")', Colour: "textColour", Size: "textSize", Align: '"center right"' });
 
   await d.addComponent("Joints", 36, 18);
   await d.sizing("Fill");

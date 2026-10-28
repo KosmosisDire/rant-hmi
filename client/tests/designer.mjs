@@ -148,6 +148,18 @@ export function designer(page) {
       await commit(d.field(label), text);
     },
 
+    /** Picks `word` from the list the lead of the field `label` opens, as "right" for Direction. */
+    async choose(label, word) {
+      await right().locator(".field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) }).locator(".lead").first().click();
+      await page.locator(".popover.choice-list .menu-item", { hasText: new RegExp(`^${word.replace(/[$^.*+?()[\]{}|\\]/g, "\\$&")}$`) }).click();
+    },
+
+    /** Picks a point titled as "Center left" from the grid the lead of the field `label` opens. */
+    async point(label, title) {
+      await right().locator(".field", { has: page.locator("label", { hasText: new RegExp(`^${label}$`) }) }).locator(".lead").first().click();
+      await page.locator(`.popover .point[title="${title}"]`).click();
+    },
+
     // ---------------------------------------------------------------- building
 
     /** Sets fields in order, as `{ label: text }`. */
@@ -205,13 +217,13 @@ export function designer(page) {
       await right().locator(".field", { has: page.locator("label", { hasText: /^Sizing$/ }) }).locator("button", { hasText: new RegExp(`^${word}$`) }).click();
     },
 
-    /** Lays out what the selected frame holds, toward `title` ("Left to right"), its parts
-     *  sitting at `point` ("Center"), a gap `gap` apart. */
-    async layOut(title, point, gap) {
+    /** Lays out what the selected frame holds, toward `flow` ("right"), its parts sitting at
+     *  `point` ("Center"), a gap `gap` apart. */
+    async layOut(flow, point, gap) {
       const start = right().locator(".ghost", { hasText: "Lay out what it holds" });
       if (await start.count()) await start.click();
-      await right().locator(`button[title="${title}"]`).click();
-      if (point) await right().locator(`.point[title="${point}"]`).click();
+      await d.choose("Direction", flow);
+      if (point) await d.point("Align", point);
       if (gap !== undefined) await d.setField("Gap", gap);
     },
 

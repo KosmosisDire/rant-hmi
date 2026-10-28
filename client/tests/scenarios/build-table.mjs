@@ -16,17 +16,17 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("textSize", "1.4");
   await d.addInput("radius", "$radius");
   await d.add("frame", { Name: "card", x: "0", y: "0", w: "100%", h: "100%", Fill: "fill", Radius: "radius", Overflow: '"hidden"' });
-  await d.layOut("Top to bottom", undefined, "0");
+  await d.layOut("down", undefined, "0");
   await d.setField("Padding", "1");
   await d.add("frame", { Name: "head", w: "fill", h: "hug", Fill: "", Radius: "" });
-  await d.layOut("Left to right", undefined, "1");
+  await d.layOut("right", undefined, "1");
   await d.setField("Padding", "0.6");
   await d.add("text", { Name: "heading", Repeat: "columns.length ? columns : Object.keys(rows[0] ?? {})", w: "fill", h: "hug", Text: "item", Colour: "headColour", Size: "textSize", Weight: "600" });
   await d.select("card");
   await d.add("frame", { Name: "body", w: "fill", h: "fill", Fill: "", Radius: "", Overflow: '"auto"' });
-  await d.layOut("Top to bottom", undefined, "0");
+  await d.layOut("down", undefined, "0");
   await d.add("frame", { Name: "row", Repeat: "rows", w: "fill", h: "hug", Fill: 'index % 2 ? stripe : "transparent"', Radius: "$radiusSmall" });
-  await d.layOut("Left to right", undefined, "1");
+  await d.layOut("right", undefined, "1");
   await d.setField("Padding", "0.6");
   // the cells read the row as item, before each cell's own item takes its name
   await d.add("text", {

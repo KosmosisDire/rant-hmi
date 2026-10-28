@@ -69,7 +69,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   // a choice from its list
   await d.el(label).click();
-  await lead("Align").click();
-  await page.locator(".popover .menu-item", { hasText: /^center$/ }).click();
-  await eventually(() => props(hmi, pageId, label)["text-align"] === '"center"', "the picked choice to be kept");
+  await lead("Weight").click();
+  await page.locator(".popover .menu-item", { hasText: /^600$/ }).click();
+  await eventually(() => props(hmi, pageId, label)["font-weight"] === "600", "the picked choice to be kept");
 }

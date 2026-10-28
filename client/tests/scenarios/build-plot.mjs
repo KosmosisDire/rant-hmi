@@ -21,7 +21,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("fill", "$panel");
   await d.addInput("radius", "$radius");
   await d.add("frame", { Name: "card", x: "0", y: "0", w: "100%", h: "100%", Fill: "fill", Radius: "radius" });
-  await d.layOut("Top to bottom");
+  await d.layOut("down");
   await d.setField("Padding", "1");
   await d.add("diagram", { Name: "chart", w: "fill", h: "fill", "View box": '"0 0 100 100"', Fit: '"stretch"', Overflow: '"hidden"' });
   await d.addShape("polyline", {

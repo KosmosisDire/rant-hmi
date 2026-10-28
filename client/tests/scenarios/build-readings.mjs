@@ -16,7 +16,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("textSize", "2.5");
   await d.addInput("radius", "$radius");
   await d.add("frame", { Name: "card", x: "0", y: "0", w: "100%", h: "100%", Fill: "fill", Radius: "radius" });
-  await d.layOut("Top to bottom", "Center left", "0.2");
+  await d.layOut("down", "Center left", "0.2");
   await d.setField("Padding", "1.5");
   await d.add("text", { Name: "caption", w: "hug", h: "hug", Text: "label", Colour: "labelColour", Size: "1.3" });
   await d.select("card");
@@ -31,7 +31,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("textColour", "$text");
   await d.addInput("textSize", "1.5");
   await d.add("frame", { Name: "face", x: "0", y: "0", w: "100%", h: "100%", Fill: "", Radius: "" });
-  await d.layOut("Left to right", "Center left", "1");
+  await d.layOut("right", "Center left", "1");
   await d.add("frame", { Name: "light", w: "2", h: "2", Fill: "value ? onColour : offColour", Radius: "$radiusPill" });
   await d.select("face");
   await d.add("text", { Name: "caption", w: "fill", h: "hug", Text: "label", Colour: "textColour", Size: "textSize" });
@@ -44,7 +44,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("fill", "$panel");
   await d.addInput("radius", "$radius");
   await d.add("frame", { Name: "card", x: "0", y: "0", w: "100%", h: "100%", Fill: "fill", Radius: "radius" });
-  await d.layOut("Left to right", "Center left", "0");
+  await d.layOut("right", "Center left", "0");
   await d.add("frame", { Name: "chip", w: "4", h: "4", Fill: 'typeof value === "string" ? value : `rgba(${value.r}, ${value.g}, ${value.b}, ${value.a / 255})`', Radius: "$radiusSmall" });
   await page.locator('button[title="Edit the border"]').click();
   await d.set({ Width: "0.1", Colour: "$border2" });
@@ -62,13 +62,13 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("angleDigits", "1");
   await d.addInput("fill", "$panel");
   await d.add("frame", { Name: "rows", x: "0", y: "0", w: "100%", h: "100%", Fill: "", Radius: "" });
-  await d.layOut("Top to bottom", undefined, "1");
+  await d.layOut("down", undefined, "1");
   await d.add("frame", { Name: "position", w: "fill", h: "fill", Fill: "", Radius: "" });
-  await d.layOut("Left to right", undefined, "1");
+  await d.layOut("right", undefined, "1");
   await d.place("Readout", { w: "fill", h: "fill", Repeat: "[value.position.x, value.position.y, value.position.z]", label: '["X", "Y", "Z"][index]', value: "item", unit: '"m"', digits: "digits", fill: "fill" });
   await d.select("rows");
   await d.add("frame", { Name: "orientation", w: "fill", h: "fill", Fill: "", Radius: "" });
-  await d.layOut("Left to right", undefined, "1");
+  await d.layOut("right", undefined, "1");
   await d.place("Readout", { w: "fill", h: "fill", Repeat: "Object.values(value.orientation.euler()).map(degrees)", label: '["Roll", "Pitch", "Yaw"][index]', value: "item", unit: '"°"', digits: "angleDigits", fill: "fill" });
 
   await d.addPage("Readings");

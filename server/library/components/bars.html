@@ -16,7 +16,7 @@
     <div id="e2" name="row" repeat="values" x="1" y="1" w="fill" h="fill" style='align: "center left"; gap: 1; layout: "right"'>
       <span id="e3" name="label" x="1" y="1" w="8" h="hug" style="color: labelColour; font-size: textSize">labels[index] ?? String(index + 1)</span>
       <Bar id="e4" name="Bar" x="3" y="3" w="fill" h="1" colour="colour" max="max" min="min" trackColour="trackColour" value="item"/>
-      <span id="e5" name="reading" x="5" y="5" w="7" h="hug" style='color: textColour; font-size: textSize; text-align: "right"'>item.toFixed(digits) + (unit ? " " + unit : "")</span>
+      <span id="e5" name="reading" x="5" y="5" w="7" h="hug" style='align: "center right"; color: textColour; font-size: textSize'>item.toFixed(digits) + (unit ? " " + unit : "")</span>
     </div>
   </div>
 </component>
