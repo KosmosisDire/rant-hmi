@@ -48,6 +48,7 @@ export class Hmi {
     if (msg.type === "pages") s.pages = msg.pages;
     if (msg.type === "mesh") s.entities = msg.entities;
     if (msg.type === "theme") s.tokens = msg.tokens;
+    if (msg.type === "hello" || msg.type === "project") s.project = msg.project;
     if (msg.type === "values") for (const v of msg.values) s.values[v.alias] = v;
     if (msg.type === "page") {
       const at = s.pages.findIndex((p) => p.id === msg.page.id);

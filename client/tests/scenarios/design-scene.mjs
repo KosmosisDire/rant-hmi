@@ -1,17 +1,17 @@
-// A designer adds a 3D scene, which starts with a floor and its axes, and a box in it whose pose
+﻿// A designer adds a 3D scene, which starts with a floor and its axes, and a box in it whose pose
 // follows a value, seen by a camera the scene's properties aim. three.js loads only once a scene
 // shows. A value a part or the camera cannot use gives way to its default and says why on the
 // scene, a picked part rings its scene, and the run draws it as the editor does.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const loaded = () => page.evaluate(() => performance.getEntriesByType("resource").some((r) => /\/assets\/scene-[^/]*\.js$/.test(r.name)));
-  // the board draws the pages beside this one too, which may hold a scene of their own, as one
-  // an earlier scenario left beside the page the editor opened on
+  // the board draws the pages beside this one too, and the hidden run the start page as the
+  // editor opens, which may hold a scene of their own, as one an earlier scenario left
   const holds = (els) => els.some((e) => e.tag === "scene" || holds(e.children));
   const drawn = () => page.locator(".artboard .page-layer").evaluateAll((ls) => ls.map((l) => l.dataset.page));
   const before = await drawn();
   await d.addPage("Scene");
-  const shown = [...before, ...(await drawn())];
+  const shown = [...before, ...(await drawn()), hmi.state.project?.start];
   check(!(await loaded()) || shown.some((id) => holds(hmi.page(id)?.children ?? [])), "three.js loaded before any scene showed");
   const scene = await d.add("scene", { Name: "cell", x: "4", y: "4", w: "40", h: "30", Target: "vec(10, 0, 0.5)" });
   await eventually(loaded, "three.js to load once a scene shows");
