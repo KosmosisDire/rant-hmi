@@ -1,6 +1,6 @@
 [package]
 name = "rant-hmi"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 description = "The Rant HMI backend: one Rant node on the system that serves the editor and every screen"
 publish = false
