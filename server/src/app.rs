@@ -644,8 +644,10 @@ pub struct App {
     changed: BTreeSet<String>,
     /// Values sent since the last tick began, which wait for the next to go again.
     sent: HashSet<String>,
-    /// Whether a value went at once since the last tick, so the engine judges by it then.
-    hurried: bool,
+    /// Whether the engine still works out the last ask, so the next waits for its answer and
+    /// asks never pile up behind slow code, and the records due meanwhile, read at the next.
+    thinking: bool,
+    due: Vec<String>,
     /// The values of the variables every screen shares.
     shared: HashMap<String, Value>,
     /// Each record's samples, oldest first, and when it next samples.
@@ -700,7 +702,8 @@ impl App {
             values: HashMap::new(),
             changed: BTreeSet::new(),
             sent: HashSet::new(),
-            hurried: false,
+            thinking: false,
+            due: Vec::new(),
             shared,
             history: HashMap::new(),
             sample_at: HashMap::new(),
@@ -1295,9 +1298,6 @@ impl App {
         } else {
             self.fields_changed();
         }
-        if old.computed != new.computed {
-            self.script.send(ToScript::Compute);
-        }
     }
 
     /// Moves what is held under `from` to `to`, a renamed member's key: its value, its shared
@@ -1378,13 +1378,31 @@ impl App {
         }
     }
 
-    /// Asks the engine to judge the conditions and work the computed values out anew, by the
-    /// values it has now.
-    fn rethink(&self) {
-        self.script.send(ToScript::Judge);
-        if !self.project.flat().computed.is_empty() {
-            self.script.send(ToScript::Compute);
+    /// Asks the engine to work out what is due by the values it has now, with each record due,
+    /// unless it still works out the last ask.
+    fn think(&mut self) {
+        self.sample();
+        if self.thinking {
+            return;
         }
+        self.thinking = true;
+        self.script.send(ToScript::Think { sample: std::mem::take(&mut self.due) });
+    }
+
+    /// Takes what the engine worked out, and tells of each that failed, by its key or a rule's
+    /// name, logging it the first time.
+    fn thought(&mut self, computed: Vec<(String, Option<Value>)>, judged: Vec<(String, bool)>, sampled: Vec<(String, Option<Value>)>, faults: Vec<(String, String)>) {
+        self.thinking = false;
+        for (key, why) in faults {
+            let rule = self.project.flat().rules.iter().find(|(_, r)| r.id == key).map(|(_, r)| r.name.clone());
+            let text = format!("{}: {why}", rule.unwrap_or(key));
+            if self.problems.ran(Level::Fault, text.clone(), None, None) {
+                warn!("{text}");
+            }
+        }
+        self.computed(computed);
+        self.sampled(sampled);
+        self.judged(judged);
     }
 
     /// Takes what the engine worked out as values, which go out as any value does.
@@ -1403,7 +1421,7 @@ impl App {
         }
     }
 
-    /// Asks the engine for each record that is due, and keeps when it is due next.
+    /// Takes each record that is due for the next ask, and keeps when it is due next.
     fn sample(&mut self) {
         let now = Instant::now();
         let mut due = Vec::new();
@@ -1416,8 +1434,10 @@ impl App {
                 due.push(r.name.clone());
             }
         }
-        if !due.is_empty() {
-            self.script.send(ToScript::Sample(due));
+        for name in due {
+            if !self.due.contains(&name) {
+                self.due.push(name);
+            }
         }
     }
 
@@ -1598,7 +1618,6 @@ impl App {
             self.turned.entry(r.id.clone()).or_insert_with(|| Turned { of: Some((r.when.clone(), r.code.clone())), ..Turned::default() });
         }
         self.fields_changed();
-        self.script.send(ToScript::Judge);
     }
 
     /// Notes when each condition turned true or false.
@@ -1694,8 +1713,7 @@ impl App {
                     self.send(session, &ServerMsg::Mode { mode });
                 }
             }
-            FromScript::Judged(truths) => self.judged(truths),
-            FromScript::Computed(list) => self.computed(list),
+            FromScript::Thought { computed, judged, sampled, faults } => self.thought(computed, judged, sampled, faults),
             FromScript::Tried { session, warning } => self.send(session, &ServerMsg::Notice { text: warning, level: Level::Warn }),
             FromScript::Inverted { session, name, target, value } => {
                 let done = value.and_then(|v| {
@@ -1708,7 +1726,6 @@ impl App {
                     _ => {}
                 }
             }
-            FromScript::Sampled(read) => self.sampled(read),
             FromScript::Done { run, end, value } => {
                 let text = match &end {
                     End::Ok => None,
@@ -1954,12 +1971,9 @@ impl App {
         let held: Vec<String> = std::mem::take(&mut self.changed).into_iter().collect();
         self.flush(&held);
         // the engine has the new values before it judges by them
-        if std::mem::take(&mut self.hurried) || !held.is_empty() {
-            self.rethink();
-        }
+        self.think();
         self.sent = held.into_iter().collect();
-        // a change runs the rules that wait on it, and a variable's asks the conditions anew,
-        // its value already with the engine
+        // a change runs the rules that wait on it
         let moved = std::mem::take(&mut self.moved);
         for (name, previous, value) in &moved {
             if !self.waits(name) {
@@ -1968,11 +1982,7 @@ impl App {
             let p = Value::map([("value", value.clone()), ("previous", previous.clone().unwrap_or_default())]);
             self.run_rules(|r| matches!(&r.when, When::Changes { name: n } if n == name), p);
         }
-        if moved.iter().any(|(name, _, _)| self.project.variable(name).is_some()) {
-            self.rethink();
-        }
         self.fire_turned();
-        self.sample();
         // each screen's round trip goes out as it is measured, the rest once a second
         self.publish_clients();
         self.publish_problems();
@@ -2009,7 +2019,6 @@ impl App {
     /// next, so a value that changes fast still goes once a tick.
     fn hurry(&mut self) {
         let due: Vec<String> = self.changed.extract_if(.., |alias| !self.sent.contains(alias)).collect();
-        self.hurried |= !due.is_empty();
         self.flush(&due);
     }
 

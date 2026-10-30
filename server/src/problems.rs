@@ -57,23 +57,25 @@ impl Problems {
         }
     }
 
-    /// Notes what a run on the system met, once more when it met it before. The run's end
-    /// already logged it.
-    pub fn ran(&mut self, level: Level, text: String, page: Option<String>, element: Option<String>) {
+    /// Notes what a run on the system met, once more when it met it before, and says whether it
+    /// is new. The run's end already logged it.
+    pub fn ran(&mut self, level: Level, text: String, page: Option<String>, element: Option<String>) -> bool {
         let p = Problem { source: Source::Run, level, text, detail: None, page, element, count: 1, at: now_ms() };
+        self.changed = true;
         match self.ran.iter_mut().find(|h| same(h, &p)) {
             Some(h) => {
                 h.count += 1;
                 h.at = p.at;
+                false
             }
             None => {
                 self.ran.push(p);
                 if self.ran.len() > KEPT {
                     self.ran.remove(0);
                 }
+                true
             }
         }
-        self.changed = true;
     }
 
     /// A screen went, and its problems with it.

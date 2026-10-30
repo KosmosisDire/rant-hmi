@@ -342,13 +342,13 @@ fn conditions_are_judged_and_an_unknown_one_is_false() {
     let c = |id: &str, condition: &str| Rule { id: id.into(), name: id.into(), when: When::Turns { condition: condition.into(), ms: 0 }, code: String::new() };
     let rules = vec![c("fast", "Speed > 0.5"), c("slow", "Speed <= 0.5"), c("running", "Running"), c("broken", "Speed >"), c("writes", "(Speed = 3) > 0")];
     script.send(ToScript::Objects(vec![line(Vec::new(), rules)]));
-    script.send(ToScript::Judge);
-    let FromScript::Judged(truths) = rx.blocking_recv().unwrap() else { panic!("no judgement") };
+    let (_, truths, faults) = think(&script, &mut rx);
     assert_eq!(truths, [("fast".to_string(), true), ("slow".to_string(), false), ("running".to_string(), false), ("writes".to_string(), false)]);
+    assert!(matches!(faults.as_slice(), [(id, why)] if id == "writes" && why.contains("only reads")), "{faults:?}");
+    // only those that read what changed are judged again
     script.send(ToScript::Values(vec![("Line.Speed".into(), Some(value!(0.2)))]));
-    script.send(ToScript::Judge);
-    let FromScript::Judged(truths) = rx.blocking_recv().unwrap() else { panic!("no judgement") };
-    assert_eq!(truths[0..2], [("fast".to_string(), false), ("slow".to_string(), true)]);
+    let (_, truths, _) = think(&script, &mut rx);
+    assert_eq!(truths, [("fast".to_string(), false), ("slow".to_string(), true)]);
 }
 
 #[test]
@@ -427,14 +427,21 @@ fn code_does_math_on_numbers_vectors_turns_and_poses() {
     assert_eq!(writes(&said), [("Line.count".to_string(), value!(12)), ("Line.Settings".to_string(), value!({ "mode": "x(1, 2)", "target": 1 }))]);
 
     script.send(ToScript::Objects(vec![line(vec![computed("reach", "(vec(Speed, 0, 0) * 3).length()", None)], Vec::new())]));
-    script.send(ToScript::Compute);
-    let got = next(&mut rx, |m| if let FromScript::Computed(list) = m { Some(list) } else { None });
+    let (got, _, _) = think(&script, &mut rx);
     assert_eq!(got, [("Line.reach".to_string(), Some(value!(3)))]);
 }
 
 fn computed(name: &str, get: &str, set: Option<(&str, &str)>) -> Computed {
     let set = set.map(|(target, value)| crate::project::Setter { target: target.into(), value: value.into() });
     Computed { name: name.into(), get: get.into(), set, unit: None, note: None }
+}
+
+/// Asks the engine to work out what is due, and gives the computed values, the conditions'
+/// truths and the faults it worked out.
+#[allow(clippy::type_complexity)]
+fn think(script: &Script, rx: &mut UnboundedReceiver<FromScript>) -> (Vec<(String, Option<Value>)>, Vec<(String, bool)>, Vec<(String, String)>) {
+    script.send(ToScript::Think { sample: Vec::new() });
+    next(rx, |m| if let FromScript::Thought { computed, judged, faults, .. } = m { Some((computed, judged, faults)) } else { None })
 }
 
 /// The next message of the kind `pick` takes, skipping the rest.
@@ -462,8 +469,7 @@ fn computed_values_are_worked_out_in_any_order_and_unknown_while_what_they_read_
         computed("percent", "Speed * 100", Some(("Speed", "v / 100"))),
         computed("on", "Running ? 1 : 0", None),
     ], Vec::new())]));
-    script.send(ToScript::Compute);
-    let got = next(&mut rx, |m| if let FromScript::Computed(list) = m { Some(list) } else { None });
+    let (got, _, _) = think(&script, &mut rx);
     assert_eq!(got, [("Line.half".to_string(), Some(value!(50))), ("Line.percent".to_string(), Some(value!(100))), ("Line.on".to_string(), None)]);
 
     // handlers read them as any value, and a write goes back through the setter
@@ -473,6 +479,41 @@ fn computed_values_are_worked_out_in_any_order_and_unknown_while_what_they_read_
     script.send(ToScript::Invert { session: Some(7), name: "Line.percent".into(), v: value!(250) });
     let (target, value) = next(&mut rx, |m| if let FromScript::Inverted { target, value, .. } = m { Some((target, value)) } else { None });
     assert_eq!((target.as_str(), value), ("Line.Speed", Ok(value!(2.5))));
+}
+
+#[test]
+fn a_computed_value_is_worked_out_again_only_once_what_it_read_changed_or_while_it_reads_the_clock() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Objects(vec![line(vec![
+        computed("percent", "Speed * 100", None),
+        computed("aim", "Target + 1", None),
+        computed("blink", "Number.isInteger(time.now) ? Speed : 0", None),
+    ], Vec::new())]));
+    let names = |list: Vec<(String, Option<Value>)>| list.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+    assert_eq!(names(think(&script, &mut rx).0), ["Line.percent", "Line.aim", "Line.blink"]);
+    assert_eq!(names(think(&script, &mut rx).0), ["Line.blink"], "only what reads the clock goes again");
+    script.send(ToScript::Values(vec![("Line.Target".into(), Some(value!(4)))]));
+    let (got, _, _) = think(&script, &mut rx);
+    assert_eq!(got, [("Line.aim".to_string(), Some(value!(5))), ("Line.blink".to_string(), Some(value!(1)))]);
+    // the loop sends a computed value back as it took it, which changes nothing
+    script.send(ToScript::Values(vec![("Line.percent".into(), Some(value!(100)))]));
+    assert_eq!(names(think(&script, &mut rx).0), ["Line.blink"]);
+}
+
+#[test]
+fn a_computed_value_that_fails_or_runs_too_long_says_why() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Objects(vec![line(vec![
+        computed("broken", "Speed.nope.deeper", None),
+        computed("slow", "(() => { const t = Date.now(); while (Date.now() - t < 1000); return 1; })()", None),
+        computed("unknown", "Running", None),
+    ], Vec::new())]));
+    let (got, _, faults) = think(&script, &mut rx);
+    assert!(got.iter().all(|(_, v)| v.is_none()), "{got:?}");
+    let why = |key: &str| faults.iter().find(|(k, _)| k == key).map(|(_, w)| w.clone()).unwrap_or_default();
+    assert!(why("Line.broken").contains("deeper"), "{faults:?}");
+    assert!(why("Line.slow").contains("without waiting, so it was stopped"), "{faults:?}");
+    assert_eq!(faults.len(), 2, "reading an unknown value is no fault: {faults:?}");
 }
 
 #[test]
@@ -488,8 +529,7 @@ fn an_imports_own_objects_and_lists_are_values_whole_filtered_or_picked() {
         computed("jog", "Jog", None),
         computed("after", "Speed + 1", None),
     ], Vec::new())]));
-    script.send(ToScript::Compute);
-    let got = next(&mut rx, |m| if let FromScript::Computed(list) = m { Some(list) } else { None });
+    let (got, _, _) = think(&script, &mut rx);
     let want = [
         ("all", Some(groups)),
         ("on", Some(value!([{ "name": "a", "on": true }]))),
@@ -517,9 +557,9 @@ fn an_imports_own_objects_and_lists_are_values_whole_filtered_or_picked() {
 fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
     let (script, mut rx) = engine();
     script.send(ToScript::Objects(vec![line(vec![computed("sneaky", "(Speed = 5, 1)", None), computed("plain", "Speed + 1", None)], Vec::new())]));
-    script.send(ToScript::Compute);
-    let got = next(&mut rx, |m| if let FromScript::Computed(list) = m { Some(list) } else { None });
+    let (got, _, faults) = think(&script, &mut rx);
     assert_eq!(got, [("Line.sneaky".to_string(), None), ("Line.plain".to_string(), Some(value!(2)))]);
+    assert!(matches!(faults.as_slice(), [(key, why)] if key == "Line.sneaky" && why.contains("only reads")), "{faults:?}");
     script.send(ToScript::Run { run: 1, session: Some(7), code: "plain = 3;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert!(matches!(end(&said), End::Fault(text) if text.contains("no setter")));
@@ -529,7 +569,7 @@ fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
 fn a_setter_that_does_not_undo_its_getter_is_caught_on_a_try() {
     let (script, mut rx) = engine();
     script.send(ToScript::Objects(vec![line(vec![computed("good", "Speed * 100", Some(("Speed", "v / 100"))), computed("bad", "Speed * 100", Some(("Speed", "v * 4")))], Vec::new())]));
-    script.send(ToScript::Compute);
+    script.send(ToScript::Think { sample: Vec::new() });
     // a good one says nothing, so the first warning is the bad one's
     script.send(ToScript::Try { session: 7, name: "Line.good".into() });
     script.send(ToScript::Try { session: 7, name: "Line.bad".into() });
