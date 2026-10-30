@@ -156,8 +156,11 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
         key,
         "a number, or a list of numbers one per point",
         (v) => {
-          const [ref, list] = [refOf(v), numberList(v)];
-          return ref ? { follow: ref } : list ? Float32Array.from(list) : typeof v === "number" && Number.isFinite(v) ? v : undefined;
+          // a list the worker keeps is never read here
+          const ref = refOf(v);
+          if (ref) return { follow: ref };
+          const list = numberList(v);
+          return list ? Float32Array.from(list) : typeof v === "number" && Number.isFinite(v) ? v : undefined;
         },
         true,
       ),
