@@ -1,11 +1,11 @@
 #!/bin/sh
 # Packs the release build as the archive rant install unpacks: package.rant, the group, bin/
 # with the backend, and client/ with the built editor it serves.
-# Usage: ci/archive.sh <platform>, such as linux-x64. Writes out/rant-hmi-<version>-<platform>.tar.gz
+# Usage: ci/archive.sh <platform>, such as linux-x64. Writes out/hmi-<version>-<platform>.tar.gz
 set -e
 platform=$1
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' server/Cargo.toml | head -1)
-name="rant-hmi-$version-$platform"
+name="hmi-$version-$platform"
 # where cargo built, under the target CARGO_BUILD_TARGET names when it names one
 built=target/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}release
 rm -rf pkg && mkdir -p pkg/bin out
