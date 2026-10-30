@@ -1,6 +1,9 @@
 // What a canvas and a scene share: drawing at most once a frame, at the pixels they cover on
 // the screen, and what a drawing found that the element shows.
 
+import { createSignal, untrack } from "solid-js";
+import type { Listed } from "../net/draw";
+
 /** What an element's own drawing found last: faults to show in the editor, whether a value it
  *  reads is not known yet, and warnings, as for code that ran slow or a model read only in part. */
 export interface Drawn {
@@ -10,6 +13,20 @@ export interface Drawn {
 }
 
 export const CLEAN: Drawn = { faults: [], unknown: false, warnings: [] };
+
+/** The robots each model part's file holds, by the part's element, for the editor to list. */
+const [robots, setRobots] = createSignal(new Map<string, Listed[]>(), { equals: false });
+export { robots };
+
+/** Says which robots element `id`'s model holds, none once it holds none or is gone. */
+export function holds(id: string, list: Listed[] | undefined) {
+  if (untrack(robots).get(id) === list) return;
+  setRobots((m) => {
+    if (list?.length) m.set(id, list);
+    else m.delete(id);
+    return m;
+  });
+}
 
 /** A function that runs `draw` soon after it is called, at most once a frame: in the frame the
  *  call came in when that frame has not drawn yet, else in the next. */

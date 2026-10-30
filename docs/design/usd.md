@@ -40,6 +40,9 @@ The user's:
 - Testing on many robots, from Isaac's library, Hugging Face and others.
 - glTF stays for models that do not move, as a hall or a cell's frame. It has no joints, only
   nodes, so its `joints` and `names` went: a robot is USD.
+- A file of several robots, as a cell or a warehouse, stays one model. `joints` and `names`
+  take each robot's under its name, and a file of one robot keeps the plain form. A robot that
+  drives around a hall would need a part of its own, which this leaves for later.
 
 Claude's:
 
@@ -57,6 +60,12 @@ Claude's:
   robots' frames agree with their links at rest.
 - **The tree**: joints between two bodies come before ones to the world, and a loop's own
   joints last, so each link takes one parent.
+- **Robots**: joints joined through their links are one robot. It is placed at the
+  PhysicsArticulationRootAPI on it, which Isaac puts on a robot's prim, its first link or its
+  root joint, else at its links' common prim. It is named by the nearest prim there that is no
+  link or joint, as `Nova_Carter_ROS_1`, or by that prim's path when two share a name. Joint
+  names repeat across robots and inside one, as a dolly's four `revolute_joint`, so a list of
+  positions maps by place, never by name.
 - **Files**: only files inside the project's `files` folder are read, by a resolver that finds
   nothing outside it. A layer or texture outside it, or missing, is left out as a problem.
 - **Problems are warnings** on the model, which shows the rest. A model with problems is made

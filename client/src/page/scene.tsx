@@ -14,7 +14,7 @@ import { short } from "../state/format";
 import { readFar, readWhole } from "../state/store";
 import { onResize } from "../ui/size";
 import { kind } from "../lang/math.js";
-import { CLEAN, type Drawn, oncePerFrame, pixelsOf } from "./drawing";
+import { CLEAN, type Drawn, holds, oncePerFrame, pixelsOf } from "./drawing";
 import { slowOf, timer } from "./slow";
 import { CAMERA, isPart, type Part, PARTS, POSE, rgbaOf } from "./parts";
 import { Repeated } from "./repeat";
@@ -35,7 +35,7 @@ interface Read {
   pose(key: string): Pose | undefined;
   text(key: string): string | undefined;
   joints(key: string): Shown["joints"];
-  names(key: string): string[] | undefined;
+  names(key: string): Shown["names"];
   readonly drawn: Drawn;
 }
 
@@ -90,6 +90,43 @@ function numberList(v: unknown): ArrayLike<number> | undefined {
   const packed = numbers(v);
   if (packed) return packed;
   return v.every((n) => typeof n === "number" && Number.isFinite(n)) ? (v as number[]) : undefined;
+}
+
+/** Positions from a list or a JointState's, copied, as the page's change check passes over
+ *  typed arrays. */
+const positionsOf = (v: unknown) => {
+  const list = numberList(Array.isArray(v) ? v : (v as { position?: unknown } | null)?.position);
+  return list && Array.from(list);
+};
+
+/** Joint names each with a number. */
+function byName(v: unknown): Record<string, number> | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const out: Record<string, number> = {};
+  for (const [name, j] of Object.entries(v)) {
+    if (typeof j !== "number" || !Number.isFinite(j)) return undefined;
+    out[name] = j;
+  }
+  return out;
+}
+
+/** Names from a list or a JointNames. */
+function nameList(v: unknown): string[] | undefined {
+  const list = Array.isArray(v) ? v : (v as { name?: unknown } | null)?.name;
+  return Array.isArray(list) && list.every((n) => typeof n === "string") ? [...list] : undefined;
+}
+
+/** What `read` takes, or the same under each robot's name. */
+function byRobot<T>(v: unknown, read: (v: unknown) => T | undefined): T | Record<string, T> | undefined {
+  const one = read(v);
+  if (one !== undefined || typeof v !== "object" || v === null || Array.isArray(v)) return one;
+  const out: Record<string, T> = {};
+  for (const [robot, each] of Object.entries(v)) {
+    const got = read(each);
+    if (got === undefined) return undefined;
+    out[robot] = got;
+  }
+  return out;
 }
 
 /** Points' code, which may give a list the data worker keeps as it is. Anything else counts the
@@ -166,24 +203,21 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
       ),
     pose: (key) => as(key, "a pose, a position and an orientation each optional", poseOf),
     text: (key) => as(key, "text", (v) => (typeof v === "string" ? v : undefined)),
+    // a number under a name is a joint's, anything else a robot's
     joints: (key) =>
-      as(key, "joint names each with a number, or a JointState", (v) => {
-        // a JointState's positions, as the page's change check passes over typed arrays
-        const listed = numberList(Array.isArray(v) ? v : (v as { position?: unknown } | null)?.position);
-        if (listed) return Array.from(listed);
+      as(key, "joint names each with a number, or a JointState, or these by robot name", (v) => {
+        const listed = positionsOf(v);
+        if (listed) return listed;
         if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
-        const joints: Record<string, number> = {};
+        const joints: NonNullable<Shown["joints"]> = {};
         for (const [name, j] of Object.entries(v)) {
-          if (typeof j !== "number" || !Number.isFinite(j)) return undefined;
-          joints[name] = j;
+          const got = typeof j === "number" ? (Number.isFinite(j) ? j : undefined) : (positionsOf(j) ?? byName(j));
+          if (got === undefined) return undefined;
+          joints[name] = got;
         }
         return joints;
       }),
-    names: (key) =>
-      as(key, "a list of names or a JointNames", (v) => {
-        const list = Array.isArray(v) ? v : (v as { name?: unknown } | null)?.name;
-        return Array.isArray(list) && list.every((n) => typeof n === "string") ? [...list] : undefined;
-      }),
+    names: (key) => as(key, "a list of names or a JointNames, or these by robot name", (v) => byRobot(v, nameList)),
     get drawn() {
       return { faults, unknown, warnings: slowOf(slow) };
     },
@@ -291,6 +325,9 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
     drawing({ to: "show", part: id, shown }, laid.map((v) => v.buffer as ArrayBuffer));
     p.view.told();
   });
+  // the editor lists the robots a model holds
+  createEffect(() => holds(p.element.id, theirs().robots));
+  onCleanup(() => holds(p.element.id, undefined));
   createEffect(() => {
     const name = p.element.props.name ?? tag;
     const d = mine();

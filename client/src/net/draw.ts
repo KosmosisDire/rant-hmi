@@ -62,9 +62,10 @@ export interface Shown {
   points?: Float32Array | { follow: string };
   step?: number;
   src?: string;
-  /** A USD robot's values by joint name, or a JointState's positions in the order `names` gives. */
-  joints?: Record<string, number> | number[];
-  names?: string[];
+  /** A USD robot's values by joint name, or a JointState's positions in the order `names` gives,
+   *  each under its robot's name in a model of several robots. */
+  joints?: number[] | Record<string, number | number[] | Record<string, number>>;
+  names?: string[] | Record<string, string[]>;
 }
 
 /** Where a scene's camera orbits to, as `CAMERA` says. */
@@ -85,10 +86,18 @@ export type Drawing =
   | { to: "drop"; part: number }
   | { to: "end"; scene: number };
 
-/** What showing a part found: faults, and warnings for what it shows only in part. */
+/** What showing a part found: faults, warnings for what it shows only in part, and the robots
+ *  a model holds. */
 export interface Found {
   faults: string[];
   warnings: string[];
+  robots?: Listed[];
+}
+
+/** A robot a model holds, and its moving joints in the order a list of positions takes. */
+export interface Listed {
+  name: string;
+  joints: string[];
 }
 
 /** What the scenes tell the page: what a part found here, or a scene that has no WebGL. */
@@ -255,20 +264,65 @@ async function made(url: string) {
   return new GLTFLoader().parseAsync(await got.arrayBuffer(), "");
 }
 
-/** A USD robot's values by joint name: a list of positions in the order `names` gives, else in
- *  the order the robot lists its moving joints. */
-function named(model: Object3D, s: Shown, faults: string[]): Record<string, number> {
-  const list = s.joints;
-  if (!Array.isArray(list)) return list ?? {};
-  const given = !!s.names?.length;
-  const names: string[] = given ? s.names! : (model.userData.names ?? []);
-  if (names.length === 0) {
-    faults.push("joints: a list of positions needs names, as this model lists none");
-    return {};
+/** A robot in a USD model, and its moving joints by their place in the model's list. */
+interface Robot {
+  name: string;
+  path: string;
+  moving: number[];
+}
+
+/** The robots a USD model holds, for the editor to list. */
+const listedOf = (model: Object3D): Listed[] => (model.userData.robots as Robot[]).map((r) => ({ name: r.name, joints: r.moving.map((j) => (model.userData.joints as Joint[])[j].name) }));
+
+const count = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
+
+/** A USD model's joint values by their place in its list, from joints by name, or a list of
+ *  positions in the order `names` gives, else in the order the robot lists its moving joints.
+ *  In a model of several robots, each robot's are under its name. */
+function valuesOf(model: Object3D, s: Shown, faults: string[]): Map<number, number> {
+  const joints: Joint[] = model.userData.joints;
+  const robots: Robot[] = model.userData.robots;
+  const values = new Map<number, number>();
+  const given = s.joints ?? {};
+  const many = robots.length > 1;
+  const whose = (r: number) => (many ? robots[r].name : "the model");
+  const named = (r: number, name: string, value: number) => {
+    const at = joints.flatMap((j, i) => (j.robot === r && j.name === name ? [i] : []));
+    if (at.length === 0) faults.push(`joints: ${whose(r)} has no joint ${name}`);
+    else if (at.length > 1) faults.push(`joints: ${whose(r)} has ${at.length} joints named ${name}, so give its positions as a list`);
+    else if (joints[at[0]].kind === "fixed") faults.push(`joints: ${name} is fixed`);
+    else values.set(at[0], value);
+  };
+  const names = s.names ?? [];
+  if (Array.isArray(names) && names.length > 0 && many) faults.push(`names: a list of names needs its robot's name, as the model has ${robots.length} robots`);
+  if (!Array.isArray(names)) for (const key of Object.keys(names)) if (!robots.some((r) => r.name === key)) faults.push(`names: the model has no robot ${key}`);
+  const listed = (r: number, list: number[]) => {
+    const order = Array.isArray(names) ? (many ? [] : names) : (names[robots[r].name] ?? []);
+    const say = many ? `${robots[r].name}: ` : "";
+    const n = order.length || robots[r].moving.length;
+    if (n !== list.length) faults.push(`joints: ${say}${count(list.length, "position")} for ${count(n, order.length ? "name" : "moving joint")}`);
+    if (order.length) order.slice(0, list.length).forEach((name, i) => named(r, name, list[i]));
+    else robots[r].moving.slice(0, list.length).forEach((j, i) => values.set(j, list[i]));
+  };
+  const empty = Array.isArray(given) ? given.length === 0 : Object.keys(given).length === 0;
+  if (robots.length === 0) {
+    if (!empty) faults.push("joints: the model has no joints");
+  } else if (Array.isArray(given)) {
+    if (many) faults.push(`joints: a list of positions needs its robot's name, as the model has ${robots.length} robots`);
+    else listed(0, given);
+  } else {
+    for (const [key, v] of Object.entries(given)) {
+      const r = robots.findIndex((x) => x.name === key);
+      if (typeof v === "number") {
+        if (!many) named(0, key, v);
+        else if (r >= 0) faults.push(`joints: ${key} is a robot, which takes joint names each with a number, or a JointState`);
+        else faults.push(`joints: ${key} needs its robot's name, as the model has ${robots.length} robots`);
+      } else if (r < 0) faults.push(`joints: the model has no robot ${key}`);
+      else if (Array.isArray(v)) listed(r, v);
+      else for (const [name, value] of Object.entries(v)) named(r, name, value);
+    }
   }
-  const many = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
-  if (names.length !== list.length) faults.push(`joints: ${many(list.length, "position")} for ${many(names.length, given ? "name" : "moving joint")}`);
-  return Object.fromEntries(names.slice(0, list.length).map((name, i) => [name, list[i]]));
+  return values;
 }
 
 /** A USD robot's joint as the HMI lists it in its model, parents first. */
@@ -281,32 +335,29 @@ interface Joint {
   axis: [number, number, number];
   /** Where the joint is in the parent and in the child. */
   frames: { translation: [number, number, number]; rotation: [number, number, number, number] }[];
+  /** The robot it is in, by its place in the model's list. */
+  robot: number;
 }
 
 const ONE = new Vector3(1, 1, 1);
 const frameOf = (f: Joint["frames"][number]) => new Matrix4().compose(new Vector3(...f.translation), new Quaternion(...f.rotation), ONE);
 
-/** Moves a USD robot's links by its joints, each child from its parent: a turning joint by an
- *  angle in radians about its axis, a sliding one by metres along it. A joint given no value, or
- *  a fixed one, keeps its child where the file puts it from its parent. */
-function move(model: Object3D, joints: Record<string, number>, faults: string[]) {
+/** Moves a USD robot's links by the values of its joints, by their place in its list, each child
+ *  from its parent: a turning joint by an angle in radians about its axis, a sliding one by metres
+ *  along it. A joint given no value, or a fixed one, keeps its child where the file puts it from
+ *  its parent. */
+function move(model: Object3D, values: Map<number, number>) {
   const list: Joint[] = model.userData.joints;
   const links: Map<string, { node: Object3D; rest: Matrix4 }> = (model.userData.links ??= new Map());
   if (links.size === 0) model.traverse((o) => o.userData.link && links.set(o.userData.link, { node: o, rest: o.matrix.clone() }));
-  const kinds = new Map(list.map((j) => [j.name, j.kind]));
-  for (const name of Object.keys(joints)) {
-    const kind = kinds.get(name);
-    if (!kind) faults.push(`joints: the model has no joint ${name}`);
-    else if (kind === "fixed") faults.push(`joints: ${name} is fixed`);
-  }
   const unit: number = model.userData.metersPerUnit ?? 1;
   const world = new Map<string, Matrix4>();
-  for (const j of list) {
+  for (const [i, j] of list.entries()) {
     const child = links.get(j.child);
     const parent = j.parent === null ? null : links.get(j.parent);
     if (!child || parent === undefined) continue;
     const at = parent ? (world.get(j.parent!) ?? parent.rest).clone() : new Matrix4();
-    const value = joints[j.name];
+    const value = values.get(i);
     if (value === undefined || j.kind === "fixed") {
       if (parent) at.multiply(parent.rest.clone().invert());
       at.multiply(child.rest);
@@ -523,9 +574,12 @@ const KINDS: Record<Part, Kind> = {
       }
       const model = o.children[0];
       if (!got || !model) return;
-      if (got.robot) found.warnings.push(...(model.userData.problems as string[]).map((p) => `src: ${p}`));
+      if (got.robot) {
+        found.warnings.push(...(model.userData.problems as string[]).map((p) => `src: ${p}`));
+        found.robots = listedOf(model);
+      }
       if (s.joints === undefined) return;
-      if (got.robot) move(model, named(model, s, found.faults), found.faults);
+      if (got.robot) move(model, valuesOf(model, s, found.faults));
       else if (Object.keys(s.joints).length > 0) found.faults.push(`joints: ${s.src} is glTF, which has no joints`);
     },
   },

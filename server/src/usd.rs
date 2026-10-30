@@ -126,6 +126,8 @@ struct Robot<'s> {
     /// Prims a joint moves or that are rigid bodies, which become nodes under the root.
     bodies: HashSet<String>,
     joints: Vec<Joint>,
+    /// The prims PhysicsArticulationRootAPI marks, each a robot's.
+    roots: Vec<String>,
     /// The link nodes by prim path, each with its world transform at rest.
     links: HashMap<String, (usize, gf::Matrix4d)>,
     nodes: Vec<Value>,
@@ -144,6 +146,7 @@ struct Robot<'s> {
 /// A joint as the file says, with `parent` the world when it names no body.
 struct Joint {
     name: String,
+    path: String,
     kind: &'static str,
     parent: Option<String>,
     child: String,
@@ -189,6 +192,7 @@ impl<'s> Robot<'s> {
             xforms: XformCache::new(None),
             bodies: HashSet::new(),
             joints: Vec::new(),
+            roots: Vec::new(),
             links: HashMap::new(),
             nodes: vec![Value::Null],
             top: Vec::new(),
@@ -206,10 +210,14 @@ impl<'s> Robot<'s> {
         Ok(robot)
     }
 
-    /// Gathers the joints and the bodies they join, before the walk that makes nodes.
+    /// Gathers the joints, the bodies they join and the robots' roots, before the walk that makes
+    /// nodes.
     fn find_joints(&mut self, prim: &usd::Prim) {
         for prim in children(prim) {
             let kind = type_name(&prim);
+            if prim.has_api_schema("PhysicsArticulationRootAPI").unwrap_or(false) {
+                self.roots.push(prim.path().as_str().to_string());
+            }
             if kind.starts_with("Physics") && kind.ends_with("Joint") {
                 if let Some(joint) = self.joint(&prim, &kind) {
                     self.joints.push(joint);
@@ -239,7 +247,8 @@ impl<'s> Robot<'s> {
             _ => "fixed",
         };
         let closes_loop = prim.attribute("physics:excludeFromArticulation").get::<bool>().ok().flatten().unwrap_or(false);
-        let name = prim.path().name().unwrap_or_default().to_string();
+        let name = name_of(prim);
+        let path = prim.path().as_str().to_string();
         let (parent, child, frames, axis) = match (body("physics:body0"), body("physics:body1")) {
             (parent, Some(child)) => (parent, child, [frame('0'), frame('1')], axis),
             // a joint to the world named from the body's side, as Franka's root joint is
@@ -248,7 +257,7 @@ impl<'s> Robot<'s> {
         };
         self.bodies.extend(parent.iter().cloned());
         self.bodies.insert(child.clone());
-        Some(Joint { name, kind, parent, child, axis, frames, closes_loop })
+        Some(Joint { name, path, kind, parent, child, axis, frames, closes_loop })
     }
 
     /// Makes nodes for the prim and what is under it. `link` is the link node it moves with.
@@ -585,9 +594,10 @@ impl<'s> Robot<'s> {
         Some(index)
     }
 
-    /// The joints the screen moves in the order Isaac Sim lists them: breadth first from the
-    /// root, siblings in the file's order. A joint state without names follows the movable ones.
-    fn joint_list(&mut self) -> (Vec<Value>, Vec<String>) {
+    /// The joints the screen moves in the order Isaac Sim lists them, breadth first from the
+    /// root, siblings in the file's order, and the robots they make. A list of positions without
+    /// names follows a robot's moving joints.
+    fn joint_list(&mut self, fallback: &str) -> (Vec<Value>, Vec<Value>) {
         let mut taken: HashSet<&str> = HashSet::new();
         let mut kept: Vec<(usize, &Joint)> = Vec::new();
         // a joint between two bodies first, so a tool frame fixed to the world, as UR's ee_joint
@@ -620,11 +630,12 @@ impl<'s> Robot<'s> {
                 queue.push_back(Some(&joint.child));
             }
         }
-        let names = sorted.iter().filter(|j| j.kind != "fixed").map(|j| j.name.clone()).collect();
+        let (robots, of) = self.robots(&sorted, fallback);
         let frame = |(at, turn): &(gf::Vec3f, gf::Quatf)| json!({ "translation": [at.x, at.y, at.z], "rotation": [turn.x, turn.y, turn.z, turn.w] });
         let joints = sorted
             .iter()
-            .map(|j| {
+            .zip(of)
+            .map(|(j, robot)| {
                 json!({
                     "name": j.name,
                     "kind": j.kind,
@@ -632,10 +643,75 @@ impl<'s> Robot<'s> {
                     "child": j.child,
                     "axis": j.axis,
                     "frames": [frame(&j.frames[0]), frame(&j.frames[1])],
+                    "robot": robot,
                 })
             })
             .collect();
-        (joints, names)
+        (joints, robots)
+    }
+
+    /// The robots the joints make, and the robot each joint is in. Joints joined through their
+    /// links are one robot, placed at the articulation root on them or over them, else at the
+    /// links' common prim. It is named by the nearest prim there that is neither a link nor a
+    /// joint, or by that prim's path when two share a name.
+    fn robots(&self, sorted: &[&Joint], fallback: &str) -> (Vec<Value>, Vec<usize>) {
+        let mut up: HashMap<&str, &str> = HashMap::new();
+        for joint in sorted {
+            if let Some(parent) = &joint.parent {
+                let (a, b) = (end(&up, parent), end(&up, &joint.child));
+                if a != b {
+                    up.insert(a, b);
+                }
+            }
+        }
+        let group: Vec<&str> = sorted.iter().map(|j| end(&up, &j.child)).collect();
+        let joints: HashSet<&str> = self.joints.iter().map(|j| j.path.as_str()).collect();
+        let mut places: Vec<String> = Vec::new();
+        let mut placed: HashMap<&str, usize> = HashMap::new();
+        let mut of = Vec::new();
+        for &g in &group {
+            if let Some(&robot) = placed.get(g) {
+                of.push(robot);
+                continue;
+            }
+            let members: Vec<&Joint> = sorted.iter().zip(&group).filter(|(_, h)| **h == g).map(|(j, _)| *j).collect();
+            let links: Vec<&str> = members.iter().flat_map(|j| j.parent.as_deref().into_iter().chain([j.child.as_str()])).collect();
+            // a root on a joint, as Isaac's root_joint, places the robot at the joint's link
+            let on = self.roots.iter().find_map(|r| match links.contains(&r.as_str()) {
+                true => Some(r.clone()),
+                false => members.iter().find(|j| j.path == *r).map(|j| j.child.clone()),
+            });
+            let over = || self.roots.iter().filter(|r| links.iter().any(|l| l.starts_with(&format!("{r}/")))).max_by_key(|r| r.len()).cloned();
+            let place = on.or_else(over).unwrap_or_else(|| common(&links));
+            let mut at = place.as_str();
+            while self.bodies.contains(at) || joints.contains(at) {
+                at = at.rsplit_once('/').map_or("", |(p, _)| p);
+            }
+            let robot = match places.iter().position(|p| p == at) {
+                Some(robot) => robot,
+                None => {
+                    places.push(at.to_string());
+                    places.len() - 1
+                }
+            };
+            placed.insert(g, robot);
+            of.push(robot);
+        }
+        let names: Vec<&str> = places.iter().map(|p| p.rsplit_once('/').map_or(fallback, |(_, n)| n)).collect();
+        let robots = places
+            .iter()
+            .enumerate()
+            .map(|(robot, path)| {
+                let path = if path.is_empty() { "/" } else { path.as_str() };
+                let name = match names.iter().filter(|n| **n == names[robot]).count() {
+                    1 => names[robot],
+                    _ => path,
+                };
+                let moving: Vec<usize> = sorted.iter().enumerate().filter(|&(i, j)| of[i] == robot && j.kind != "fixed").map(|(i, _)| i).collect();
+                json!({ "name": name, "path": path, "moving": moving })
+            })
+            .collect();
+        (robots, of)
     }
 
     /// The model, and whether it holds the whole robot with no problems.
@@ -656,9 +732,10 @@ impl<'s> Robot<'s> {
             Some(v) => floats(&v).first().map_or(0.01, |&u| u as f64),
             None => 0.01,
         };
-        let (joints, names) = self.joint_list();
+        let name = file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let (joints, robots) = self.joint_list(&name);
         let mut root = json!({
-            "name": file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+            "name": name,
             "scale": [unit, unit, unit],
             "children": self.top,
         });
@@ -675,7 +752,7 @@ impl<'s> Robot<'s> {
         let mut doc = json!({
             "asset": { "version": "2.0", "generator": "rant-hmi" },
             "scene": 0,
-            "scenes": [{ "nodes": [0], "extras": { "joints": joints, "names": names, "metersPerUnit": unit, "problems": problems } }],
+            "scenes": [{ "nodes": [0], "extras": { "joints": joints, "robots": robots, "metersPerUnit": unit, "problems": problems } }],
             "nodes": self.nodes,
             "meshes": self.mesh_list,
             "materials": self.material_list,
@@ -686,6 +763,24 @@ impl<'s> Robot<'s> {
         }
         Ok((self.glb.finish(doc), whole))
     }
+}
+
+/// Where a link's group ends, following `up` from it.
+fn end<'a>(up: &HashMap<&'a str, &'a str>, mut at: &'a str) -> &'a str {
+    while let Some(&next) = up.get(at) {
+        at = next;
+    }
+    at
+}
+
+/// The prim that holds all of `paths`, or "" for the stage's root.
+fn common(paths: &[&str]) -> String {
+    let mut parts: Vec<&str> = paths.first().map_or(Vec::new(), |p| p.split('/').collect());
+    for path in paths {
+        let same = parts.iter().zip(path.split('/')).take_while(|(a, b)| **a == *b).count();
+        parts.truncate(same);
+    }
+    parts.join("/")
 }
 
 /// A primvar's values, and which of them each face corner takes.
@@ -1341,7 +1436,8 @@ over "arm"
         assert_eq!(joints[1]["axis"], json!([0.0, 0.0, 1.0]));
         assert_eq!(joints[1]["frames"][0]["translation"], json!([0.0, 0.0, 1.0]));
         assert_eq!(joints[1]["frames"][1]["rotation"][3], json!(0.7071068f32));
-        assert_eq!(scene["names"], json!(["joint1"]));
+        assert_eq!(scene["robots"], json!([{ "name": "arm", "path": "/arm", "moving": [1] }]));
+        assert_eq!((&joints[0]["robot"], &joints[1]["robot"]), (&json!(0), &json!(0)));
         assert_eq!(scene["problems"], json!([]));
         let read: HashSet<String> = made.read.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
         assert_eq!(read, ["arm.usda", "arm_base.usda", "arm_physics.usda", "check.png"].map(String::from).into());
@@ -1372,6 +1468,57 @@ def Cube "box"
         assert!(problems.contains("@robot.usda@</nothing>"), "{problems}");
         let real = fs::canonicalize(&inside).unwrap();
         assert!(made.read.iter().all(|p| p.starts_with(&real)), "{:?}", made.read);
+    }
+
+    /// Robots marked as Isaac's scenes mark them: the root on a robot's prim, on its first link,
+    /// on its root joint, or nowhere.
+    #[test]
+    fn robots_in_a_scene() {
+        let dir = scratch("robots");
+        let joint = |name: &str, kind: &str, from: &str, to: &str| {
+            let from = if from.is_empty() { String::new() } else { format!("rel physics:body0 = <{from}>") };
+            format!("def Physics{kind}Joint \"{name}\" {{ {from}\n rel physics:body1 = <{to}> }}")
+        };
+        let body = |name: &str, root: bool| {
+            let root = if root { ", \"PhysicsArticulationRootAPI\"" } else { "" };
+            format!("def Cube \"{name}\" (prepend apiSchemas = [\"PhysicsRigidBodyAPI\"{root}]) {{ }}")
+        };
+        let text = format!(
+            "#usda 1.0\ndef Xform \"World\" {{\n\
+             def Xform \"cart\" (prepend apiSchemas = [\"PhysicsArticulationRootAPI\"]) {{ {} {} {} }}\n\
+             def Xform \"left\" {{ def Xform \"arm\" {{ {} {} {} }} }}\n\
+             def Xform \"right\" {{ def Xform \"arm\" {{ {} {} def Scope \"joints\" {{ {} {} }} }} }}\n\
+             def Xform \"door\" {{ {} {} {} }}\n}}\n",
+            body("body", false),
+            body("wheel", false),
+            joint("spin", "Revolute", "/World/cart/body", "/World/cart/wheel"),
+            body("base", true),
+            body("link", false),
+            joint("spin", "Revolute", "/World/left/arm/base", "/World/left/arm/link"),
+            body("base", false),
+            body("link", false),
+            joint("root_joint", "Fixed", "", "/World/right/arm/base").replace("Joint \"root_joint\"", "Joint \"root_joint\" (prepend apiSchemas = [\"PhysicsArticulationRootAPI\"])"),
+            joint("spin", "Prismatic", "/World/right/arm/base", "/World/right/arm/link"),
+            body("frame", false),
+            body("leaf", false),
+            joint("hinge", "Revolute", "/World/door/frame", "/World/door/leaf"),
+        );
+        write(&dir, "scene.usda", &text);
+        let doc = json_of(&make(&dir.join("scene.usda"), &dir).unwrap().glb);
+        let scene = &doc["scenes"][0]["extras"];
+        let joints: Vec<(&str, u64)> = scene["joints"].as_array().unwrap().iter().map(|j| (j["name"].as_str().unwrap(), j["robot"].as_u64().unwrap())).collect();
+        assert_eq!(joints, [("root_joint", 0), ("spin", 1), ("spin", 2), ("hinge", 3), ("spin", 0)]);
+        let robots: Vec<(&str, &str, &Value)> = scene["robots"].as_array().unwrap().iter().map(|r| (r["name"].as_str().unwrap(), r["path"].as_str().unwrap(), &r["moving"])).collect();
+        // two robots called arm go by their paths
+        assert_eq!(
+            robots,
+            [
+                ("/World/right/arm", "/World/right/arm", &json!([4])),
+                ("cart", "/World/cart", &json!([1])),
+                ("/World/left/arm", "/World/left/arm", &json!([2])),
+                ("door", "/World/door", &json!([3])),
+            ]
+        );
     }
 
     #[test]
@@ -1444,7 +1591,10 @@ def Cylinder "rod"
                 doc["images"].as_array().map_or(0, Vec::len),
                 made.read.len()
             );
-            println!("  unit {} names {}", scene["metersPerUnit"], scene["names"]);
+            println!("  unit {}", scene["metersPerUnit"]);
+            for r in scene["robots"].as_array().unwrap() {
+                println!("  robot {} at {} moving {}", r["name"], r["path"], r["moving"]);
+            }
             for j in scene["joints"].as_array().unwrap() {
                 println!("  joint {} {} {} -> {} axis {}", j["name"], j["kind"], j["parent"], j["child"], j["axis"]);
             }

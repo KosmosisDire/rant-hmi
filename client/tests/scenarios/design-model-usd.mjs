@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 // A designer shows a USD robot from the project's files in a scene, its layers composed as Isaac
 // Sim writes them, and moves it by its joints: by name, by a JointState in the order the robot
 // lists its moving joints, or in the order names give. A joint it lacks, a count that does not
-// match, a file that is no USD and a layer it cannot find each say why.
+// match, a file that is no USD and a layer it cannot find each say why. A file of two robots
+// takes each one's joints under its name, and the inspector lists the robots a file holds.
 
 // a base and one link holding a red block at x 1, joined by joint1 turning about z, the
 // geometry a sublayer and the physics a reference
@@ -75,9 +76,26 @@ over "arm"
 }
 `,
   "broken.usda": "not a USD file",
+  // the arm twice, at y 1 and y -1
+  "pair.usda": `#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Xform "left" (prepend references = @arm.usda@)
+{
+    double3 xformOp:translate = (0, 1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Xform "right" (prepend references = @arm.usda@)
+{
+    double3 xformOp:translate = (0, -1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+`,
 };
 
-export default async function ({ hmi, sys, d, eventually }) {
+export default async function ({ page, hmi, sys, d, eventually }) {
   for (const [name, text] of Object.entries(FILES)) {
     const file = join(sys.project, "files", "robot", name);
     mkdirSync(dirname(file), { recursive: true });
@@ -92,6 +110,9 @@ export default async function ({ hmi, sys, d, eventually }) {
   const right = (why) => d.shows(d.el(scene), 0.65, 0.5, red, why).then(() => d.shows(d.el(scene), 0.35, 0.5, (c) => !red(c), why));
   const left = (why) => d.shows(d.el(scene), 0.35, 0.5, red, why).then(() => d.shows(d.el(scene), 0.65, 0.5, (c) => !red(c), why));
   await right("the block right of the middle at rest");
+  const robots = page.locator(".screen:not([hidden]) .sidebar.right .robot");
+  const listed = (want, what) => eventually(async () => JSON.stringify(await robots.allTextContents()) === JSON.stringify(want), what);
+  await listed(["armjoint1"], "the inspector to list the arm and its joint");
 
   // a half turn of joint1 swings the block to the other side, a value driving it
   await d.setField("Joints", "{ joint1: Line.Speed * PI }");
@@ -130,4 +151,25 @@ export default async function ({ hmi, sys, d, eventually }) {
   await right("the arm drawn without the gripper it cannot find");
   const warned = async () => (await (await fetch(`${sys.url}/problems`)).json()).some((p) => p.level === "warn" && p.text.includes("Model: src:") && p.text.includes("parts/gripper.usda"));
   await eventually(warned, "the missing gripper to be a warning");
+
+  // two robots, each its joints under its name
+  await d.setField("Source", '"files/robot/pair.usda"');
+  await listed(["leftjoint1", "rightjoint1"], "the inspector to list both robots");
+  const red2 = (fx, fy, why) => d.shows(d.el(scene), fx, fy, red, why);
+  const clear = (fx, fy, why) => d.shows(d.el(scene), fx, fy, (c) => !red(c), why);
+  await red2(0.65, 0.3, "the left robot's block right of the middle at the top");
+  await red2(0.65, 0.7, "the right robot's block right of the middle at the bottom");
+  await d.setField("Joints", "{ left: { joint1: PI } }");
+  await red2(0.35, 0.3, "the left robot's block turned by its joint1");
+  await clear(0.65, 0.3, "nothing where the left robot's block was");
+  await red2(0.65, 0.7, "the right robot's block where it was");
+  await d.setField("Joints", "{ right: [PI] }");
+  await red2(0.35, 0.7, "the right robot's block turned by its first position");
+  await red2(0.65, 0.3, "the left robot's block back at rest");
+  await d.setField("Joints", "{ joint1: 1 }");
+  await says("Model: joints: joint1 needs its robot's name, as the model has 2 robots");
+  await d.setField("Joints", "[1]");
+  await says("Model: joints: a list of positions needs its robot's name, as the model has 2 robots");
+  await d.setField("Joints", "{ middle: [1] }");
+  await says("Model: joints: the model has no robot middle");
 }

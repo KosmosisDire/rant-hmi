@@ -794,6 +794,16 @@
   color: var(--faint);
 }
 
+/* A robot a model holds, its name over its moving joints. */
+.robot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  font-size: 11px;
+  word-break: break-word;
+}
+
 /* A handler: its event on top, its code below, as one box. */
 .handler {
   margin-bottom: 8px;

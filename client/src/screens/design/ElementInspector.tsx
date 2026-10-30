@@ -1,5 +1,6 @@
 import { batch, createEffect, createMemo, createSignal, For, type JSX, on, Show, useContext } from "solid-js";
 import { CONTEXTS, cssFault, homeOf, OWN } from "../../page/PageView";
+import { robots } from "../../page/drawing";
 import { isPart } from "../../page/parts";
 import type { Element } from "../../protocol/Element";
 import { SENDERS } from "../../protocol/events";
@@ -493,6 +494,21 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         <Show when={part()}>
           <div class="section">{TAG_WORDS[p.element.tag]}</div>
           <For each={isPart(p.element.tag) ? partFields(p.element.tag) : []}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
+        </Show>
+        <Show when={robots().get(p.element.id)}>
+          {(list) => (
+            <>
+              <div class="section">Robots</div>
+              <For each={list()}>
+                {(r) => (
+                  <div class="robot" title="Its moving joints, in the order a list of positions takes">
+                    <span class="mono">{r.name}</span>
+                    <span class="field-hint">{r.joints.join(", ") || "no moving joints"}</span>
+                  </div>
+                )}
+              </For>
+            </>
+          )}
         </Show>
         <Show when={(scene() || part()) && pageOf(p.page)}>{(pg) => <AddRow section="Parts" label="Add part" kinds={PART_KINDS} onAdd={(tag) => addPart(pg(), p.element, tag)} />}</Show>
         <Show when={instance()}>
