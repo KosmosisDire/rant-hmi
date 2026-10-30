@@ -249,6 +249,8 @@ pub enum Tag {
     Points,
     /// A Mesh's triangles, lit.
     Mesh,
+    /// A Grid's cells, coloured by one of its fields.
+    Grid,
     /// Lines on the ground every so far, to judge sizes and distances by.
     Floor,
     Arrow,
@@ -257,7 +259,7 @@ pub enum Tag {
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-pub(crate) const WORDS: [(Tag, &str); 28] = [
+pub(crate) const WORDS: [(Tag, &str); 29] = [
     (Tag::Div, "div"),
     (Tag::Group, "group"),
     (Tag::Span, "span"),
@@ -283,6 +285,7 @@ pub(crate) const WORDS: [(Tag, &str); 28] = [
     (Tag::Cylinder, "cylinder"),
     (Tag::Points, "points"),
     (Tag::Mesh, "mesh"),
+    (Tag::Grid, "grid"),
     (Tag::Floor, "floor"),
     (Tag::Arrow, "arrow"),
     (Tag::Model, "model"),
@@ -297,7 +300,7 @@ impl Tag {
     pub fn home(self) -> Home {
         match self {
             Tag::Path | Tag::Circle | Tag::Ellipse | Tag::Rect | Tag::Line | Tag::Polyline | Tag::Polygon | Tag::SvgText | Tag::G => Home::Diagram,
-            Tag::Anchor | Tag::Axes | Tag::Box | Tag::Sphere | Tag::Cylinder | Tag::Points | Tag::Mesh | Tag::Floor | Tag::Arrow | Tag::Model => Home::Scene,
+            Tag::Anchor | Tag::Axes | Tag::Box | Tag::Sphere | Tag::Cylinder | Tag::Points | Tag::Mesh | Tag::Grid | Tag::Floor | Tag::Arrow | Tag::Model => Home::Scene,
             _ => Home::Page,
         }
     }

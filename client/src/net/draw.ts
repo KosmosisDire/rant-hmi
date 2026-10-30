@@ -12,18 +12,23 @@ import {
   BufferGeometry,
   Color,
   CylinderGeometry,
+  DataTexture,
   DirectionalLight,
   DoubleSide,
   GridHelper,
   Group,
   HemisphereLight,
+  InstancedBufferAttribute,
+  InstancedMesh,
   Line,
   type Material,
   Matrix4,
   Mesh,
+  MeshBasicMaterial,
   MeshLambertMaterial,
   type Object3D,
   PerspectiveCamera,
+  PlaneGeometry,
   Points,
   Quaternion,
   Scene,
@@ -39,7 +44,7 @@ import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { CAMERA, type Part, rgbaOf } from "../page/parts";
 import type { Column } from "./packed";
-import { cloudOf, laidOf, listOf, meshOf, type PoseValue, Pool, ramped, scanOf, shaded, type Spread } from "./spread";
+import { cloudOf, type Gridded, gridOf, laidOf, listOf, meshOf, type PoseValue, Pool, ramped, scanOf, shaded, type Spread } from "./spread";
 
 export type Vec3 = { x: number; y: number; z: number };
 export type Pose = { position?: Vec3; orientation?: Vec3 & { w: number } };
@@ -77,6 +82,9 @@ export interface Shown {
   /** A mesh's vertices, their bytes and its triangles as the page sent them, or the big value
    *  it follows by its vertices' bytes, whose other fields sit beside them, or null for none. */
   mesh?: { follow: string } | { vertices: unknown; data: Uint8Array; triangles: Uint32Array } | null;
+  /** A grid's own numbers, and the kind and bytes of the field it draws, as the page sent them,
+   *  or the big value it follows by those bytes, whose grid holds them, or null for none. */
+  grid?: { follow: string } | { grid: unknown; kind: string; data: Uint8Array } | null;
   step?: number;
   src?: string;
   /** A USD robot's values by joint name, or a JointState's positions in the order `names` gives,
@@ -137,7 +145,7 @@ export interface Host {
 export const aliasOf = (ref: string) => ref.split("/")[0];
 
 /** What a part may follow in a big value the worker keeps, rather than be sent. */
-const FOLLOWED = ["points", "color", "size", "mesh"] as const;
+const FOLLOWED = ["points", "color", "size", "mesh", "grid"] as const;
 type Followed = (typeof FOLLOWED)[number];
 const isFollow = (v: unknown): v is { follow: string } => typeof v === "object" && v !== null && "follow" in v;
 const isVec3 = (v: unknown): v is Vec3 => typeof v === "object" && v !== null && "x" in v;
@@ -146,6 +154,13 @@ const isList = (c: unknown): c is ArrayLike<number> => ArrayBuffer.isView(c) && 
 
 /** A part's dots or line. */
 type Dotted = Line<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial>;
+
+/** Marks the first `items` of `a` to go to the GPU at the next draw. */
+function touched(a: BufferAttribute, items: number) {
+  a.clearUpdateRanges();
+  a.addUpdateRange(0, items * a.itemSize);
+  a.needsUpdate = true;
+}
 
 /** Puts `n` points and what each carries on `drawn`, and a mesh's first `index[1]` vertex
  *  numbers, from arrays a pool keeps, so a new value writes in place and only one that grew makes
@@ -161,14 +176,9 @@ function upload(
   let g = drawn.geometry;
   const names = Object.keys(arrays).filter((k) => arrays[k]);
   const fits = names.length === Object.keys(g.attributes).length && names.every((k) => g.getAttribute(k)?.array === arrays[k]![0]) && g.index?.array === index?.[0];
-  const update = (a: BufferAttribute, items: number) => {
-    a.clearUpdateRanges();
-    a.addUpdateRange(0, items * a.itemSize);
-    a.needsUpdate = true;
-  };
   if (fits) {
-    for (const k of names) update(g.getAttribute(k) as BufferAttribute, n);
-    if (index) update(g.index!, index[1]);
+    for (const k of names) touched(g.getAttribute(k) as BufferAttribute, n);
+    if (index) touched(g.index!, index[1]);
   } else {
     g.dispose();
     g = drawn.geometry = new BufferGeometry();
@@ -192,8 +202,14 @@ function paint(m: Painted, s: Shown, opacity = 1) {
   if (!Array.isArray(s.color)) return;
   const [r, g, b, a] = s.color;
   m.color.setRGB(r, g, b, SRGBColorSpace);
-  m.opacity = a * opacity;
-  const see = m.opacity < 1;
+  fade(m, a * opacity);
+}
+
+/** A material as see through as `opacity`, which then draws over what is behind without hiding
+ *  it. */
+function fade(m: Material, opacity: number) {
+  m.opacity = opacity;
+  const see = opacity < 1;
   if (m.transparent !== see) Object.assign(m, { transparent: see, depthWrite: !see, needsUpdate: true });
 }
 
@@ -202,7 +218,9 @@ const BLOCK = new BoxGeometry(1, 1, 1);
 const BALL = new SphereGeometry(1, 48, 24);
 // a cylinder along z, as three.js makes it along y
 const ROD = new CylinderGeometry(1, 1, 1, 48).rotateX(Math.PI / 2);
-const SHARED = new Set<BufferGeometry>([BLOCK, BALL, ROD]);
+// a square with a corner at the middle, as a grid's origin is its first cell's outer corner
+const FLAT = new PlaneGeometry(1, 1).translate(0.5, 0.5, 0);
+const SHARED = new Set<BufferGeometry>([BLOCK, BALL, ROD, FLAT]);
 
 /** A part as the worker holds it. */
 interface Held {
@@ -603,6 +621,95 @@ function layMesh(drawn: Meshy, h: Held, faults: string[]) {
   faults.push(...found);
 }
 
+/** A grid's square, and its cubes. */
+type Flat = Mesh<BufferGeometry, MeshBasicMaterial>;
+type Cubes = InstancedMesh<BufferGeometry, MeshLambertMaterial>;
+
+/** Lays out the cells of the grid `o` draws, by the field it was given, along the ramp, only
+ *  those in `range`: a flat grid on its square, a deep one as cubes. It is laid out again only
+ *  when one of them is new, and says which it drew in `flat`. */
+function layGrid(o: Object3D, h: Held, faults: string[]) {
+  const s = h.shown;
+  const ref = h.follows.grid;
+  const sent = s.grid && !isFollow(s.grid) ? s.grid : undefined;
+  // a grid the worker keeps holds its fields, each with its kind beside its bytes
+  const [grid, kind, data] = ref
+    ? [host.value(holderOf(holderOf(holderOf(ref)))), (host.value(holderOf(ref)) as { kind?: unknown } | undefined)?.kind, host.column(ref)]
+    : [sent?.grid, sent?.kind, sent?.data];
+  const from = [data, JSON.stringify(s.range)];
+  const u = o.userData;
+  if (!data || (u.from && from.every((f, i) => f === u.from[i]))) return void faults.push(...(u.faults ?? []));
+  u.from = from;
+  const found: string[] = (u.faults = []);
+  const pool: Pool = (u.pool ??= new Pool());
+  let g;
+  if (!(data instanceof Uint8Array)) found.push("grid: the field's data is not bytes");
+  else if (typeof kind !== "string") found.push("grid: the field has no kind");
+  else g = gridOf(grid, kind, data, s.range, pool, found);
+  if (!g) return void faults.push(...found);
+  const [cx, cy, cz] = g.cells;
+  const most = scenes.get(h.scene)?.renderer?.capabilities.maxTextureSize ?? Infinity;
+  u.flat = g.n === 0 ? undefined : cz === 1;
+  if (u.flat && (cx > most || cy > most)) {
+    found.push(`grid: ${cx} by ${cy} cells, over the ${most} by ${most} this screen draws`);
+    u.flat = undefined;
+  }
+  if (u.flat) flatten(o.children[0] as Flat, g);
+  else if (u.flat === false) cube(o, g);
+  faults.push(...found);
+}
+
+/** Puts a flat grid's colours on its square, a pixel a cell, in a texture kept while its size
+ *  holds. */
+function flatten(plane: Flat, g: Gridded) {
+  const [cx, cy] = g.cells;
+  const was = plane.material.map as DataTexture | null;
+  if (was && was.image.data?.buffer === g.rgba.buffer && was.image.width === cx && was.image.height === cy) was.needsUpdate = true;
+  else {
+    was?.dispose();
+    const map = new DataTexture(g.rgba.subarray(0, 4 * cx * cy), cx, cy);
+    map.colorSpace = SRGBColorSpace;
+    map.needsUpdate = true;
+    Object.assign(plane.material, { map, needsUpdate: true });
+  }
+  plane.scale.set(cx * g.side, cy * g.side, 1);
+  place(plane, g.origin);
+}
+
+/** Puts a deep grid's cells in range as cubes, an instance each, made again only to hold more. */
+function cube(o: Object3D, g: Gridded) {
+  let cubes = o.children[1] as Cubes | undefined;
+  if (!cubes || cubes.instanceMatrix.count < g.n) {
+    const room = Math.ceil(g.n * 1.25);
+    const next: Cubes = new InstancedMesh(BLOCK, cubes?.material ?? new MeshLambertMaterial(), room);
+    next.instanceColor = new InstancedBufferAttribute(new Float32Array(room * 3), 3);
+    if (cubes) {
+      o.remove(cubes);
+      cubes.dispose();
+    }
+    o.add(next);
+    cubes = next;
+  }
+  const [matrices, colours] = [cubes.instanceMatrix.array as Float32Array, cubes.instanceColor!.array as Float32Array];
+  const { xyz, rgba, side, n } = g;
+  for (let i = 0; i < n; i++) {
+    const k = 16 * i;
+    matrices[k] = matrices[k + 5] = matrices[k + 10] = side;
+    matrices[k + 12] = xyz![3 * i];
+    matrices[k + 13] = xyz![3 * i + 1];
+    matrices[k + 14] = xyz![3 * i + 2];
+    colours[3 * i] = LINEAR[rgba[4 * i]];
+    colours[3 * i + 1] = LINEAR[rgba[4 * i + 1]];
+    colours[3 * i + 2] = LINEAR[rgba[4 * i + 2]];
+  }
+  cubes.count = n;
+  touched(cubes.instanceMatrix, n);
+  touched(cubes.instanceColor!, n);
+  const [x, y, z] = g.cells.map((c) => c * side);
+  cubes.boundingSphere = new Sphere(new Vector3(x / 2, y / 2, z / 2), Math.hypot(x, y, z) / 2);
+  place(cubes, g.origin);
+}
+
 const KINDS: Record<Part, Kind> = {
   anchor: { make: () => new Group(), show: () => {} },
   arrow: {
@@ -669,6 +776,19 @@ const KINDS: Record<Part, Kind> = {
       if (drawn.material.vertexColors) drawn.material.color.setRGB(1, 1, 1);
     },
   },
+  // a flat grid on one square, unlit so its colours read true, its clear cells left out however
+  // faint the rest, and pushed back a little so floor lines on it still show
+  grid: {
+    make: () => new Group().add(new Mesh(FLAT, new MeshBasicMaterial({ side: DoubleSide, alphaTest: 0.01, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }))),
+    show: (o, s, found, h) => {
+      const on = s.grid !== null;
+      if (on) layGrid(o, h, found.faults);
+      const [plane, cubes] = o.children as [Flat, Cubes | undefined];
+      plane.visible = on && o.userData.flat === true;
+      if (cubes) cubes.visible = on && o.userData.flat === false;
+      for (const c of [plane, cubes]) if (c) fade(c.material, s.opacity ?? 1);
+    },
+  },
   // three.js lays a grid on its xz plane and makes its lines once, in white its material then
   // colours, so it turns onto xy and is made again as its size changes
   floor: {
@@ -724,8 +844,11 @@ function free(o: Object3D, root = o) {
   if (o.userData.shared || (o !== root && o.userData.part)) return;
   if (o instanceof Mesh || o instanceof Line || o instanceof Points) {
     if (!SHARED.has(o.geometry)) o.geometry.dispose();
-    (o.material as Material).dispose();
+    const m = o.material as MeshBasicMaterial;
+    m.map?.dispose();
+    m.dispose();
   }
+  if (o instanceof InstancedMesh) o.dispose();
   for (const c of o.children) free(c, root);
 }
 

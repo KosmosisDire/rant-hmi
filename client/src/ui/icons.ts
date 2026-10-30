@@ -59,6 +59,8 @@ export { default as Link } from "lucide-solid/icons/link";
 export { default as List } from "lucide-solid/icons/list";
 export { default as ListClock } from "lucide-solid/icons/list-clock";
 export { default as Lock } from "lucide-solid/icons/lock";
+// not Map, which would hide the built in Map where it is imported
+export { default as MapIcon } from "lucide-solid/icons/map";
 export { default as Minus } from "lucide-solid/icons/minus";
 export { default as Monitor } from "lucide-solid/icons/monitor";
 export { default as MonitorOff } from "lucide-solid/icons/monitor-off";

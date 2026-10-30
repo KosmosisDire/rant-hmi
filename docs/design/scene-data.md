@@ -46,6 +46,11 @@ Claude's:
   PCL names them, or else worked out from the triangles round each vertex, each by its area.
 - A mesh is lit from both sides, as a scanned surface is seen from under it too. `mesh="null"`
   draws none, as a model's `src=""` does.
+- A grid's `field` names one of its fields, its first when left out, as a map's occupancy
+  usually is. The page knows the names, so it says when there is no such field.
+- A flat grid is a picture, unlit so its colours read true, a cell a square with no blending
+  between them, and drawn a little behind its plane so a `floor` on it still shows. A deep grid
+  is lit cubes. A grid wider than the screen's largest texture says so rather than draw wrong.
 
 ## How it stays fast
 
@@ -75,7 +80,10 @@ small list's points always were.
 - Nothing is read again unless the value it came from is new.
 
 A mesh never comes as code, only from the mesh, so a small one's vertices, bytes and triangles
-go to the worker as they came, and it reads them as it reads a big one. Points may be written in
+go to the worker as they came, and it reads them as it reads a big one. A grid is the same. Its
+fields are records with names, never a list the worker marks, so even a big one comes to the
+page whole, its bytes copied and marked. The page picks the field and hands the worker that
+field's ref, and the worker reads the grid's other numbers beside it, from the same value. Points may be written in
 code, which only the page reads, so a small cloud is laid out there instead. three.js takes a
 vertex's colour as linear light, so a mesh's sRGB colours go through a table of 256.
 
@@ -83,12 +91,15 @@ Measured in Node, reading from the bytes into what the GPU is given:
 
 | Value | Time |
 | --- | --- |
-| A cloud of 1M points, x, y and z | 13 ms |
-| The same in its own rgb | 18 ms |
-| The same along the ramp by intensity | 27 ms |
-| A scan of 128 by 1024 | 4 ms |
+| A cloud of 1M points, x, y and z | 12 ms |
+| The same in its own rgb | 15 ms |
+| The same along the ramp by intensity | 21 ms |
+| A scan of 128 by 1024 | 3 ms |
 | A mesh of 1M vertices and 2M triangles, its normals worked out | 54 ms |
 | The same along the ramp by z, cut to a range | 67 ms |
+| A map of 2000 by 2000 I8 cells, cut to a range | 15 ms |
+| The same of F32 cells, the values' own ends | 26 ms |
+| Voxels of 200 by 200 by 100, a tenth in range, each a cube's matrix and colour | 14 ms |
 
 Points with no z now lie at z 0, so a Path2D, a Polyline2D and a list of Double2 draw.
 `run-big-import-edit` read a cloud without z to see the page sent fewer fields, and expected the
@@ -102,7 +113,8 @@ scene to refuse it. It now checks that they draw flat.
 4. `grid` for a Grid.
 
 Each step has a scenario drawing it from the demo line, which publishes a cloud, a scan, a
-path, a small turning box and rolling ground as meshes, and a map. The scenarios count the
+path, a small turning box and rolling ground as meshes, a map of the scan's room, big, and a
+ball as voxels, small. The scenarios count the
 scene's pixels of each colour with the designer's `count` and `sees`.
 
 ## Later

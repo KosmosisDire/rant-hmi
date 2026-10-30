@@ -4,7 +4,8 @@
 //! shot with a parcel and its labels, a 3D scan of the cell's floor with that part on it, and
 //! the floor's heat as points each with a colour and a size, and the robot's routes, each leg
 //! a list of points of its own. The same floor as a PointCloud, a room's walls as a LaserScan,
-//! a planned Path, a turning part and rolling ground as Meshes, as the standard types carry them.
+//! a planned Path, a turning part and rolling ground as Meshes, the room as a map and a ball as
+//! voxels in Grids, as the standard types carry them.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
@@ -12,7 +13,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use rant::types::{
-    AlignedBox2D, Color, Double2, Double3, Empty, Float3, Image, ImageFormat, JointState, LaserScan, Mesh, Path, PointCloud, PointField, Pose, Quaternion, ScalarKind,
+    AlignedBox2D, Color, Double2, Double3, Empty, Float3, Grid, GridField, Image, ImageFormat, JointState, LaserScan, Mesh, Path, PointCloud, PointField, Pose, Quaternion, ScalarKind,
     Timestamp, Transform, VideoCodec, VideoFrame,
 };
 use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, Request, TaskOptions, TaskRequest, VariableOptions};
@@ -106,6 +107,8 @@ fn main() -> Result<(), rant::Error> {
     let plan = node.publisher::<Path>("Cell/Plan", Qos::new())?;
     let part = node.publisher::<Mesh>("Cell/Part", Qos::new())?;
     let ground = node.publisher::<Mesh>("Cell/Ground", Qos::new())?;
+    let map = node.publisher::<Grid>("Cell/Map", Qos::new())?;
+    let voxels = node.publisher::<Grid>("Cell/Voxels", Qos::new())?;
     let jog = Arc::new(Mutex::new(None::<f64>));
     let heard = jog.clone();
     let _jog = node.subscriber::<f64>("Line1/Jog", Qos::new(), move |m| *heard.lock().unwrap() = Some(m.into_inner()))?;
@@ -189,6 +192,8 @@ fn main() -> Result<(), rant::Error> {
             plan.send(&plan_of(t))?;
             part.send(&part_of(t))?;
             ground.send(&ground_of(t))?;
+            map.send(&map_of(t))?;
+            voxels.send(&voxels_of(t))?;
         }
         next += Duration::from_millis(50);
         match next.checked_duration_since(Instant::now()) {
@@ -325,6 +330,53 @@ fn ground_of(t: f64) -> Mesh {
     }
     let vertices = PointCloud { origin: Transform::identity(), width: N, fields: floats(&["x", "y", "z"]), point_step: 12, dense: true, data };
     Mesh { vertices, triangles }
+}
+
+/// A grid's origin: its first cell's outer corner at x and y on the floor, square to the axes.
+fn corner(x: f64, y: f64) -> Transform {
+    Transform { pose: Pose { position: Double3 { x, y, z: 0.0 }, orientation: Quaternion::IDENTITY }, ..Transform::identity() }
+}
+
+/// The lidar's room, 6 by 4 m, as a map in cells of 2.5 cm: its walls and the post occupied,
+/// 100, the floor free, 0, and the far corners unknown, -1. Beside that each cell's clearance,
+/// how far it is from the nearest wall in metres.
+fn map_of(t: f64) -> Grid {
+    let (w, h, cell) = (240u32, 160u32, 0.025);
+    let post = (1.5 * (t * 0.5).cos(), 1.0 * (t * 0.5).sin());
+    let (mut occupancy, mut clearance) = (Vec::with_capacity((w * h) as usize), Vec::with_capacity((w * h * 4) as usize));
+    for j in 0..h {
+        for i in 0..w {
+            let (x, y) = (-3.0 + (i as f64 + 0.5) * cell, -2.0 + (j as f64 + 0.5) * cell);
+            let clear = (3.0 - x.abs()).min(2.0 - y.abs());
+            let v: i8 = if clear < 0.1 || (x - post.0).hypot(y - post.1) < 0.15 { 100 } else if x.hypot(y) > 3.0 { -1 } else { 0 };
+            occupancy.push(v as u8);
+            clearance.extend((clear as f32).to_le_bytes());
+        }
+    }
+    let fields = vec![
+        GridField { name: "occupancy".to_owned(), kind: ScalarKind::I8, data: occupancy },
+        GridField { name: "clearance".to_owned(), kind: ScalarKind::F32, data: clearance },
+    ];
+    Grid { origin: corner(-3.0, -2.0), resolution: cell, cells_x: w, cells_y: h, cells_z: 1, fields }
+}
+
+/// A ball 0.8 m across bobbing in a 1.2 m cube of 5 cm cells, as voxels: the cells inside it
+/// occupied, 100, the rest free, 0.
+fn voxels_of(t: f64) -> Grid {
+    let (n, cell) = (24u32, 0.05);
+    let middle = |c: u32| (c as f64 + 0.5) * cell;
+    let z = 0.6 + 0.1 * (t * 0.8).sin();
+    let mut data = Vec::with_capacity((n * n * n) as usize);
+    for k in 0..n {
+        for j in 0..n {
+            for i in 0..n {
+                let inside = (middle(i) - 0.6).hypot(middle(j) - 0.6).hypot(middle(k) - z) < 0.4;
+                data.push(if inside { 100 } else { 0 });
+            }
+        }
+    }
+    let fields = vec![GridField { name: "occupancy".to_owned(), kind: ScalarKind::I8, data }];
+    Grid { origin: corner(-0.6, -0.6), resolution: cell, cells_x: n, cells_y: n, cells_z: n, fields }
 }
 
 /// Two legs of 2 and 3 points, the second's last point moving along x, and two route names.

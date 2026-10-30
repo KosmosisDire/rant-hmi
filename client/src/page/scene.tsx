@@ -29,6 +29,8 @@ interface Read {
   /** Points from a value, `field`'s number of each, and a cloud's own colours when `own`. */
   points(key: string, field: string | undefined, own: boolean): Laid | undefined;
   mesh(key: string): Shown["mesh"];
+  /** A Grid by its field `field`, or its first. */
+  grid(key: string, field: string | undefined): Shown["grid"];
   /** No numbers for the values' own ends, or a low and a high. */
   range(key: string): number[] | undefined;
   /** Whether the part sets `key` itself, not leaving it to its default. */
@@ -156,6 +158,27 @@ function meshOf(v: unknown): Shown["mesh"] {
   return { vertices: { fields, point_step: c.point_step, origin }, data: c.data.slice(), triangles: Uint32Array.from(list) };
 }
 
+/** A Grid as the worker draws it by its field `field`, or its first when none is named: by the
+ *  ref of the field's bytes when the worker keeps them, or for one that came small, its numbers
+ *  and that field copied to be sent. Null draws none, as does a grid without the field, which
+ *  `say` is told. */
+function gridOf(v: unknown, field: string | undefined, say: (fault: string) => void): Shown["grid"] {
+  if (v === null) return null;
+  const g = v as { fields?: unknown; resolution?: unknown; origin?: { pose?: unknown }; cells_x?: unknown; cells_y?: unknown; cells_z?: unknown };
+  if (typeof g !== "object" || !Array.isArray(g.fields) || typeof g.resolution !== "number") return undefined;
+  const fields = g.fields as ({ name?: unknown; kind?: unknown; data?: unknown } | null)[];
+  const f = field ? fields.find((x) => x?.name === field) : fields[0];
+  if (!f) {
+    say(field ? `field: the grid has no field ${field}` : "grid: the grid has no fields");
+    return null;
+  }
+  const ref = refOf(f.data);
+  if (ref) return { follow: ref };
+  if (!(f.data instanceof Uint8Array) || typeof f.kind !== "string") return undefined;
+  const { resolution, cells_x, cells_y, cells_z } = g;
+  return { grid: { origin: { pose: poseOf(g.origin?.pose) }, resolution, cells_x, cells_y, cells_z }, kind: f.kind, data: f.data.slice() };
+}
+
 /** Colours one per point, a byte each of red, green, blue and alpha, from a list of Colors or
  *  colour text, or undefined where an item is neither. */
 function rgbaList(v: unknown[]): Uint8Array | undefined {
@@ -232,6 +255,10 @@ function farResolve(code: string | undefined, scope: Scope, kept: (v: unknown) =
 const isKept = (v: unknown) => refOf(v) !== undefined;
 const isKeptPoints = (v: unknown) => refOf(listOfPoints(v).list) !== undefined;
 const isKeptMesh = (v: unknown) => refOf((v as { vertices?: { data?: unknown } } | null)?.vertices?.data) !== undefined;
+const isKeptGrid = (v: unknown) => {
+  const fields = (v as { fields?: unknown } | null)?.fields;
+  return Array.isArray(fields) && fields.some((f) => refOf((f as { data?: unknown } | null)?.data) !== undefined);
+};
 
 /** What `props` read as, each timed by `time`, which the part or scene keeps between reads. */
 function reader(props: Element["props"], defaults: Record<string, string>, scope: Scope, time: ReturnType<typeof timer>): Read {
@@ -271,6 +298,7 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
         isKeptPoints,
       ),
     mesh: (key) => as(key, "a Mesh", meshOf, isKeptMesh),
+    grid: (key, field) => as(key, "a Grid", (v) => gridOf(v, field, (f) => faults.push(f)), isKeptGrid),
     colour: (key) => as(key, "a colour", colourOf),
     colours: (key) =>
       as(
@@ -383,6 +411,7 @@ const SHOWS: Record<Part, (read: Read) => Omit<Shown, "visible">> = {
     };
   },
   mesh: (r) => ({ mesh: r.mesh("mesh"), color: r.colour("color"), opacity: r.number("opacity"), field: r.text("field"), range: r.range("range"), own: !r.given("color") }),
+  grid: (r) => ({ grid: r.grid("grid", r.text("field") || undefined), range: r.range("range"), opacity: r.number("opacity") }),
   floor: (r) => ({ size: r.number("size"), step: r.number("step"), color: r.colour("color") }),
   model: (r) => ({ src: r.text("src"), joints: r.joints("joints"), names: r.names("names") }),
 };
@@ -435,8 +464,9 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
     shown.visible = !d.unknown;
     setMine(d);
     // lists laid out here go to the worker whole, and are always new
-    const sent = shown.mesh && "data" in shown.mesh ? [shown.mesh.data, shown.mesh.triangles] : [];
-    const laid = [shown.points, shown.color, shown.size, shown.values, ...sent].filter((v) => ArrayBuffer.isView(v)) as (Float32Array | Uint8Array | Uint32Array)[];
+    const mesh = shown.mesh && "data" in shown.mesh ? [shown.mesh.data, shown.mesh.triangles] : [];
+    const grid = shown.grid && "data" in shown.grid ? [shown.grid.data] : [];
+    const laid = [shown.points, shown.color, shown.size, shown.values, ...mesh, ...grid].filter((v) => ArrayBuffer.isView(v)) as (Float32Array | Uint8Array | Uint32Array)[];
     const now = JSON.stringify(shown, (_, v) => (ArrayBuffer.isView(v) ? undefined : v));
     if (now === said && laid.length === 0) return;
     said = now;

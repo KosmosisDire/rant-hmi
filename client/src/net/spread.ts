@@ -1,7 +1,7 @@
-// Points a scene draws from Rant's standard types, read in the data worker: a PointCloud's from
-// its bytes, a LaserScan's returns, those of a list, a Path or a Polyline, the number a field
-// gives each, and the colour a ramp gives that number. three.js stays out, so any way of
-// drawing can read them.
+// What a scene draws from Rant's standard types, read in the data worker: a PointCloud's points
+// from its bytes, a LaserScan's returns, those of a list, a Path or a Polyline, a Mesh's
+// triangles, a Grid's cells, the number a field gives each, and the colour a ramp gives that
+// number. three.js stays out, so any way of drawing can read them.
 
 import type { Column } from "./packed";
 
@@ -133,6 +133,19 @@ export function laidOf(given: Float32Array, field: string | undefined, values: F
 
 /** How many bytes a number of each ScalarKind takes. */
 const WIDTH: Record<string, number> = { I8: 1, U8: 1, I16: 2, U16: 2, I32: 4, U32: 4, F32: 4, F64: 8, I64: 8, U64: 8 };
+
+/** The typed arrays that read each ScalarKind in place, little endian as every browser's
+ *  machine is. */
+const VIEWS: Record<string, { new (buffer: ArrayBufferLike, offset: number, length: number): ArrayLike<number>; BYTES_PER_ELEMENT: number }> = {
+  I8: Int8Array,
+  U8: Uint8Array,
+  I16: Int16Array,
+  U16: Uint16Array,
+  I32: Int32Array,
+  U32: Uint32Array,
+  F32: Float32Array,
+  F64: Float64Array,
+};
 
 /** A reader of the number of `kind` at a byte of `dv`, little endian as PCL writes it. */
 function reading(dv: DataView, kind: string): ((at: number) => number) | undefined {
@@ -373,8 +386,17 @@ const RAMP = (() => {
   return out;
 })();
 
+/** Writes the ramp's colour for `v`, `scale` steps a unit up from `lo`, opaque at `rgba[k]`. */
+function inked(rgba: Uint8Array, k: number, v: number, lo: number, scale: number) {
+  const at = 3 * (((v - lo) * scale + 0.5) | 0);
+  rgba[k] = RAMP[at];
+  rgba[k + 1] = RAMP[at + 1];
+  rgba[k + 2] = RAMP[at + 2];
+  rgba[k + 3] = 255;
+}
+
 /** The low and high ends of the ramp: `range`, or the first `n` values' own when it is empty. */
-function endsOf(values: Float32Array, n: number, range: number[] | undefined): [number, number] {
+function endsOf(values: ArrayLike<number>, n: number, range: number[] | undefined): [number, number] {
   if (range && range.length === 2 && range.every(Number.isFinite)) return [range[0], range[1]];
   let [lo, hi] = [Infinity, -Infinity];
   for (let i = 0; i < n; i++) {
@@ -392,14 +414,7 @@ export function shaded(m: Meshed, range: number[] | undefined, pool: Pool): Uint
   const [lo, hi] = endsOf(values, m.n, range);
   const scale = 255 / (hi - lo || 1);
   const rgba = pool.bytes("ramp", m.n, 4);
-  for (let i = 0; i < m.n; i++) {
-    const v = values[i];
-    const at = 3 * (((Math.min(hi, Math.max(lo, v)) - lo) * scale + 0.5) | 0);
-    rgba[4 * i] = RAMP[at];
-    rgba[4 * i + 1] = RAMP[at + 1];
-    rgba[4 * i + 2] = RAMP[at + 2];
-    rgba[4 * i + 3] = 255;
-  }
+  for (let i = 0; i < m.n; i++) inked(rgba, 4 * i, Math.min(hi, Math.max(lo, values[i])), lo, scale);
   const index = m.index;
   let j = 0;
   for (let t = 0; t < m.m; t += 3) {
@@ -429,7 +444,6 @@ export function ramped(s: Spread, range: number[] | undefined, sizes: ArrayLike<
   for (let i = 0; i < s.n; i++) {
     const v = values[i];
     if (!(v >= lo && v <= hi)) continue;
-    const at = 3 * (((v - lo) * scale + 0.5) | 0);
     const k = 3 * i;
     const m = 3 * j;
     const x = xyz[k];
@@ -444,14 +458,78 @@ export function ramped(s: Spread, range: number[] | undefined, sizes: ArrayLike<
     if (y > y1) y1 = y;
     if (z < z0) z0 = z;
     if (z > z1) z1 = z;
-    rgba[4 * j] = RAMP[at];
-    rgba[4 * j + 1] = RAMP[at + 1];
-    rgba[4 * j + 2] = RAMP[at + 2];
-    rgba[4 * j + 3] = 255;
+    inked(rgba, 4 * j, v, lo, scale);
     if (kept) kept[j] = sizes![i];
     j++;
   }
   s.n = j;
   s.box = [x0, y0, z0, x1, y1, z1];
   return { rgba, sizes: kept };
+}
+
+/** The first `n` numbers of `kind` in `bytes`: a view over them where they start on the kind's
+ *  width, else read into the pool. */
+function numbersOf(bytes: Uint8Array, kind: string, n: number, pool: Pool): ArrayLike<number> {
+  const View = VIEWS[kind];
+  if (View && bytes.byteOffset % View.BYTES_PER_ELEMENT === 0) return new View(bytes.buffer, bytes.byteOffset, n);
+  const [read, width] = [reading(viewOf(bytes), kind)!, WIDTH[kind]];
+  const out = pool.floats("values", n);
+  for (let i = 0; i < n; i++) out[i] = read(i * width);
+  return out;
+}
+
+/** A grid ready to draw: its cells along x, y and z, a cell's side, the pose of its first cell's
+ *  outer corner, and colours along the ramp. A flat grid has one a cell, x fastest, clear where
+ *  its value is outside the range. A deep one has the middles of its `n` cells in range, from
+ *  the corner, and a colour each. */
+export interface Gridded {
+  cells: number[];
+  side: number;
+  origin?: PoseValue;
+  rgba: Uint8Array;
+  xyz?: Float32Array;
+  n: number;
+}
+
+/** A Grid's cells by the numbers of one of its fields, of `kind`, in `bytes`. */
+export function gridOf(value: unknown, kind: string, bytes: Uint8Array, range: number[] | undefined, pool: Pool, faults: string[]): Gridded | undefined {
+  const v = (value ?? {}) as { origin?: { pose?: PoseValue }; resolution?: unknown; cells_x?: unknown; cells_y?: unknown; cells_z?: unknown };
+  const cells = [v.cells_x, v.cells_y, v.cells_z].map((c) => (Number.isInteger(c) && (c as number) >= 0 ? (c as number) : NaN));
+  const side = v.resolution;
+  if (!cells.every(Number.isFinite) || typeof side !== "number" || !(side > 0)) return void faults.push("grid: the grid has no cells_x, cells_y and cells_z, or no resolution above 0");
+  const width = WIDTH[kind];
+  if (width === undefined) return void faults.push(`grid: the field's kind ${kind} is not a number`);
+  const [cx, cy, cz] = cells;
+  const all = cx * cy * cz;
+  if (bytes.length < all * width) return void faults.push(`grid: the field has ${bytes.length} bytes, not ${all * width} for ${all} cells of ${kind}`);
+  const values = numbersOf(bytes, kind, all, pool);
+  const [lo, hi] = endsOf(values, all, range);
+  const scale = 255 / (hi - lo || 1);
+  const origin = v.origin?.pose;
+  if (cz === 1) {
+    const rgba = pool.bytes("cells", all, 4);
+    for (let i = 0; i < all; i++) {
+      const x = values[i];
+      if (x >= lo && x <= hi) inked(rgba, 4 * i, x, lo, scale);
+      else rgba[4 * i + 3] = 0;
+    }
+    return { cells, side, origin, rgba, n: all };
+  }
+  let n = 0;
+  for (let i = 0; i < all; i++) if (values[i] >= lo && values[i] <= hi) n++;
+  const xyz = pool.floats("xyz", n, 3);
+  const rgba = pool.bytes("cells", n, 4);
+  let [i, j] = [0, 0];
+  for (let c = 0; c < cz; c++)
+    for (let b = 0; b < cy; b++)
+      for (let a = 0; a < cx; a++, i++) {
+        const x = values[i];
+        if (!(x >= lo && x <= hi)) continue;
+        xyz[3 * j] = (a + 0.5) * side;
+        xyz[3 * j + 1] = (b + 0.5) * side;
+        xyz[3 * j + 2] = (c + 0.5) * side;
+        inked(rgba, 4 * j, x, lo, scale);
+        j++;
+      }
+  return { cells, side, origin, rgba, xyz, n };
 }
