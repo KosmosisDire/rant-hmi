@@ -277,6 +277,8 @@ struct Robot<'s> {
     mesh_list: Vec<Value>,
     looks: HashMap<String, Surface>,
     materials: HashMap<String, usize>,
+    /// The materials by what they hold, as each copy of a prop brings its own copy of its look.
+    contents: HashMap<String, usize>,
     material_list: Vec<Value>,
     images: HashMap<PathBuf, usize>,
     glb: Glb,
@@ -340,6 +342,7 @@ impl<'s> Robot<'s> {
             mesh_list: Vec::new(),
             looks: HashMap::new(),
             materials: HashMap::new(),
+            contents: HashMap::new(),
             material_list: Vec::new(),
             images: HashMap::new(),
             glb: Glb::default(),
@@ -752,13 +755,21 @@ impl<'s> Robot<'s> {
         if let Some(texture) = surface.texture.as_ref().and_then(|t| self.texture(t)) {
             pbr["baseColorTexture"] = json!({ "index": texture });
         }
-        let mut material = json!({ "name": name, "pbrMetallicRoughness": pbr, "doubleSided": double });
+        let mut material = json!({ "pbrMetallicRoughness": pbr, "doubleSided": double });
         if surface.color[3] < 1.0 {
             material["alphaMode"] = json!("BLEND");
         }
-        self.material_list.push(material);
-        self.materials.insert(key, self.material_list.len() - 1);
-        self.material_list.len() - 1
+        let index = match self.contents.get(&material.to_string()) {
+            Some(&index) => index,
+            None => {
+                self.contents.insert(material.to_string(), self.material_list.len());
+                material["name"] = json!(name);
+                self.material_list.push(material);
+                self.material_list.len() - 1
+            }
+        };
+        self.materials.insert(key, index);
+        index
     }
 
     /// The texture for an image file, which a browser draws only as PNG or JPEG.
