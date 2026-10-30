@@ -717,7 +717,7 @@ mod tests {
     fn a_scene_keeps_its_camera_and_its_parts_every_property_as_attributes() {
         let text = r#"<page name="A" size="1408x792">
   <scene id="e1" name="Cell" x="4" w="40" target="vec(0, 0, 1)" yaw="-2" distance="5" style="background: $panel">
-    <grid id="e2" color="$border" size="10"/>
+    <floor id="e2" color="$border" size="10"/>
     <anchor id="e3" name="Arm" pose="Arm.pose" repeat="Arms">
       <box id="e4" name="Link" color="$accent" size="vec(1, 0.2, 0.2)"/>
       <axes id="e5"/>

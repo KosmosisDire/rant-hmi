@@ -42,7 +42,7 @@ export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup
  *  shows which way it looks. */
 const HOLDS: Partial<Record<Tag, Pick<Element, "tag" | "props">[]>> = {
   scene: [
-    { tag: "grid", props: { name: "Floor" } },
+    { tag: "floor", props: { name: "Floor" } },
     { tag: "axes", props: { name: "Origin" } },
   ],
 };

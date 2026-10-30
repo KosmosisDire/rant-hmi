@@ -59,6 +59,8 @@ export { default as Link } from "lucide-solid/icons/link";
 export { default as List } from "lucide-solid/icons/list";
 export { default as ListClock } from "lucide-solid/icons/list-clock";
 export { default as Lock } from "lucide-solid/icons/lock";
+// not Map, which would hide the built in Map where it is imported
+export { default as MapIcon } from "lucide-solid/icons/map";
 export { default as Minus } from "lucide-solid/icons/minus";
 export { default as Monitor } from "lucide-solid/icons/monitor";
 export { default as MonitorOff } from "lucide-solid/icons/monitor-off";
@@ -71,6 +73,7 @@ export { default as PanelRight } from "lucide-solid/icons/panel-right";
 export { default as Parentheses } from "lucide-solid/icons/parentheses";
 export { default as PenTool } from "lucide-solid/icons/pen-tool";
 export { default as Pentagon } from "lucide-solid/icons/pentagon";
+export { default as Pyramid } from "lucide-solid/icons/pyramid";
 export { default as Pin } from "lucide-solid/icons/pin";
 export { default as PinOff } from "lucide-solid/icons/pin-off";
 export { default as Play } from "lucide-solid/icons/play";

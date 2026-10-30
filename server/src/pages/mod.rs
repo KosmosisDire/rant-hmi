@@ -247,14 +247,19 @@ pub enum Tag {
     Sphere,
     Cylinder,
     Points,
+    /// A Mesh's triangles, lit.
+    Mesh,
+    /// A Grid's cells, coloured by one of its fields.
     Grid,
+    /// Lines on the ground every so far, to judge sizes and distances by.
+    Floor,
     Arrow,
     /// A glTF file, its named nodes turned by joints.
     Model,
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-pub(crate) const WORDS: [(Tag, &str); 27] = [
+pub(crate) const WORDS: [(Tag, &str); 29] = [
     (Tag::Div, "div"),
     (Tag::Group, "group"),
     (Tag::Span, "span"),
@@ -279,7 +284,9 @@ pub(crate) const WORDS: [(Tag, &str); 27] = [
     (Tag::Sphere, "sphere"),
     (Tag::Cylinder, "cylinder"),
     (Tag::Points, "points"),
+    (Tag::Mesh, "mesh"),
     (Tag::Grid, "grid"),
+    (Tag::Floor, "floor"),
     (Tag::Arrow, "arrow"),
     (Tag::Model, "model"),
 ];
@@ -293,7 +300,7 @@ impl Tag {
     pub fn home(self) -> Home {
         match self {
             Tag::Path | Tag::Circle | Tag::Ellipse | Tag::Rect | Tag::Line | Tag::Polyline | Tag::Polygon | Tag::SvgText | Tag::G => Home::Diagram,
-            Tag::Anchor | Tag::Axes | Tag::Box | Tag::Sphere | Tag::Cylinder | Tag::Points | Tag::Grid | Tag::Arrow | Tag::Model => Home::Scene,
+            Tag::Anchor | Tag::Axes | Tag::Box | Tag::Sphere | Tag::Cylinder | Tag::Points | Tag::Mesh | Tag::Grid | Tag::Floor | Tag::Arrow | Tag::Model => Home::Scene,
             _ => Home::Page,
         }
     }
@@ -1865,7 +1872,7 @@ mod tests {
         assert_eq!(pages.apply(add(o(), Some(diagram), Tag::Axes, props(&[]))).unwrap_err(), "a diagram holds only shapes");
         assert_eq!(pages.apply(add(o(), Some(scene.clone()), Tag::Circle, props(&[]))).unwrap_err(), "a scene holds only 3D parts");
         assert_eq!(pages.apply(add(o(), Some(scene.clone()), Tag::Div, props(&[]))).unwrap_err(), "a scene holds only 3D parts");
-        let parts: Vec<String> = [Tag::Box, Tag::Grid].iter().map(|t| pages.apply(add(o(), Some(scene.clone()), *t, props(&[]))).unwrap().made.unwrap().1).collect();
+        let parts: Vec<String> = [Tag::Box, Tag::Floor].iter().map(|t| pages.apply(add(o(), Some(scene.clone()), *t, props(&[]))).unwrap().made.unwrap().1).collect();
         let grouped = pages.apply(Edit::Group { page: o(), ids: parts.clone() }).unwrap();
         let anchor = grouped.made.clone().unwrap().1;
         let held = find(&pages.get("overview").unwrap().children, &anchor).unwrap();

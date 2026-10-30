@@ -44,7 +44,7 @@ A page is a file of the elements it draws. This page lists every element and pro
 | `group` | parts picked and moved as one, with no box of its own |
 | a component's name, as `<Gauge>` | an instance of that component ([Components](components.md#placing-one)) |
 | `path` `circle` `ellipse` `rect` `line` `polyline` `polygon` `text` `g` | shapes, in a diagram only |
-| `anchor` `axes` `box` `sphere` `cylinder` `points` `grid` `arrow` `model` | 3D parts, in a scene only |
+| `anchor` `axes` `box` `sphere` `cylinder` `points` `mesh` `grid` `floor` `arrow` `model` | 3D parts, in a scene only |
 
 - A frame, a group, a diagram, a `g`, a scene and an `anchor` hold parts.
 - Any element but a 3D part may hold handlers, each an `<on event="...">`
@@ -132,7 +132,7 @@ letters, each an expression: `cx`, `r`, `fill`, `stroke`, `d`, `points`, `pathle
 
 ```html
 <scene id="e1" name="Cell" x="2" y="2" w="40" h="30" style="background: $panel">
-  <grid id="e2" name="Floor"/>
+  <floor id="e2" name="Floor"/>
   <anchor id="e3" name="Arm" pose="Robot.Arm">
     <box id="e4" name="Link" pose="{ position: vec(0.5, 0, 0) }" size="vec(1, 0.1, 0.1)"/>
   </anchor>
@@ -148,17 +148,21 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 | `pitch` | `scene` | how far up the camera is, in radians, `0.5` |
 | `distance` | `scene` | how far the camera is from `target`, `5` |
 | `pose` | every part | where it sits and how it turns in what holds it: a Pose, as `Robot.Arm`, or `{ position: vec(0, 0, 1) }`, each half optional |
-| `color` | every part but `anchor`, `axes` and `model` | a colour, `$accent`, or `$border` for a grid. `points` take a list too, one per point |
-| `opacity` | `box`, `sphere`, `cylinder` | `1` |
+| `color` | every part but `anchor`, `axes`, `grid` and `model` | a colour, `$accent`, or `$border` for a floor. `points` take a list too, one per point. A PointCloud or a Mesh left without one shows its own `rgb` |
+| `opacity` | `box`, `sphere`, `cylinder`, `mesh`, `grid` | `1` |
 | `size` | `box` | its edges, `vec(1, 1, 1)` |
 | `size` | `axes` | how long its arrows are, `1` |
 | `size` | `points` | how wide each dot is in metres, `0.05`, or a list, one per point |
-| `size` | `grid` | how wide it is, `10` |
-| `step` | `grid` | the gap between its lines, `1` |
+| `size` | `floor` | how wide it is, `10` |
+| `step` | `floor` | the gap between its lines, `1` |
 | `radius` | `sphere`, `cylinder` | `0.5` |
 | `length` | `cylinder` | along its z, `1` |
-| `points` | `points` | a list of points with `x`, `y` and `z`, as a Double3 list from the mesh |
-| `joined` | `points` | `true` to draw one line through them instead of dots |
+| `points` | `points` | a list of points with `x`, `y` and maybe `z`, as a Double3 list from the mesh, or a PointCloud, a LaserScan, a Path or a Polyline. A cloud's points sit at its `origin` |
+| `joined` | `points` | `true` to draw one line through them instead of dots, broken where a point is not drawn |
+| `mesh` | `mesh` | a Mesh, as `Cell.Part`, `null` for none. Its vertices sit at their cloud's `origin`, and their `normal_x`, `normal_y` and `normal_z` light it when it has them |
+| `grid` | `grid` | a Grid, as `Cell.Map`, `null` for none. Its first cell's outer corner sits at its `origin`. A flat one draws as a picture, a square a cell, a deep one as a cube a cell |
+| `field` | `points`, `mesh`, `grid` | a number each point or vertex has, or a grid's field, which colours it from blue to red, as `"intensity"`, or `"z"` for height. A scan's points have `range` and `intensity`. A grid takes its first field when left out |
+| `range` | `points`, `mesh`, `grid` | the low and high ends of `field`, as `[0, 100]`, its values' own when left out. A point outside it is not drawn, nor the part of a mesh outside it, nor a cell |
 | `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
 | `src` | `model` | a USD file in the project's files, as `"files/ur10e/ur10e.usd"`, or a glTF file, `.glb` or `.gltf`, as `"files/hall.glb"` or any URL, which stays as its file puts it |
 | `joints` | `model` | a USD robot's joints by name, `{ elbow_joint: 0.5 }`, each turned by radians or slid by metres, or a JointState, as `Arm.JointState`. A file of several robots takes each one's under its name, `{ carter_1: { left_wheel: 2 }, arm: Arm.JointState }`. A joint that mimics another, as a gripper's finger, follows it unless given its own. A glTF model has none |

@@ -102,6 +102,34 @@ export function designer(page) {
       });
     },
 
+    /** How many pixels of an element each test takes, each test code of `r`, `g` and `b`. */
+    async count(el, tests) {
+      const png = (await el.screenshot()).toString("base64");
+      return page.evaluate(
+        async ([png, tests]) => {
+          const img = new Image();
+          img.src = `data:image/png;base64,${png}`;
+          await img.decode();
+          const c = new OffscreenCanvas(img.width, img.height).getContext("2d");
+          c.drawImage(img, 0, 0);
+          const px = c.getImageData(0, 0, img.width, img.height).data;
+          const fns = Object.fromEntries(Object.entries(tests).map(([k, f]) => [k, new Function("r", "g", "b", `return ${f}`)]));
+          const out = Object.fromEntries(Object.keys(tests).map((k) => [k, 0]));
+          for (let i = 0; i < px.length; i += 4) for (const k in fns) if (fns[k](px[i], px[i + 1], px[i + 2])) out[k]++;
+          return out;
+        },
+        [png, tests],
+      );
+    },
+
+    /** Waits for the counts of an element's pixels each test takes to be ones `ok` takes. */
+    async sees(el, tests, ok, what) {
+      let seen;
+      await until(async () => ok((seen = await d.count(el, tests))), what).catch((e) => {
+        throw new Error(`${e.message}, not ${JSON.stringify(seen)}`);
+      });
+    },
+
     async box(id) {
       return d.el(id).boundingBox();
     },
