@@ -47,9 +47,14 @@ Claude's:
 - A cloud's `rgb` or `rgba` field colours it when `color` is left out, packed as PCL packs it.
 - `floor`, not "floor grid": a tag is one word.
 - A fault about `field` is the field's own, `cloud: field: the cloud has no number field nope`.
-- A mesh keeps every vertex, as its triangles count them, and leaves out a triangle with a
-  vertex outside `range`. Its normals are its `normal_x`, `normal_y` and `normal_z` fields, as
-  PCL names them, or else worked out from the triangles round each vertex, each by its area.
+- A mesh keeps every vertex, as its triangles count them. `range` cuts its surface where its
+  value crosses an end, as the GPU colours each pixel by the value there, where a triangle with
+  a vertex outside it was left out before. A triangle on a vertex that is not finite is left out.
+- A mesh's normals are its `normal_x`, `normal_y` and `normal_z` fields, as PCL names them, or
+  else summed from the triangles round each vertex, each weighted by its angle there, where it
+  was by its area before: a half float holds an angle at any scale, an area not.
+- A screen that cannot draw into float textures says it cannot work out normals, and asks for
+  the fields.
 - A line through points breaks where one is not drawn, where it was joined across before: a
   segment reads both its ends, so one left out takes both its segments.
 - A cloud's points over 255 bytes apart say so, as WebGL reads a vertex's numbers no further.
@@ -102,7 +107,14 @@ Points are read on the GPU (`net/spread.ts` says where each number sits, `net/dr
 - A flat grid's own ends are read on the CPU too: 6 ms for 2000 by 2000 I8 cells, 30 ms for
   4000 by 4000 F32 cells.
 - A 3D grid is one instanced mesh of cubes, an instance per cell in range.
-- A mesh's triangles go to the GPU as they come, an index of 32 bit numbers.
+- A mesh's vertex bytes go to the GPU as a cloud's do, and its triangles as they come, an index
+  of 32 bit numbers.
+- A mesh without normals is drawn twice more when a value is new: each vertex's position into a
+  float texel of its own, then each triangle's normal added into its three vertices' texels by
+  blending. The mesh's shader reads its vertex's texel by its number. Its triangles go to the
+  GPU twice, as WebGL keeps an index for drawing alone.
+- A mesh's largest vertex number is read on the CPU, 7 ms for 2M triangles, as the GPU would
+  draw nothing and say nothing for one past the last.
 - Nothing is read again unless the value it came from is new.
 
 A mesh never comes as code, only from the mesh, so a small one's vertices, bytes and triangles
@@ -111,8 +123,8 @@ fields are records with names, never a list the worker marks, so even a big one 
 page whole, its bytes copied and marked. The page picks the field and hands the worker that
 field's ref, and the worker reads the grid's other numbers beside it, from the same value.
 Points may be written in code, which only the page reads, so a small list is laid out there
-instead. three.js takes a
-vertex's colour as linear light, so a mesh's sRGB colours go through a table of 256.
+instead. three.js lights in linear light, so a mesh's sRGB colours are made linear in its
+shader, and a deep grid's go through a table of 256.
 
 Measured in Chrome on an RTX 4080 laptop GPU: the worker's time from a new value to its draw
 sent, which holds back every scene and the values coming in, before and after reading on the GPU,
@@ -129,17 +141,21 @@ and the frame after, all medians of 10:
 | The same cut to a range | 7 ms | 0.7 ms | 1.5 ms |
 | The same of F32 cells, its own ends | 45 ms | 13 ms | 1.6 ms |
 | A map of 4000 by 4000 F32 cells, its own ends | 98 ms | 49 ms | 1.7 ms |
+| A mesh of 1M vertices and 2M triangles, its normals worked out | 57 ms | 15 ms | 1.1 ms |
+| The same along the ramp by z, cut to a range | 71 ms | 15 ms | 1.3 ms |
+| The same along the ramp by intensity, its own ends | 78 ms | 20 ms | 1.7 ms |
+| The same with normal fields, 28 bytes a vertex | 32 ms | 13.5 ms | 1.1 ms |
 
 The cloud of 32 bytes a point is the bytes going to the GPU, which Chrome copies past 16 MB only
 as fast as its GPU process takes them. A map's own ends take most of its time, and the 64 MB of
-the biggest the rest.
+the biggest the rest. A mesh's is its 52 to 64 MB going to the GPU and the check of its
+triangles. Each mesh was timed in a browser of its own, as Chrome takes a mesh's index more
+slowly once another mesh's is freed.
 
 Measured in Node, reading from the bytes into what the GPU is given:
 
 | Value | Time |
 | --- | --- |
-| A mesh of 1M vertices and 2M triangles, its normals worked out | 54 ms |
-| The same along the ramp by z, cut to a range | 67 ms |
 | Voxels of 200 by 200 by 100, a tenth in range, each a cube's matrix and colour | 14 ms |
 
 Points with no z now lie at z 0, so a Path2D, a Polyline2D and a list of Double2 draw.

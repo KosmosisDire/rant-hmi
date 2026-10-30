@@ -11,11 +11,14 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  CustomBlending,
   CylinderGeometry,
   DataTexture,
   DirectionalLight,
   DoubleSide,
+  FloatType,
   GridHelper,
+  HalfFloatType,
   Group,
   HemisphereLight,
   InstancedBufferAttribute,
@@ -32,7 +35,10 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
+  NearestFilter,
   type Object3D,
+  OneFactor,
+  OrthographicCamera,
   PerspectiveCamera,
   PlaneGeometry,
   Points,
@@ -43,10 +49,12 @@ import {
   Sphere,
   SphereGeometry,
   SRGBColorSpace,
+  type Texture,
   UnsignedByteType,
   Vector3,
   Vector4,
   WebGLRenderer,
+  WebGLRenderTarget,
 } from "three";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -61,17 +69,16 @@ import {
   inputOf,
   laidSource,
   listSource,
-  meshOf,
   type Numbers,
   type PoseValue,
   Pool,
   RAMP,
   scanSource,
   seeThrough,
-  shaded,
   type Source,
   spanOf,
   spanOfNumbers,
+  trianglesOf,
   WIDTH,
 } from "./spread";
 
@@ -187,39 +194,6 @@ function touched(a: BufferAttribute, items: number) {
   a.clearUpdateRanges();
   a.addUpdateRange(0, items * a.itemSize);
   a.needsUpdate = true;
-}
-
-/** Puts `n` points and what each carries on `drawn`, and a mesh's first `index[1]` vertex
- *  numbers, from arrays a pool keeps, so a new value writes in place and only one that grew makes
- *  a new geometry. three.js is given the sphere round `box`, as it would walk every point for it
- *  before the first draw. */
-function upload(
-  drawn: { geometry: BufferGeometry },
-  n: number,
-  box: number[],
-  arrays: Record<string, [Float32Array | Uint8Array, number, boolean] | undefined>,
-  index?: [Uint32Array, number],
-) {
-  let g = drawn.geometry;
-  const names = Object.keys(arrays).filter((k) => arrays[k]);
-  const fits = names.length === Object.keys(g.attributes).length && names.every((k) => g.getAttribute(k)?.array === arrays[k]![0]) && g.index?.array === index?.[0];
-  if (fits) {
-    for (const k of names) touched(g.getAttribute(k) as BufferAttribute, n);
-    if (index) touched(g.index!, index[1]);
-  } else {
-    g.dispose();
-    g = drawn.geometry = new BufferGeometry();
-    for (const k of names) {
-      const [array, size, normalized] = arrays[k]!;
-      g.setAttribute(k, new BufferAttribute(array, size, normalized));
-    }
-    if (index) g.setIndex(new BufferAttribute(index[0], 1));
-  }
-  g.setDrawRange(0, index ? index[1] : n);
-  if (n > 0 && box.every(Number.isFinite)) {
-    const [lo, hi] = [new Vector3(box[0], box[1], box[2]), new Vector3(box[3], box[4], box[5])];
-    g.boundingSphere = new Sphere(lo.clone().add(hi).multiplyScalar(0.5), lo.distanceTo(hi) / 2);
-  } else g.boundingSphere = new Sphere();
 }
 
 type Painted = Material & { color: Color };
@@ -482,19 +456,19 @@ bool finiteOf(uvec4 lo, uvec4 hi, int kind) {
 /** Each ScalarKind as the shader numbers it. */
 const CODES: Record<string, number> = { I8: 0, U8: 1, I16: 2, U16: 3, I32: 4, U32: 5, F32: 6, F64: 7, I64: 8, U64: 9 };
 
-/** What a points shader reads: each input's kind, a colour's byte order, the axis its ramp goes
- *  by, whether its points are a scan's returns, and whether it draws the line through them. */
+/** What a points or mesh shader reads: each input's kind, a colour's byte order, the axis its ramp
+ *  goes by, whether its points are a scan's returns, and whether it draws the line through them. */
 interface Reads {
-  kinds: Partial<Record<"X" | "Y" | "Z" | "V" | "S", string>>;
+  kinds: Partial<Record<"X" | "Y" | "Z" | "V" | "S" | "NX" | "NY" | "NZ", string>>;
   colour?: string;
   axis?: number;
   scan: boolean;
   joined: boolean;
 }
 
-// Points as round dots as wide as their size in metres, never under a pixel, or a line through
-// them. Colours are sRGB and go out as they are, as nothing lights them.
-function dotsVertex(r: Reads): string {
+/** The attributes a shader reads its inputs from, each four bytes as `a` and its name, and the
+ *  next four for a wide kind, and how it reads each. A line reads the next point's too. */
+function readers(r: Reads) {
   const decls: string[] = [];
   // a line's segment is an instance, its ends this point and the next
   const pick = (a: string) => (r.joined ? `(next ? ${a}n : ${a})` : a);
@@ -507,6 +481,13 @@ function dotsVertex(r: Reads): string {
     const args = `${pick(`a${name}`)}, ${wide ? pick(`a${name}2`) : "uvec4(0u)"}, ${CODES[kind]}`;
     return { value: `numberOf(${args})`, ok: `finiteOf(${args})` };
   };
+  return { decls, pick, attribute, read };
+}
+
+// Points as round dots as wide as their size in metres, never under a pixel, or a line through
+// them. Colours are sRGB and go out as they are, as nothing lights them.
+function dotsVertex(r: Reads): string {
+  const { decls, pick, attribute, read } = readers(r);
   const body: string[] = [];
   if (r.scan) {
     const range = read("X");
@@ -667,10 +648,11 @@ function place(drawn: Object3D, origin: PoseValue | undefined) {
 }
 
 /** Hands the GPU the bytes `inputs` sit in, a buffer each, read four bytes at a time as `a` and
- *  the input's name. New bytes of the same layout and length are written into the old buffers. */
-function bind(drawn: Dotted, inputs: [string, Input][], n: number, joined: boolean) {
+ *  the input's name, and a mesh's first `index[1]` vertex numbers. New bytes of the same layout and
+ *  length are written into the old buffers. */
+function bind(drawn: { geometry: BufferGeometry }, inputs: [string, Input][], n: number, joined: boolean, index?: [Uint32Array, number]) {
   const held: Input[] = [];
-  const shape: unknown[] = [n, joined];
+  const shape: unknown[] = [n, joined, index?.[0].length];
   for (const [name, input] of inputs) {
     let k = held.findIndex((b) => b.bytes === input.bytes && b.stride === input.stride);
     if (k < 0) k = held.push(input) - 1;
@@ -685,6 +667,11 @@ function bind(drawn: Dotted, inputs: [string, Input][], n: number, joined: boole
       b.array = held[i].bytes;
       b.needsUpdate = true;
     });
+    const at = drawn.geometry.index;
+    if (index && at && at.array !== index[0]) {
+      at.array = index[0];
+      at.needsUpdate = true;
+    }
     return;
   }
   drawn.geometry.dispose();
@@ -702,6 +689,9 @@ function bind(drawn: Dotted, inputs: [string, Input][], n: number, joined: boole
   if (g instanceof InstancedBufferGeometry) {
     g.instanceCount = Math.max(n - 1, 0);
     g.setDrawRange(0, 2);
+  } else if (index) {
+    g.setIndex(new BufferAttribute(index[0], 1));
+    g.setDrawRange(0, index[1]);
   } else g.setDrawRange(0, n);
   g.userData = { key, buffers };
   drawn.geometry = g;
@@ -771,9 +761,229 @@ const LINEAR = Float32Array.from({ length: 256 }, (_, i) => (i <= 10 ? i / 255 /
 /** A part's lit triangles. */
 type Meshy = Mesh<BufferGeometry, MeshLambertMaterial>;
 
-/** Lays out the triangles `drawn` draws: its vertices, their normals, and their colours along the
- *  ramp by `field`, leaving out triangles outside `range`, or a cloud's own. It is laid out again
- *  only when one of them is new. */
+// where a point of a pixel lands on texel `i` of a target `uWide` texels wide, as a vertex's own
+const TEXELS = `
+uniform int uWide;
+uniform vec2 uSize;
+vec4 texelAt(int i) { return vec4((vec2(i % uWide, i / uWide) + 0.5) / uSize * 2.0 - 1.0, 0.0, 1.0); }`;
+
+/** A pass putting each vertex of a mesh in its texel: its position, and 0 for w when that is not
+ *  finite. */
+function placeVertex(r: Reads): string {
+  const { decls, read } = readers(r);
+  const [x, y, z] = [read("X"), read("Y"), read("Z")];
+  return `
+${TEXELS}
+${decls.join("\n")}
+varying vec4 vP;
+${NUMBERS}
+void main() {
+  vP = vec4(${x.value}, ${y.value}, ${z.value}, ${x.ok} && ${y.ok} && ${z.ok} ? 1.0 : 0.0);
+  gl_Position = texelAt(gl_VertexID);
+  gl_PointSize = 1.0;
+}`;
+}
+const PLACE_FRAGMENT = `
+varying vec4 vP;
+void main() { gl_FragColor = vP; }`;
+
+// A pass adding each triangle's normal into its three vertices' texels, a point each, weighted by
+// its angle there, as a half float holds that at any scale where it would not hold an area.
+const ADD_VERTEX = `
+${TEXELS}
+uniform highp sampler2D uPositions;
+attribute uvec3 aT;
+varying vec3 vN;
+vec4 positionOf(uint i) { return texelFetch(uPositions, ivec2(int(i) % uWide, int(i) / uWide), 0); }
+void main() {
+  int k = gl_VertexID;
+  uint i = k == 0 ? aT.x : k == 1 ? aT.y : aT.z;
+  vec4 p = positionOf(i);
+  vec4 q = positionOf(k == 0 ? aT.y : k == 1 ? aT.z : aT.x);
+  vec4 r = positionOf(k == 0 ? aT.z : k == 1 ? aT.x : aT.y);
+  vec3 u = q.xyz - p.xyz;
+  vec3 w = r.xyz - p.xyz;
+  vec3 face = cross(u, w);
+  float l = length(face);
+  gl_PointSize = 1.0;
+  vN = vec3(0.0);
+  // a triangle on a missing vertex, or with no area, adds nothing
+  if (p.w * q.w * r.w == 0.0 || !(l > 0.0)) {
+    gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+    return;
+  }
+  vN = face / l * acos(clamp(dot(u, w) / (length(u) * length(w)), -1.0, 1.0));
+  gl_Position = texelAt(int(i));
+}`;
+const ADD_FRAGMENT = `
+varying vec3 vN;
+void main() { gl_FragColor = vec4(vN, 0.0); }`;
+
+const PASS_EYE = new OrthographicCamera();
+const texels = (type: typeof FloatType | typeof HalfFloatType) => new WebGLRenderTarget(1, 1, { type, depthBuffer: false, minFilter: NearestFilter, magFilter: NearestFilter });
+
+/** Frees a geometry whose attributes another holds, which keeps them. */
+function letGo(g: BufferGeometry) {
+  for (const k of Object.keys(g.attributes)) g.deleteAttribute(k);
+  g.dispose();
+}
+
+/** The passes that sum a mesh's normals on the GPU, and the targets they draw into, a texel a
+ *  vertex in rows `wide` long. */
+class Sums {
+  readonly positions = texels(FloatType);
+  readonly normals = texels(HalfFloatType);
+  wide = 1;
+  private readonly place = new Points(new BufferGeometry(), new ShaderMaterial({ uniforms: { uWide: { value: 1 }, uSize: { value: [1, 1] } }, fragmentShader: PLACE_FRAGMENT }));
+  private readonly add = new Points(
+    new InstancedBufferGeometry(),
+    new ShaderMaterial({
+      uniforms: { uWide: { value: 1 }, uSize: { value: [1, 1] }, uPositions: { value: this.positions.texture } },
+      vertexShader: ADD_VERTEX,
+      fragmentShader: ADD_FRAGMENT,
+      blending: CustomBlending,
+      blendSrc: OneFactor,
+      blendDst: OneFactor,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  private readonly scenes = [new Scene().add(this.place), new Scene().add(this.add)];
+
+  constructor() {
+    this.place.frustumCulled = this.add.frustumCulled = false;
+  }
+
+  /** Sums the normals of the `n` vertices `mesh` reads by `kinds`, from the triangles of the first
+   *  `index[1]` vertex numbers. */
+  run(renderer: WebGLRenderer, mesh: BufferGeometry, kinds: Reads["kinds"], index: [Uint32Array, number], n: number) {
+    const wide = (this.wide = Math.min(n, renderer.capabilities.maxTextureSize));
+    const high = Math.ceil(n / wide);
+    for (const t of [this.positions, this.normals]) t.setSize(wide, high);
+    for (const m of [this.place.material, this.add.material]) {
+      m.uniforms.uWide.value = wide;
+      m.uniforms.uSize.value = [wide, high];
+    }
+    // the vertices are read from the mesh's own buffers
+    if (this.place.geometry.userData.of !== mesh) {
+      letGo(this.place.geometry);
+      const g = (this.place.geometry = new BufferGeometry());
+      for (const [k, a] of Object.entries(mesh.attributes)) if (/^a[XYZ]2?$/.test(k)) g.setAttribute(k, a);
+      g.userData.of = mesh;
+    }
+    this.place.geometry.setDrawRange(0, n);
+    const vertexShader = placeVertex({ kinds: { X: kinds.X, Y: kinds.Y, Z: kinds.Z }, scan: false, joined: false });
+    if (this.place.material.vertexShader !== vertexShader) Object.assign(this.place.material, { vertexShader, needsUpdate: true });
+    // the triangles as numbers it reads, as WebGL keeps a mesh's index for drawing alone
+    const g = this.add.geometry;
+    const was = g.getAttribute("aT") as InstancedBufferAttribute | undefined;
+    if (was?.array.length === index[0].length) {
+      if (was.array !== index[0]) {
+        was.array = index[0];
+        was.needsUpdate = true;
+      }
+    } else {
+      g.dispose();
+      g.setAttribute("aT", Object.assign(new InstancedBufferAttribute(index[0], 3), { gpuType: IntType }));
+    }
+    g.instanceCount = index[1] / 3;
+    g.setDrawRange(0, 3);
+    const target = renderer.getRenderTarget();
+    renderer.setRenderTarget(this.positions);
+    renderer.render(this.scenes[0], PASS_EYE);
+    renderer.setRenderTarget(this.normals);
+    renderer.render(this.scenes[1], PASS_EYE);
+    renderer.setRenderTarget(target);
+  }
+
+  dispose() {
+    letGo(this.place.geometry);
+    this.add.geometry.dispose();
+    for (const m of [this.place.material, this.add.material]) m.dispose();
+    this.positions.dispose();
+    this.normals.dispose();
+  }
+}
+
+/** A mesh's shaders as three.js lights a MeshLambertMaterial, its vertices read from their bytes
+ *  as a cloud's points are, its normals given or summed, its colours from sRGB bytes or the ramp
+ *  as linear light, and the surface cut where its value leaves the range. */
+function meshShaders(r: Reads, vertex: string, fragment: string): [string, string] {
+  const { decls, read, attribute } = readers(r);
+  const [x, y, z] = [read("X"), read("Y"), read("Z")];
+  const body = [`p = vec3(${x.value}, ${y.value}, ${z.value});`, `bool ok = ${x.ok} && ${y.ok} && ${z.ok};`];
+  if (r.kinds.NX) body.push(`n = vec3(${["NX", "NY", "NZ"].map((k) => read(k as "NX").value).join(", ")});`);
+  else body.push("n = texelFetch(uNormals, ivec2(gl_VertexID % uWide, gl_VertexID / uWide), 0).xyz;");
+  body.push("if (n == vec3(0.0)) n = vec3(0.0, 0.0, 1.0);");
+  if (r.kinds.V) {
+    const v = read("V");
+    body.push(`v = ${v.value};`, `ok = ok && ${v.ok};`);
+  } else body.push(`v = ${r.axis !== undefined ? `p[${r.axis}]` : "0.0"};`);
+  if (r.colour) {
+    attribute("aC");
+    body.push(`colour = linearOf(vec3(aC${r.colour === "RGBA" ? ".xyz" : ".zyx"}) / 255.0);`);
+  } else body.push("colour = vec3(1.0);");
+  const linear = "vec3 linearOf(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }";
+  const ramped = !!r.kinds.V || r.axis !== undefined;
+  const v = vertex
+    .replace(
+      "#include <common>",
+      `#include <common>
+uniform highp sampler2D uNormals;
+uniform int uWide;
+${decls.join("\n")}
+// where the pixel's samples lie in the triangle, so its edges keep within the values' ends
+centroid varying float vValue;
+${NUMBERS}
+${linear}
+bool vertexAt(out vec3 p, out vec3 n, out float v, out vec3 colour) {
+  ${body.join("\n  ")}
+  return ok;
+}`,
+    )
+    .replace("void main() {", "void main() {\n  vec3 rp;\n  vec3 rn;\n  float rv;\n  vec3 rc;\n  bool rok = vertexAt(rp, rn, rv, rc);")
+    .replace("#include <color_vertex>", "#ifdef USE_COLOR\n  vColor = vec4(rc, 1.0);\n#endif")
+    .replace("#include <beginnormal_vertex>", "vec3 objectNormal = rn;")
+    .replace("#include <begin_vertex>", "vec3 transformed = rp;\n  vValue = rv;")
+    // a triangle on a vertex not drawn is dropped whole
+    .replace("#include <project_vertex>", "#include <project_vertex>\n  if (!rok) gl_Position = vec4(uintBitsToFloat(0x7fc00000u));");
+  const f = fragment
+    .replace("#include <common>", `#include <common>\nuniform float uLow;\nuniform float uHigh;\nuniform float uScale;\nuniform sampler2D uRamp;\ncentroid varying float vValue;\n${linear}`)
+    .replace(
+      "#include <color_fragment>",
+      ramped
+        ? "if (vValue < uLow || vValue > uHigh) discard;\n  diffuseColor.rgb *= linearOf(texelFetch(uRamp, ivec2(clamp(int((vValue - uLow) * uScale + 0.5), 0, 255), 0), 0).rgb);"
+        : "#include <color_fragment>",
+    );
+  return [v, f];
+}
+
+/** A mesh's material, lit from both sides as a scanned surface is seen from under it too, and the
+ *  uniforms its shaders read. */
+function meshMaterial() {
+  const m = new MeshLambertMaterial({ side: DoubleSide });
+  const uniforms = {
+    uNormals: { value: null as Texture | null },
+    uWide: { value: 1 },
+    uLow: { value: 0 },
+    uHigh: { value: 1 },
+    uScale: { value: 255 },
+    uRamp: { value: RAMP_MAP },
+  };
+  m.userData = { uniforms, reads: { kinds: { X: "F32", Y: "F32", Z: "F32" }, scan: false, joined: false } satisfies Reads };
+  m.onBeforeCompile = (shader) => {
+    // three.js lights a mesh with no normal attribute in facets, and these normals are read here
+    Object.assign(shader, { flatShading: false });
+    Object.assign(shader.uniforms, uniforms);
+    [shader.vertexShader, shader.fragmentShader] = meshShaders(m.userData.reads, shader.vertexShader, shader.fragmentShader);
+  };
+  m.customProgramCacheKey = () => JSON.stringify(m.userData.reads);
+  return m;
+}
+
+/** Says where what the mesh `drawn` draws sits for the GPU to read: its vertices and triangles, a
+ *  value each for the ramp or a colour each, and its normals, given or summed on the GPU. Only the
+ *  ramp's own ends and the largest vertex number are read here, once a value. */
 function layMesh(drawn: Meshy, h: Held, faults: string[]) {
   const s = h.shown;
   const ref = h.follows.mesh;
@@ -782,30 +992,50 @@ function layMesh(drawn: Meshy, h: Held, faults: string[]) {
   const [vertices, data, triangles] = ref
     ? [host.value(holderOf(ref)), host.column(ref), host.column(`${holderOf(holderOf(ref))}/triangles`)]
     : [sent?.vertices, sent?.data, sent?.triangles];
-  const from = [data, triangles, s.field, JSON.stringify(s.range), s.own];
+  const from = [data, triangles, s.field, s.own];
   const u = drawn.userData;
-  if (!data || (u.from && from.every((f, i) => f === u.from[i]))) return void faults.push(...(u.faults ?? []));
-  u.from = from;
-  const found: string[] = (u.faults = []);
-  const pool: Pool = (u.pool ??= new Pool());
-  let m;
-  if (!(data instanceof Uint8Array)) found.push("mesh: the vertices' data is not bytes");
-  else if (!isList(triangles)) found.push("mesh: the triangles are not numbers");
-  else m = meshOf(vertices, data, triangles, s.field || undefined, !!s.own, pool, found);
-  if (!m) return void faults.push(...found);
-  const rgba = s.field && m.values ? shaded(m, s.range, pool) : !s.field && s.own ? m.rgba : undefined;
-  const colours = rgba && pool.floats("linear", m.n, 3);
-  if (colours)
-    for (let i = 0; i < m.n; i++) {
-      colours[3 * i] = LINEAR[rgba![4 * i]];
-      colours[3 * i + 1] = LINEAR[rgba![4 * i + 1]];
-      colours[3 * i + 2] = LINEAR[rgba![4 * i + 2]];
+  if (data && !(u.from && from.every((f, i) => f === u.from[i]))) {
+    u.from = from;
+    const found: string[] = (u.faults = []);
+    let src: Source | undefined;
+    let index: [Uint32Array, number] | undefined;
+    if (!(data instanceof Uint8Array)) found.push("mesh: the vertices' data is not bytes");
+    else if ((src = cloudSource(vertices, data, s.field || undefined, !!s.own, found, true))) index = trianglesOf(triangles, src.n, found);
+    if (src && index) {
+      const [nx, ny, nz] = src.normals ?? [];
+      const inputs = Object.entries({ X: src.x, Y: src.y, Z: src.z, V: src.value, C: src.colour, NX: nx, NY: ny, NZ: nz }).filter((e): e is [string, Input] => e[1] !== undefined);
+      bind(drawn, inputs, src.n, false, index);
+      const kinds = Object.fromEntries(inputs.filter(([k]) => k !== "C").map(([k, input]) => [k, input.kind]));
+      const m = drawn.material;
+      const reads: Reads = { kinds, colour: src.colour?.kind, axis: src.axis, scan: false, joined: false };
+      if (JSON.stringify(reads) !== JSON.stringify(m.userData.reads)) Object.assign(m, { needsUpdate: true }).userData.reads = reads;
+      if (m.vertexColors !== !!src.colour) Object.assign(m, { vertexColors: !!src.colour, needsUpdate: true });
+      const renderer = scenes.get(h.scene)?.renderer;
+      const most = renderer?.capabilities.maxTextureSize ?? 0;
+      if (src.normals || !renderer) {
+        u.sums?.dispose();
+        u.sums = undefined;
+      } else if (!renderer.extensions.has("EXT_color_buffer_float")) found.push("mesh: this screen cannot work out normals, so the vertices need normal_x, normal_y and normal_z");
+      else if (src.n > most * most) found.push(`mesh: ${src.n} vertices, more than this screen works out normals for`);
+      else (u.sums ??= new Sums()).run(renderer, drawn.geometry, kinds, index, src.n);
+      m.userData.uniforms.uNormals.value = u.sums?.normals.texture ?? null;
+      m.userData.uniforms.uWide.value = u.sums?.wide ?? 1;
+      place(drawn, src.origin);
+      // its own colours or the ramp's, which the material's colour would tint
+      u.coloured = !!src.colour || !!src.value || src.axis !== undefined;
+      u.source = src;
+      u.span = undefined;
     }
-  upload(drawn, m.n, m.box, { position: [m.xyz, 3, false], normal: [m.normals, 3, false], color: colours && [colours, 3, false] }, [m.index, m.m]);
-  place(drawn, m.origin);
-  const mat = drawn.material;
-  if (mat.vertexColors !== !!colours) Object.assign(mat, { vertexColors: !!colours, needsUpdate: true });
-  faults.push(...found);
+  }
+  faults.push(...(u.faults ?? []));
+  const src: Source | undefined = u.source;
+  if (!src || !s.field || !(src.value || src.axis !== undefined)) return;
+  const given = s.range?.length === 2 && s.range.every(Number.isFinite);
+  const [lo, hi]: number[] = given ? s.range! : (u.span ??= spanOf(src));
+  const uniforms = drawn.material.userData.uniforms;
+  uniforms.uLow.value = lo;
+  uniforms.uHigh.value = hi;
+  uniforms.uScale.value = 255 / (hi - lo || 1);
 }
 
 /** A grid's square, and its cubes. */
@@ -1039,16 +1269,19 @@ const KINDS: Record<Part, Kind> = {
       if (m.transparent !== see) Object.assign(m, { transparent: see, depthWrite: !see, needsUpdate: true });
     },
   },
-  // triangles lit from both sides, as a scanned surface is seen from under it too
+  // triangles lit, the GPU alone knowing where they are
   mesh: {
-    make: () => new Group().add(new Mesh(new BufferGeometry(), new MeshLambertMaterial({ side: DoubleSide }))),
+    make: () => {
+      const drawn = new Mesh(new BufferGeometry(), meshMaterial());
+      drawn.frustumCulled = false;
+      return new Group().add(drawn);
+    },
     show: (o, s, found, h) => {
       const drawn = o.children[0] as Meshy;
       drawn.visible = s.mesh !== null;
       if (drawn.visible) layMesh(drawn, h, found.faults);
       paint(drawn.material, s, s.opacity);
-      // its own colours or the ramp's, which the material's colour would tint
-      if (drawn.material.vertexColors) drawn.material.color.setRGB(1, 1, 1);
+      if (drawn.userData.coloured) drawn.material.color.setRGB(1, 1, 1);
     },
   },
   // a flat grid on one square, or a deep one's cubes
@@ -1124,6 +1357,7 @@ function free(o: Object3D, root = o) {
     // the bytes a shader reads are its own, and its ramp shared
     if (m instanceof ShaderMaterial) m.uniforms.uBytes?.value?.dispose();
     m.dispose();
+    (o.userData.sums as Sums | undefined)?.dispose();
   }
   if (o instanceof InstancedMesh) o.dispose();
   for (const c of o.children) free(c, root);

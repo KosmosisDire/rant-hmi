@@ -1,6 +1,6 @@
-// A mesh part draws a Rant Mesh lit: a big one the worker keeps, its normals worked out from its
-// triangles, coloured along the ramp and cut to a range, and a small one that came on the page,
-// in its own colours and normals, in one colour, or by a field.
+// A mesh part draws a Rant Mesh lit: a big one the worker keeps, its normals summed on the GPU
+// from its triangles, coloured along the ramp and cut to a range, and a small one that came on
+// the page, in its own colours and normals, in one colour, or by a field.
 
 export default async function ({ hmi, d, check, eventually }) {
   await hmi.import("Cell.GroundD", "Cell/Ground");
@@ -23,7 +23,7 @@ export default async function ({ hmi, d, check, eventually }) {
   const ramp = { low: "b > r + 40 && b > g", high: "r > g + 60 && r > b + 60" };
   await d.sees(el, ramp, (s) => s.low > 2000 && s.high > 2000, "the ground along the ramp by height");
   const whole = (await d.count(el, { lit })).lit;
-  // a range leaves out each triangle with a vertex below it, about half the ground
+  // a range cuts away the ground below it, about half
   await hmi.setProps(pageId, ground, { range: "[0, 0.3]" });
   await d.sees(el, { lit }, (s) => s.lit < 0.7 * whole && s.lit > 0.2 * whole, `only the hills of the ${whole} pixels, the hollows below the range`);
   await quiet();
