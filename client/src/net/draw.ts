@@ -7,6 +7,7 @@
 import {
   ArrowHelper,
   AxesHelper,
+  BackSide,
   BoxGeometry,
   BufferAttribute,
   BufferGeometry,
@@ -24,7 +25,6 @@ import {
   InstancedBufferAttribute,
   InstancedBufferGeometry,
   InstancedInterleavedBuffer,
-  InstancedMesh,
   InterleavedBuffer,
   InterleavedBufferAttribute,
   IntType,
@@ -46,7 +46,6 @@ import {
   Quaternion,
   Scene,
   ShaderMaterial,
-  Sphere,
   SphereGeometry,
   SRGBColorSpace,
   type Texture,
@@ -63,7 +62,6 @@ import type { Column } from "./packed";
 import {
   type Cells,
   cloudSource,
-  cubesOf,
   gridSource,
   type Input,
   inputOf,
@@ -71,7 +69,6 @@ import {
   listSource,
   type Numbers,
   type PoseValue,
-  Pool,
   RAMP,
   scanSource,
   seeThrough,
@@ -189,13 +186,6 @@ const isList = (c: unknown): c is Numbers => ArrayBuffer.isView(c) && !(c instan
 /** A part's dots or line. */
 type Dotted = LineSegments<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial>;
 
-/** Marks the first `items` of `a` to go to the GPU at the next draw. */
-function touched(a: BufferAttribute, items: number) {
-  a.clearUpdateRanges();
-  a.addUpdateRange(0, items * a.itemSize);
-  a.needsUpdate = true;
-}
-
 type Painted = Material & { color: Color };
 
 /** A material in a part's colour, as see through as the colour's alpha and `opacity` make it. */
@@ -219,9 +209,11 @@ const BLOCK = new BoxGeometry(1, 1, 1);
 const BALL = new SphereGeometry(1, 48, 24);
 // a cylinder along z, as three.js makes it along y
 const ROD = new CylinderGeometry(1, 1, 1, 48).rotateX(Math.PI / 2);
-// a square with a corner at the middle, as a grid's origin is its first cell's outer corner
+// a square and a box with a corner at the middle, as a grid's origin is its first cell's outer
+// corner
 const FLAT = new PlaneGeometry(1, 1).translate(0.5, 0.5, 0);
-const SHARED = new Set<BufferGeometry>([BLOCK, BALL, ROD, FLAT]);
+const BOX = new BoxGeometry(1, 1, 1).translate(0.5, 0.5, 0.5);
+const SHARED = new Set<BufferGeometry>([BLOCK, BALL, ROD, FLAT, BOX]);
 
 /** A part as the worker holds it. */
 interface Held {
@@ -755,9 +747,6 @@ function lay(drawn: Dotted, h: Held, faults: string[]) {
   m.uniforms.uScale.value = 255 / (hi - lo || 1);
 }
 
-// sRGB bytes as the linear light three.js takes a vertex's colour in
-const LINEAR = Float32Array.from({ length: 256 }, (_, i) => (i <= 10 ? i / 255 / 12.92 : ((i / 255 + 0.055) / 1.055) ** 2.4));
-
 /** A part's lit triangles. */
 type Meshy = Mesh<BufferGeometry, MeshLambertMaterial>;
 
@@ -1038,33 +1027,17 @@ function layMesh(drawn: Meshy, h: Held, faults: string[]) {
   uniforms.uScale.value = 255 / (hi - lo || 1);
 }
 
-/** A grid's square, and its cubes. */
+/** A grid's square, and its box of voxels. */
 type Flat = Mesh<BufferGeometry, ShaderMaterial>;
-type Cubes = InstancedMesh<BufferGeometry, MeshLambertMaterial>;
+type Voxels = Mesh<BufferGeometry, MeshLambertMaterial>;
 
-// A flat grid's cells on its square, each read from the field's bytes by the shader, a byte a
-// texel, and coloured along the ramp. Those outside the range are left out.
-const CELLS_VERTEX = `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}`;
-const CELLS_FRAGMENT = `
+// The number of a grid's cell `c` in its field's bytes, a byte a texel, and whether it is finite.
+const CELL = `
 uniform highp usampler2D uBytes;
-uniform ivec2 uCells;
 uniform int uRow;
-uniform float uLow;
-uniform float uHigh;
-uniform float uScale;
-uniform float uOpacity;
-uniform sampler2D uRamp;
-varying vec2 vUv;
-${NUMBERS}
 uint byteAt(int i) { return texelFetch(uBytes, ivec2(i % uRow, i / uRow), 0).r; }
-void main() {
-  ivec2 c = clamp(ivec2(vUv * vec2(uCells)), ivec2(0), uCells - 1);
-  int i = (c.y * uCells.x + c.x) * WIDTH;
+bool cellAt(int c, out float v) {
+  int i = c * WIDTH;
   uvec4 lo = uvec4(byteAt(i), 0u, 0u, 0u);
   uvec4 hi = uvec4(0u);
   #if WIDTH > 1
@@ -1076,8 +1049,31 @@ void main() {
   #if WIDTH > 4
   hi = uvec4(byteAt(i + 4), byteAt(i + 5), byteAt(i + 6), byteAt(i + 7));
   #endif
-  float v = numberOf(lo, hi, KIND);
-  if (!finiteOf(lo, hi, KIND) || v < uLow || v > uHigh) discard;
+  v = numberOf(lo, hi, KIND);
+  return finiteOf(lo, hi, KIND);
+}`;
+
+// A flat grid's cells on its square, coloured along the ramp, those outside the range left out.
+const CELLS_VERTEX = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+const CELLS_FRAGMENT = `
+uniform ivec2 uCells;
+uniform float uLow;
+uniform float uHigh;
+uniform float uScale;
+uniform float uOpacity;
+uniform sampler2D uRamp;
+varying vec2 vUv;
+${NUMBERS}
+${CELL}
+void main() {
+  ivec2 c = clamp(ivec2(vUv * vec2(uCells)), ivec2(0), uCells - 1);
+  float v;
+  if (!cellAt(c.y * uCells.x + c.x, v) || v < uLow || v > uHigh) discard;
   gl_FragColor = vec4(texelFetch(uRamp, ivec2(clamp(int((v - uLow) * uScale + 0.5), 0, 255), 0), 0).rgb, uOpacity);
 }`;
 
@@ -1098,6 +1094,105 @@ function cellsMaterial() {
   return new ShaderMaterial({ uniforms, defines, vertexShader: CELLS_VERTEX, fragmentShader: CELLS_FRAGMENT, side: DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
 }
 
+// A deep grid's box, the view's ray through each pixel walked from cell to cell, its eye and the
+// box's far side in cells, to the first cell in range. That cell's face is lit as three.js lights
+// a MeshLambertMaterial, and its depth is where the ray meets it.
+const RAYS_PARS_VERTEX = `
+uniform ivec3 uCells;
+varying vec3 vCell;
+varying vec3 vEye;`;
+const RAYS_VERTEX = `
+vCell = position * vec3(uCells);
+vEye = (inverse(modelMatrix) * vec4(cameraPosition, 1.0)).xyz * vec3(uCells);`;
+const RAYS_PARS_FRAGMENT = `
+uniform ivec3 uCells;
+uniform float uLow;
+uniform float uHigh;
+uniform float uScale;
+uniform sampler2D uRamp;
+uniform mat4 modelMatrix;
+uniform mat4 projectionMatrix;
+varying vec3 vCell;
+varying vec3 vEye;
+${NUMBERS}
+${CELL}
+vec3 linearOf(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }`;
+const RAYS_FRAGMENT = `
+vec3 dir = vCell - vEye;
+// a ray square to an axis, which would divide by 0
+dir += vec3(equal(dir, vec3(0.0))) * 1e-6;
+vec3 inv = 1.0 / dir;
+vec3 near = min(-vEye * inv, (vec3(uCells) - vEye) * inv);
+vec3 far = max(-vEye * inv, (vec3(uCells) - vEye) * inv);
+float t = max(max(near.x, near.y), max(near.z, 0.0));
+float end = min(far.x, min(far.y, far.z));
+int axis = near.x >= near.y && near.x >= near.z ? 0 : near.y >= near.z ? 1 : 2;
+ivec3 cell = clamp(ivec3(floor(vEye + dir * t)), ivec3(0), uCells - 1);
+ivec3 stride = ivec3(sign(dir));
+vec3 delta = abs(inv);
+vec3 next = (vec3(cell) + max(vec3(stride), 0.0) - vEye) * inv;
+float v;
+bool hit = false;
+for (int k = uCells.x + uCells.y + uCells.z; k > 0; k--) {
+  if (cellAt((cell.z * uCells.y + cell.y) * uCells.x + cell.x, v) && v >= uLow && v <= uHigh) {
+    hit = true;
+    break;
+  }
+  if (next.x <= next.y && next.x <= next.z) {
+    axis = 0;
+    t = next.x;
+    next.x += delta.x;
+    cell.x += stride.x;
+  } else if (next.y <= next.z) {
+    axis = 1;
+    t = next.y;
+    next.y += delta.y;
+    cell.y += stride.y;
+  } else {
+    axis = 2;
+    t = next.z;
+    next.z += delta.z;
+    cell.z += stride.z;
+  }
+  if (t > end || any(lessThan(cell, ivec3(0))) || any(greaterThanEqual(cell, uCells))) break;
+}
+if (!hit) discard;
+vec3 face = vec3(0.0);
+face[axis] = dir[axis] > 0.0 ? -1.0 : 1.0;
+vec3 rayNormal = normalize(mat3(viewMatrix) * mat3(modelMatrix) * face);
+vec4 clip = projectionMatrix * viewMatrix * modelMatrix * vec4((vEye + dir * t) / vec3(uCells), 1.0);
+gl_FragDepth = clip.z / clip.w * 0.5 + 0.5;
+diffuseColor.rgb *= linearOf(texelFetch(uRamp, ivec2(clamp(int((v - uLow) * uScale + 0.5), 0, 255), 0), 0).rgb);`;
+
+/** A deep grid's material, drawn on its box's far side so a ray starts in every pixel it covers,
+ *  even from inside, and the uniforms its shaders read. */
+function raysMaterial() {
+  const m = new MeshLambertMaterial({ side: BackSide });
+  const uniforms = {
+    uBytes: { value: null as DataTexture | null },
+    uRow: { value: 1 },
+    uCells: { value: [1, 1, 1] },
+    uLow: { value: 0 },
+    uHigh: { value: 1 },
+    uScale: { value: 255 },
+    uRamp: { value: RAMP_MAP },
+  };
+  m.defines = { KIND: 6, WIDTH: 4 };
+  m.userData.uniforms = uniforms;
+  m.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>\n${RAYS_PARS_VERTEX}`)
+      .replace("#include <project_vertex>", `#include <project_vertex>\n${RAYS_VERTEX}`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>\n${RAYS_PARS_FRAGMENT}`)
+      .replace("#include <color_fragment>", RAYS_FRAGMENT)
+      .replace("#include <normal_fragment_begin>", "float faceDirection = 1.0;\nvec3 normal = rayNormal;\nvec3 nonPerturbedNormal = normal;");
+  };
+  m.customProgramCacheKey = () => "rays";
+  return m;
+}
+
 /** The width of the rows `bytes` bytes are laid in for the GPU: `natural`, a row of cells, when
  *  that fits `most` by `most`, else the widest that divides them and fits, or 0 for none. */
 function rowOf(bytes: number, natural: number, most: number) {
@@ -1107,8 +1202,8 @@ function rowOf(bytes: number, natural: number, most: number) {
 }
 
 /** Lays out the cells of the grid `o` draws, by the field it was given, along the ramp, only
- *  those in `range`: a flat grid on its square, a deep one as cubes. A new value is laid out
- *  again, and a new `range` only moves the ramp of a flat one. It says which it drew in `flat`. */
+ *  those in `range`: a flat grid on its square, a deep one in its box. A new value is laid out
+ *  again, and a new `range` only moves the ramp. It says which it drew in `flat`. */
 function layGrid(o: Object3D, h: Held, faults: string[]) {
   const s = h.shown;
   const ref = h.follows.grid;
@@ -1118,6 +1213,7 @@ function layGrid(o: Object3D, h: Held, faults: string[]) {
     ? [host.value(holderOf(holderOf(holderOf(ref)))), (host.value(holderOf(ref)) as { kind?: unknown } | undefined)?.kind, host.column(ref)]
     : [sent?.grid, sent?.kind, sent?.data];
   const u = o.userData;
+  const [plane, box] = o.children as [Flat, Voxels];
   if (!data) return void faults.push(...(u.faults ?? []));
   if (u.data !== data) {
     u.data = data;
@@ -1127,87 +1223,57 @@ function layGrid(o: Object3D, h: Held, faults: string[]) {
     else if (typeof kind !== "string") found.push("grid: the field has no kind");
     else g = gridSource(grid, kind, data, found);
     u.flat = g && g.n > 0 ? g.cells[2] === 1 : undefined;
-    if (g && u.flat) u.flat = flatten(o.children[0] as Flat, g, scenes.get(h.scene)?.renderer?.capabilities.maxTextureSize ?? Infinity, found);
-    Object.assign(u, { cells: g, span: undefined, cubed: undefined });
+    if (g && u.flat !== undefined && !upload(o, g, scenes.get(h.scene)?.renderer?.capabilities.maxTextureSize ?? Infinity, found)) u.flat = undefined;
+    else if (g && u.flat !== undefined) {
+      const [cx, cy, cz] = g.cells;
+      const drawn = u.flat ? plane : box;
+      if (u.flat) plane.material.uniforms.uCells.value = [cx, cy];
+      else box.material.userData.uniforms.uCells.value = [cx, cy, cz];
+      drawn.scale.set(cx * g.side, cy * g.side, u.flat ? 1 : cz * g.side);
+      place(drawn, g.origin);
+    }
+    Object.assign(u, { cells: g, span: undefined });
   }
   faults.push(...u.faults);
   const g: Cells | undefined = u.cells;
   if (!g || u.flat === undefined) return;
   const given = s.range?.length === 2 && s.range.every(Number.isFinite);
   const [lo, hi]: number[] = given ? s.range! : (u.span ??= spanOfNumbers(g.values, g.n));
-  if (u.flat) {
-    const m = (o.children[0] as Flat).material;
-    m.uniforms.uLow.value = lo;
-    m.uniforms.uHigh.value = hi;
-    m.uniforms.uScale.value = 255 / (hi - lo || 1);
-  } else if (u.cubed !== `${lo} ${hi}`) {
-    u.cubed = `${lo} ${hi}`;
-    cube(o, g, cubesOf(g, lo, hi, (u.pool ??= new Pool())));
+  for (const uniforms of [plane.material.uniforms, box.material.userData.uniforms]) {
+    uniforms.uLow.value = lo;
+    uniforms.uHigh.value = hi;
+    uniforms.uScale.value = 255 / (hi - lo || 1);
   }
 }
 
-/** Hands the GPU a flat grid's bytes as they came, a byte a texel in rows that fit a screen of
- *  textures `most` wide, kept while their layout holds. Says whether they fit. */
-function flatten(plane: Flat, g: Cells, most: number, found: string[]): boolean {
-  const [cx, cy] = g.cells;
+/** Hands the GPU a grid's bytes as they came, a byte a texel in rows that fit a screen of
+ *  textures `most` wide, for its square and its box to read, kept while their layout holds. Says
+ *  whether they fit. */
+function upload(o: Object3D, g: Cells, most: number, found: string[]): boolean {
+  const [cx, cy, cz] = g.cells;
   const { bytes, kind, stride } = g.values;
   const total = g.n * stride;
   const row = rowOf(total, cx * stride, most);
   if (row === 0) {
-    found.push(`grid: ${cx} by ${cy} cells of ${kind}, more than this screen draws`);
+    found.push(`grid: ${cx} by ${cy}${cz > 1 ? ` by ${cz}` : ""} cells of ${kind}, more than this screen draws`);
     return false;
   }
-  const m = plane.material;
+  const [plane, box] = o.children as [Flat, Voxels];
   const data = bytes.subarray(0, total);
-  const was = m.uniforms.uBytes.value;
-  if (was && was.image.width === row && was.image.height === total / row) was.image.data = data;
+  let map = plane.material.uniforms.uBytes.value;
+  if (map && map.image.width === row && map.image.height === total / row) map.image.data = data;
   else {
-    was?.dispose();
-    m.uniforms.uBytes.value = Object.assign(new DataTexture(data, row, total / row, RedIntegerFormat, UnsignedByteType), { internalFormat: "R8UI" });
+    map?.dispose();
+    map = Object.assign(new DataTexture(data, row, total / row, RedIntegerFormat, UnsignedByteType), { internalFormat: "R8UI" as const });
   }
-  m.uniforms.uBytes.value!.needsUpdate = true;
-  m.uniforms.uCells.value = [cx, cy];
-  m.uniforms.uRow.value = row;
+  map.needsUpdate = true;
   const defines = { KIND: CODES[kind], WIDTH: stride };
-  if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
-  plane.scale.set(cx * g.side, cy * g.side, 1);
-  place(plane, g.origin);
+  for (const [m, uniforms] of [[plane.material, plane.material.uniforms], [box.material, box.material.userData.uniforms]] as const) {
+    uniforms.uBytes.value = map;
+    uniforms.uRow.value = row;
+    if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
+  }
   return true;
-}
-
-/** Puts a deep grid's cells in range as cubes, an instance each, made again only to hold more. */
-function cube(o: Object3D, g: Cells, c: { xyz: Float32Array; rgba: Uint8Array; n: number }) {
-  let cubes = o.children[1] as Cubes | undefined;
-  if (!cubes || cubes.instanceMatrix.count < c.n) {
-    const room = Math.ceil(c.n * 1.25);
-    const next: Cubes = new InstancedMesh(BLOCK, cubes?.material ?? new MeshLambertMaterial(), room);
-    next.instanceColor = new InstancedBufferAttribute(new Float32Array(room * 3), 3);
-    if (cubes) {
-      o.remove(cubes);
-      cubes.dispose();
-    }
-    o.add(next);
-    cubes = next;
-  }
-  const [matrices, colours] = [cubes.instanceMatrix.array as Float32Array, cubes.instanceColor!.array as Float32Array];
-  const { xyz, rgba, n } = c;
-  const side = g.side;
-  for (let i = 0; i < n; i++) {
-    const k = 16 * i;
-    matrices[k] = matrices[k + 5] = matrices[k + 10] = side;
-    matrices[k + 12] = xyz[3 * i];
-    matrices[k + 13] = xyz[3 * i + 1];
-    matrices[k + 14] = xyz[3 * i + 2];
-    colours[3 * i] = LINEAR[rgba[4 * i]];
-    colours[3 * i + 1] = LINEAR[rgba[4 * i + 1]];
-    colours[3 * i + 2] = LINEAR[rgba[4 * i + 2]];
-  }
-  cubes.count = n;
-  touched(cubes.instanceMatrix, n);
-  touched(cubes.instanceColor!, n);
-  const [x, y, z] = g.cells.map((c) => c * side);
-  cubes.boundingSphere = new Sphere(new Vector3(x / 2, y / 2, z / 2), Math.hypot(x, y, z) / 2);
-  place(cubes, g.origin);
 }
 
 const KINDS: Record<Part, Kind> = {
@@ -1284,16 +1350,16 @@ const KINDS: Record<Part, Kind> = {
       if (drawn.userData.coloured) drawn.material.color.setRGB(1, 1, 1);
     },
   },
-  // a flat grid on one square, or a deep one's cubes
+  // a flat grid on one square, or a deep one in its box
   grid: {
-    make: () => new Group().add(new Mesh(FLAT, cellsMaterial())),
+    make: () => new Group().add(new Mesh(FLAT, cellsMaterial()), new Mesh(BOX, raysMaterial())),
     show: (o, s, found, h) => {
       const on = s.grid !== null;
       if (on) layGrid(o, h, found.faults);
-      const [plane, cubes] = o.children as [Flat, Cubes | undefined];
+      const [plane, box] = o.children as [Flat, Voxels];
       plane.visible = on && o.userData.flat === true;
-      if (cubes) cubes.visible = on && o.userData.flat === false;
-      for (const c of [plane, cubes]) if (c) fade(c.material, s.opacity ?? 1);
+      box.visible = on && o.userData.flat === false;
+      for (const c of [plane, box]) fade(c.material, s.opacity ?? 1);
       plane.material.uniforms.uOpacity.value = plane.material.opacity;
     },
   },
@@ -1359,7 +1425,6 @@ function free(o: Object3D, root = o) {
     m.dispose();
     (o.userData.sums as Sums | undefined)?.dispose();
   }
-  if (o instanceof InstancedMesh) o.dispose();
   for (const c of o.children) free(c, root);
 }
 

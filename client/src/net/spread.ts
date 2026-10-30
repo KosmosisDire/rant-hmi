@@ -19,25 +19,6 @@ export interface PoseValue {
   orientation?: { x: number; y: number; z: number; w: number };
 }
 
-/** Arrays a part keeps from one value to the next, grown as one needs and never shrunk, so a
- *  stream of voxels makes no garbage. Each holds whole items of its width. */
-export class Pool {
-  private kept = new Map<string, Float32Array | Uint8Array>();
-  floats(key: string, items: number, width = 1): Float32Array {
-    return this.get(key, items, width, Float32Array) as Float32Array;
-  }
-  bytes(key: string, items: number, width = 1): Uint8Array {
-    return this.get(key, items, width, Uint8Array) as Uint8Array;
-  }
-  private get(key: string, items: number, width: number, Kind: typeof Float32Array | typeof Uint8Array) {
-    const had = this.kept.get(key);
-    if (had && had.length >= items * width) return had;
-    const made = new Kind(Math.ceil(items * 1.25) * width);
-    this.kept.set(key, made);
-    return made;
-  }
-}
-
 const AXES = ["x", "y", "z"];
 /** The axis `field` takes the values of, or -1. */
 const axisOf = (field: string | undefined) => (field ? AXES.indexOf(field) : -1);
@@ -309,15 +290,6 @@ export const RAMP = (() => {
   return out;
 })();
 
-/** Writes the ramp's colour for `v`, `scale` steps a unit up from `lo`, opaque at `rgba[k]`. */
-function inked(rgba: Uint8Array, k: number, v: number, lo: number, scale: number) {
-  const at = 3 * (((v - lo) * scale + 0.5) | 0);
-  rgba[k] = RAMP[at];
-  rgba[k + 1] = RAMP[at + 1];
-  rgba[k + 2] = RAMP[at + 2];
-  rgba[k + 3] = 255;
-}
-
 /** A Grid's cells along x, y and z, a cell's side, the pose of its first cell's outer corner, and
  *  where the GPU reads the number of the field drawn of each, x fastest. */
 export interface Cells {
@@ -352,29 +324,4 @@ export function spanOfNumbers(v: Input, n: number): [number, number] {
     if (k > hi) hi = k;
   }
   return [lo, hi];
-}
-
-/** A deep grid's `n` cells from `lo` to `hi` as cubes: the middle of each from the corner, and its
- *  colour along the ramp. */
-export function cubesOf(g: Cells, lo: number, hi: number, pool: Pool): { xyz: Float32Array; rgba: Uint8Array; n: number } {
-  const [values, step, first] = spaced(g.values, g.n);
-  const [[cx, cy, cz], side] = [g.cells, g.side];
-  const scale = 255 / (hi - lo || 1);
-  let n = 0;
-  for (let i = 0; i < g.n; i++) if (values[i * step + first] >= lo && values[i * step + first] <= hi) n++;
-  const xyz = pool.floats("xyz", n, 3);
-  const rgba = pool.bytes("cells", n, 4);
-  let [i, j] = [0, 0];
-  for (let c = 0; c < cz; c++)
-    for (let b = 0; b < cy; b++)
-      for (let a = 0; a < cx; a++, i++) {
-        const x = values[i * step + first];
-        if (!(x >= lo && x <= hi)) continue;
-        xyz[3 * j] = (a + 0.5) * side;
-        xyz[3 * j + 1] = (b + 0.5) * side;
-        xyz[3 * j + 2] = (c + 0.5) * side;
-        inked(rgba, 4 * j, x, lo, scale);
-        j++;
-      }
-  return { xyz, rgba, n };
 }

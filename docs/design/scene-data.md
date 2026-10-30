@@ -33,7 +33,8 @@ The user's, 2026-10-30:
   this branch, before review.
 - **A mesh with no normals is lit smooth**, its normals summed on the GPU, over facets or a sum
   on the CPU.
-- **Voxels by marching rays** through them, kept only if they draw faster than cubes.
+- **Voxels by marching rays** through them, kept only if they draw faster than cubes. They do,
+  in every case measured below.
 
 Claude's:
 
@@ -64,8 +65,9 @@ Claude's:
   usually is. The page knows the names, so it says when there is no such field.
 - A flat grid is a picture, unlit so its colours read true, a cell a square with no blending
   between them, and drawn a little behind its plane so a `floor` on it still shows. A deep grid
-  is lit cubes. A grid whose bytes the screen's largest texture cannot hold says so rather than
-  draw wrong.
+  looks as lit cubes did, within 2 levels of light, but its outline is a pixel's, where cubes
+  had smoothed edges. A grid whose bytes the screen's largest texture cannot hold says so rather
+  than draw wrong.
 
 ## How it stays fast
 
@@ -106,7 +108,10 @@ Points are read on the GPU (`net/spread.ts` says where each number sits, `net/dr
   the same.
 - A flat grid's own ends are read on the CPU too: 6 ms for 2000 by 2000 I8 cells, 30 ms for
   4000 by 4000 F32 cells.
-- A 3D grid is one instanced mesh of cubes, an instance per cell in range.
+- A deep grid's bytes go to the GPU as a flat one's do, and one box is drawn round it, its far
+  side so a ray starts in each pixel it covers, even from inside. The shader walks the ray from
+  cell to cell to the first in `range`, lights that cell's face and writes its depth where the
+  ray meets it. Nothing is laid out on the CPU, so a new `range` reads nothing.
 - A mesh's vertex bytes go to the GPU as a cloud's do, and its triangles as they come, an index
   of 32 bit numbers.
 - A mesh without normals is drawn twice more when a value is new: each vertex's position into a
@@ -123,8 +128,8 @@ fields are records with names, never a list the worker marks, so even a big one 
 page whole, its bytes copied and marked. The page picks the field and hands the worker that
 field's ref, and the worker reads the grid's other numbers beside it, from the same value.
 Points may be written in code, which only the page reads, so a small list is laid out there
-instead. three.js lights in linear light, so a mesh's sRGB colours are made linear in its
-shader, and a deep grid's go through a table of 256.
+instead. three.js lights in linear light, so a mesh's and a deep grid's sRGB colours are made
+linear in their shaders.
 
 Measured in Chrome on an RTX 4080 laptop GPU: the worker's time from a new value to its draw
 sent, which holds back every scene and the values coming in, before and after reading on the GPU,
@@ -145,18 +150,16 @@ and the frame after, all medians of 10:
 | The same along the ramp by z, cut to a range | 71 ms | 15 ms | 1.3 ms |
 | The same along the ramp by intensity, its own ends | 78 ms | 20 ms | 1.7 ms |
 | The same with normal fields, 28 bytes a vertex | 32 ms | 13.5 ms | 1.1 ms |
+| Voxels of 128 by 128 by 128 F32 cells, a ball cut to a range | 18 ms | 1.3 ms | 1.7 ms |
+| The same, every cell, its own ends | 54 ms | 8.5 ms | 1.3 ms |
+| Voxels of 256 by 256 by 256 U8 cells, walls cut to a range | 51 ms | 3 ms | 2 ms |
 
 The cloud of 32 bytes a point is the bytes going to the GPU, which Chrome copies past 16 MB only
 as fast as its GPU process takes them. A map's own ends take most of its time, and the 64 MB of
 the biggest the rest. A mesh's is its 52 to 64 MB going to the GPU and the check of its
 triangles. Each mesh was timed in a browser of its own, as Chrome takes a mesh's index more
-slowly once another mesh's is freed.
-
-Measured in Node, reading from the bytes into what the GPU is given:
-
-| Value | Time |
-| --- | --- |
-| Voxels of 200 by 200 by 100, a tenth in range, each a cube's matrix and colour | 14 ms |
+slowly once another mesh's is freed, and each voxel case too. Cubes took 4 to 15 ms a frame for
+the same voxels, where rays take 2 or less. Every cell's own ends are the rest of their time.
 
 Points with no z now lie at z 0, so a Path2D, a Polyline2D and a list of Double2 draw.
 `run-big-import-edit` read a cloud without z to see the page sent fewer fields, and expected the
@@ -171,12 +174,14 @@ scene to refuse it. It now checks that they draw flat.
 5. Points read on the GPU.
 6. A flat grid as its field's bytes in a texture.
 7. A mesh read on the GPU, its normals summed there.
-8. Voxels by marching rays, kept only if faster than cubes.
+8. Voxels by marching rays, kept as they are faster than cubes.
 
 Each step has a scenario drawing it from the demo line, which publishes a cloud, a scan, a
-big path of 64 bit poses, a small turning box and rolling ground as meshes, a map of the scan's room, big, and a
-ball as voxels, small. The scenarios count the
-scene's pixels of each colour with the designer's `count` and `sees`.
+big path of 64 bit poses, a small turning box and rolling ground as meshes, a map of the scan's
+room, big, and a ball as voxels, small. The scenarios count the scene's pixels of each colour
+with the designer's `count` and `sees`. Checked in a browser while building, pixel against
+pixel: every ScalarKind draws as its twin, summed normals light a mesh within 2 levels of exact
+ones, and rays light voxels as cubes did.
 
 ## Later
 
