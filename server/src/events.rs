@@ -337,6 +337,16 @@ pub fn ends_itself(event: &str) -> bool {
     find(event).is_some_and(|e| e.ends_with == Some(e.name))
 }
 
+/// Whether `event` bringing `p` lets go of what a screen holds: an end, as a release, or a
+/// stream at rest.
+pub fn lets_go(event: &str, p: &Value) -> bool {
+    match ended_by(event) {
+        Some(_) if ends_itself(event) => rest(event, p) == *p,
+        Some(_) => true,
+        None => false,
+    }
+}
+
 /// What `event` brings at rest: `p` with each number outside its filters 0, in lists too.
 pub fn rest(event: &str, p: &Value) -> Value {
     fn zeroed(v: &Value) -> Value {
@@ -402,6 +412,9 @@ mod tests {
         let at_rest = rest("axes", &p);
         assert_eq!(at_rest, Value::from(serde_json::json!({ "lx": 0.0, "ly": 0, "axes": [0.0, 0.0], "pad": 1 })));
         assert_eq!(rest("axes", &at_rest), at_rest);
+        assert!(lets_go("axes", &at_rest) && !lets_go("axes", &p));
+        assert!(lets_go("release", &Value::Null) && lets_go("keyup", &Value::Null) && !lets_go("press", &Value::Null));
+        assert!(!lets_go("move", &Value::from(serde_json::json!({ "x": 0, "y": 0 }))), "a component's own events say themselves");
     }
 
     #[test]

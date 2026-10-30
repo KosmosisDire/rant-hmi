@@ -31,7 +31,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   check(refused.includes("is one of south, east"), `a button no option names refused, not "${refused}"`);
 
   const screen = await Hmi.connect(sys.ws);
-  const fire = (event, payload, heard) => screen.send({ type: "fire", page: pageId, id: pad, event, payload, heard });
+  const fire = (event, payload, heard) => screen.send({ type: "fire", page: pageId, id: pad, event, payload, heard, t: performance.now() });
   fire("buttondown", { button: "south", pad: 0 }, [{ button: "south" }]);
   // a press while its handler still runs from the last is dropped
   await eventually(() => hmi.state.values["Hmi.padSouth"]?.value === 1, "south on the first pad");

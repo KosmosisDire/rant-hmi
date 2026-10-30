@@ -1,5 +1,5 @@
 // A page handler that touches only the screen's own variables runs on the screen. Through a
-// link that turns slow just before a drag, holding every byte a second each way while the
+// link that turns slow just before a drag, holding every byte 300 ms each way while the
 // screen's measure of the round trip still says fast, a view it drags follows the pointer within
 // a frame and never steps back as the system's older values come in, and the system has the
 // value once they have. A handler that touches a shared variable runs on the system, so its
@@ -7,8 +7,9 @@
 
 import net from "node:net";
 
-/** How long the link holds what it carries, each way, once it turns slow. */
-const DELAY = 1000;
+/** How long the link holds what it carries, each way, once it turns slow, which is short of
+ *  when the system no longer runs what a screen did. */
+const DELAY = 300;
 
 export default async function ({ page, hmi, check, eventually, sys }) {
   hmi.setVariable("Hmi.hereX", 0, "screen");

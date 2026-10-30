@@ -29,7 +29,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
 
   // a screen of its own, to lose
   const screen = await Hmi.connect(sys.ws);
-  const fire = (event, key, heard) => screen.send({ type: "fire", page: pageId, id: pad, event, payload: { key, code: key === " " ? "Space" : `Key${key.toUpperCase()}` }, heard });
+  const fire = (event, key, heard) => screen.send({ type: "fire", page: pageId, id: pad, event, payload: { key, code: key === " " ? "Space" : `Key${key.toUpperCase()}` }, heard, t: performance.now() });
   fire("keydown", "a", [{ key: "a" }]);
   await eventually(() => hmi.state.values["Hmi.keyedA"]?.value === 1, "the handler for a to run");
   fire("keydown", " ", [{ key: " " }]);

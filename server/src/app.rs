@@ -177,6 +177,7 @@ struct Session {
     webrtc: bool,
     /// The last while of round trips and of big values' trips, for `Hmi/Clients`.
     trips: Trips,
+    clock: Clock,
     /// When it connected, and why its WebRTC connection did not open, as it said.
     opened: Instant,
     webrtc_problem: Option<String>,
@@ -434,6 +435,11 @@ impl Trips {
         Self::keep(&mut self.pings, rtt);
     }
 
+    /// The quickest round trip of the while kept, in ms, 0 before any.
+    fn quickest(&self) -> f64 {
+        self.pings.iter().map(|(_, ms)| *ms).reduce(f64::min).unwrap_or(0.0)
+    }
+
     fn big(&mut self, trip: Duration) {
         Self::keep(&mut self.bigs, trip);
     }
@@ -483,6 +489,46 @@ impl Trips {
     }
 }
 
+/// A screen's clock read as this host's, from its pings of the last while: how far this host's
+/// time in ms since `origin` was ahead of the screen's as each came, the least of them taken, as a
+/// ping held up on its way only comes later.
+struct Clock {
+    origin: Instant,
+    gaps: VecDeque<(Instant, f64)>,
+}
+
+impl Default for Clock {
+    fn default() -> Clock {
+        Clock { origin: Instant::now(), gaps: VecDeque::new() }
+    }
+}
+
+impl Clock {
+    /// A ping the screen sent at `t` by its clock came now.
+    fn ping(&mut self, t: f64) {
+        let now = Instant::now();
+        self.gaps.push_back((now, now.duration_since(self.origin).as_secs_f64() * 1000.0 - t));
+        while self.gaps.front().is_some_and(|(at, _)| now.duration_since(*at) > TRIPS_FOR) {
+            self.gaps.pop_front();
+        }
+    }
+
+    /// When what the screen did at `t` by its clock happened by this host's, `trip` the quickest
+    /// round trip of its link in ms, half of which the quickest ping took to come. Now before any
+    /// ping.
+    fn at(&self, t: f64, trip: f64) -> Instant {
+        let now = Instant::now();
+        let Some(gap) = self.gaps.iter().map(|(_, g)| *g).reduce(f64::min) else { return now };
+        let ms = t + gap - trip / 2.0;
+        let at = match Duration::try_from_secs_f64(ms.abs() / 1000.0) {
+            Ok(d) if ms >= 0.0 => self.origin.checked_add(d),
+            Ok(d) => self.origin.checked_sub(d),
+            Err(_) => None,
+        };
+        at.unwrap_or(now).min(now)
+    }
+}
+
 /// Why an edit is applied, which says which stack its undo goes on.
 #[derive(Clone, Copy)]
 enum Step {
@@ -492,12 +538,14 @@ enum Step {
 }
 
 /// A run going on: the screen that started it, none for a rule's, the handler it runs, what
-/// the log calls it, and for a function's the call it answers with what it returns.
+/// the log calls it, for a function's the call it answers with what it returns, and for a
+/// screen's event when the operator did it.
 struct Running {
     session: Option<u32>,
     of: HandlerKey,
     label: String,
     answers: Option<u64>,
+    came: Option<Instant>,
 }
 
 /// A handler as it runs: an element's for an event and filter on the copy of a repeat it
@@ -528,9 +576,9 @@ struct Held {
     by: Filter,
 }
 
-/// An event waiting for its screen's run of its handler to end: what it brought and the item of
-/// the copy it happened on.
-type Waiting = (Value, Option<Value>);
+/// An event waiting for its screen's run of its handler to end: what it brought, the item of the
+/// copy it happened on and when the operator did it.
+type Waiting = (Value, Option<Value>, Option<Instant>);
 
 /// A rule's condition: true since when, and whether it has fired since it turned true, for the
 /// condition and code it was judged with.
@@ -840,7 +888,7 @@ impl App {
                 let vars: HashMap<String, Value> = self.project.flat().variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
                 let key = new_key();
-                self.sessions.insert(session, Session { out, channel: None, held: None, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), answered: Instant::now(), shown: true, undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
+                self.sessions.insert(session, Session { out, channel: None, held: None, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), clock: Clock::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), answered: Instant::now(), shown: true, undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
                 info!("screen {session} connected");
                 // it reads all of every value until it says what it reads
                 self.fields_changed();
@@ -979,6 +1027,7 @@ impl App {
             }
             ClientMsg::Ping { t, rtt, seen } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
+                s.clock.ping(t);
                 if let Some(rtt) = rtt.filter(|r| r.is_finite() && *r >= 0.0) {
                     let rtt = Duration::from_secs_f64(rtt / 1000.0);
                     s.timed(rtt);
@@ -1125,11 +1174,14 @@ impl App {
                     self.edit(session, edit, Step::Redo);
                 }
             }
-            ClientMsg::Fire { page, id, event, payload, copies, item, heard } => {
+            ClientMsg::Fire { page, id, event, payload, copies, item, heard, t, ending } => {
+                // a start too late never runs, while what lets go always does
+                let lets_go = ending || events::lets_go(&event, &payload);
+                let came = self.sessions.get(&session).filter(|_| !lets_go).map(|s| s.clock.at(t, s.trips.quickest()));
                 let on = HandlerKey { page, id, copies, event, filter: Filter::new() };
                 self.follow_held(session, &on, &payload, &heard);
                 for filter in heard {
-                    self.fire(session, HandlerKey { filter, ..on.clone() }, payload.clone(), item.clone());
+                    self.fire(session, HandlerKey { filter, ..on.clone() }, payload.clone(), item.clone(), came);
                 }
             }
             ClientMsg::Answer { ask, value } => {
@@ -1427,8 +1479,9 @@ impl App {
 
     /// Runs the element's handler `of` names, unless the screen's run of it from before goes on.
     /// Then a stream's event and an end wait for it, while a one off start is dropped. Each
-    /// screen runs its own, so one never drops another's. `item` is the copy's it happened on.
-    fn fire(&mut self, session: u32, of: HandlerKey, payload: Value, item: Option<Value>) {
+    /// screen runs its own, so one never drops another's. `item` is the copy's it happened on,
+    /// and `came` when the operator did it, None for one that runs however late.
+    fn fire(&mut self, session: u32, of: HandlerKey, payload: Value, item: Option<Value>, came: Option<Instant>) {
         let Some(e) = self.pages.element(&of.page, &of.id) else { return };
         let Some(h) = e.handlers.iter().find(|h| h.event == of.event && h.filter == of.filter) else { return };
         if self.runs.values().any(|r| r.of == of && r.session == Some(session)) {
@@ -1439,15 +1492,18 @@ impl App {
             }
             let queue = self.waiting.entry((session, of.clone())).or_default();
             match queue.back_mut() {
-                // a stream's events on the same copy gather in, so no move is lost
-                Some((was, _)) if stream => *was = events::gather(&of.event, was, payload),
-                _ => queue.push_back((payload, item)),
+                // a stream's events on the same copy gather in, so no move is lost, nor a rest
+                Some((was, _, when)) if stream => {
+                    *was = events::gather(&of.event, was, payload);
+                    *when = when.and(came);
+                }
+                _ => queue.push_back((payload, item, came)),
             }
             return;
         }
         let label = format!("{} {}", e.props.get("name").unwrap_or(&of.id), of.event);
         let code = h.code.clone();
-        self.start(Running { session: Some(session), of, label, answers: None }, code, payload, item, None, Vec::new());
+        self.start(Running { session: Some(session), of, label, answers: None, came }, code, payload, item, None, Vec::new());
     }
 
     /// The filters of an element's handlers that take `event` bringing `p`.
@@ -1491,8 +1547,9 @@ impl App {
         let of = &running.of;
         let at = of.copies.last().map(|i| (*i, item.unwrap_or_default()));
         let bound = self.pages.bound(&of.page, &of.id, &of.copies);
+        let came = running.came;
         self.runs.insert(self.next_run, running);
-        self.script.send(ToScript::Run { run: self.next_run, session, code, p, at, bound, own, takes });
+        self.script.send(ToScript::Run { run: self.next_run, session, code, p, at, bound, own, came, takes });
     }
 
     /// Runs each rule that `fits` in its object, unless it still runs from before.
@@ -1503,7 +1560,7 @@ impl App {
             if self.runs.values().any(|r| r.session.is_none() && r.of == of) {
                 continue;
             }
-            self.start(Running { session: None, of, label: rule.name, answers: None }, rule.code, p.clone(), None, Some(own), Vec::new());
+            self.start(Running { session: None, of, label: rule.name, answers: None, came: None }, rule.code, p.clone(), None, Some(own), Vec::new());
         }
     }
 
@@ -1523,7 +1580,7 @@ impl App {
         let takes = f.takes.into_iter().zip(args.into_iter().chain(std::iter::repeat(Value::Null))).collect();
         let of = HandlerKey { id: function.clone(), ..HandlerKey::default() };
         let own = object::owner(&function).to_owned();
-        self.start(Running { session, of, label: function, answers: Some(call) }, f.code, Value::Null, None, Some(own), takes);
+        self.start(Running { session, of, label: function, answers: Some(call), came: None }, f.code, Value::Null, None, Some(own), takes);
     }
 
     /// Keeps each timer's next time and which conditions are judged anew.
@@ -1684,8 +1741,8 @@ impl App {
                 if !goes || self.waiting.get(&key).is_some_and(VecDeque::is_empty) {
                     self.waiting.remove(&key);
                 }
-                if let Some((payload, item)) = next.filter(|_| goes) {
-                    self.fire(session, key.1, payload, item);
+                if let Some((payload, item, came)) = next.filter(|_| goes) {
+                    self.fire(session, key.1, payload, item, came);
                 }
                 self.forget(session);
             }
@@ -2132,7 +2189,7 @@ impl App {
             };
             for filter in ends {
                 let of = HandlerKey { page: h.page.clone(), id: h.id.clone(), copies: h.copies.clone(), event: h.end.into(), filter };
-                self.fire(session, of, p.clone(), None);
+                self.fire(session, of, p.clone(), None, None);
             }
         }
     }
@@ -2420,7 +2477,7 @@ mod tests {
 
     fn session(remote: IpAddr) -> Session {
         let out = Outbox::new(Arc::new(Lanes::default()));
-        Session { out, channel: None, held: None, bulk: None, key: new_key(), local: remote, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), answered: Instant::now(), shown: true, undo: Vec::new(), redo: Vec::new(), vars: HashMap::new(), plays: HashSet::new(), decodes: HashSet::new() }
+        Session { out, channel: None, held: None, bulk: None, key: new_key(), local: remote, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), clock: Clock::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), answered: Instant::now(), shown: true, undo: Vec::new(), redo: Vec::new(), vars: HashMap::new(), plays: HashSet::new(), decodes: HashSet::new() }
     }
 
     /// The messages waiting in `lanes`, each joined from its pieces.
@@ -2590,5 +2647,19 @@ mod tests {
     fn a_value_too_big_to_share_goes_alone() {
         assert!(matches!(written(update("Speed", Value::Float(1.5)), 1, false), Written::Small(_)));
         assert!(matches!(written(update("Cam", Value::Bytes(vec![0; PIECE])), 1, false), Written::Big(_)));
+    }
+
+    #[test]
+    fn a_screens_clock_reads_as_this_hosts_by_its_quickest_ping() {
+        let ago = |at: Instant| at.elapsed().as_secs_f64() * 1000.0;
+        assert!(ago(Clock::default().at(9.0, 0.0)) < 50.0, "before any ping, what comes came now");
+        // the screen's clock is 5 s ahead, and one ping was held up 300 ms on its way
+        let mut c = Clock::default();
+        c.ping(4700.0);
+        c.ping(5000.0);
+        assert!(ago(c.at(5000.0, 0.0)) < 50.0);
+        assert!((ago(c.at(3000.0, 0.0)) - 2000.0).abs() < 50.0, "what happened 2 s before is 2 s old");
+        assert!(ago(c.at(9000.0, 0.0)) < 50.0, "what says it is from later came now");
+        assert!((ago(c.at(5000.0, 600.0)) - 300.0).abs() < 50.0, "a link that takes 300 ms each way makes all it brings 300 ms old");
     }
 }

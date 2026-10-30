@@ -21,6 +21,9 @@ use crate::protocol::{EnumInfo, Mode};
 
 /// How long code may run without waiting before it is stopped.
 const BUDGET: Duration = Duration::from_millis(250);
+/// How long after an operator did something on a screen its handler may still start. One later
+/// is not run, as a jog that starts late moves a machine no one is steering.
+pub const LATE: Duration = Duration::from_millis(500);
 const MEMORY: usize = 64 << 20;
 const PRELUDE: &str = include_str!("prelude.js");
 
@@ -60,7 +63,8 @@ pub enum ToScript {
     /// repeat it happened on, which the code reads as `index` and `item`. `bound` is the state
     /// its element sees, by key, which the code reads by name over any other. Code of an object
     /// `own` reads its members by name too, and a function's reads what it takes, nearest of all.
-    Run { run: u64, session: Option<u32>, code: String, p: Value, at: Option<(u32, Value)>, bound: Vec<(String, Variable)>, own: Option<String>, takes: Vec<(String, Value)> },
+    /// `came` is when the operator did what it is for, None for a run that may start any time.
+    Run { run: u64, session: Option<u32>, code: String, p: Value, at: Option<(u32, Value)>, bound: Vec<(String, Variable)>, own: Option<String>, came: Option<Instant>, takes: Vec<(String, Value)> },
     /// How a call ended: its answer, or why it failed.
     Answer { call: u64, outcome: Result<Value, CallFailure> },
     /// One of a task call's progress updates, for the function the call was given.
@@ -722,7 +726,10 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
                 };
             }
         }
-        ToScript::Run { run, session, code, p, at, bound, own, takes } => {
+        ToScript::Run { run, session, code, p, at, bound, own, came, takes } => {
+            if let Some(late) = came.map(|c| c.elapsed()).filter(|d| *d > LATE) {
+                return finish(shared, run, End::Fault(format!("not run, since it would have started {} ms after it happened", late.as_millis())));
+            }
             let mut s = shared.borrow_mut();
             s.live.insert(run);
             s.sessions.insert(run, session);

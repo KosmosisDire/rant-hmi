@@ -87,7 +87,7 @@ fn end(said: &[FromScript]) -> &End {
 #[test]
 fn a_run_writes_what_it_sets_when_it_ends() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = Speed + 1;\nSpeed = Speed * 2;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = Speed + 1;\nSpeed = Speed * 2;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(writes(&said), [("Line.Speed".to_string(), value!(4))]);
     assert_eq!(end(&said), &End::Ok);
@@ -101,21 +101,21 @@ fn state_reads_by_its_name_over_others_from_its_start_then_its_screens_value() {
     let bound = || vec![("@o/e1/lit#2".to_string(), lit.clone()), ("@o/count".to_string(), shared.clone())];
     // count is the HMI's variable too, which the page's count hides
     let code = "log(lit, count);\nlit = !lit;\ncount = count + 1;\nSettings.mode = \"Manual\";";
-    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: bound(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: bound(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(end(&said), &End::Ok);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "false 10")));
     let wrote = writes(&said);
     assert_eq!(wrote[..2], [("@o/e1/lit#2".to_string(), value!(true)), ("@o/count".to_string(), value!(11))]);
     // what the run wrote is held, its screen's for state each screen keeps
-    script.send(ToScript::Run { run: 2, session: Some(7), code: "log(lit, count);".into(), p: Value::Null, at: None, bound: bound(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "log(lit, count);".into(), p: Value::Null, at: None, bound: bound(), own: own(), came: None, takes: Vec::new() });
     assert!(until_done(&mut rx, 2).iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "true 11")));
-    script.send(ToScript::Run { run: 3, session: Some(8), code: "log(lit, count);".into(), p: Value::Null, at: None, bound: bound(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 3, session: Some(8), code: "log(lit, count);".into(), p: Value::Null, at: None, bound: bound(), own: own(), came: None, takes: Vec::new() });
     assert!(until_done(&mut rx, 3).iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "false 11")));
     script.send(ToScript::Forget(vec!["@o/count".into()]));
-    script.send(ToScript::Run { run: 4, session: Some(7), code: "log(count);".into(), p: Value::Null, at: None, bound: bound(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 4, session: Some(7), code: "log(count);".into(), p: Value::Null, at: None, bound: bound(), own: own(), came: None, takes: Vec::new() });
     assert!(until_done(&mut rx, 4).iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "10")));
-    script.send(ToScript::Run { run: 5, session: Some(7), code: "log(count);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 5, session: Some(7), code: "log(count);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     assert!(until_done(&mut rx, 5).iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "0")));
 }
 
@@ -126,21 +126,21 @@ fn values_reach_code_as_js_values_and_come_back_whole() {
     script.send(ToScript::Values(vec![("Line.Settings".into(), Some(Value::map([("image", image), ("count", Value::Int(u64::MAX.into()))])))]));
     let code = "log(Settings.image.data instanceof Uint8Array, Settings.image.data[2], typeof Settings.count);\n\
                 Settings = { image: { width: 3, data: new Uint8Array([9, 8]) }, count: Settings.count - 1n };";
-    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(end(&said), &End::Ok);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "true 255 bigint")));
     let written = Value::map([("image", Value::map([("width", 3.into()), ("data", Value::Bytes(vec![9, 8]))])), ("count", Value::Int((u64::MAX - 1).into()))]);
     assert_eq!(writes(&said), [("Line.Settings".to_string(), written)]);
 
-    script.send(ToScript::Run { run: 2, session: Some(7), code: "Speed = 2n ** 70n;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "Speed = 2n ** 70n;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     assert!(matches!(end(&until_done(&mut rx, 2)), End::Fault(text) if text.contains("past what a whole number holds")));
 }
 
 #[test]
 fn a_function_is_never_a_value() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "Settings = { mode: () => 1 };".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "Settings = { mode: () => 1 };".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert!(matches!(end(&said), End::Fault(text) if text.contains("function cannot be a value")), "{:?}", end(&said));
 }
@@ -148,7 +148,7 @@ fn a_function_is_never_a_value() {
 #[test]
 fn fields_set_together_go_out_as_one_value() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "Settings.target = 5;\nconst s = Settings;\ns.mode = \"Manual\";".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "Settings.target = 5;\nconst s = Settings;\ns.mode = \"Manual\";".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(writes(&said), [("Line.Settings".to_string(), value!({ "mode": "Manual", "target": 5 }))]);
 }
@@ -156,7 +156,7 @@ fn fields_set_together_go_out_as_one_value() {
 #[test]
 fn reading_an_unknown_value_stops_the_run_and_drops_its_writes() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 9;\nif (Running) Speed = 10;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 9;\nif (Running) Speed = 10;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert!(writes(&said).is_empty());
     assert_eq!(end(&said), &End::Unknown("Line.Running".into()));
@@ -178,7 +178,7 @@ if (", "Unexpected token (line 2)"),
     ];
     for (n, (code, want)) in cases.iter().enumerate() {
         let run = n as u64 + 1;
-        script.send(ToScript::Run { run, session: Some(7), code: code.to_string(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+        script.send(ToScript::Run { run, session: Some(7), code: code.to_string(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
         let said = until_done(&mut rx, run);
         assert_eq!(end(&said), &End::Fault(want.to_string()), "{code}");
     }
@@ -187,7 +187,7 @@ if (", "Unexpected token (line 2)"),
 #[test]
 fn a_call_goes_out_after_the_writes_before_it_and_its_answer_comes_back() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 3;\nconst r = await Reset();\nlog(\"answer\", r);\nSpeed = 4;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 3;\nconst r = await Reset();\nlog(\"answer\", r);\nSpeed = 4;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let first = rx.blocking_recv().unwrap();
     assert!(matches!(&first, FromScript::Write { alias, value, .. } if alias == "Line.Speed" && *value == value!(3)));
     let FromScript::Call { call, alias, request, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
@@ -197,14 +197,14 @@ fn a_call_goes_out_after_the_writes_before_it_and_its_answer_comes_back() {
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "answer {\"ok\":true}")));
     assert_eq!(writes(&said), [("Line.Speed".to_string(), value!(4))]);
 
-    script.send(ToScript::Run { run: 2, session: Some(7), code: "try { await Reset(true); } catch (e) { log(e.status, e.message); }".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "try { await Reset(true); } catch (e) { log(e.status, e.message); }".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let FromScript::Call { call, request, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
     assert_eq!(request, value!(true));
     script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "timeout".into(), message: "no answer".into() }) });
     let said = until_done(&mut rx, 2);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "timeout no answer")));
 
-    script.send(ToScript::Run { run: 3, session: Some(7), code: "await Reset();".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 3, session: Some(7), code: "await Reset();".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let FromScript::Call { call, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
     script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "app_error".into(), message: "the belt is jammed".into() }) });
     let said = until_done(&mut rx, 3);
@@ -214,7 +214,7 @@ fn a_call_goes_out_after_the_writes_before_it_and_its_answer_comes_back() {
 #[test]
 fn a_task_call_hands_each_update_to_its_function_and_cancels() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "const n = await Fill(4, (p) => { count = p; });\nlog(\"filled\", n);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "const n = await Fill(4, (p) => { count = p; });\nlog(\"filled\", n);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let FromScript::Call { call, alias, request, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
     assert_eq!((alias.as_str(), request), ("Line.Fill", value!(4)));
     for share in [0.25, 0.5] {
@@ -228,7 +228,7 @@ fn a_task_call_hands_each_update_to_its_function_and_cancels() {
 
     // what a call gives cancels that call, and the task's own cancel every call of it
     let code = "const job = Fill(9);\njob.cancel();\nFill.cancel();\ntry { await job; } catch (e) { log(e.status); }";
-    script.send(ToScript::Run { run: 2, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 2, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let FromScript::Call { call, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
     assert!(matches!(rx.blocking_recv().unwrap(), FromScript::Cancel { alias, call: Some(c), .. } if alias == "Line.Fill" && c == call));
     assert!(matches!(rx.blocking_recv().unwrap(), FromScript::Cancel { alias, call: None, .. } if alias == "Line.Fill"));
@@ -237,7 +237,7 @@ fn a_task_call_hands_each_update_to_its_function_and_cancels() {
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "cancelled")));
 
     // a function that throws is told, and the call goes on
-    script.send(ToScript::Run { run: 3, session: Some(7), code: "await Fill(2, () => { throw new Error(\"no bar\"); });\nlog(\"done\");".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 3, session: Some(7), code: "await Fill(2, () => { throw new Error(\"no bar\"); });\nlog(\"done\");".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let FromScript::Call { call, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
     script.send(ToScript::Progress { call, value: value!(0.5) });
     assert!(matches!(rx.blocking_recv().unwrap(), FromScript::Fault { text, .. } if text.starts_with("no bar")));
@@ -248,7 +248,7 @@ fn a_task_call_hands_each_update_to_its_function_and_cancels() {
 
     // only a task takes a function and cancels
     for (run, code, want) in [(4, "await Reset(() => 1);", "a function cannot be a value"), (5, "Reset.cancel();", "not a function")] {
-        script.send(ToScript::Run { run, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+        script.send(ToScript::Run { run, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
         let said = until_done(&mut rx, run);
         assert!(matches!(end(&said), End::Fault(text) if text.contains(want)), "{code}: {:?}", end(&said));
     }
@@ -258,7 +258,7 @@ fn a_task_call_hands_each_update_to_its_function_and_cancels() {
 fn sleep_waits_and_writes_go_out_at_each_await() {
     let (script, mut rx) = engine();
     let start = std::time::Instant::now();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 5;\nawait sleep(60);\nSpeed = 6;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 5;\nawait sleep(60);\nSpeed = 6;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let first = rx.blocking_recv().unwrap();
     assert!(matches!(&first, FromScript::Write { value, .. } if *value == value!(5)));
     let said = until_done(&mut rx, 1);
@@ -271,7 +271,7 @@ fn a_run_going_on_reads_what_another_wrote_before_it_waited_or_ended() {
     let (script, mut rx) = engine();
     // both wake from their sleeps together, each adding to what the other wrote
     for (run, session) in [(1, 7), (2, 8)] {
-        script.send(ToScript::Run { run, session: Some(session), code: "await sleep(40);\ncount = count + 1;\nawait sleep(1);\ncount = count + 1;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+        script.send(ToScript::Run { run, session: Some(session), code: "await sleep(40);\ncount = count + 1;\nawait sleep(1);\ncount = count + 1;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     }
     let mut said = until_done(&mut rx, 1);
     if !said.iter().any(|m| matches!(m, FromScript::Done { run: 2, .. })) {
@@ -280,7 +280,7 @@ fn a_run_going_on_reads_what_another_wrote_before_it_waited_or_ended() {
     let counts: Vec<Value> = writes(&said).into_iter().filter(|(a, _)| a == "Line.count").map(|(_, v)| v).collect();
     assert_eq!(counts.last(), Some(&value!(4)), "{counts:?}");
     // one that throws sends nothing of what it wrote since it last waited
-    script.send(ToScript::Run { run: 3, session: Some(7), code: "count = 10;\nawait sleep(1);\ncount = 20;\nthrow new Error(\"no\");".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 3, session: Some(7), code: "count = 10;\nawait sleep(1);\ncount = 20;\nthrow new Error(\"no\");".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 3);
     assert_eq!(writes(&said), [("Line.count".to_string(), value!(10))]);
 }
@@ -288,7 +288,7 @@ fn a_run_going_on_reads_what_another_wrote_before_it_waited_or_ended() {
 #[test]
 fn pages_open_and_close_by_name() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "open(Pages.RobotCell);\nopen(Pages.Overview, { replace: true });\nclose();\nclose({ ok: true });".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "open(Pages.RobotCell);\nopen(Pages.Overview, { replace: true });\nclose();\nclose({ ok: true });".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     let moves: Vec<String> = said
         .iter()
@@ -300,7 +300,7 @@ fn pages_open_and_close_by_name() {
         .collect();
     assert_eq!(moves, ["open robot-cell false", "open overview true", "close null", "close { ok: true }"]);
 
-    script.send(ToScript::Run { run: 2, session: Some(7), code: "if (await open(Pages.RobotCell)) log(\"yes\");".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "if (await open(Pages.RobotCell)) log(\"yes\");".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let FromScript::Open { call, .. } = rx.blocking_recv().unwrap() else { panic!("no open") };
     script.send(ToScript::Answer { call, outcome: Ok(value!(true)) });
     let said = until_done(&mut rx, 2);
@@ -310,20 +310,20 @@ fn pages_open_and_close_by_name() {
 #[test]
 fn variables_read_and_write_as_their_screen_sees_them() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "count = count + 1;\njogMode = jogMode + \"!\";".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "count = count + 1;\njogMode = jogMode + \"!\";".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(writes(&said), [("Line.count".to_string(), value!(1)), ("Line.jogMode".to_string(), value!("Joint!"))]);
-    script.send(ToScript::Run { run: 2, session: None, code: "jogMode = \"Cartesian\";".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 2, session: None, code: "jogMode = \"Cartesian\";".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 2);
     assert_eq!(end(&said), &End::Fault("Line.jogMode is each screen's own, and this handler runs for no screen (line 1)".into()));
-    script.send(ToScript::Run { run: 3, session: Some(8), code: "log(jogMode);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 3, session: Some(8), code: "log(jogMode);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     assert_eq!(end(&until_done(&mut rx, 3)), &End::Unknown("Line.jogMode".into()));
 }
 
 #[test]
 fn a_handler_reads_what_its_event_brought_as_p() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(p.on, p.value);".into(), p: value!({ "on": "knob", "value": 3 }), at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(p.on, p.value);".into(), p: value!({ "on": "knob", "value": 3 }), at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "knob 3")));
 }
@@ -331,7 +331,7 @@ fn a_handler_reads_what_its_event_brought_as_p() {
 #[test]
 fn a_repeated_elements_handler_reads_its_copy_as_index_and_item() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(index, item.name);".into(), p: Value::Null, at: Some((2, value!({ "name": "J3" }))), bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(index, item.name);".into(), p: Value::Null, at: Some((2, value!({ "name": "J3" }))), bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "2 J3")));
 }
@@ -354,7 +354,7 @@ fn conditions_are_judged_and_an_unknown_one_is_false() {
 #[test]
 fn a_topic_sends_after_the_writes_before_it_and_reads_its_latest() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 2;\nJog.send(1.75);\nlog(Joints.position[1]);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = 2;\nJog.send(1.75);\nlog(Joints.position[1]);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     let order: Vec<String> = said
         .iter()
@@ -366,7 +366,7 @@ fn a_topic_sends_after_the_writes_before_it_and_reads_its_latest() {
         })
         .collect();
     assert_eq!(order, ["write Line.Speed", "send Line.Jog 1.75", "log 1.5"]);
-    script.send(ToScript::Run { run: 2, session: Some(7), code: "Joints.send({});".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "Joints.send({});".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     assert_eq!(end(&until_done(&mut rx, 2)), &End::Fault("Line.Joints is imported to read. Import it to write to send on it. (line 1)".into()));
 }
 
@@ -376,7 +376,7 @@ fn a_message_is_passed_whole_or_by_its_fields() {
     let form = |name: &str, fields: &[&str]| Form { name: name.into(), fields: fields.iter().map(|f| f.to_string()).collect() };
     script.send(ToScript::Forms(HashMap::from([("Line.Jog".into(), form("Vector3", &["x", "y", "z"])), ("Line.Reset".into(), form("ResetRequest", &["line"]))])));
     let mut sends = |code: &str, run: u64| {
-        script.send(ToScript::Run { run, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+        script.send(ToScript::Run { run, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
         until_done(&mut rx, run)
     };
     let sent = |said: &[FromScript]| said.iter().find_map(|m| if let FromScript::Send { value, .. } = m { Some(value.clone()) } else { None });
@@ -385,7 +385,7 @@ fn a_message_is_passed_whole_or_by_its_fields() {
     assert_eq!(end(&sends("Jog.send(1, 2);", 3)), &End::Fault("Line.Jog.send takes x, y, z, or one Vector3 with them (line 1)".into()));
 
     // a request of one field takes that field bare
-    script.send(ToScript::Run { run: 4, session: Some(7), code: "await Reset(4);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 4, session: Some(7), code: "await Reset(4);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let FromScript::Call { call, request, .. } = rx.blocking_recv().unwrap() else { panic!("no call") };
     assert_eq!(request, value!({ "line": 4 }));
     script.send(ToScript::Answer { call, outcome: Ok(Value::Null) });
@@ -397,7 +397,7 @@ fn an_enum_reads_by_its_type_name_as_a_fresh_list_of_its_options() {
     let (script, mut rx) = engine();
     script.send(ToScript::Enums(vec![EnumInfo { name: "Job".into(), options: vec!["None".into(), "Pick".into()] }]));
     let code = r#"const o = Job.options; o.push("Place"); log(o, Job.options.length, Job.options.includes("Pick"));"#;
-    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == r#"["None","Pick","Place"] 2 true"#)), "the log was not the options");
     assert!(reserved("Math") && reserved("Pages") && reserved("sqrt") && reserved("emit") && reserved("link") && reserved("keys") && reserved("gamepads") && !reserved("Job"));
@@ -407,9 +407,9 @@ fn an_enum_reads_by_its_type_name_as_a_fresh_list_of_its_options() {
 #[test]
 fn runs_do_not_share_names() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "globalThis.mine = 1;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "globalThis.mine = 1;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     until_done(&mut rx, 1);
-    script.send(ToScript::Run { run: 2, session: Some(7), code: "log(typeof mine);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "log(typeof mine);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 2);
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "undefined")));
 }
@@ -421,7 +421,7 @@ fn code_does_math_on_numbers_vectors_turns_and_poses() {
                 const turned = fromEuler(0, 0, PI / 2) * vec(1, 0, 0);
                 const pose = { position: vec(1, 2, 3), orientation: fromEuler(0, 0, PI / 2) };
                 Settings = { mode: \"x\" + vec(1, 2), target: round(turned.y) + (pose * pose.inverse()).position.length() };";
-    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(end(&said), &End::Ok);
     assert_eq!(writes(&said), [("Line.count".to_string(), value!(12)), ("Line.Settings".to_string(), value!({ "mode": "x(1, 2)", "target": 1 }))]);
@@ -467,7 +467,7 @@ fn computed_values_are_worked_out_in_any_order_and_unknown_while_what_they_read_
     assert_eq!(got, [("Line.half".to_string(), Some(value!(50))), ("Line.percent".to_string(), Some(value!(100))), ("Line.on".to_string(), None)]);
 
     // handlers read them as any value, and a write goes back through the setter
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "count = half; percent = 250;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "count = half; percent = 250;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(writes(&said), [("Line.count".to_string(), value!(50)), ("Line.percent".to_string(), value!(250))]);
     script.send(ToScript::Invert { session: Some(7), name: "Line.percent".into(), v: value!(250) });
@@ -502,12 +502,12 @@ fn an_imports_own_objects_and_lists_are_values_whole_filtered_or_picked() {
 
     // handlers write and send them too, and one read while unknown stops the run
     let code = "count = Target.filter((g) => !g.on);\nSettings = Joints;\nJog.send(Target[1]);";
-    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(end(&said), &End::Ok);
     assert_eq!(writes(&said), [("Line.count".to_string(), value!([{ "name": "b", "on": false }])), ("Line.Settings".to_string(), value!({ "position": [0.5, 1.5] }))]);
     assert!(said.iter().any(|m| matches!(m, FromScript::Send { value, .. } if *value == value!({ "name": "b", "on": false }))));
-    script.send(ToScript::Run { run: 2, session: Some(7), code: "count = Jog;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "count = Jog;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 2);
     assert!(writes(&said).is_empty());
     assert_eq!(end(&said), &End::Unknown("Line.Jog".into()));
@@ -520,7 +520,7 @@ fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
     script.send(ToScript::Compute);
     let got = next(&mut rx, |m| if let FromScript::Computed(list) = m { Some(list) } else { None });
     assert_eq!(got, [("Line.sneaky".to_string(), None), ("Line.plain".to_string(), Some(value!(2)))]);
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "plain = 3;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "plain = 3;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert!(matches!(end(&said), End::Fault(text) if text.contains("no setter")));
 }
@@ -557,7 +557,7 @@ fn a_handler_reads_what_the_api_lists_and_nothing_more() {
         assert!(standard.contains(name), "{name} is listed as JavaScript's own, which it is not");
     }
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(Object.getOwnPropertyNames(globalThis).join(\" \"));".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(Object.getOwnPropertyNames(globalThis).join(\" \"));".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     let all = said.iter().find_map(|m| if let FromScript::Log { text, .. } = m { Some(text.clone()) } else { None }).unwrap();
     let project = ["p", "Line", "Speed", "Running", "Settings", "Joints", "Jog", "Target", "Peek", "Reset", "Fill", "jogMode", "count"];
@@ -571,7 +571,7 @@ fn a_handler_reads_what_the_api_lists_and_nothing_more() {
 #[test]
 fn colours_lighten_darken_fade_mix_and_scale() {
     let (script, mut rx) = engine();
-    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(\"#224493\".lighten(0), \"#224493\".lighten(0.2), \"#224493\".lighten(1), \"#224493\".darken(1), \"#808080\" * 0.5, \"#229834\" * 1.2, 0.8 * \"#229834\", \"#ffffff\" * \"#ff8000\", \"#f00\".alpha(0.5), \"#ff000080\".fade(0.5), mix(\"#000000\", \"#ffffff\", 1), \"#ff0000\".mix(\"#0000ff\"), \"#808080\" / 2);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(\"#224493\".lighten(0), \"#224493\".lighten(0.2), \"#224493\".lighten(1), \"#224493\".darken(1), \"#808080\" * 0.5, \"#229834\" * 1.2, 0.8 * \"#229834\", \"#ffffff\" * \"#ff8000\", \"#f00\".alpha(0.5), \"#ff000080\".fade(0.5), mix(\"#000000\", \"#ffffff\", 1), \"#ff0000\".mix(\"#0000ff\"), \"#808080\" / 2);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     let text = said.iter().find_map(|m| if let FromScript::Log { text, .. } = m { Some(text.as_str()) } else { None });
     assert_eq!(text, Some("#224493 #4a69aa #ffffff #000000 #404040 #29b63e #1b7a2a #ff8000 #ff000080 #ff000040 #ffffff #8c53a2 #404040"));
@@ -585,19 +585,19 @@ fn code_outside_reads_an_objects_global_members_and_its_functions_run_on_their_o
     o.local = vec!["Target".into()];
     script.send(ToScript::Objects(vec![o]));
     let code = "Line.Speed = Line.Speed + 1;\nlog(typeof Line.Target, typeof Speed);\nlog(await Line.restart(\"pick\"));";
-    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: None, takes: Vec::new() });
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: None, came: None, takes: Vec::new() });
     // a Local member and a bare name are not there, and the write goes out before the call
     assert_eq!(next(&mut rx, |m| if let FromScript::Log { text, .. } = m { Some(text) } else { None }), "undefined undefined");
     assert!(matches!(rx.blocking_recv().unwrap(), FromScript::Write { alias, value, .. } if alias == "Line.Speed" && value == value!(2)));
     let FromScript::Run { run, call, function, args } = rx.blocking_recv().unwrap() else { panic!("no run") };
     assert_eq!((run, function.as_str(), args), (1, "Line.restart", vec![value!("pick")]));
     // the function's own run reads what it takes and gives back what it returns
-    script.send(ToScript::Run { run: 2, session: Some(7), code: "return job + \"ed\";".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: vec![("job".into(), value!("pick"))] });
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "return job + \"ed\";".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: vec![("job".into(), value!("pick"))] });
     let returned = until_done(&mut rx, 2).into_iter().find_map(|m| if let FromScript::Done { value, .. } = m { Some(value) } else { None });
     assert_eq!(returned, Some(value!("picked")));
     script.send(ToScript::Answer { call, outcome: Ok(value!("picked")) });
     assert!(until_done(&mut rx, 1).iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "picked")));
     // and only code outside the object is kept from its Local members
-    script.send(ToScript::Run { run: 3, session: Some(7), code: "log(Target, Line.Target);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), takes: Vec::new() });
+    script.send(ToScript::Run { run: 3, session: Some(7), code: "log(Target, Line.Target);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     assert!(until_done(&mut rx, 3).iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "3 3")));
 }

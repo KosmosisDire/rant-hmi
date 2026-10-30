@@ -10,13 +10,14 @@ import type { Handler } from "../protocol/Handler";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { resolve, runHandler, type Scope } from "../state/bind";
-import { endOf, eventInfo, handlerKey, rests, settingsOf, takes } from "../state/events";
+import { endOf, eventInfo, handlerKey, letsGo, rests, settingsOf, takes } from "../state/events";
 import { key, named } from "../state/names";
 
 export interface Act {
   /** `scope` is what the element reads, its copy's in a repeat, and `only` the one handler a
-   *  timed event is for, as a repeat's on its own beat. */
-  fire(e: Element, event: string, payload: unknown, scope: Scope, only?: Handler): void;
+   *  timed event is for, as a repeat's on its own beat. `ending` while a component handles
+   *  what lets go, as a release, so what it sends then runs on the system however late. */
+  fire(e: Element, event: string, payload: unknown, scope: Scope, only?: Handler, ending?: boolean): void;
   /** Whether `e`'s handler `h` is heard now, read in `scope`, so a watch follows it. */
   hears(e: Element, h: Handler, scope: Scope): boolean;
 }
@@ -78,7 +79,7 @@ export function runsHere(h: Handler, scope: Scope): boolean {
  *  held per handler there, so it goes only to those. */
 export function pageAct(page: string): Act {
   return {
-    fire: (e, event, payload, scope, only) => {
+    fire: (e, event, payload, scope, only, ending) => {
       const heard = hearing(e, event, payload, scope, only);
       const here = (h: Handler) => runsHere(h, scope);
       for (const h of heard.filter(here)) runHandler(h.code, scope, undefined, payload ?? null, { label: `${e.props.name ?? e.id} ${event}`, page, element: e.id });
@@ -87,7 +88,8 @@ export function pageAct(page: string): Act {
       if (there.length > 0 || (end && e.handlers.some((h) => takes(h, end, payload) && (end === event || !here(h))))) {
         // the copy it happened on, by the index of each copy it sits in, and the nearest's item
         const item = scope.place?.copies.length ? (scope.get("item") as Value) : undefined;
-        send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as Value, copies: scope.place?.copies ?? [], item, heard: there.map((h) => h.filter) });
+        // when it happened, by the clock the pings give, so the system runs no start that comes late
+        send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as Value, copies: scope.place?.copies ?? [], item, heard: there.map((h) => h.filter), t: performance.now(), ending: !!ending });
       }
     },
     hears: (_, h, scope) => heard(h, scope),
@@ -98,8 +100,9 @@ export function pageAct(page: string): Act {
  *  the scope the instance sits in. */
 export function componentAct(c: Page, instance: Element, outer: Act, at: Scope): Act {
   return {
-    fire: (e, event, payload, scope, only) => {
-      const emit = (name: string, sent?: unknown) => outer.fire(instance, String(name), sent, at);
+    fire: (e, event, payload, scope, only, ending) => {
+      const lets = !!ending || letsGo(event, payload);
+      const emit = (name: string, sent?: unknown) => outer.fire(instance, String(name), sent, at, undefined, lets);
       for (const h of hearing(e, event, payload, scope, only)) runHandler(h.code, scope, emit, payload ?? null, { label: `${c.name} ${e.props.name ?? e.id} ${event}`, page: c.id, element: e.id });
     },
     hears: (_, h, scope) => heard(h, scope),

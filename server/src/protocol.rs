@@ -272,7 +272,9 @@ pub enum ClientMsg {
     /// copy, the index of each copy it sits in outermost first, and `item` is the nearest
     /// copy's, which the code reads as `index` and `item`. `heard` names the element's handlers
     /// for it the screen heard, by their filters. With none it still tells what the screen
-    /// holds, as a press, for the end to run should the screen be lost.
+    /// holds, as a press, for the end to run should the screen be lost. `t` is when it happened,
+    /// in ms by the clock the screen's pings give, and `ending` says a component sent it while it
+    /// handled an end, as a joystick's zeros on its release, so it runs however late.
     Fire {
         page: String,
         id: String,
@@ -285,6 +287,10 @@ pub enum ClientMsg {
         item: Option<Value>,
         #[serde(default)]
         heard: Vec<BTreeMap<String, String>>,
+        t: f64,
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        ending: bool,
     },
 }
 

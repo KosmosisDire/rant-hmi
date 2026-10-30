@@ -46,6 +46,10 @@ export function rest(event: string, p: object): Record<string, unknown> {
 export const rests = (event: string, p: unknown) =>
   eventInfo(event)?.ends_with === event && typeof p === "object" && p !== null && JSON.stringify(rest(event, p)) === JSON.stringify(p);
 
+/** Whether `event` bringing `p` lets go of what a screen holds: an end, as a release, or a
+ *  stream at rest. */
+export const letsGo = (event: string, p: unknown) => (eventInfo(event)?.ends_with !== event && EVENTS.some((x) => x.ends_with === event)) || rests(event, p);
+
 /** A handler's setting as written, a filter's or an expression's. */
 export const settingOf = (h: Handler, name: string) => h.filter[name] ?? h.attrs[name];
 
