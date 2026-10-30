@@ -3,14 +3,18 @@
 //! and a home it counts, the same view as MJPEG video, a label camera showing a real conveyor
 //! shot with a parcel and its labels, a 3D scan of the cell's floor with that part on it, and
 //! the floor's heat as points each with a colour and a size, and the robot's routes, each leg
-//! a list of points of its own.
+//! a list of points of its own. The same floor as a PointCloud, a room's walls as a LaserScan
+//! and a planned Path, as the standard types carry them.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use rant::types::{AlignedBox2D, Color, Double2, Double3, Empty, Float3, Image, ImageFormat, JointState, Pose, Quaternion, Timestamp, VideoCodec, VideoFrame};
+use rant::types::{
+    AlignedBox2D, Color, Double2, Double3, Empty, Float3, Image, ImageFormat, JointState, LaserScan, Path, PointCloud, PointField, Pose, Quaternion, ScalarKind,
+    Timestamp, Transform, VideoCodec, VideoFrame,
+};
 use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, Request, TaskOptions, TaskRequest, VariableOptions};
 
 #[derive(rant::Message, Clone)]
@@ -72,7 +76,7 @@ fn main() -> Result<(), rant::Error> {
     let args: Vec<String> = std::env::args().collect();
     let loopback = args.iter().any(|a| a == "--loopback");
     let domain = args.iter().position(|a| a == "--domain").and_then(|i| args.get(i + 1)?.parse().ok()).unwrap_or(0);
-    let mut options = NodeOptions::new().domain(domain).max_topics(32);
+    let mut options = NodeOptions::new().domain(domain).max_topics(48);
     if loopback {
         options = options.multicast_interface("127.0.0.1");
     }
@@ -97,6 +101,9 @@ fn main() -> Result<(), rant::Error> {
     let scan = node.publisher::<Scan>("Cell/Scan", Qos::new())?;
     let heat = node.publisher::<Heat>("Cell/Heat", Qos::new())?;
     let routes = node.publisher::<Routes>("Cell/Routes", Qos::new())?;
+    let cloud = node.publisher::<PointCloud>("Cell/Cloud", Qos::new())?;
+    let lidar = node.publisher::<LaserScan>("Cell/Lidar", Qos::new())?;
+    let plan = node.publisher::<Path>("Cell/Plan", Qos::new())?;
     let jog = Arc::new(Mutex::new(None::<f64>));
     let heard = jog.clone();
     let _jog = node.subscriber::<f64>("Line1/Jog", Qos::new(), move |m| *heard.lock().unwrap() = Some(m.into_inner()))?;
@@ -175,6 +182,9 @@ fn main() -> Result<(), rant::Error> {
             scan.send(&scan_of(t))?;
             heat.send(&heat_of(t))?;
             routes.send(&routes_of(t))?;
+            cloud.send(&cloud_of(t))?;
+            lidar.send(&lidar_of(t))?;
+            plan.send(&plan_of(t))?;
         }
         next += Duration::from_millis(50);
         match next.checked_duration_since(Instant::now()) {
@@ -196,6 +206,62 @@ fn scan_of(t: f64) -> Scan {
         })
         .collect();
     Scan { points }
+}
+
+/// The floor of `scan_of` as a PCL cloud: x, y, z and intensity as 32 bit floats, then rgb
+/// packed blue, green, red, as PCL packs it. The part is orange and brighter, the floor grey.
+fn cloud_of(t: f64) -> PointCloud {
+    let fields = [("x", 0), ("y", 4), ("z", 8), ("intensity", 12), ("rgb", 16)]
+        .map(|(name, offset)| PointField { name: name.to_owned(), offset, kind: ScalarKind::F32, count: 1 })
+        .to_vec();
+    let mut data = Vec::with_capacity(20_000 * 20);
+    for p in scan_of(t).points {
+        let on = p.z > 0.0;
+        let intensity: f32 = if on { 200.0 } else { 40.0 + 20.0 * p.x.abs() };
+        let [b, g, r] = if on { [40u8, 140, 230] } else { [120, 120, 120] };
+        for v in [p.x, p.y, p.z, intensity] {
+            data.extend(v.to_le_bytes());
+        }
+        data.extend([b, g, r, 0]);
+    }
+    PointCloud { origin: Transform::identity(), width: 200, fields, point_step: 20, dense: true, data }
+}
+
+/// A planar lidar at the middle of a 6 by 4 m room, a post 0.3 m wide circling it, in 360
+/// beams. The walls return 100 and the post 255.
+fn lidar_of(t: f64) -> LaserScan {
+    let post = (1.5 * (t * 0.5).cos(), 1.0 * (t * 0.5).sin());
+    let (mut ranges, mut intensities) = (Vec::with_capacity(360), Vec::with_capacity(360));
+    for i in 0..360 {
+        let a = -std::f64::consts::PI + i as f64 * std::f64::consts::TAU / 360.0;
+        let (dx, dy) = (a.cos(), a.sin());
+        // the nearer of the walls the beam meets
+        let wall = [3.0 / dx.abs(), 2.0 / dy.abs()].into_iter().filter(|d| d.is_finite()).fold(f64::INFINITY, f64::min);
+        // the post as a circle of radius 0.15: the nearer root along the beam, if it meets it
+        let along = dx * post.0 + dy * post.1;
+        let miss = (post.0 * post.0 + post.1 * post.1) - along * along;
+        let hit = if miss < 0.0225 && along > 0.0 { along - (0.0225 - miss).sqrt() } else { f64::INFINITY };
+        let (r, v) = if hit < wall { (hit, 255.0) } else { (wall, 100.0) };
+        ranges.push(r as f32);
+        intensities.push(v);
+    }
+    let step = (std::f64::consts::TAU / 360.0) as f32;
+    LaserScan { angle_min: -std::f32::consts::PI, angle_step: step, time_step: 0.0, range_min: 0.05, range_max: 10.0, echoes: 1, ranges, intensities }
+}
+
+/// A planned path of 40 poses round an ellipse, each facing along it, turning as time goes.
+fn plan_of(t: f64) -> Path {
+    let poses = (0..40)
+        .map(|i| {
+            let a = t * 0.2 + i as f64 * std::f64::consts::TAU / 40.0;
+            let heading = (0.5 * a.cos()).atan2(-1.5 * a.sin()) / 2.0;
+            Pose {
+                position: Double3 { x: 1.5 * a.cos(), y: 0.5 * a.sin(), z: 0.05 },
+                orientation: Quaternion { x: 0.0, y: 0.0, z: heading.sin(), w: heading.cos() },
+            }
+        })
+        .collect();
+    Path { poses }
 }
 
 /// Two legs of 2 and 3 points, the second's last point moving along x, and two route names.

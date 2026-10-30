@@ -1,0 +1,79 @@
+// Points take Rant's standard types as they come: a PointCloud in its own colours or along the
+// ramp by a field, cut to a range, a LaserScan's returns and a Path as a line. The worker reads
+// them from their bytes, and a field the value lacks says so on the scene.
+
+export default async function ({ page, hmi, d, check, eventually }) {
+  await hmi.import("Cell.CloudD", "Cell/Cloud");
+  await hmi.import("Cell.LidarD", "Cell/Lidar");
+  await hmi.import("Cell.PlanD", "Cell/Plan");
+  await d.addPage("Scene data");
+  const pageId = hmi.state.pages.find((p) => p.name === "Scene data").id;
+  // seen from above, x to the right, the 4 by 2 m floor and the 6 by 4 m room in view
+  const scene = await hmi.addElement(pageId, "scene", { name: "top", x: "4", y: "4", w: "40", h: "30", yaw: "-PI / 2", pitch: "1.5", distance: "9", background: "#000000" }, null);
+  const dots = await hmi.addElement(pageId, "points", { name: "cloud", points: "Cell.CloudD", size: "0.03" }, scene);
+  const el = d.el(scene);
+  const says = (words) => eventually(async () => (await el.getAttribute("title"))?.includes(words), `the scene to say ${words}`);
+  const quiet = async () => check(!(await el.getAttribute("title"))?.includes("cloud:"), `the scene says ${await el.getAttribute("title")}`);
+
+  // how many pixels of the scene each test takes
+  const count = (tests) =>
+    el.screenshot().then((png) =>
+      page.evaluate(
+        async ([png, tests]) => {
+          const img = new Image();
+          img.src = `data:image/png;base64,${png}`;
+          await img.decode();
+          const c = new OffscreenCanvas(img.width, img.height).getContext("2d");
+          c.drawImage(img, 0, 0);
+          const px = c.getImageData(0, 0, img.width, img.height).data;
+          const fns = Object.fromEntries(Object.entries(tests).map(([k, f]) => [k, new Function("r", "g", "b", `return ${f}`)]));
+          const out = Object.fromEntries(Object.keys(tests).map((k) => [k, 0]));
+          for (let i = 0; i < px.length; i += 4) for (const k in fns) if (fns[k](px[i], px[i + 1], px[i + 2])) out[k]++;
+          return out;
+        },
+        [png.toString("base64"), tests],
+      ),
+    );
+  const sees = async (tests, ok, what) => {
+    let seen;
+    await eventually(async () => ok((seen = await count(tests))), () => `${what}, not ${JSON.stringify(seen)}`);
+  };
+
+  // its own rgb: a grey floor and an orange part
+  const own = { grey: "Math.abs(r - 120) < 25 && Math.abs(g - 120) < 25 && Math.abs(b - 120) < 25", orange: "r > 180 && g > 100 && g < 180 && b < 90" };
+  await sees(own, (s) => s.grey > 2000 && s.orange > 50, "the cloud in its own colours");
+  await quiet();
+
+  // by height along the ramp: the floor at the low end, blue, the part at the high end, red
+  await hmi.setProps(pageId, dots, { field: '"z"' });
+  const ramp = { low: "b > 150 && r < 120 && g < 130", high: "r > 150 && g < 70 && b < 40", grey: own.grey };
+  await sees(ramp, (s) => s.low > 2000 && s.high > 50 && s.grey < 100, "the cloud along the ramp by height");
+
+  // a range leaves the floor out, as below it
+  await hmi.setProps(pageId, dots, { range: "[0.1, 0.5]" });
+  await sees({ low: ramp.low, lit: "r + g + b > 150" }, (s) => s.low < 50 && s.lit > 50, "only the part, the floor below the range");
+  await quiet();
+
+  // a field the cloud has not
+  await hmi.setProps(pageId, dots, { field: '"nope"', range: "[]" });
+  await says("cloud: points: field: the cloud has no number field nope");
+
+  // a lidar's returns on the room's walls, 3 m to either side, and on the post
+  await hmi.setProps(pageId, dots, { points: "Cell.LidarD", field: '""', range: "[]", size: "0.08", color: '"#ffff00"' });
+  const b = await el.boundingBox();
+  // where x falls across the scene, which sees 2 tan(PI / 8) of its distance up its height
+  const across = (x) => 0.5 + x / (2 * 9 * Math.tan(Math.PI / 8) * (b.width / b.height));
+  const yellow = ([r, g, bl]) => r > 80 && g > 80 && bl < 60 && Math.abs(r - g) < 40;
+  await d.shows(el, across(3), 0.5, yellow, "the right wall's returns");
+  await d.shows(el, across(-3), 0.5, yellow, "the left wall's returns");
+  await d.shows(el, across(0.5), 0.3, (c) => !yellow(c), "nothing inside the room but the post");
+  await quiet();
+  // by intensity the post, 255, is at the ramp's high end and the walls, 100, below it
+  await hmi.setProps(pageId, dots, { field: '"intensity"', range: "[0, 255]" });
+  await sees({ high: ramp.high, wall: "g > 180 && b > 90 && r < 140" }, (s) => s.high > 0 && s.wall > 200, "the walls and the post by intensity");
+
+  // a path as one line through its poses, round an ellipse 3 m across
+  await hmi.setProps(pageId, dots, { points: "Cell.PlanD", field: '""', range: "[]", joined: "true", color: '"#00ff00"' });
+  await sees({ green: "g > 150 && r < 100 && b < 100" }, (s) => s.green > 100, "the path drawn round its ellipse");
+  await quiet();
+}

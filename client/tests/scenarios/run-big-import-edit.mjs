@@ -1,5 +1,5 @@
 // A big value's import edited while a screen's scene draws it: its points read without z, so the
-// screen is sent them without z, which the scene says in the editor, and read whole again, its
+// screen is sent them without z, which the scene draws flat, and read whole again, its
 // alias renamed, which the page follows, and the import removed, then made again. After each the
 // scene draws it again and its values come at their pace, none waiting on word of one taken that
 // never comes.
@@ -53,10 +53,10 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
     const before = lapses();
     await draws("at first");
 
-    // read without z its points are no points, until z is read again
+    // read without z its points lie flat at 0, until z is read again
     await hmi.setProps(pageId, points, { points: "Cell.ScanE.points.map((p) => ({ x: p.x, y: p.y }))" });
-    let last = "";
-    await eventually(async () => (last = await said()).includes(NOT_POINTS), () => `the scene to say its points lack z, not "${last}"`, 10000);
+    await draws("read without z, flat");
+    check(!(await said()).includes(NOT_POINTS), `the scene says ${await said()} of points without z`);
     await hmi.setProps(pageId, points, { points: "Cell.ScanE.points" });
     await draws("with its points' every field again");
 

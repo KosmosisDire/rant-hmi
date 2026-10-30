@@ -1,0 +1,332 @@
+// Points a scene draws from Rant's standard types, read in the data worker: a PointCloud's from
+// its bytes, a LaserScan's returns, those of a list, a Path or a Polyline, the number a field
+// gives each, and the colour a ramp gives that number. three.js stays out, so any way of
+// drawing can read them.
+
+import type { Column } from "./packed";
+
+type Numbers = Exclude<Column, Fields>;
+interface Fields {
+  readonly [field: string]: Column;
+}
+
+const isNumbers = (c: unknown): c is Numbers => ArrayBuffer.isView(c) && !(c instanceof DataView);
+const isFields = (c: unknown): c is Fields => typeof c === "object" && c !== null && !ArrayBuffer.isView(c);
+
+/** A pose as Rant's types give it. */
+export interface PoseValue {
+  position?: { x: number; y: number; z?: number };
+  orientation?: { x: number; y: number; z: number; w: number };
+}
+
+/** Points ready to draw: the first `n` of `xyz`, each one's x, y and z after the one before, the
+ *  number the asked field gives each in `values`, a cloud's own colours in `rgba`, the box round
+ *  them, and the pose a cloud's points are measured from. */
+export interface Spread {
+  n: number;
+  xyz: Float32Array;
+  values?: Float32Array;
+  rgba?: Uint8Array;
+  box: number[];
+  origin?: PoseValue;
+}
+
+/** Arrays a part keeps from one value to the next, grown as one needs and never shrunk, so a
+ *  stream of clouds makes no garbage. Each holds whole items of its width. */
+export class Pool {
+  private kept = new Map<string, Float32Array | Uint8Array>();
+  floats(key: string, items: number, width = 1): Float32Array {
+    return this.get(key, items, width, Float32Array) as Float32Array;
+  }
+  bytes(key: string, items: number, width = 1): Uint8Array {
+    return this.get(key, items, width, Uint8Array) as Uint8Array;
+  }
+  private get(key: string, items: number, width: number, Kind: typeof Float32Array | typeof Uint8Array) {
+    const had = this.kept.get(key);
+    if (had && had.length >= items * width) return had;
+    const made = new Kind(Math.ceil(items * 1.25) * width);
+    this.kept.set(key, made);
+    return made;
+  }
+}
+
+const AXES = ["x", "y", "z"];
+const emptyBox = () => [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+
+/** Grows `box` round point x, y, z. */
+function widen(box: number[], x: number, y: number, z: number) {
+  if (x < box[0]) box[0] = x;
+  if (y < box[1]) box[1] = y;
+  if (z < box[2]) box[2] = z;
+  if (x > box[3]) box[3] = x;
+  if (y > box[4]) box[4] = y;
+  if (z > box[5]) box[5] = z;
+}
+
+/** The axis `field` takes the values of, or -1. */
+const axisOf = (field: string | undefined) => (field ? AXES.indexOf(field) : -1);
+
+/** Values from the points' own axis, when the field asked is x, y or z. */
+function axisValues(s: Spread, axis: number, pool: Pool) {
+  const values = pool.floats("values", s.n);
+  for (let i = 0; i < s.n; i++) values[i] = s.xyz[3 * i + axis];
+  s.values = values;
+}
+
+/** A list's points, of records with numbers x and y and maybe z, or with such a `position`, as
+ *  Poses, Pose2Ds and Double2s have, and the numbers `field` names of each. */
+export function listOf(c: Column, field: string | undefined, pool: Pool, faults: string[]): Spread | undefined {
+  if (!isFields(c)) return void faults.push("points: the value is not a list of points, each with numbers x, y and z");
+  const at = isFields(c.position) ? c.position : c;
+  const [x, y, z] = [at.x, at.y, at.z];
+  if (!isNumbers(x) || !isNumbers(y)) return void faults.push("points: the value is not a list of points, each with numbers x, y and z");
+  const n = x.length;
+  const xyz = pool.floats("xyz", n, 3);
+  const box = emptyBox();
+  const flat = !isNumbers(z);
+  for (let i = 0; i < n; i++) {
+    const [a, b, d] = [x[i], y[i], flat ? 0 : (z as Numbers)[i]];
+    xyz[3 * i] = a;
+    xyz[3 * i + 1] = b;
+    xyz[3 * i + 2] = d;
+    widen(box, a, b, d);
+  }
+  const s: Spread = { n, xyz, box };
+  const axis = axisOf(field);
+  if (axis >= 0) axisValues(s, axis, pool);
+  else if (field) {
+    const own = isNumbers(c[field]) ? c[field] : at[field];
+    if (!isNumbers(own)) faults.push(`points: field: ${field} is not a number each point has`);
+    else s.values = copyInto(pool.floats("values", n), own, n);
+  }
+  return s;
+}
+
+function copyInto(out: Float32Array, from: ArrayLike<number>, n: number): Float32Array {
+  for (let i = 0; i < n; i++) out[i] = from[i];
+  return out;
+}
+
+/** Points laid out on the page, each one's x, y and z after the one before, and the numbers
+ *  the page read for `field` when it is not an axis. */
+export function laidOf(given: Float32Array, field: string | undefined, values: Float32Array | undefined, pool: Pool): Spread {
+  const n = Math.floor(given.length / 3);
+  const xyz = pool.floats("xyz", n, 3);
+  const box = emptyBox();
+  for (let i = 0; i < n; i++) {
+    const [a, b, d] = [given[3 * i], given[3 * i + 1], given[3 * i + 2]];
+    xyz[3 * i] = a;
+    xyz[3 * i + 1] = b;
+    xyz[3 * i + 2] = d;
+    widen(box, a, b, d);
+  }
+  const s: Spread = { n, xyz, box };
+  const axis = axisOf(field);
+  if (axis >= 0) axisValues(s, axis, pool);
+  // a field the page could not read it said so of
+  else if (field && values?.length === n) s.values = copyInto(pool.floats("values", n), values, n);
+  return s;
+}
+
+/** How many bytes a number of each ScalarKind takes. */
+const WIDTH: Record<string, number> = { I8: 1, U8: 1, I16: 2, U16: 2, I32: 4, U32: 4, F32: 4, F64: 8, I64: 8, U64: 8 };
+
+/** A reader of the number of `kind` at a byte of `dv`, little endian as PCL writes it. */
+function reading(dv: DataView, kind: string): ((at: number) => number) | undefined {
+  switch (kind) {
+    case "I8": return (at) => dv.getInt8(at);
+    case "U8": return (at) => dv.getUint8(at);
+    case "I16": return (at) => dv.getInt16(at, true);
+    case "U16": return (at) => dv.getUint16(at, true);
+    case "I32": return (at) => dv.getInt32(at, true);
+    case "U32": return (at) => dv.getUint32(at, true);
+    case "F32": return (at) => dv.getFloat32(at, true);
+    case "F64": return (at) => dv.getFloat64(at, true);
+    case "I64": return (at) => Number(dv.getBigInt64(at, true));
+    case "U64": return (at) => Number(dv.getBigUint64(at, true));
+  }
+  return undefined;
+}
+
+interface CloudField {
+  name: string;
+  offset: number;
+  kind: string;
+}
+
+/** A field's first number at each point, read a word at a time from `words` when it is a 32 bit
+ *  float on a word, else through `dv`. */
+function fieldReader(f: CloudField, step: number, dv: DataView, words: Float32Array | undefined): ((i: number) => number) | undefined {
+  if (words && f.kind === "F32" && f.offset % 4 === 0 && step % 4 === 0) {
+    const [stride, at] = [step / 4, f.offset / 4];
+    return (i) => words[i * stride + at];
+  }
+  const read = reading(dv, f.kind);
+  return read && ((i) => read(i * step + f.offset));
+}
+
+/** A PointCloud's points from its bytes: those with x, y and z all finite, the numbers `field`
+ *  names, and its `rgb` or `rgba` field's colours when `own` asks for them, packed blue, green,
+ *  red and alpha as PCL packs them. */
+export function cloudOf(value: unknown, bytes: Uint8Array, field: string | undefined, own: boolean, pool: Pool, faults: string[]): Spread | undefined {
+  const v = (value ?? {}) as { fields?: unknown; point_step?: unknown; origin?: { pose?: PoseValue } };
+  const fields = (Array.isArray(v.fields) ? v.fields : []) as CloudField[];
+  const step = typeof v.point_step === "number" ? v.point_step : 0;
+  const named = (name: string) => fields.find((f) => f.name === name && WIDTH[f.kind] !== undefined && f.offset + WIDTH[f.kind] <= step);
+  const [fx, fy, fz] = AXES.map(named);
+  if (!fx || !fy || !fz || step <= 0) return void faults.push("points: the cloud has no x, y and z fields that fit its point_step");
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const words = bytes.byteOffset % 4 === 0 ? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2) : undefined;
+  const onWords = (f: CloudField) => words !== undefined && step % 4 === 0 && f.kind === "F32" && f.offset % 4 === 0;
+  // PCL's usual x, y and z are 32 bit floats on words, read here with no call a point
+  const fast = onWords(fx) && onWords(fy) && onWords(fz);
+  const [rx, ry, rz] = [fx, fy, fz].map((f) => fieldReader(f, step, dv, words)!);
+  const [stride, ax, ay, az] = [step >> 2, fx.offset >> 2, fy.offset >> 2, fz.offset >> 2];
+  const axis = axisOf(field);
+  let rv: ((i: number) => number) | undefined;
+  let av = -1;
+  if (field && axis < 0) {
+    const f = named(field);
+    rv = f && fieldReader(f, step, dv, words);
+    if (f && fast && onWords(f)) av = f.offset >> 2;
+    if (!rv) faults.push(`points: field: the cloud has no number field ${field}`);
+  }
+  const colour = own && !field ? (named("rgba") ?? named("rgb")) : undefined;
+  const alpha = colour?.name === "rgba";
+  const n = Math.floor(bytes.length / step);
+  const xyz = pool.floats("xyz", n, 3);
+  const values = rv ? pool.floats("values", n) : undefined;
+  const rgba = colour && WIDTH[colour.kind] === 4 ? pool.bytes("rgba", n, 4) : undefined;
+  let [x0, y0, z0, x1, y1, z1] = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    const w = i * stride;
+    const x = fast ? words![w + ax] : rx(i);
+    const y = fast ? words![w + ay] : ry(i);
+    const z = fast ? words![w + az] : rz(i);
+    // NaN and infinities alike, as a cloud that is not dense marks a missing point
+    if (x - x !== 0 || y - y !== 0 || z - z !== 0) continue;
+    const k = 3 * j;
+    xyz[k] = x;
+    xyz[k + 1] = y;
+    xyz[k + 2] = z;
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+    if (z < z0) z0 = z;
+    if (z > z1) z1 = z;
+    if (values) values[j] = av >= 0 ? words![w + av] : rv!(i);
+    if (rgba) {
+      const at = i * step + colour!.offset;
+      rgba[4 * j] = bytes[at + 2];
+      rgba[4 * j + 1] = bytes[at + 1];
+      rgba[4 * j + 2] = bytes[at];
+      rgba[4 * j + 3] = alpha ? bytes[at + 3] : 255;
+    }
+    j++;
+  }
+  const s: Spread = { n: j, xyz, box: [x0, y0, z0, x1, y1, z1], values, rgba, origin: v.origin?.pose };
+  if (axis >= 0) axisValues(s, axis, pool);
+  return s;
+}
+
+/** A LaserScan's returns as points in its xy plane, each beam's echoes together, those outside
+ *  its ranges or not finite left out. Each has a `range` and an `intensity` for `field`. */
+export function scanOf(value: unknown, ranges: ArrayLike<number>, intensities: ArrayLike<number> | undefined, field: string | undefined, pool: Pool, faults: string[]): Spread {
+  const v = (value ?? {}) as Record<string, unknown>;
+  const num = (k: string) => (typeof v[k] === "number" ? (v[k] as number) : 0);
+  const [start, turn, low, high] = [num("angle_min"), num("angle_step"), num("range_min"), num("range_max")];
+  const echoes = Math.max(1, num("echoes"));
+  const axis = axisOf(field);
+  let by: ArrayLike<number> | undefined;
+  if (field === "range") by = ranges;
+  else if (field === "intensity") {
+    if (intensities && intensities.length === ranges.length) by = intensities;
+    else faults.push("points: field: the scan has no intensity for each range");
+  } else if (field && axis < 0) faults.push(`points: field: a scan's points have x, y, z, range and intensity, not ${field}`);
+  const n = ranges.length;
+  const xyz = pool.floats("xyz", n, 3);
+  const values = by ? pool.floats("values", n) : undefined;
+  const box = emptyBox();
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    const r = ranges[i];
+    if (!Number.isFinite(r) || r < low || (high > 0 && r > high)) continue;
+    const a = start + Math.floor(i / echoes) * turn;
+    const [x, y] = [r * Math.cos(a), r * Math.sin(a)];
+    xyz[3 * j] = x;
+    xyz[3 * j + 1] = y;
+    xyz[3 * j + 2] = 0;
+    widen(box, x, y, 0);
+    if (values) values[j] = by![i];
+    j++;
+  }
+  const s: Spread = { n: j, xyz, box, values };
+  if (axis >= 0) axisValues(s, axis, pool);
+  return s;
+}
+
+/** Turbo, as robotics tools colour intensity and height: 256 colours from low to high, a byte
+ *  each of red, green and blue, Anton Mikhailov's polynomial fit. Only its tenth to ninth tenth,
+ *  blue to dark red, as its ends are near black and vanish on a dark scene. */
+const RAMP = (() => {
+  const out = new Uint8Array(256 * 3);
+  const poly = (t: number, c: number[]) => c.reduceRight((acc, k) => acc * t + k, 0);
+  const R = [0.13572138, 4.6153926, -42.66032258, 132.13108234, -152.94239396, 59.28637943];
+  const G = [0.09140261, 2.19418839, 4.84296658, -14.18503333, 4.27729857, 2.82956604];
+  const B = [0.1066733, 12.64194608, -60.58204836, 110.36276771, -89.90310912, 27.34824973];
+  for (let i = 0; i < 256; i++) {
+    const t = 0.1 + (0.8 * i) / 255;
+    [R, G, B].forEach((c, k) => (out[3 * i + k] = Math.round(255 * Math.min(1, Math.max(0, poly(t, c))))));
+  }
+  return out;
+})();
+
+/** Keeps the points whose value lies in `range`, or within the values' own low and high when it
+ *  is empty, each coloured on the ramp, and their sizes when each has one. Values not finite are
+ *  left out too. */
+export function ramped(s: Spread, range: number[] | undefined, sizes: ArrayLike<number> | undefined, pool: Pool): { rgba: Uint8Array; sizes?: Float32Array } {
+  const values = s.values!;
+  let [lo, hi] = range && range.length === 2 && range.every(Number.isFinite) ? range : [Infinity, -Infinity];
+  if (lo > hi)
+    for (let i = 0; i < s.n; i++) {
+      const v = values[i];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  const scale = 255 / (hi - lo || 1);
+  const rgba = pool.bytes("ramp", s.n, 4);
+  const kept = sizes ? pool.floats("sizes", s.n) : undefined;
+  const xyz = s.xyz;
+  let [x0, y0, z0, x1, y1, z1] = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  let j = 0;
+  for (let i = 0; i < s.n; i++) {
+    const v = values[i];
+    if (!(v >= lo && v <= hi)) continue;
+    const at = 3 * (((v - lo) * scale + 0.5) | 0);
+    const k = 3 * i;
+    const m = 3 * j;
+    const x = xyz[k];
+    const y = xyz[k + 1];
+    const z = xyz[k + 2];
+    xyz[m] = x;
+    xyz[m + 1] = y;
+    xyz[m + 2] = z;
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+    if (z < z0) z0 = z;
+    if (z > z1) z1 = z;
+    rgba[4 * j] = RAMP[at];
+    rgba[4 * j + 1] = RAMP[at + 1];
+    rgba[4 * j + 2] = RAMP[at + 2];
+    rgba[4 * j + 3] = 255;
+    if (kept) kept[j] = sizes![i];
+    j++;
+  }
+  s.n = j;
+  s.box = [x0, y0, z0, x1, y1, z1];
+  return { rgba, sizes: kept };
+}

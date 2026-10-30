@@ -145,10 +145,14 @@ export function revive(v: unknown): unknown {
     return p;
   }
   if (keys === "far,length" && typeof o.far === "string" && typeof o.length === "number") return farList(o.far, o.length);
+  if (keys === "bytes,ref" && o.bytes instanceof Uint8Array && typeof o.ref === "string") {
+    refs.set(o.bytes, o.ref);
+    return o.bytes;
+  }
   return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, revive(x)]));
 }
 
-/** The ref of each list the data worker keeps, which a scene's points follow there. */
+/** The ref of each list and bytes the data worker keeps, which a scene's points follow there. */
 const refs = new WeakMap<object, string>();
 
 /** The ref of a list the data worker keeps, or undefined. */
@@ -261,6 +265,13 @@ export function packed(v: unknown): boolean {
 export function column(v: unknown, field: string): Numbers | undefined {
   const c = typeof v === "object" && v !== null ? behind.get(v) : undefined;
   return c && !isNumbers(c) && c[field] && isNumbers(c[field]) ? c[field] : undefined;
+}
+
+/** The columns behind packed records `v`, a column a field, or undefined. They are the list's
+ *  own, so never written. */
+export function fieldsOf(v: unknown): Fields | undefined {
+  const c = typeof v === "object" && v !== null ? behind.get(v) : undefined;
+  return c && !isNumbers(c) ? c : undefined;
 }
 
 /** The numbers a packed list of numbers holds, or undefined for any other value. */

@@ -81,21 +81,23 @@ const under = (ref: string, alias: string) => ref === alias || ref.startsWith(`$
 const marked = (v: unknown): v is { packed: Column } =>
   typeof v === "object" && v !== null && !ArrayBuffer.isView(v) && "packed" in v && Object.keys(v).length === 1;
 
-/** Calls `each` with every marked list in `v` and its path. */
-function lists(v: unknown, path: string, each: (c: Column, ref: string) => void) {
-  if (marked(v)) return each(v.packed, path);
-  if (typeof v !== "object" || v === null || ArrayBuffer.isView(v)) return;
+/** Calls `each` with every marked list in `v` and its path, and with its bytes, as a cloud's,
+ *  which a scene draws from too. */
+function lists(v: unknown, path: string, each: (c: Column, ref: string, bytes: boolean) => void) {
+  if (marked(v)) return each(v.packed, path, false);
+  if (ArrayBuffer.isView(v)) return each(v as Uint8Array, path, true);
+  if (typeof v !== "object" || v === null) return;
   for (const [k, x] of Object.entries(v)) lists(x, `${path}/${k}`, each);
 }
 
 const copied = (c: Column): Column => (ArrayBuffer.isView(c) ? c.slice() : Object.fromEntries(Object.entries(c).map(([k, x]) => [k, copied(x)])));
 const sizeOf = (c: Column): number => (ArrayBuffer.isView(c) ? c.length : Object.values(c).map(sizeOf)[0] ?? 0);
 
-/** `v` as the main thread gets it: each list a copy with its ref when `whole`, else far, and any
- *  other bytes a copy too, as the kept value holds on to its own. */
+/** `v` as the main thread gets it: each list a copy with its ref when `whole`, else far, and its
+ *  bytes always a copy with their ref, as the kept value holds on to its own. */
 function handed(v: unknown, path: string, isWhole: boolean): unknown {
   if (marked(v)) return isWhole ? { packed: copied(v.packed), ref: path } : { far: path, length: sizeOf(v.packed) };
-  if (ArrayBuffer.isView(v)) return (v as Uint8Array).slice();
+  if (ArrayBuffer.isView(v)) return { bytes: (v as Uint8Array).slice(), ref: path };
   if (Array.isArray(v)) return v.map((x, i) => handed(x, `${path}/${i}`, isWhole));
   if (typeof v !== "object" || v === null) return v;
   return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, handed(x, `${path}/${k}`, isWhole)]));
@@ -141,13 +143,15 @@ function values(msg: Values) {
     }
     newest.set(u.alias, msg.seq);
     for (const ref of held.keys()) if (under(ref, u.alias)) held.delete(ref);
-    let holds = false;
-    lists(u.value, u.alias, (c, ref) => {
+    // a value of bytes and no lists goes whole as ever, its bytes kept for a scene to draw too
+    let [holds, listed] = [false, false];
+    lists(u.value, u.alias, (c, ref, bytes) => {
       held.set(ref, c);
       holds = true;
+      listed ||= !bytes;
     });
     // one the main thread reads is taken there, as it may lag behind the scene that draws it
-    const read = !holds || whole.has(u.alias);
+    const read = !listed || whole.has(u.alias);
     if (!scenes?.came(u.alias, read ? undefined : msg.seq) || read) took.push(u.alias);
     if (!holds) {
       kept.delete(u.alias);
@@ -156,7 +160,7 @@ function values(msg: Values) {
       continue;
     }
     kept.set(u.alias, { seq: msg.seq, update: u });
-    const isWhole = whole.has(u.alias);
+    const isWhole = !listed || whole.has(u.alias);
     if (isWhole) farSent.delete(u.alias);
     else {
       farSent.add(u.alias);
@@ -283,6 +287,12 @@ function openWt(wt: { url: string; hash: string }, socket: string) {
 const host: Host = {
   post: (drew) => post({ drew }),
   column: (ref) => held.get(ref),
+  value: (path) => {
+    const [alias, ...keys] = path.split("/");
+    let v = kept.get(alias)?.update.value;
+    for (const k of keys) v = typeof v === "object" && v !== null ? (v as Record<string, unknown>)[k] : undefined;
+    return v;
+  },
   // on the second way, or on the link while there is none
   took: (alias, seq, missed = false) => {
     const toLink = () => post({ took: alias, seq, missed });

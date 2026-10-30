@@ -36,26 +36,41 @@ Claude's:
   `points`.
 - Every point has `x`, `y` and `z` for `field`, so height is `field="z"`. A cloud's points have
   its own fields too, a list's its records' numbers, a scan's `range` and `intensity`.
-- The ramp is turbo, as robotics tools colour intensity and height.
+- The ramp is turbo, as robotics tools colour intensity and height, from its tenth to its ninth
+  tenth, blue to dark red: its ends are near black and vanished on a dark scene.
 - A cloud's `rgb` or `rgba` field colours it when `color` is left out, packed as PCL packs it.
 - `floor`, not "floor grid": a tag is one word.
 
 ## How it stays fast
 
-The page never holds a cloud. Each list in an import's value already stays in the data worker
-under a ref, and the page holds a stand in of its length (`data-paths.md`). The page reads a
-cloud's small parts, its fields, step and origin, and hands the worker the ref of its bytes.
+A big value comes through the data worker, which keeps each list in it under a ref and hands the
+page a stand in of its length (`data-paths.md`). A cloud's `data` is bytes, not a list, and bytes
+went to the page whole and were not kept. Now the worker keeps a value's bytes too and hands the
+page a copy marked with their ref. A value of bytes and no lists still goes whole, as before, so
+a picture or a video frame reads as it did, and only lists make a value far. The copy is made in
+the worker, off the page's thread. The page reads a cloud's small parts and hands the worker
+the ref of its bytes, which the worker reads beside the fields that hold them.
+
+A small value comes on the page's own socket and has no ref. Its points are laid out on the page
+by the same readers (`net/spread.ts`, no three.js in it) and sent to the worker as arrays, as a
+small list's points always were.
 
 - The worker reads a new cloud in one pass into a positions array, and colours or ramp values
   when shown, computing the bounds on the way, as three.js should be given them.
 - It reads x, y and z straight from the bytes as 32 bit floats when they are, a word at a time,
   and through a DataView for any other kind.
-- Buffers are kept while the count holds, and written in place, so a lidar at 10 Hz makes no
-  garbage and no new GPU buffer.
+- Points that are not finite, and those outside `range`, are left out in that pass, so they cost
+  the GPU nothing.
+- A part keeps its arrays and its GPU buffers, written in place while the count fits and only
+  made again when it grows, so a lidar at 10 Hz makes no garbage and no new buffer.
 - A 2D grid is one texture on one square, a pixel a cell. A 3D grid is one instanced mesh of
   cubes, an instance per cell in range.
 - A mesh's triangles go to the GPU as they come, an index of 32 bit numbers.
 - Nothing is read again unless the value it came from is new.
+
+Points with no z now lie at z 0, so a Path2D, a Polyline2D and a list of Double2 draw.
+`run-big-import-edit` read a cloud without z to see the page sent fewer fields, and expected the
+scene to refuse it. It now checks that they draw flat.
 
 ## Steps
 

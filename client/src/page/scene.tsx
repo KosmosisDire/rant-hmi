@@ -6,7 +6,8 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { drawing, onDrew } from "../net/connection";
 import type { Found, Pose, Rgba, Shown, Vec3 } from "../net/draw";
-import { column, numbers, refOf } from "../net/packed";
+import { column, fieldsOf, numbers, refOf } from "../net/packed";
+import { cloudOf, Pool, scanOf, type Spread } from "../net/spread";
 import type { Element } from "../protocol/Element";
 import type { Value } from "../protocol/Value";
 import { resolve, type Resolved, type Scope } from "../state/bind";
@@ -26,7 +27,12 @@ interface Read {
   flag(key: string): boolean | undefined;
   vector(key: string): Vec3 | undefined;
   /** Each point's x, y and z after the one before, or the ref of the big value they are. */
-  points(key: string): Shown["points"];
+  /** Points from a value, `field`'s number of each, and a cloud's own colours when `own`. */
+  points(key: string, field: string | undefined, own: boolean): Laid | undefined;
+  /** No numbers for the values' own ends, or a low and a high. */
+  range(key: string): number[] | undefined;
+  /** Whether the part sets `key` itself, not leaving it to its default. */
+  given(key: string): boolean;
   colour(key: string): Rgba | undefined;
   /** One colour, or a list of them one per point, Colors or colour text. */
   colours(key: string): Shown["color"];
@@ -40,28 +46,99 @@ interface Read {
 }
 
 /** A list of points as three.js draws them, each one's x, y and z after the one before, read in
- *  one pass, or undefined unless every point has numbers x, y and z. Other fields a point has,
- *  as a lidar's intensity, are passed over. */
+ *  one pass, or undefined unless every point has numbers x and y, or a `position` with them, as
+ *  a Pose has. A point with no z lies at 0. Other fields a point has, as a lidar's intensity, are
+ *  passed over. */
 function positions(v: unknown): Float32Array | undefined {
   if (!Array.isArray(v)) return undefined;
   const out = new Float32Array(v.length * 3);
-  const [x, y, z] = ["x", "y", "z"].map((f) => column(v, f));
-  if (x && y && z) {
+  const c = fieldsOf(v);
+  const at = c && !ArrayBuffer.isView(c.position) && typeof c.position === "object" ? c.position : c;
+  const [x, y, z] = ["x", "y", "z"].map((f) => (at && ArrayBuffer.isView(at[f]) ? (at[f] as ArrayLike<number>) : undefined));
+  if (x && y) {
     for (let i = 0; i < x.length; i++) {
       out[3 * i] = x[i];
       out[3 * i + 1] = y[i];
-      out[3 * i + 2] = z[i];
+      out[3 * i + 2] = z ? z[i] : 0;
     }
     return out;
   }
   for (let i = 0; i < v.length; i++) {
-    const p = v[i] as { x?: unknown; y?: unknown; z?: unknown } | null;
-    if (typeof p?.x !== "number" || typeof p.y !== "number" || typeof p.z !== "number") return undefined;
+    const item = v[i] as { position?: unknown } | null;
+    const p = (typeof item?.position === "object" ? item.position : item) as { x?: unknown; y?: unknown; z?: unknown } | null;
+    if (typeof p?.x !== "number" || typeof p.y !== "number" || (p.z !== undefined && typeof p.z !== "number")) return undefined;
     out[3 * i] = p.x;
     out[3 * i + 1] = p.y;
-    out[3 * i + 2] = p.z;
+    out[3 * i + 2] = p.z ?? 0;
   }
   return out;
+}
+
+/** The list a value's points come from, and how the worker reads it: a PointCloud's bytes or a
+ *  LaserScan's ranges beside the fields that hold them, a Path's poses, a Polyline's points, or
+ *  the value itself. */
+function listOfPoints(v: unknown): { list: unknown; as?: "cloud" | "scan" } {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return { list: v };
+  const o = v as Record<string, unknown>;
+  if ("point_step" in o && "fields" in o && "data" in o) return { list: o.data, as: "cloud" };
+  if ("ranges" in o && "angle_step" in o) return { list: o.ranges, as: "scan" };
+  if (Array.isArray(o.poses)) return { list: o.poses };
+  if (Array.isArray(o.points)) return { list: o.points };
+  return { list: v };
+}
+
+/** Points laid out here, for the worker to draw as they are: each one's x, y and z after the
+ *  one before, the number `field` gives each, a cloud's own colours, and the pose its points are
+ *  measured from. */
+interface Laid {
+  points: Shown["points"];
+  values?: Float32Array;
+  rgba?: Uint8Array;
+  origin?: Pose;
+}
+
+/** The number `field` names of each item of a list, or of its `position`, or undefined. */
+function valuesOf(list: unknown[], field: string): Float32Array | undefined {
+  const c = fieldsOf(list);
+  const at = c && typeof c.position === "object" && !ArrayBuffer.isView(c.position) ? c.position : c;
+  const col = (c && ArrayBuffer.isView(c[field]) ? c[field] : at && ArrayBuffer.isView(at[field]) ? at[field] : undefined) as ArrayLike<number> | undefined;
+  if (col) return Float32Array.from(col);
+  const out = new Float32Array(list.length);
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i] as Record<string, unknown> | null;
+    const v = item?.[field] ?? (item?.position as Record<string, unknown> | undefined)?.[field];
+    if (typeof v !== "number") return undefined;
+    out[i] = v;
+  }
+  return out;
+}
+
+/** What a points part draws from a value: the list or bytes the worker keeps, by their ref, or,
+ *  for one that came small, points laid out here by the same readers. Faults go to `say`. */
+function pointsOf(v: unknown, field: string | undefined, own: boolean, say: (fault: string) => void): Laid | undefined {
+  const { list, as } = listOfPoints(v);
+  const ref = refOf(list);
+  if (ref) return { points: as ? { follow: ref, as } : { follow: ref } };
+  const found: string[] = [];
+  const pool = new Pool();
+  let s: Spread | undefined;
+  if (as === "cloud") s = list instanceof Uint8Array ? cloudOf(v, list, field, own, pool, found) : undefined;
+  else if (as === "scan") {
+    const ranges = numberList(list);
+    const intensities = numberList((v as { intensities?: unknown }).intensities);
+    s = ranges && scanOf(v, ranges, intensities, field, pool, found);
+  } else {
+    const xyz = positions(list);
+    if (!xyz) return undefined;
+    // x, y and z are the worker's to read from the points
+    const values = field && !["x", "y", "z"].includes(field) ? valuesOf(list as unknown[], field) : undefined;
+    if (field && !["x", "y", "z"].includes(field) && !values) say(`points: field: ${field} is not a number each point has`);
+    return { points: xyz, values };
+  }
+  found.forEach(say);
+  if (!s) return undefined;
+  const n = s.n;
+  return { points: s.xyz.slice(0, 3 * n), values: s.values?.slice(0, n), rgba: s.rgba?.slice(0, 4 * n), origin: s.origin && poseOf(s.origin) };
 }
 
 /** Colours one per point, a byte each of red, green, blue and alpha, from a list of Colors or
@@ -129,13 +206,16 @@ function byRobot<T>(v: unknown, read: (v: unknown) => T | undefined): T | Record
   return out;
 }
 
-/** Points' code, which may give a list the data worker keeps as it is. Anything else counts the
- *  names it read as read whole, as their lists are then needed here. */
-function farResolve(code: string | undefined, scope: Scope): Resolved {
+/** Points' code, which may give a value the data worker keeps as it is, which `kept` knows.
+ *  Anything else counts the names it read as read whole, as their lists are then needed here. */
+function farResolve(code: string | undefined, scope: Scope, kept: (v: unknown) => boolean): Resolved {
   const { value: r, names } = readFar(() => resolve(code, scope));
-  if (!r.ok || !refOf(r.value)) readWhole(names);
+  if (!r.ok || !kept(r.value)) readWhole(names);
   return r;
 }
+
+const isKept = (v: unknown) => refOf(v) !== undefined;
+const isKeptPoints = (v: unknown) => refOf(listOfPoints(v).list) !== undefined;
 
 /** What `props` read as, each timed by `time`, which the part or scene keeps between reads. */
 function reader(props: Element["props"], defaults: Record<string, string>, scope: Scope, time: ReturnType<typeof timer>): Read {
@@ -143,13 +223,13 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
   const slow = new Set<string>();
   let unknown = false;
   // a value that will not read gives way to the default, as CSS drops one it cannot take
-  const as = <T,>(key: string, what: string, read: (v: unknown) => T | undefined, far = false): T | undefined =>
+  const as = <T,>(key: string, what: string, read: (v: unknown) => T | undefined, far?: (v: unknown) => boolean): T | undefined =>
     time(
       key,
       props[key],
       () => {
         for (const code of props[key] === undefined ? [defaults[key]] : [props[key], defaults[key]]) {
-          const r = far ? farResolve(code, scope) : resolve(code, scope);
+          const r = far ? farResolve(code, scope, far) : resolve(code, scope);
           if (!r.ok && r.unknown) {
             unknown = true;
             return undefined;
@@ -167,15 +247,12 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
     number: (key) => as(key, "a number", (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)),
     flag: (key) => as(key, "true or false", (v) => (typeof v === "boolean" ? v : undefined)),
     vector: (key) => as(key, "a 3D vector", vector),
-    points: (key) =>
+    points: (key, field, own) =>
       as(
         key,
-        "a list of points, each with numbers x, y and z",
-        (v) => {
-          const ref = refOf(v);
-          return ref ? { follow: ref } : positions(v);
-        },
-        true,
+        "a list of points each with numbers x and y, a PointCloud, a LaserScan, a Path or a Polyline",
+        (v) => pointsOf(v, field, own, (f) => faults.push(f)),
+        isKeptPoints,
       ),
     colour: (key) => as(key, "a colour", colourOf),
     colours: (key) =>
@@ -186,7 +263,7 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
           const ref = refOf(v);
           return ref ? { follow: ref } : Array.isArray(v) ? rgbaList(v) : colourOf(v);
         },
-        true,
+        isKept,
       ),
     sizes: (key) =>
       as(
@@ -199,8 +276,14 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
           const list = numberList(v);
           return list ? Float32Array.from(list) : typeof v === "number" && Number.isFinite(v) ? v : undefined;
         },
-        true,
+        isKept,
       ),
+    range: (key) =>
+      as(key, "a list of a low and a high number, or none", (v) => {
+        const list = numberList(v);
+        return list && (list.length === 0 || list.length === 2) ? Array.from(list) : undefined;
+      }),
+    given: (key) => props[key] !== undefined,
     pose: (key) => as(key, "a pose, a position and an orientation each optional", poseOf),
     text: (key) => as(key, "text", (v) => (typeof v === "string" ? v : undefined)),
     // a number under a name is a joint's, anything else a robot's
@@ -265,7 +348,23 @@ const SHOWS: Record<Part, (read: Read) => Omit<Shown, "visible">> = {
   box: (r) => ({ size: r.vector("size"), opacity: r.number("opacity"), color: r.colour("color") }),
   sphere: (r) => ({ radius: r.number("radius"), opacity: r.number("opacity"), color: r.colour("color") }),
   cylinder: (r) => ({ radius: r.number("radius"), length: r.number("length"), opacity: r.number("opacity"), color: r.colour("color") }),
-  points: (r) => ({ joined: r.flag("joined"), points: r.points("points"), size: r.sizes("size"), color: r.colours("color") }),
+  points: (r) => {
+    const field = r.text("field");
+    const own = !r.given("color");
+    const laid = r.points("points", field || undefined, own);
+    return {
+      joined: r.flag("joined"),
+      points: laid?.points,
+      values: laid?.values,
+      origin: laid?.origin,
+      size: r.sizes("size"),
+      // a small cloud's own colours, laid out here
+      color: laid?.rgba ?? r.colours("color"),
+      field,
+      range: r.range("range"),
+      own,
+    };
+  },
   floor: (r) => ({ size: r.number("size"), step: r.number("step"), color: r.colour("color") }),
   model: (r) => ({ src: r.text("src"), joints: r.joints("joints"), names: r.names("names") }),
 };
@@ -318,7 +417,7 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
     shown.visible = !d.unknown;
     setMine(d);
     // lists laid out here go to the worker whole, and are always new
-    const laid = [shown.points, shown.color, shown.size].filter((v) => ArrayBuffer.isView(v)) as (Float32Array | Uint8Array)[];
+    const laid = [shown.points, shown.color, shown.size, shown.values].filter((v) => ArrayBuffer.isView(v)) as (Float32Array | Uint8Array)[];
     const now = JSON.stringify(shown, (_, v) => (ArrayBuffer.isView(v) ? undefined : v));
     if (now === said && laid.length === 0) return;
     said = now;

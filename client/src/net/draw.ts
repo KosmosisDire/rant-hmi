@@ -38,6 +38,7 @@ import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { CAMERA, type Part, rgbaOf } from "../page/parts";
 import type { Column } from "./packed";
+import { cloudOf, laidOf, listOf, Pool, ramped, scanOf, type Spread } from "./spread";
 
 export type Vec3 = { x: number; y: number; z: number };
 export type Pose = { position?: Vec3; orientation?: Vec3 & { w: number } };
@@ -59,8 +60,19 @@ export interface Shown {
   length?: number;
   vector?: Vec3;
   joined?: boolean;
-  /** Each point's x, y and z after the one before, or the big value it follows. */
-  points?: Float32Array | { follow: string };
+  /** Each point's x, y and z after the one before, or the big value it follows: a list, or the
+   *  bytes of a PointCloud or the ranges of a LaserScan, whose other fields sit beside them. */
+  points?: Float32Array | { follow: string; as?: "cloud" | "scan" };
+  /** The number of each point its colour comes from, along the ramp, or "" for none. */
+  field?: string;
+  /** The low and high ends of `field` drawn, or empty for the values' own. */
+  range?: number[];
+  /** A cloud's own colours, as its colour is left out. */
+  own?: boolean;
+  /** For points laid out on the page, the number `field` gives each, and the pose a cloud's
+   *  points are measured from. */
+  values?: Float32Array;
+  origin?: Pose;
   step?: number;
   src?: string;
   /** A USD robot's values by joint name, or a JointState's positions in the order `names` gives,
@@ -109,6 +121,9 @@ export interface Host {
   post(m: Drew): void;
   /** A big value's column kept under `ref`, if any. */
   column(ref: string): Column | undefined;
+  /** What a kept value holds at `path`, the import's alias then the keys to it, its lists still
+   *  marked as the worker read them. */
+  value(path: string): unknown;
   /** The screen has drawn `alias`'s value from batch `seq`, or `missed` it, lacking the one it
    *  changed. */
   took(alias: string, seq: number, missed?: boolean): void;
@@ -125,49 +140,36 @@ const isVec3 = (v: unknown): v is Vec3 => typeof v === "object" && v !== null &&
 
 const isList = (c: unknown): c is ArrayLike<number> => ArrayBuffer.isView(c) && !(c instanceof DataView);
 
-/** A column of records as three.js draws its points, each one's x, y and z after the one
- *  before, and the box round them, or undefined unless it has number fields x, y and z. */
-function laidOut(c: Column): { xyz: Float32Array; box: number[] } | undefined {
-  if (ArrayBuffer.isView(c)) return undefined;
-  const [x, y, z] = [c.x, c.y, c.z];
-  if (!isList(x) || !isList(y) || !isList(z)) return undefined;
-  const xyz = new Float32Array(x.length * 3);
-  const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < x.length; i++) {
-    const [a, b, d] = [x[i], y[i], z[i]];
-    xyz[3 * i] = a;
-    xyz[3 * i + 1] = b;
-    xyz[3 * i + 2] = d;
-    if (a < box[0]) box[0] = a;
-    if (b < box[1]) box[1] = b;
-    if (d < box[2]) box[2] = d;
-    if (a > box[3]) box[3] = a;
-    if (b > box[4]) box[4] = b;
-    if (d > box[5]) box[5] = d;
-  }
-  return { xyz, box };
-}
+/** A part's dots or line. */
+type Dotted = Line<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial>;
 
-/** The box round points the page laid out. */
-function boxOf(xyz: Float32Array): number[] {
-  const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < xyz.length; i += 3)
-    for (let k = 0; k < 3; k++) {
-      if (xyz[i + k] < box[k]) box[k] = xyz[i + k];
-      if (xyz[i + k] > box[3 + k]) box[3 + k] = xyz[i + k];
+/** Puts `n` points and what each carries on `drawn`, from arrays a pool keeps, so a new value
+ *  writes in place and only one that grew makes a new geometry. three.js is given the sphere
+ *  round `box`, as it would walk every point for it before the first draw. */
+function upload(drawn: Dotted, n: number, box: number[], arrays: Record<string, [Float32Array | Uint8Array, number, boolean] | undefined>) {
+  let g = drawn.geometry;
+  const names = Object.keys(arrays).filter((k) => arrays[k]);
+  const fits = names.length === Object.keys(g.attributes).length && names.every((k) => g.getAttribute(k)?.array === arrays[k]![0]);
+  if (fits)
+    for (const k of names) {
+      const a = g.getAttribute(k) as BufferAttribute;
+      a.clearUpdateRanges();
+      a.addUpdateRange(0, n * a.itemSize);
+      a.needsUpdate = true;
     }
-  return box;
-}
-
-/** Points as three.js draws them, over `xyz` itself, given the sphere round `box`, as three.js
- *  would walk every point for it before the first draw. */
-function geometryOf(xyz: Float32Array, box: number[]): BufferGeometry {
-  const g = new BufferGeometry().setAttribute("position", new BufferAttribute(xyz, 3));
-  if (box.every(Number.isFinite)) {
+  else {
+    g.dispose();
+    g = drawn.geometry = new BufferGeometry();
+    for (const k of names) {
+      const [array, size, normalized] = arrays[k]!;
+      g.setAttribute(k, new BufferAttribute(array, size, normalized));
+    }
+  }
+  g.setDrawRange(0, n);
+  if (n > 0 && box.every(Number.isFinite)) {
     const [lo, hi] = [new Vector3(box[0], box[1], box[2]), new Vector3(box[3], box[4], box[5])];
     g.boundingSphere = new Sphere(lo.clone().add(hi).multiplyScalar(0.5), lo.distanceTo(hi) / 2);
-  }
-  return g;
+  } else g.boundingSphere = new Sphere();
 }
 
 type Painted = Material & { color: Color };
@@ -452,47 +454,92 @@ function coloursOf(c: Float32Array | Uint8Array | Column): Uint8Array | undefine
   return isList(r) && isList(g) && isList(b) ? rgbaOf(r, g, b, isList(a) ? a : undefined) : undefined;
 }
 
-/** Sizes one per point from what the page laid out, or from a big value's numbers. */
-function sizesOf(c: Float32Array | Uint8Array | Column): Float32Array | undefined {
-  if (c instanceof Float32Array) return c;
-  return isList(c) ? Float32Array.from(c) : undefined;
+/** The path of what holds the list `ref` names, as a cloud holds its bytes. */
+const holderOf = (ref: string) => ref.slice(0, ref.lastIndexOf("/"));
+
+/** The points `drawn` draws: a list, a cloud's or a scan's, read again only when the value or
+ *  what it is asked to show is new. */
+function spreadOf(h: Held, points: Float32Array | Uint8Array | Column, pool: Pool, found: string[]): Spread | undefined {
+  const s = h.shown;
+  const field = s.field || undefined;
+  const ref = h.follows.points;
+  const as = isFollow(s.points) ? s.points.as : undefined;
+  if (as && ref) {
+    const holder = host.value(holderOf(ref));
+    if (as === "cloud") {
+      if (points instanceof Uint8Array) return cloudOf(holder, points, field, !!s.own, pool, found);
+      return void found.push("points: the cloud's data is not bytes");
+    }
+    const intensities = host.column(`${holderOf(ref)}/intensities`);
+    if (isList(points)) return scanOf(holder, points, isList(intensities) ? intensities : undefined, field, pool, found);
+    return void found.push("points: the scan's ranges are not numbers");
+  }
+  if (points instanceof Float32Array) {
+    const laid = laidOf(points, field, s.values, pool);
+    if (s.origin) laid.origin = s.origin;
+    return laid;
+  }
+  if (!ArrayBuffer.isView(points)) return listOf(points, field, pool, found);
+  found.push("points: the value is not a list of points, each with numbers x, y and z");
 }
 
-/** Lays out what `drawn` draws: its points, and their colours and sizes when it has one each,
- *  made again only when one of them is new. None yet, as before a big value first comes, draws
- *  what it drew. */
-function lay(drawn: Line<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial>, h: Held, faults: string[]) {
-  const from = FOLLOWED.map((k) => sourceOf(h, k));
-  const [xyz, rgba, sizes] = from;
+/** Lays out what `drawn` draws: its points, their colours along the ramp by `field`, or as given
+ *  one each, or a cloud's own, and their sizes when each has one. It is laid out again only when
+ *  one of them is new, and none yet, as before a big value first comes, draws what it drew. */
+function lay(drawn: Dotted, h: Held, faults: string[]) {
+  const s = h.shown;
+  const from = [...FOLLOWED.map((k) => sourceOf(h, k)), s.field, JSON.stringify(s.range), s.own, s.values, JSON.stringify(s.origin)];
+  const [points, rgba, sizes] = from as (Float32Array | Uint8Array | Column | undefined)[];
   const u = drawn.userData;
-  if (!xyz || (u.from && from.every((f, i) => f === u.from[i]))) return void faults.push(...(u.faults ?? []));
+  if (!points || (u.from && from.every((f, i) => f === u.from[i]))) return void faults.push(...(u.faults ?? []));
   u.from = from;
   const found: string[] = (u.faults = []);
-  const laid = xyz instanceof Float32Array ? { xyz, box: boxOf(xyz) } : ArrayBuffer.isView(xyz) ? undefined : laidOut(xyz);
-  if (!laid) {
-    found.push("points: the value is not a list of points, each with numbers x, y and z");
-    return void faults.push(...found);
-  }
-  const g = geometryOf(laid.xyz, laid.box);
-  const n = laid.xyz.length / 3;
-  const colours = rgba && coloursOf(rgba);
-  if (rgba && !colours) found.push("color: the value is not a list of colours");
-  else if (colours && colours.length !== 4 * n) found.push(`color: ${colours.length / 4} colours for ${n} points`);
-  else if (colours) g.setAttribute("pointColor", new BufferAttribute(colours, 4, true));
-  const each = sizes && sizesOf(sizes);
+  const pool: Pool = (u.pool ??= new Pool());
+  const spread = spreadOf(h, points, pool, found);
+  if (!spread) return void faults.push(...found);
+  let each: ArrayLike<number> | undefined = isList(sizes) ? sizes : undefined;
   if (sizes && !each) found.push("size: the value is not a list of numbers");
-  else if (each && each.length !== n) found.push(`size: ${each.length} sizes for ${n} points`);
-  else if (each) g.setAttribute("pointSize", new BufferAttribute(each, 1));
-  drawn.geometry.dispose();
-  drawn.geometry = g;
+  else if (each && each.length !== spread.n) {
+    found.push(`size: ${each.length} sizes for ${spread.n} points`);
+    each = undefined;
+  }
+  let colours: Uint8Array | undefined;
+  let ramp = false;
+  if (s.field && spread.values) {
+    const r = ramped(spread, s.range, each, pool);
+    [colours, each, ramp] = [r.rgba, r.sizes, true];
+  } else if (!s.field && rgba) {
+    const given = coloursOf(rgba);
+    if (!given) found.push("color: the value is not a list of colours");
+    else if (given.length !== 4 * spread.n) found.push(`color: ${given.length / 4} colours for ${spread.n} points`);
+    else {
+      colours = pool.bytes("colours", spread.n, 4);
+      colours.set(given);
+    }
+  } else if (!s.field && s.own) colours = spread.rgba;
+  const kept = each && !ramp ? pool.floats("sizes", spread.n) : (each as Float32Array | undefined);
+  if (each && !ramp) for (let i = 0; i < spread.n; i++) kept![i] = each[i];
+  upload(drawn, spread.n, spread.box, {
+    position: [spread.xyz, 3, false],
+    pointColor: colours && [colours, 4, true],
+    pointSize: kept && [kept, 1, false],
+  });
+  // a cloud's points sit at its origin, in the frame of what holds the part
+  const at = spread.origin?.position;
+  const turn = spread.origin?.orientation;
+  drawn.position.set(at?.x ?? 0, at?.y ?? 0, at?.z ?? 0);
+  if (turn) drawn.quaternion.set(turn.x, turn.y, turn.z, turn.w).normalize();
+  else drawn.quaternion.identity();
   const m = drawn.material;
   const defines: Record<string, string> = {};
-  if (g.getAttribute("pointColor")) defines.COLORS = "";
-  if (g.getAttribute("pointSize")) defines.SIZES = "";
+  if (colours) defines.COLORS = "";
+  if (kept) defines.SIZES = "";
   if (drawn instanceof Points) defines.DOTS = "";
   if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
   // any colour see through, which then draws over what is behind without hiding it
-  u.seeThrough = !!colours && colours.some((v, i) => i % 4 === 3 && v < 255);
+  let see = false;
+  if (colours && !ramp) for (let i = 3; i < 4 * spread.n && !see; i += 4) see = colours[i] < 255;
+  u.seeThrough = see;
   faults.push(...found);
 }
 

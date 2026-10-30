@@ -148,7 +148,7 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 | `pitch` | `scene` | how far up the camera is, in radians, `0.5` |
 | `distance` | `scene` | how far the camera is from `target`, `5` |
 | `pose` | every part | where it sits and how it turns in what holds it: a Pose, as `Robot.Arm`, or `{ position: vec(0, 0, 1) }`, each half optional |
-| `color` | every part but `anchor`, `axes` and `model` | a colour, `$accent`, or `$border` for a floor. `points` take a list too, one per point |
+| `color` | every part but `anchor`, `axes` and `model` | a colour, `$accent`, or `$border` for a floor. `points` take a list too, one per point. A PointCloud left without one shows its own `rgb` |
 | `opacity` | `box`, `sphere`, `cylinder` | `1` |
 | `size` | `box` | its edges, `vec(1, 1, 1)` |
 | `size` | `axes` | how long its arrows are, `1` |
@@ -157,8 +157,10 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 | `step` | `floor` | the gap between its lines, `1` |
 | `radius` | `sphere`, `cylinder` | `0.5` |
 | `length` | `cylinder` | along its z, `1` |
-| `points` | `points` | a list of points with `x`, `y` and `z`, as a Double3 list from the mesh |
+| `points` | `points` | a list of points with `x`, `y` and maybe `z`, as a Double3 list from the mesh, or a PointCloud, a LaserScan, a Path or a Polyline. A cloud's points sit at its `origin` |
 | `joined` | `points` | `true` to draw one line through them instead of dots |
+| `field` | `points` | a number each point has, which colours it from blue to red, as `"intensity"`, or `"z"` for height. A scan's points have `range` and `intensity` |
+| `range` | `points` | the low and high ends of `field`, as `[0, 100]`, its values' own when left out. A point outside it is not drawn |
 | `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
 | `src` | `model` | a USD file in the project's files, as `"files/ur10e/ur10e.usd"`, or a glTF file, `.glb` or `.gltf`, as `"files/hall.glb"` or any URL, which stays as its file puts it |
 | `joints` | `model` | a USD robot's joints by name, `{ elbow_joint: 0.5 }`, each turned by radians or slid by metres, or a JointState, as `Arm.JointState`. A file of several robots takes each one's under its name, `{ carter_1: { left_wheel: 2 }, arm: Arm.JointState }`. A joint that mimics another, as a gripper's finger, follows it unless given its own. A glTF model has none |
