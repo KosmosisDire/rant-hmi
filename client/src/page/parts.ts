@@ -15,7 +15,7 @@ export const PARTS = {
   sphere: { radius: "0.5", color: "$accent", opacity: "1" },
   cylinder: { radius: "0.5", length: "1", color: "$accent", opacity: "1" },
   points: { points: "[]", size: "0.05", joined: "false", color: "$accent" },
-  grid: { size: "10", step: "1", color: "$border" },
+  floor: { size: "10", step: "1", color: "$border" },
   arrow: { vector: "vec(1, 0, 0)", color: "$accent" },
   model: { src: '""', joints: "{}", names: "[]" },
 } satisfies Partial<Record<Tag, Record<string, string>>>;

@@ -58,7 +58,7 @@ export const TAG_WORDS: Record<Tag, string> = {
   sphere: "sphere",
   cylinder: "cylinder",
   points: "points",
-  grid: "grid",
+  floor: "floor",
   arrow: "arrow",
   model: "model",
 };
@@ -89,7 +89,7 @@ const ICONS: Partial<Record<Tag, (p: { size: number }) => JSX.Element>> = {
   sphere: Globe,
   cylinder: Cylinder,
   points: ChartScatter,
-  grid: Grid3x3,
+  floor: Grid3x3,
   arrow: MoveUpRight,
   model: FileBox,
 };

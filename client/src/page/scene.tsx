@@ -266,7 +266,7 @@ const SHOWS: Record<Part, (read: Read) => Omit<Shown, "visible">> = {
   sphere: (r) => ({ radius: r.number("radius"), opacity: r.number("opacity"), color: r.colour("color") }),
   cylinder: (r) => ({ radius: r.number("radius"), length: r.number("length"), opacity: r.number("opacity"), color: r.colour("color") }),
   points: (r) => ({ joined: r.flag("joined"), points: r.points("points"), size: r.sizes("size"), color: r.colours("color") }),
-  grid: (r) => ({ size: r.number("size"), step: r.number("step"), color: r.colour("color") }),
+  floor: (r) => ({ size: r.number("size"), step: r.number("step"), color: r.colour("color") }),
   model: (r) => ({ src: r.text("src"), joints: r.joints("joints"), names: r.names("names") }),
 };
 

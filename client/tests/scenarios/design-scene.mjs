@@ -17,7 +17,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(loaded, "three.js to load once a scene shows");
   const pageId = hmi.state.pages.find((p) => p.name === "Scene").id;
   const held = () => hmi.page(pageId).children.find((e) => e.id === scene).children;
-  check(held().map((e) => e.tag).join() === "grid,axes", `a new scene holds ${held().map((e) => e.tag).join()}, not a grid and axes`);
+  check(held().map((e) => e.tag).join() === "floor,axes", `a new scene holds ${held().map((e) => e.tag).join()}, not a floor and axes`);
 
   // the box sits where the value puts it, in the middle of the view where the camera aims
   const box = await d.addPart("box", { Pose: "{ position: vec(Line.Speed * 10, 0, 0.5) }", Colour: '"#ff0000"' });

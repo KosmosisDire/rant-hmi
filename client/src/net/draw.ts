@@ -552,7 +552,7 @@ const KINDS: Record<Part, Kind> = {
   },
   // three.js lays a grid on its xz plane and makes its lines once, in white its material then
   // colours, so it turns onto xy and is made again as its size changes
-  grid: {
+  floor: {
     make: () => new Group(),
     show: (o, s) => {
       if (typeof s.size === "number" && s.step !== undefined) {
