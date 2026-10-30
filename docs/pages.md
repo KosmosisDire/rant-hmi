@@ -161,7 +161,7 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 | `joined` | `points` | `true` to draw one line through them instead of dots |
 | `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
 | `src` | `model` | a USD file in the project's files, as `"files/ur10e/ur10e.usd"`, or a glTF file, `.glb` or `.gltf`, as `"files/hall.glb"` or any URL, which stays as its file puts it |
-| `joints` | `model` | a USD robot's joints by name, `{ elbow_joint: 0.5 }`, each turned by radians or slid by metres, or a JointState, as `Arm.JointState`. A file of several robots takes each one's under its name, `{ carter_1: { left_wheel: 2 }, arm: Arm.JointState }`. A glTF model has none |
+| `joints` | `model` | a USD robot's joints by name, `{ elbow_joint: 0.5 }`, each turned by radians or slid by metres, or a JointState, as `Arm.JointState`. A file of several robots takes each one's under its name, `{ carter_1: { left_wheel: 2 }, arm: Arm.JointState }`. A joint that mimics another, as a gripper's finger, follows it unless given its own. A glTF model has none |
 | `names` | `model` | the joint each of a JointState's positions is for, a list or a JointNames, as `Arm.JointNames`, or these under each robot's name. Left out, a robot takes its moving joints in the order Isaac Sim lists them |
 
 - An `anchor` draws nothing. It places what it holds by its pose, as a frame of a TF tree.

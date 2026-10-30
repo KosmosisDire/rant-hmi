@@ -60,6 +60,9 @@ Claude's:
   robots' frames agree with their links at rest.
 - **The tree**: joints between two bodies come before ones to the world, and a loop's own
   joints last, so each link takes one parent.
+- **Mimic joints**: a joint given no value follows the one PhysX's mimic joint names, its
+  position plus the gearing times that one's plus the offset being 0. A Robotiq 2F-85's fingers
+  so close by `finger_joint` alone.
 - **Robots**: joints joined through their links are one robot. It is placed at the
   PhysicsArticulationRootAPI on it, which Isaac puts on a robot's prim, its first link or its
   root joint, else at its links' common prim. It is named by the nearest prim there that is no
@@ -117,6 +120,6 @@ first make downloads.
 - What an MDL of its own works out in its code: masks that colour a cart's body and handle
   apart, tiling, and inputs a material leaves at the MDL file's defaults, as a traffic cone's
   orange.
-- Mimic joints and closed loops move only by the joints given values.
+- Closed loops move only by the joints given values.
 - Models are plain floats. The biggest robots make 40 to 80 MB, which a screen loads once and
   then asks for by tag.

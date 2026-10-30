@@ -337,6 +337,9 @@ interface Joint {
   frames: { translation: [number, number, number]; rotation: [number, number, number, number] }[];
   /** The robot it is in, by its place in the model's list. */
   robot: number;
+  /** The joint it follows, by its place: its position plus \`gearing\` times that one's plus
+   *  \`offset\` is 0, as PhysX's mimic joint says. */
+  mimic?: { joint: number; gearing: number; offset: number };
 }
 
 const ONE = new Vector3(1, 1, 1);
@@ -344,20 +347,29 @@ const frameOf = (f: Joint["frames"][number]) => new Matrix4().compose(new Vector
 
 /** Moves a USD robot's links by the values of its joints, by their place in its list, each child
  *  from its parent: a turning joint by an angle in radians about its axis, a sliding one by metres
- *  along it. A joint given no value, or a fixed one, keeps its child where the file puts it from
- *  its parent. */
+ *  along it. A joint given no value follows the one it mimics, as a gripper's fingers do. One that
+ *  follows none, or a fixed one, keeps its child where the file puts it from its parent. */
 function move(model: Object3D, values: Map<number, number>) {
   const list: Joint[] = model.userData.joints;
   const links: Map<string, { node: Object3D; rest: Matrix4 }> = (model.userData.links ??= new Map());
   if (links.size === 0) model.traverse((o) => o.userData.link && links.set(o.userData.link, { node: o, rest: o.matrix.clone() }));
   const unit: number = model.userData.metersPerUnit ?? 1;
+  // a mimic counts a sliding joint in the file's units, not metres
+  const per = (i: number) => (list[i].kind === "prismatic" ? unit : 1);
+  const follow = (i: number, depth = 0): number | undefined => {
+    const m = list[i].mimic;
+    const given = values.get(i);
+    if (given !== undefined || !m || depth > list.length) return given;
+    const led = follow(m.joint, depth + 1);
+    return led === undefined ? undefined : -(m.gearing * (led / per(m.joint)) + m.offset) * per(i);
+  };
   const world = new Map<string, Matrix4>();
   for (const [i, j] of list.entries()) {
     const child = links.get(j.child);
     const parent = j.parent === null ? null : links.get(j.parent);
     if (!child || parent === undefined) continue;
     const at = parent ? (world.get(j.parent!) ?? parent.rest).clone() : new Matrix4();
-    const value = values.get(i);
+    const value = follow(i);
     if (value === undefined || j.kind === "fixed") {
       if (parent) at.multiply(parent.rest.clone().invert());
       at.multiply(child.rest);

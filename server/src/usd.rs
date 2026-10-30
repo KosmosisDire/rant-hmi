@@ -297,6 +297,15 @@ struct Joint {
     frames: [(gf::Vec3f, gf::Quatf); 2],
     /// A loop's last joint, which the tree leaves out once the child has a parent.
     closes_loop: bool,
+    /// The joint it follows, as a gripper's fingers follow the one driven, and how.
+    mimic: Option<Mimic>,
+}
+
+/// PhysX's mimic joint: this joint's position plus `gearing` times the other's plus `offset` is 0.
+struct Mimic {
+    joint: String,
+    gearing: f64,
+    offset: f64,
 }
 
 /// A material as a glTF metallic roughness one.
@@ -400,7 +409,7 @@ impl<'s> Robot<'s> {
         };
         self.bodies.extend(parent.iter().cloned());
         self.bodies.insert(child.clone());
-        Some(Joint { name, path, kind, parent, child, axis, frames, closes_loop })
+        Some(Joint { name, path, kind, parent, child, axis, frames, closes_loop, mimic: mimic(prim) })
     }
 
     /// Makes nodes for the prim and what is under it. `link` is the link node it moves with.
@@ -831,12 +840,13 @@ impl<'s> Robot<'s> {
             }
         }
         let (robots, of) = self.robots(&sorted, fallback);
+        let place = |path: &str| sorted.iter().position(|j| j.path == path);
         let frame = |(at, turn): &(gf::Vec3f, gf::Quatf)| json!({ "translation": [at.x, at.y, at.z], "rotation": [turn.x, turn.y, turn.z, turn.w] });
         let joints = sorted
             .iter()
             .zip(of)
             .map(|(j, robot)| {
-                json!({
+                let mut joint = json!({
                     "name": j.name,
                     "kind": j.kind,
                     "parent": j.parent,
@@ -844,7 +854,11 @@ impl<'s> Robot<'s> {
                     "axis": j.axis,
                     "frames": [frame(&j.frames[0]), frame(&j.frames[1])],
                     "robot": robot,
-                })
+                });
+                if let Some((m, at)) = j.mimic.as_ref().and_then(|m| Some((m, place(&m.joint)?))) {
+                    joint["mimic"] = json!({ "joint": at, "gearing": m.gearing, "offset": m.offset });
+                }
+                joint
             })
             .collect();
         (joints, robots)
@@ -963,6 +977,16 @@ impl<'s> Robot<'s> {
         }
         Ok((self.glb.finish(doc), whole))
     }
+}
+
+/// The joint a joint follows by PhysxMimicJointAPI, under whichever axis it is applied for.
+fn mimic(prim: &usd::Prim) -> Option<Mimic> {
+    let attrs = prim.attributes_in_namespace("physxMimicJoint").unwrap_or_default();
+    let gearing = attrs.iter().find(|a| a.name().ends_with(":gearing"))?;
+    let at = gearing.name().trim_end_matches("gearing");
+    let joint = prim.relationship(format!("{at}referenceJoint")).targets().ok()?.first()?.as_str().to_string();
+    let number = |name: &str| value(prim, &format!("{at}{name}")).and_then(|v| floats(&v).first().copied()).unwrap_or(0.0) as f64;
+    Some(Mimic { joint, gearing: number("gearing"), offset: number("offset") })
 }
 
 /// Where a link's group ends, following `up` from it.
@@ -1730,6 +1754,37 @@ def Cube "box"
                 ("door", "/World/door", &json!([3])),
             ]
         );
+    }
+
+    /// A gripper's finger that follows the driven one, as Isaac writes it with PhysX's mimic joint.
+    #[test]
+    fn mimic_joints() {
+        let dir = scratch("mimic");
+        write(&dir, "gripper.usda", r#"#usda 1.0
+def Xform "gripper"
+{
+    def Cube "base" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) { }
+    def Cube "left" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) { }
+    def Cube "right" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) { }
+    def PhysicsRevoluteJoint "finger_joint"
+    {
+        rel physics:body0 = </gripper/base>
+        rel physics:body1 = </gripper/left>
+    }
+    def PhysicsRevoluteJoint "right_joint" (prepend apiSchemas = ["PhysxMimicJointAPI:rotX"])
+    {
+        rel physics:body0 = </gripper/base>
+        rel physics:body1 = </gripper/right>
+        float physxMimicJoint:rotX:gearing = -1
+        float physxMimicJoint:rotX:offset = 0.25
+        rel physxMimicJoint:rotX:referenceJoint = </gripper/finger_joint>
+    }
+}
+"#);
+        let doc = json_of(&make(&dir.join("gripper.usda"), &dir).unwrap().glb);
+        let joints = &doc["scenes"][0]["extras"]["joints"];
+        assert_eq!(joints[0]["mimic"], Value::Null);
+        assert_eq!(joints[1]["mimic"], json!({ "joint": 0, "gearing": -1.0, "offset": 0.25 }));
     }
 
     /// Materials as Unreal writes them, each an MDL of its own read by its inputs' names.

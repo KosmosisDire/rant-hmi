@@ -4,8 +4,9 @@ import { dirname, join } from "node:path";
 // A designer shows a USD robot from the project's files in a scene, its layers composed as Isaac
 // Sim writes them, and moves it by its joints: by name, by a JointState in the order the robot
 // lists its moving joints, or in the order names give. A joint it lacks, a count that does not
-// match, a file that is no USD and a layer it cannot find each say why. A file of two robots
-// takes each one's joints under its name, and the inspector lists the robots a file holds.
+// match, a file that is no USD and a layer it cannot find each say why. A joint that mimics
+// another moves with it. A file of two robots takes each one's joints under its name, and the
+// inspector lists the robots a file holds.
 
 // a base and one link holding a red block at x 1, joined by joint1 turning about z, the
 // geometry a sublayer and the physics a reference
@@ -76,6 +77,35 @@ over "arm"
 }
 `,
   "broken.usda": "not a USD file",
+  // the arm with a blue block at x -1 on a joint that mimics joint1, as a gripper's finger does
+  "follow.usda": `#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+    subLayers = [@arm.usda@]
+)
+over "arm"
+{
+    def Xform "link2" (prepend apiSchemas = ["PhysicsRigidBodyAPI"])
+    {
+        def Cube "block"
+        {
+            double size = 0.5
+            double3 xformOp:translate = (-1, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+            color3f[] primvars:displayColor = [(0, 0, 1)]
+        }
+    }
+    def PhysicsRevoluteJoint "joint2" (prepend apiSchemas = ["PhysxMimicJointAPI:rotZ"])
+    {
+        rel physics:body0 = </arm/base>
+        rel physics:body1 = </arm/link2>
+        uniform token physics:axis = "Z"
+        float physxMimicJoint:rotZ:gearing = -1
+        rel physxMimicJoint:rotZ:referenceJoint = </arm/joint1>
+    }
+}
+`,
   // the arm twice, at y 1 and y -1
   "pair.usda": `#usda 1.0
 (
@@ -151,6 +181,15 @@ export default async function ({ page, hmi, sys, d, eventually }) {
   await right("the arm drawn without the gripper it cannot find");
   const warned = async () => (await (await fetch(`${sys.url}/problems`)).json()).some((p) => p.level === "warn" && p.text.includes("Model: src:") && p.text.includes("parts/gripper.usda"));
   await eventually(warned, "the missing gripper to be a warning");
+
+  // a joint that mimics joint1 turns with it
+  await d.setField("Source", '"files/robot/follow.usda"');
+  const blue = ([r, g, b]) => b > 120 && b > 2 * r && b > 2 * g;
+  await d.shows(d.el(scene), 0.35, 0.5, blue, "the following block left of the middle at rest");
+  await d.setField("Joints", "{ joint1: PI }");
+  await d.shows(d.el(scene), 0.65, 0.5, blue, "the following block turned with joint1");
+  await d.shows(d.el(scene), 0.35, 0.5, red, "the block turned by joint1");
+  await d.setField("Joints", "{}");
 
   // two robots, each its joints under its name
   await d.setField("Source", '"files/robot/pair.usda"');
