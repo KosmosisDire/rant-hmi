@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::pages::format::{Reader, lines, quote};
+use crate::rules::RATE;
 
 /// One handler of an object's logic.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
@@ -32,7 +33,14 @@ pub enum When {
     /// Every so many milliseconds.
     Every { ms: u32 },
     /// When `condition` turns true and stays true for `ms`. An unknown value never fires it.
-    Turns { condition: String, ms: u32 },
+    /// `rate` is the most times a second it is judged, as a computed value's.
+    Turns {
+        condition: String,
+        ms: u32,
+        #[serde(default)]
+        #[ts(optional)]
+        rate: Option<u16>,
+    },
     /// When a member changes, an own one by its name, another object's as `Line.Speed`.
     /// `p.value` and `p.previous`.
     Changes { name: String },
@@ -54,6 +62,7 @@ pub fn check(rule: &Rule) -> Result<(), String> {
     // an empty condition or name is one being written, and simply never fires
     match &rule.when {
         When::Every { ms } if *ms < SHORTEST_MS => Err(format!("a timer runs every {SHORTEST_MS} ms at the most often")),
+        When::Turns { rate: Some(r), .. } if !(RATE.0..=RATE.1).contains(r) => Err(format!("a condition is judged from {} to {} times a second", RATE.0, RATE.1)),
         _ => Ok(()),
     }
 }
@@ -67,8 +76,11 @@ pub fn hmis(when: &When) -> bool {
 pub fn write(out: &mut String, indent: &str, r: &Rule) {
     let when = match &r.when {
         When::Every { ms } => format!("every=\"{ms}\""),
-        When::Turns { condition, ms } if *ms == 0 => format!("when={}", quote(condition)),
-        When::Turns { condition, ms } => format!("when={} for=\"{ms}\"", quote(condition)),
+        When::Turns { condition, ms, rate } => {
+            let held = if *ms == 0 { String::new() } else { format!(" for=\"{ms}\"") };
+            let rate = rate.map(|r| format!(" rate=\"{r}\"")).unwrap_or_default();
+            format!("when={}{held}{rate}", quote(condition))
+        }
         When::Changes { name } => format!("change={}", quote(name)),
         When::Starts => "start=\"\"".into(),
         When::Connects => "screen=\"connects\"".into(),
@@ -88,7 +100,8 @@ pub(crate) fn read(r: &mut Reader, attrs: &[(String, String)]) -> Result<Rule, S
         When::Every { ms: ms.parse().map_err(|_| r.error("every takes milliseconds"))? }
     } else if let Some(condition) = get("when") {
         let ms = get("for").map(|f| f.parse()).transpose().map_err(|_| r.error("for takes milliseconds"))?;
-        When::Turns { condition, ms: ms.unwrap_or(0) }
+        let rate = get("rate").map(|n| n.parse()).transpose().map_err(|_| r.error("rate takes times a second"))?;
+        When::Turns { condition, ms: ms.unwrap_or(0), rate }
     } else if let Some(name) = get("change") {
         When::Changes { name }
     } else if get("start").is_some() {
@@ -112,7 +125,7 @@ mod tests {
     fn rules_read_and_write_back_the_same() {
         let rules = vec![
             Rule { id: "h1".into(), name: "Blink".into(), when: When::Every { ms: 500 }, code: "lamp = !lamp;".into() },
-            Rule { id: "h2".into(), name: "Too fast".into(), when: When::Turns { condition: "Speed > 1.5 && Mode == \"Auto\"".into(), ms: 2000 }, code: "if (x) {
+            Rule { id: "h2".into(), name: "Too fast".into(), when: When::Turns { condition: "Speed > 1.5 && Mode == \"Auto\"".into(), ms: 2000, rate: Some(10) }, code: "if (x) {
   notify(\"</on>\");
 }".into() },
             Rule { id: "h3".into(), name: "Run".into(), when: When::Changes { name: "Running".into() }, code: "log(p.value);".into() },
@@ -130,7 +143,7 @@ mod tests {
             r.expect(">").unwrap();
             assert_eq!(read(&mut r, &attrs).unwrap(), rule, "{text}");
             if rule.id == "h2" {
-                assert!(text.contains("<on id=\"h2\" name=\"Too fast\" when='Speed > 1.5 && Mode == \"Auto\"' for=\"2000\">"));
+                assert!(text.contains("<on id=\"h2\" name=\"Too fast\" when='Speed > 1.5 && Mode == \"Auto\"' for=\"2000\" rate=\"10\">"));
             }
         }
         let mut r = Reader::new("<on id=\"h1\" name=\"x\">

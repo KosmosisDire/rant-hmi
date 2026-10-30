@@ -3,4 +3,4 @@
 /**
  * What starts a rule's code, and what it then reads as `p`.
  */
-export type When = { "kind": "every", ms: number, } | { "kind": "turns", condition: string, ms: number, } | { "kind": "changes", name: string, } | { "kind": "starts" } | { "kind": "connects" } | { "kind": "leaves" };
+export type When = { "kind": "every", ms: number, } | { "kind": "turns", condition: string, ms: number, rate?: number, } | { "kind": "changes", name: string, } | { "kind": "starts" } | { "kind": "connects" } | { "kind": "leaves" };

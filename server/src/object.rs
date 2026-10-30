@@ -11,7 +11,7 @@ use crate::logic::{self, Rule, When};
 use crate::pages::format::{Reader, lines, quote, var};
 use crate::pages::js;
 use crate::project::{self, Computed, Import, Intent, Kind, Record, Setter, Variable};
-use crate::rules::{self, EVERY_MS, KEEP_S};
+use crate::rules::{self, EVERY_MS, KEEP_S, RATE};
 
 /// The object every project has, which holds what is about the HMI itself.
 pub const HMI: &str = "Hmi";
@@ -246,6 +246,9 @@ pub fn check(o: &Object) -> Result<(), String> {
         if let Some(s) = c.set.as_ref().filter(|s| s.value.trim().is_empty()) {
             return Err(format!("{} needs the value its setter gives {}", c.name, s.target));
         }
+        if c.rate.is_some_and(|r| !(RATE.0..=RATE.1).contains(&r)) {
+            return Err(format!("{} is worked out from {} to {} times a second", c.name, RATE.0, RATE.1));
+        }
     }
     for r in &o.records {
         project::check_local(&r.name, "a record")?;
@@ -319,6 +322,9 @@ pub fn write(o: &Object) -> String {
         out.push_str(&format!("  <computed name={} get={}", quote(&c.name), quote(&c.get)));
         if let Some(s) = &c.set {
             out.push_str(&format!(" target={} set={}", quote(&s.target), quote(&s.value)));
+        }
+        if let Some(r) = c.rate {
+            out.push_str(&format!(" rate=\"{r}\""));
         }
         for (k, v) in [("unit", &c.unit), ("note", &c.note)] {
             if let Some(v) = v {
@@ -397,7 +403,8 @@ pub fn parse(text: &str) -> Result<Object, String> {
                     (None, None) => None,
                     _ => return Err(r.error("a setter takes both a target and set")),
                 };
-                let c = Computed { name: a.need(&r, "name")?, get: a.need(&r, "get")?, set, unit: a.take("unit"), note: a.take("note") };
+                let rate = a.take("rate").map(|n| n.parse().map_err(|_| r.error("rate takes times a second"))).transpose()?;
+                let c = Computed { name: a.need(&r, "name")?, get: a.need(&r, "get")?, set, rate, unit: a.take("unit"), note: a.take("note") };
                 a.done(&r)?;
                 r.expect("/>")?;
                 o.computed.push(c);
@@ -485,7 +492,7 @@ mod tests {
             Import { alias: "Joints".into(), entity: "/Robot/Joints".into(), kind: Kind::Topic, intent: Intent::Read, rate: None },
         ];
         o.variables = vec![Variable { name: "runSeconds".into(), start: value!(0), per: Per::Hmi }, Variable { name: "mode".into(), start: value!("Auto"), per: Per::Screen }];
-        o.computed = vec![Computed { name: "speedPercent".into(), get: "Speed / 2 * 100".into(), set: Some(Setter { target: "Speed".into(), value: "v / 100 * 2".into() }), unit: Some("%".into()), note: None }];
+        o.computed = vec![Computed { name: "speedPercent".into(), get: "Speed / 2 * 100".into(), set: Some(Setter { target: "Speed".into(), value: "v / 100 * 2".into() }), rate: Some(5), unit: Some("%".into()), note: None }];
         o.records = vec![Record { name: "speedHistory".into(), source: "Conveyor.speed".into(), every_ms: 100, keep_s: 60 }];
         o.functions = vec![Function { name: "restart".into(), takes: vec!["job".into(), "mode".into()], code: "await Reset();\nreturn job;".into() }];
         o.logic = vec![Rule { id: "h1".into(), name: "Count".into(), when: When::Every { ms: 1000 }, code: "if (Speed > 0) runSeconds = runSeconds + 1;".into() }];

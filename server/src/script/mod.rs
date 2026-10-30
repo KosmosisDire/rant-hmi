@@ -17,10 +17,15 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::logic::When;
 use crate::object::{self, Flat, owner};
 use crate::project::{self, Computed, Found, Import, Intent, Kind, Per, Variable};
-use crate::protocol::{EnumInfo, Mode};
+use crate::protocol::{EnumInfo, Level, Mode};
+use crate::rules::RATE;
 
-/// How long code may run without waiting before it is stopped.
-const BUDGET: Duration = Duration::from_millis(250);
+/// How long a handler may run without waiting before it is stopped. One that runs over half of
+/// it is told.
+const BUDGET: Duration = Duration::from_millis(50);
+/// How early a computed value or a condition may start before its period passed, as asks come
+/// each tick of the backend and a tick wanders a little. Half a tick.
+const EARLY: Duration = Duration::from_millis(16);
 /// How long after an operator did something on a screen its handler may still start. One later
 /// is not run, as a jog that starts late moves a machine no one is steering.
 pub const LATE: Duration = Duration::from_millis(500);
@@ -47,7 +52,7 @@ pub enum ToScript {
     Forget(Vec<String>),
     /// Works out each computed value and condition due, and reads the records named by key,
     /// answered with `Thought`. One is due once something it read when last worked out changed,
-    /// and each time while it reads the clock.
+    /// and each time while it reads the clock, but no sooner than its rate lets it.
     Think { sample: Vec<String> },
     /// What a write of `v` to a computed value gives its setter's target, answered with
     /// `Inverted`.
@@ -97,6 +102,8 @@ pub enum FromScript {
     Notify { run: u64, text: String },
     /// A fault that leaves the run going, as a throw in a task's progress function.
     Fault { run: u64, text: String },
+    /// A warning that leaves the run going, as code that ran long without waiting.
+    Warn { run: u64, text: String },
     Log { run: u64, text: String },
     /// Opens a page on the screen that started the run, in place of the top one when `replace`.
     /// `call` answers with what the page closes with.
@@ -108,9 +115,9 @@ pub enum FromScript {
     /// How a run ended, and what its code returned, null for nothing.
     Done { run: u64, end: End, value: Value },
     /// What a `Think` worked out: each computed value due and each record named, None where it
-    /// reads an unknown value or fails, and each condition due, false the same way. `faults`
-    /// says why each that failed did, by its key, or a rule's id.
-    Thought { computed: Vec<(String, Option<Value>)>, judged: Vec<(String, bool)>, sampled: Vec<(String, Option<Value>)>, faults: Vec<(String, String)> },
+    /// reads an unknown value or fails, and each condition due, false the same way. `problems`
+    /// says why each that failed did, and which ran long, by its key, or a rule's id.
+    Thought { computed: Vec<(String, Option<Value>)>, judged: Vec<(String, bool)>, sampled: Vec<(String, Option<Value>)>, problems: Vec<(String, Level, String)> },
     /// What a write to the computed value `name` gives `target`, or why it gives nothing.
     Inverted { session: Option<u32>, name: String, target: String, value: Result<Value, String> },
     /// Why a computed value's setter does not undo its getter.
@@ -253,8 +260,9 @@ impl Script {
     }
 }
 
-/// What a promise waits on: a call's answer or a sleep's end.
+/// What a promise waits on: a call's answer or a sleep's end, for the run whose code goes on.
 struct Waiter {
+    run: u64,
     resolve: Persistent<Function<'static>>,
     reject: Persistent<Function<'static>>,
     /// What takes a task call's progress.
@@ -269,12 +277,13 @@ struct Read {
 }
 
 /// Expressions of one kind, as computed values or conditions, each worked out again only once
-/// something it read changed, or each time while it reads the clock.
+/// something it read changed, or each time while it reads the clock, at its rate at the most.
 #[derive(Default)]
 struct Watched {
     /// What each read, by its name. One not here was not worked out since the objects changed.
     read: HashMap<String, Read>,
     stale: HashSet<String>,
+    started: HashMap<String, Instant>,
 }
 
 impl Watched {
@@ -290,15 +299,67 @@ impl Watched {
         self.stale.contains(name) || self.read.get(name).is_none_or(|r| r.clock)
     }
 
-    fn worked(&mut self, name: &str, read: Read) {
+    /// Whether its period passed since it last started.
+    fn ready(&self, name: &str, period: Duration) -> bool {
+        self.started.get(name).is_none_or(|t| t.elapsed() + EARLY >= period)
+    }
+
+    fn worked(&mut self, name: &str, read: Read, started: Instant) {
         self.stale.remove(name);
         self.read.insert(name.to_owned(), read);
+        self.started.insert(name.to_owned(), started);
     }
 
     fn forget(&mut self) {
         self.read.clear();
         self.stale.clear();
+        self.started.clear();
     }
+}
+
+/// When the code running now is stopped. The interrupt handler asks it, once, so the code that
+/// reports the stop is not stopped too.
+#[derive(Default)]
+struct Watchdog {
+    deadline: Cell<Option<Instant>>,
+    /// Whether it stopped code since it was last armed.
+    fired: Cell<bool>,
+}
+
+impl Watchdog {
+    /// Lets the code about to run go on until `limit` after `since`.
+    fn arm(&self, since: Instant, limit: Duration) {
+        self.fired.set(false);
+        self.deadline.set(Some(since + limit));
+    }
+
+    fn disarm(&self) {
+        self.deadline.set(None);
+    }
+
+    fn over(&self) -> bool {
+        let over = self.deadline.get().is_some_and(|t| Instant::now() > t);
+        if over {
+            self.deadline.set(None);
+            self.fired.set(true);
+        }
+        over
+    }
+}
+
+/// The time between two workings out at `rate` a second, the most each may take.
+fn period(rate: Option<u16>) -> Duration {
+    Duration::from_secs_f64(1.0 / f64::from(rate.unwrap_or(RATE.1).max(1)))
+}
+
+/// Why a handler was stopped, as its fault says.
+fn stopped() -> String {
+    format!("it ran {} ms without waiting, so it was stopped", BUDGET.as_millis())
+}
+
+/// What a handler that ran over half its time is told.
+fn slow() -> String {
+    format!("it ran over {} ms without waiting, half of what it may", (BUDGET / 2).as_millis())
 }
 
 struct Shared {
@@ -332,8 +393,14 @@ struct Shared {
     next: u64,
     getters: Watched,
     conditions: Watched,
+    /// How long each computed value, condition and record may run at a time, by its key, or a
+    /// rule's id.
+    limits: HashMap<String, Duration>,
     /// What the expression being worked out reads, while one is.
     reading: Option<Read>,
+    watchdog: Rc<Watchdog>,
+    /// The run whose code runs now till it waits, and since when.
+    segment: Option<(u64, Instant)>,
 }
 
 impl Shared {
@@ -345,6 +412,11 @@ impl Shared {
     fn changed(&mut self, key: &str) {
         self.getters.changed(key);
         self.conditions.changed(key);
+    }
+
+    /// How long the computed value, condition or record `name` may run at a time.
+    fn limit(&self, name: &str) -> Duration {
+        self.limits.get(name).copied().unwrap_or_else(|| period(None))
     }
 
     /// What `key` names among the objects' members.
@@ -421,10 +493,10 @@ impl Shared {
         self.pending.retain(|run, _| live.contains(run));
     }
 
-    fn wait<'js>(&mut self, ctx: &Ctx<'js>, resolve: Function<'js>, reject: Function<'js>, progress: Option<Function<'js>>) -> u64 {
+    fn wait<'js>(&mut self, ctx: &Ctx<'js>, run: u64, resolve: Function<'js>, reject: Function<'js>, progress: Option<Function<'js>>) -> u64 {
         self.next += 1;
         let progress = progress.map(|f| Persistent::save(ctx, f));
-        self.waiters.insert(self.next, Waiter { resolve: Persistent::save(ctx, resolve), reject: Persistent::save(ctx, reject), progress });
+        self.waiters.insert(self.next, Waiter { run, resolve: Persistent::save(ctx, resolve), reject: Persistent::save(ctx, reject), progress });
         self.next
     }
 }
@@ -432,16 +504,9 @@ impl Shared {
 fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
     let rt = Runtime::new().expect("QuickJS starts");
     rt.set_memory_limit(MEMORY);
-    // one shot, so the code that reports the stop is not stopped too
-    let deadline = Rc::new(Cell::new(None::<Instant>));
-    let d = deadline.clone();
-    rt.set_interrupt_handler(Some(Box::new(move || {
-        let over = d.get().is_some_and(|t| Instant::now() > t);
-        if over {
-            d.set(None);
-        }
-        over
-    })));
+    let watchdog = Rc::new(Watchdog::default());
+    let w = watchdog.clone();
+    rt.set_interrupt_handler(Some(Box::new(move || w.over())));
     // calls and sleeps settle from here, whichever run made them
     let home = Context::full(&rt).expect("QuickJS makes a context");
     let rw = Rewriter::new(&rt);
@@ -471,7 +536,10 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         next: 0,
         getters: Watched::default(),
         conditions: Watched::default(),
+        limits: HashMap::new(),
         reading: None,
+        watchdog: watchdog.clone(),
+        segment: None,
     }));
     // conditions, records and computed values are read each in a reader made anew when what
     // they read or say changes
@@ -501,6 +569,12 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 getters = flat.computed.iter().map(|c| (c.name.clone(), own(&c.name), format!("() => ({}\n)", c.get))).collect();
                 setters = flat.computed.iter().filter_map(|c| c.set.as_ref().map(|s| (c.name.clone(), own(&c.name), format!("(v) => ({}\n)", s.value)))).collect();
                 let mut st = shared.borrow_mut();
+                let rated = flat.rules.iter().filter_map(|(_, r)| match &r.when {
+                    When::Turns { rate, .. } => Some((r.id.clone(), period(*rate))),
+                    _ => None,
+                });
+                let sampled = flat.records.iter().map(|r| (r.name.clone(), Duration::from_millis(r.every_ms.into())));
+                st.limits = flat.computed.iter().map(|c| (c.name.clone(), period(c.rate))).chain(rated).chain(sampled).collect();
                 st.imports = flat.imports.into_iter().map(|i| (i.alias.clone(), i)).collect();
                 st.variables = flat.variables.into_iter().map(|v| (v.name.clone(), v)).collect();
                 st.computed = flat.computed.into_iter().map(|c| (c.name.clone(), c)).collect();
@@ -514,7 +588,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 let computer = computer.get_or_insert_with(|| make_reader(&rt, &rw, &shared, &getters, 0));
                 let judge = judge.get_or_insert_with(|| make_reader(&rt, &rw, &shared, &conditions, 0));
                 let sampler = sampler.get_or_insert_with(|| make_reader(&rt, &rw, &shared, &records, 0));
-                let thought = think(&shared, &deadline, computer, judge, sampler, &sample);
+                let thought = think(&shared, computer, judge, sampler, &sample);
                 shared.borrow().send(thought);
             }
             Ok(ToScript::Invert { session, name, v }) => {
@@ -523,7 +597,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 let found = inverter.iter().find_map(|(ctx, fns)| fns.iter().find(|(n, _)| *n == name).map(|(_, f)| (ctx, f.clone())));
                 let value = match (&target, found) {
                     (Some(_), Some((ctx, f))) => ctx.with(|ctx| {
-                        deadline.set(Some(Instant::now() + BUDGET));
+                        watchdog.arm(Instant::now(), BUDGET);
                         let got = to_js(&ctx, &v).and_then(|v| f.restore(&ctx)?.call::<_, rquickjs::Value>((v,))).and_then(from_js);
                         got.map_err(|_| {
                             let why = ctx.catch().as_exception().and_then(|e| e.message()).unwrap_or_default();
@@ -532,11 +606,11 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                     }),
                     _ => Err(format!("{name}'s setter does not read")),
                 };
-                deadline.set(None);
+                watchdog.disarm();
                 shared.borrow().send(FromScript::Inverted { session, name, target: target.unwrap_or_default(), value });
             }
             Ok(ToScript::Try { session, name }) => {
-                if let Some(warning) = try_setter(&rt, &rw, &shared, &deadline, &name) {
+                if let Some(warning) = try_setter(&rt, &rw, &shared, &name) {
                     shared.borrow().send(FromScript::Tried { session, warning });
                 }
             }
@@ -546,12 +620,13 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 st.getters.forget();
                 st.conditions.forget();
                 drop(st);
-                handle(&rt, &rw, &home, &shared, &deadline, msg);
+                handle(&rt, &rw, &home, &shared, msg);
             }
-            Ok(msg) => handle(&rt, &rw, &home, &shared, &deadline, msg),
+            Ok(msg) => handle(&rt, &rw, &home, &shared, msg),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
+        drain(&rt, &shared);
         loop {
             let due = {
                 let mut s = shared.borrow_mut();
@@ -565,17 +640,11 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 }
             };
             if let Some(w) = due {
+                begin(&shared, w.run);
                 settle(&home, w, Ok(Value::Null));
+                drain(&rt, &shared);
             }
         }
-        loop {
-            deadline.set(Some(Instant::now() + BUDGET));
-            // a job that throws is a run's own fault, which its handler reports
-            if matches!(rt.execute_pending_job(), Ok(false)) {
-                break;
-            }
-        }
-        deadline.set(None);
         shared.borrow_mut().flush_all();
     }
     // every persistent goes before the runtime does
@@ -583,10 +652,34 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
     shared.borrow_mut().waiters.clear();
 }
 
+/// What gives a computed value or a condition its time, and a record its, in words.
+const RATED: &str = "its rate gives it";
+const SAMPLED: &str = "between its samples";
+
 /// Works out what a `Think` asks: each computed value due, each after those due it read when
-/// last worked out, then each condition due, then the records named.
-fn think(shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, computer: &Reader, judge: &Reader, sampler: &Reader, sample: &[String]) -> FromScript {
-    let mut faults = Vec::new();
+/// last worked out, then each condition due, then the records named. Each runs within its limit,
+/// and one that runs over half of it is told.
+fn think(shared: &Rc<RefCell<Shared>>, computer: &Reader, judge: &Reader, sampler: &Reader, sample: &[String]) -> FromScript {
+    let mut problems = Vec::new();
+    let mut work = |name: &String, ctx: &Context, f: &Persistent<Function<'static>>, of: &str| -> (Option<Value>, Read, Instant) {
+        let limit = shared.borrow().limit(name);
+        let start = Instant::now();
+        let (got, read) = tracked(shared, ctx, f, limit);
+        let span = format!("the {} ms {of}", limit.as_millis());
+        let value = match got {
+            Ok(v) => {
+                if start.elapsed() > limit / 2 {
+                    problems.push((name.clone(), Level::Warn, format!("it ran over half {span}")));
+                }
+                v
+            }
+            Err(why) => {
+                problems.push((name.clone(), Level::Fault, why.unwrap_or_else(|| format!("it ran all {span}, so it was stopped"))));
+                None
+            }
+        };
+        (value, read, start)
+    };
     let getters: Vec<(&Context, &String, &Persistent<Function<'static>>)> = computer.iter().flat_map(|(ctx, fns)| fns.iter().map(move |(name, f)| (ctx, name, f))).collect();
     let mut computed: Vec<(String, Option<Value>)> = Vec::new();
     // each runs once, or twice where it first ran knowing nothing of what it reads, so one it
@@ -595,20 +688,20 @@ fn think(shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, compute
     loop {
         let next = {
             let st = shared.borrow();
-            let waiting: Vec<_> = getters.iter().filter(|(_, n, _)| st.getters.due(n) && ran.get(n).is_none_or(|again| *again)).collect();
+            let ready = |n: &String| match ran.get(n) {
+                Some(again) => *again,
+                None => st.getters.ready(n, st.limit(n)),
+            };
+            let waiting: Vec<_> = getters.iter().filter(|(_, n, _)| st.getters.due(n) && ready(n)).collect();
             let free = waiting.iter().find(|(_, n, _)| st.getters.read.get(*n).is_none_or(|r| !waiting.iter().any(|(_, m, _)| m != n && r.keys.contains(*m))));
             free.or(waiting.first()).map(|g| **g)
         };
         let Some((ctx, name, f)) = next else { break };
         let blind = !ran.contains_key(name) && !shared.borrow().getters.read.contains_key(name);
         ran.insert(name, blind);
-        let (got, read) = tracked(shared, deadline, ctx, f);
-        let value = got.unwrap_or_else(|why| {
-            faults.push((name.clone(), why));
-            None
-        });
+        let (value, read, started) = work(name, ctx, f, RATED);
         let mut st = shared.borrow_mut();
-        st.getters.worked(name, read);
+        st.getters.worked(name, read, started);
         if st.values.get(name) != value.as_ref() {
             match &value {
                 Some(v) => st.values.insert(name.clone(), v.clone()),
@@ -625,50 +718,95 @@ fn think(shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, compute
     let mut judged = Vec::new();
     for (ctx, fns) in judge {
         for (id, f) in fns {
-            if !shared.borrow().conditions.due(id) {
+            let due = {
+                let st = shared.borrow();
+                st.conditions.due(id) && st.conditions.ready(id, st.limit(id))
+            };
+            if !due {
                 continue;
             }
-            let (got, read) = tracked(shared, deadline, ctx, f);
-            shared.borrow_mut().conditions.worked(id, read);
-            let truth = got.unwrap_or_else(|why| {
-                faults.push((id.clone(), why));
-                None
-            });
+            let (truth, read, started) = work(id, ctx, f, RATED);
+            shared.borrow_mut().conditions.worked(id, read, started);
             judged.push((id.clone(), truth == Some(Value::Bool(true))));
         }
     }
     let mut sampled = Vec::new();
     for (ctx, fns) in sampler {
         for (name, f) in fns.iter().filter(|(name, _)| sample.contains(name)) {
-            let value = tracked(shared, deadline, ctx, f).0.unwrap_or_else(|why| {
-                faults.push((name.clone(), why));
-                None
-            });
-            sampled.push((name.clone(), value));
+            sampled.push((name.clone(), work(name, ctx, f, SAMPLED).0));
         }
     }
-    FromScript::Thought { computed, judged, sampled, faults }
+    FromScript::Thought { computed, judged, sampled, problems }
 }
 
-/// Calls a reader's function `f`, noting what it reads, within the budget: its value, None
-/// where it reads a value that is unknown, which is no fault, or why it failed.
-fn tracked(shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, ctx: &Context, f: &Persistent<Function<'static>>) -> (Result<Option<Value>, String>, Read) {
-    shared.borrow_mut().reading = Some(Read::default());
-    deadline.set(Some(Instant::now() + BUDGET));
+/// Calls a reader's function `f`, noting what it reads, within `limit`: its value, None where it
+/// reads a value that is unknown, which is no fault, or why it failed, None where it ran out of
+/// time.
+fn tracked(shared: &Rc<RefCell<Shared>>, ctx: &Context, f: &Persistent<Function<'static>>, limit: Duration) -> (Result<Option<Value>, Option<String>>, Read) {
+    let watchdog = {
+        let mut st = shared.borrow_mut();
+        st.reading = Some(Read::default());
+        st.watchdog.clone()
+    };
+    watchdog.arm(Instant::now(), limit);
     let got = ctx.with(|ctx| match f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).and_then(from_js) {
         Ok(v) => Ok(Some(v)),
         Err(rquickjs::Error::Exception) => {
             let e = ctx.catch();
+            if watchdog.fired.get() {
+                return Err(None);
+            }
             if e.as_object().and_then(|o| o.get::<_, String>("name").ok()).as_deref() == Some("Unknown") {
                 return Ok(None);
             }
             let describe: rquickjs::Result<Function> = ctx.globals().get("__describe");
-            Err(describe.and_then(|d| d.call((e,))).unwrap_or_else(|e| e.to_string()))
+            Err(Some(describe.and_then(|d| d.call((e,))).unwrap_or_else(|e| e.to_string())))
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(Some(e.to_string())),
     });
-    deadline.set(None);
+    watchdog.disarm();
     (got, shared.borrow_mut().reading.take().unwrap_or_default())
+}
+
+/// Starts a stretch of the run's code, which goes on till it waits, as long as a handler may run.
+fn begin(shared: &Rc<RefCell<Shared>>, run: u64) {
+    let since = Instant::now();
+    let mut st = shared.borrow_mut();
+    st.segment = Some((run, since));
+    st.watchdog.arm(since, BUDGET);
+}
+
+/// Runs the jobs what came queued: the code of the run that goes on after what it awaited, within
+/// what is left of its stretch. A run stopped ends here, as QuickJS gives up an async function it
+/// stops without settling its promise. One still going that ran over half its time is told.
+fn drain(rt: &Runtime, shared: &Rc<RefCell<Shared>>) {
+    let (watchdog, since) = {
+        let st = shared.borrow();
+        (st.watchdog.clone(), st.segment.map_or_else(Instant::now, |(_, t)| t))
+    };
+    loop {
+        watchdog.arm(since, BUDGET);
+        match rt.execute_pending_job() {
+            Ok(true) => {}
+            Ok(false) => break,
+            // any other throw is a run's own, which its handler reports
+            Err(e) => {
+                e.0.with(|ctx| drop(ctx.catch()));
+                let run = shared.borrow().segment.map(|(run, _)| run).filter(|run| watchdog.fired.get() && shared.borrow().live.contains(run));
+                if let Some(run) = run {
+                    finish(shared, run, End::Fault(stopped()));
+                }
+            }
+        }
+    }
+    watchdog.disarm();
+    let segment = shared.borrow_mut().segment.take();
+    if let Some((run, since)) = segment
+        && since.elapsed() > BUDGET / 2
+        && shared.borrow().live.contains(&run)
+    {
+        shared.borrow().send(FromScript::Warn { run, text: slow() });
+    }
 }
 
 /// The run a setter's trial reads as, whose own write of the target it reads first.
@@ -676,7 +814,7 @@ const TRIAL: u64 = u64::MAX;
 
 /// Writes `v` through a computed value's setter and reads it back through its getter, for a
 /// few values like the one it has now. Why one does not come back, else None.
-fn try_setter(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, name: &str) -> Option<String> {
+fn try_setter(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, name: &str) -> Option<String> {
     let c = shared.borrow().computed.get(name).cloned()?;
     let set = c.set.clone()?;
     let samples: Vec<Value> = match shared.borrow().values.get(name) {
@@ -689,9 +827,10 @@ fn try_setter(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, deadlin
     let reader = make_reader(rt, rw, shared, &sources, TRIAL);
     let [(ctx, fns)] = reader.as_slice() else { return None };
     let [(_, get), (_, put)] = fns.as_slice() else { return None };
+    let watchdog = shared.borrow().watchdog.clone();
     let wrong = ctx.with(|ctx| {
         samples.into_iter().find_map(|v| {
-            deadline.set(Some(Instant::now() + BUDGET));
+            watchdog.arm(Instant::now(), BUDGET);
             let t = to_js(&ctx, &v).and_then(|x| put.clone().restore(&ctx)?.call::<_, rquickjs::Value>((x,))).and_then(from_js).ok();
             let Some(t) = t else {
                 ctx.catch();
@@ -709,7 +848,7 @@ fn try_setter(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, deadlin
             }
         })
     });
-    deadline.set(None);
+    watchdog.disarm();
     shared.borrow_mut().pending.remove(&TRIAL);
     wrong
 }
@@ -769,7 +908,7 @@ fn read_as(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, sources: &
     (ctx, fns)
 }
 
-fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Shared>>, deadline: &Cell<Option<Instant>>, msg: ToScript) {
+fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Shared>>, msg: ToScript) {
     match msg {
         ToScript::Forms(forms) => shared.borrow_mut().forms = forms,
         ToScript::Enums(enums) => shared.borrow_mut().enums = enums,
@@ -830,12 +969,12 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
                 if let Err(e) = install(&ctx, run, shared, &p, at.as_ref(), own.as_deref()).and_then(|_| ctx.globals().set("__args", to_js(&ctx, &Value::List(args))?)) {
                     return Some(format!("could not start: {e}"));
                 }
-                deadline.set(Some(Instant::now() + BUDGET));
+                begin(shared, run);
                 let mut options = EvalOptions::default();
                 options.strict = true;
                 options.filename = Some("handler".into());
                 let result = ctx.eval_with_options::<(), _>(source, options);
-                deadline.set(None);
+                shared.borrow().watchdog.disarm();
                 match result {
                     Ok(()) => None,
                     Err(rquickjs::Error::Exception) => {
@@ -853,12 +992,14 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
         ToScript::Answer { call, outcome } => {
             let waiter = shared.borrow_mut().waiters.remove(&call);
             if let Some(w) = waiter {
+                begin(shared, w.run);
                 settle(home, w, outcome);
             }
         }
         ToScript::Progress { call, value } => {
-            let progress = shared.borrow().waiters.get(&call).and_then(|w| w.progress.clone());
-            if let Some(f) = progress {
+            let progress = shared.borrow().waiters.get(&call).and_then(|w| Some((w.run, w.progress.clone()?)));
+            if let Some((run, f)) = progress {
+                begin(shared, run);
                 home.with(|ctx| {
                     if to_js(&ctx, &value).and_then(|v| f.restore(&ctx)?.call::<_, ()>((v,))).is_err() {
                         ctx.catch();
@@ -869,9 +1010,14 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
     }
 }
 
-/// Ends a run: an ended run's last writes go out, a stopped one's are dropped.
+/// Ends a run: an ended run's last writes go out, a stopped one's are dropped. One whose last
+/// stretch ran over half its time tells so first, unless that stopped it.
 fn finish(shared: &Rc<RefCell<Shared>>, run: u64, end: End) {
     let mut s = shared.borrow_mut();
+    let stretch = s.segment.take_if(|(r, _)| *r == run);
+    if stretch.is_some_and(|(_, since)| since.elapsed() > BUDGET / 2) && !s.watchdog.fired.get() {
+        s.send(FromScript::Warn { run, text: slow() });
+    }
     if end == End::Ok {
         s.flush(run);
     }
@@ -976,7 +1122,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         let mut st = s.borrow_mut();
         // what the run wrote before the call goes out before it
         st.flush(run);
-        let call = st.wait(&ctx, resolve, reject, progress);
+        let call = st.wait(&ctx, run, resolve, reject, progress);
         if kind == Kind::Task {
             let (s, alias) = (s.clone(), alias.clone());
             let cancel = move || s.borrow().send(FromScript::Cancel { run, alias: alias.clone(), call: Some(call) });
@@ -1000,7 +1146,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         let mut st = s.borrow_mut();
         // what the run wrote before the call goes out before it
         st.flush(run);
-        let call = st.wait(&ctx, resolve, reject, None);
+        let call = st.wait(&ctx, run, resolve, reject, None);
         st.send(FromScript::Run { run, call, function, args });
         Ok(promise)
     };
@@ -1033,7 +1179,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let sleep = move |ctx: Ctx<'js>, ms: f64| -> rquickjs::Result<Promise<'js>> {
         let (promise, resolve, reject) = ctx.promise()?;
         let mut st = s.borrow_mut();
-        let id = st.wait(&ctx, resolve, reject, None);
+        let id = st.wait(&ctx, run, resolve, reject, None);
         st.timers.push(Reverse((Instant::now() + Duration::from_secs_f64(ms.max(0.0) / 1000.0), id)));
         Ok(promise)
     };
@@ -1049,7 +1195,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let open = move |ctx: Ctx<'js>, page: String, replace: bool| -> rquickjs::Result<Promise<'js>> {
         let (promise, resolve, reject) = ctx.promise()?;
         let mut st = s.borrow_mut();
-        let call = st.wait(&ctx, resolve, reject, None);
+        let call = st.wait(&ctx, run, resolve, reject, None);
         st.send(FromScript::Open { run, page, replace, call });
         Ok(promise)
     };
@@ -1088,7 +1234,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         Ok(())
     };
     g.set("__setMode", Function::new(ctx.clone(), set_mode)?)?;
-    g.set("__budget", Function::new(ctx.clone(), || BUDGET.as_millis() as f64)?)?;
+    g.set("__stopped", Function::new(ctx.clone(), stopped)?)?;
 
     // with what the code returned, or what stopped it
     let s = shared.clone();

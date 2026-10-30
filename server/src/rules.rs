@@ -32,6 +32,9 @@ pub const TYPE_WORD: &str = "^[A-Za-z][A-Za-z0-9_]*(\\[\\])*$";
 pub const EVERY_MS: (u32, u32) = (50, 86_400_000);
 /// How long a record keeps its samples, in seconds.
 pub const KEEP_S: (u32, u32) = (1, 86_400);
+/// How many times a second a computed value or a condition is worked out at the most. One that
+/// names none takes the most, the backend's tick.
+pub const RATE: (u16, u16) = (1, 30);
 
 /// Why code cannot write a name, `{name}` standing for it. The engine and the editor say the same.
 pub const MISSING: &str = "{name} names no object, member or state";
@@ -105,7 +108,7 @@ mod tests {
             ts += &format!("export const {name}: Shape = {{ pattern: {}, except: {:?} }};\n", pattern(s), s.except);
         }
         ts += &format!("export const TYPE_WORD = /{TYPE_WORD}/;\n");
-        ts += &format!("\nexport const EVERY_MS = [{}, {}] as const;\nexport const KEEP_S = [{}, {}] as const;\n\n", EVERY_MS.0, EVERY_MS.1, KEEP_S.0, KEEP_S.1);
+        ts += &format!("\nexport const EVERY_MS = [{}, {}] as const;\nexport const KEEP_S = [{}, {}] as const;\nexport const RATE = [{}, {}] as const;\n\n", EVERY_MS.0, EVERY_MS.1, KEEP_S.0, KEEP_S.1, RATE.0, RATE.1);
         let reasons = [
             ("MISSING", MISSING),
             ("NO_SETTER", NO_SETTER),

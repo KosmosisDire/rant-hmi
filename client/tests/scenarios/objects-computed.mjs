@@ -1,7 +1,7 @@
 // A designer gives Line a computed value on the Objects tab: its speed in percent, with a setter
-// that writes the speed back. It reads as Speed does, a write to it sets Speed, a getter that
-// cannot work says why, one that reads itself is refused, and a setter that does not undo the
-// getter gets a warning.
+// that writes the speed back, worked out at most ten times a second. It reads as Speed does, a
+// write to it sets Speed, a getter that cannot work says why, one that reads itself is refused,
+// and a setter that does not undo the getter gets a warning.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const side = page.locator(".screen:not([hidden]) .sidebar.right");
@@ -31,6 +31,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await get.press("Escape");
   await eventually(async () => (await get.inputValue()) === "Speed * 100", "Escape to keep the getter");
   await write("Unit", "%");
+  // a rate says how long each time may take, and one past the most is refused
+  await field("Rate").locator("input").waitFor();
+  check((await side.locator(".field-hint", { hasText: "At most 30 a second, each time stopped after 33 ms." }).count()) === 1, "the rate says the most it takes when it names none");
+  await write("Rate", "10");
+  await eventually(() => percent()?.rate === 10, "its rate");
+  await side.locator(".field-hint", { hasText: "At most 10 a second, each time stopped after 100 ms." }).waitFor();
+  await write("Rate", "31");
+  await field("Rate").locator("input.bad").waitFor();
+  check(percent().rate === 10, `a rate of 31 was taken as ${percent().rate}`);
+  await field("Rate").locator("input").press("Escape");
   await field("Set").locator("select").selectOption("Speed");
   await eventually(() => percent()?.set?.target === "Speed", "its setter");
   await write("As", "v / 100");

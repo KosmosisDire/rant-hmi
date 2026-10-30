@@ -1,9 +1,9 @@
-// A computed value's inspector: its getter, its setter, unit and note, and its value now.
+// A computed value's inspector: its getter, its setter, rate, unit and note, and its value now.
 
 import { createMemo, For, Show } from "solid-js";
 import type { Computed } from "../../protocol/Computed";
 import type { Object as Thing } from "../../protocol/Object";
-import { LOCAL } from "../../protocol/rules";
+import { LOCAL, RATE } from "../../protocol/rules";
 import { objectScope } from "../../state/bind";
 import { change } from "../../state/change";
 import { complete, type Suggestion } from "../../state/complete";
@@ -26,6 +26,34 @@ const targets = (own: string, self: string) =>
 
 /** The new value a setter works from, offered beside the names. */
 const NEW_VALUE: Suggestion = { label: "v", insert: "v", icon: "local", type: "the value written" };
+
+/** A rate as the field takes it, a whole number of times a second, and as it shows. */
+const rateOf = (t: string): number | undefined => (/^\d+$/.test(t.trim()) && Number(t) >= RATE[0] && Number(t) <= RATE[1] ? Number(t) : undefined);
+// a call, since a ternary in a prop compiles to a memo, which may read a removed rule first
+const rateText = (rate: number | undefined) => (rate ? String(rate) : "");
+
+/** How many times a second an expression on the system is worked out at the most, which gives
+ *  each time as long as the time between two. Empty takes the most. */
+export function RateField(p: { rate: number | undefined; onCommit: (rate: number | undefined) => void }) {
+  const r = () => p.rate ?? RATE[1];
+  return (
+    <>
+      <div class="field">
+        <label>Rate</label>
+        <DraftInput
+          value={rateText(p.rate)}
+          placeholder={String(RATE[1])}
+          title={`The most times a second it is worked out, from ${RATE[0]} to ${RATE[1]}`}
+          accept={(t) => t.trim() === "" || rateOf(t) !== undefined}
+          onCommit={(t) => p.onCommit(rateOf(t))}
+        />
+      </div>
+      <div class="field-hint">
+        At most {r()} a second, each time stopped after {Math.floor(1000 / r())} ms.
+      </div>
+    </>
+  );
+}
 
 export function ComputedView(p: { object: Thing; computed: Computed; picking: Picking }) {
   const k = () => key(p.object.name, p.computed.name);
@@ -68,6 +96,7 @@ export function ComputedView(p: { object: Thing; computed: Computed; picking: Pi
           </div>
         )}
       </Show>
+      <RateField rate={p.computed.rate} onCommit={(rate) => put({ rate })} />
       <div class="field">
         <label>Unit</label>
         <DraftInput value={p.computed.unit ?? ""} placeholder="%" onCommit={(t) => put({ unit: words(t) })} />

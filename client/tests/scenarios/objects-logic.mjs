@@ -1,6 +1,6 @@
 // A user writes Hmi's logic on the Objects tab: a counting timer, a warning when the line runs
-// too fast, one that follows Line's Running. A new rule opens with its name ready to type, and
-// a removed timer stops.
+// too fast judged five times a second, one that follows Line's Running. A new rule opens with its
+// name ready to type, and a removed timer stops.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   hmi.setVariable("Hmi.ticks", 0);
@@ -38,8 +38,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await field("Runs").locator("select").selectOption("turns");
   await commit(field("Condition").locator("input"), "Line.Speed > 1.5");
   await commit(field("For ms").locator("input"), "300");
+  await commit(field("Rate").locator("input"), "5");
   await code('notify("The line runs too fast");');
-  await eventually(() => hmi.state.rules.some((r) => r.when.kind === "turns" && r.when.ms === 300 && r.code.includes("too fast")), "the condition rule");
+  await eventually(() => hmi.state.rules.some((r) => r.when.kind === "turns" && r.when.ms === 300 && r.when.rate === 5 && r.code.includes("too fast")), "the condition rule");
   await hmi.set("Line.Speed", 2);
   await page.locator(".notice", { hasText: "The line runs too fast" }).waitFor({ timeout: 4000 });
 

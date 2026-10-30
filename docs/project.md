@@ -59,7 +59,7 @@ rest in camelCase.
 | `<function>` | `name`, `entity` | a function on the mesh |
 | `<task>` | `name`, `entity` | a task on the mesh |
 | `<var>` | `name`, `start`, `per` | state the HMI keeps |
-| `<computed>` | `name`, `get`, `target`, `set`, `unit`, `note` | a value worked out from others |
+| `<computed>` | `name`, `get`, `target`, `set`, `rate`, `unit`, `note` | a value worked out from others |
 | `<record>` | `name`, `source`, `every`, `keep` | a value's history |
 | `<fn>` | `name`, `takes` | a function of the object's own |
 | `<on>` | see [Logic](#logic) | logic |
@@ -73,6 +73,7 @@ rest in camelCase.
 | `per` | `<var>` | `hmi` for one value every screen shares. Left out, each screen keeps its own |
 | `get` | `<computed>` | an expression, as `Speed * 100` |
 | `target`, `set` | `<computed>` | the member a write to it sets, and to what: an expression of the new value `v`. Left out, it is read only |
+| `rate` | `<computed>` | the most times a second it is worked out, from 1 to 30, and 30 when left out. Each time may run as long as the time between two |
 | `unit`, `note` | `<computed>` | the unit shown after its value, and what it means |
 | `source` | `<record>` | the expression it samples |
 | `every`, `keep` | `<record>` | how often it samples in ms, and how many seconds it keeps each sample. It reads as a list of `{ t, v }`, oldest first |
@@ -87,7 +88,7 @@ across the project, a `name`, and one of these:
 | Attribute | Runs its code | `p` holds |
 | --- | --- | --- |
 | `every="1000"` | every so many ms | nothing |
-| `when="Speed > 1.5"` | as the condition turns true, or with `for="2000"` once it has held that long | nothing |
+| `when="Speed > 1.5"` | as the condition turns true, or with `for="2000"` once it has held that long. `rate` sets how often it is judged, as a `<computed>`'s does | nothing |
 | `change="Speed"` | when a member changes | `value` and `previous` |
 | `start=""` | once, as the HMI starts | nothing |
 | `screen="connects"` | when a screen connects | `screen`, its number |

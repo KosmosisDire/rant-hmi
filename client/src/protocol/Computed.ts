@@ -9,4 +9,9 @@ export type Computed = { name: string,
 /**
  * An expression over members, with no writes.
  */
-get: string, set?: Setter, unit?: string, note?: string, };
+get: string, set?: Setter, 
+/**
+ * The most times a second it is worked out, which also gives each time as long as the time
+ * between two.
+ */
+rate?: number, unit?: string, note?: string, };

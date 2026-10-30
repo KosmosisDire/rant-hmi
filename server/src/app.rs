@@ -1391,12 +1391,12 @@ impl App {
 
     /// Takes what the engine worked out, and tells of each that failed, by its key or a rule's
     /// name, logging it the first time.
-    fn thought(&mut self, computed: Vec<(String, Option<Value>)>, judged: Vec<(String, bool)>, sampled: Vec<(String, Option<Value>)>, faults: Vec<(String, String)>) {
+    fn thought(&mut self, computed: Vec<(String, Option<Value>)>, judged: Vec<(String, bool)>, sampled: Vec<(String, Option<Value>)>, problems: Vec<(String, Level, String)>) {
         self.thinking = false;
-        for (key, why) in faults {
+        for (key, level, why) in problems {
             let rule = self.project.flat().rules.iter().find(|(_, r)| r.id == key).map(|(_, r)| r.name.clone());
             let text = format!("{}: {why}", rule.unwrap_or(key));
-            if self.problems.ran(Level::Fault, text.clone(), None, None) {
+            if self.problems.ran(level, text.clone(), None, None) {
                 warn!("{text}");
             }
         }
@@ -1690,8 +1690,18 @@ impl App {
                     self.tell(run, Level::Fault, text);
                 }
             }
-            FromScript::Notify { run, text } => self.tell(run, Level::Info, text),
-            FromScript::Fault { run, text } => self.tell(run, Level::Fault, text),
+            FromScript::Notify { run, text } => {
+                self.tell(run, Level::Info, text);
+            }
+            FromScript::Fault { run, text } => {
+                self.tell(run, Level::Fault, text);
+            }
+            FromScript::Warn { run, text } => {
+                let label = self.label(run);
+                if self.tell(run, Level::Warn, text.clone()) {
+                    warn!("{label}: {text}");
+                }
+            }
             FromScript::Log { run, text } => info!("{}: {text}", self.label(run)),
             FromScript::Open { run, page, replace, call } => match (self.pages.get(&page), self.runs.get(&run).and_then(|r| r.session)) {
                 (Some(_), Some(session)) => {
@@ -1713,7 +1723,7 @@ impl App {
                     self.send(session, &ServerMsg::Mode { mode });
                 }
             }
-            FromScript::Thought { computed, judged, sampled, faults } => self.thought(computed, judged, sampled, faults),
+            FromScript::Thought { computed, judged, sampled, problems } => self.thought(computed, judged, sampled, problems),
             FromScript::Tried { session, warning } => self.send(session, &ServerMsg::Notice { text: warning, level: Level::Warn }),
             FromScript::Inverted { session, name, target, value } => {
                 let done = value.and_then(|v| {
@@ -1774,20 +1784,22 @@ impl App {
         }
     }
 
-    /// Tells the screen that started a run, naming what said it. A rule's run has no screen,
-    /// so every screen hears it.
-    fn tell(&mut self, run: u64, level: Level, text: String) {
-        let Some(r) = self.runs.get(&run) else { return };
+    /// Tells the screen that started a run, naming what said it, and whether it is a problem
+    /// not met before. A rule's run has no screen, so every screen hears it.
+    fn tell(&mut self, run: u64, level: Level, text: String) -> bool {
+        let Some(r) = self.runs.get(&run) else { return false };
         let text = if matches!(level, Level::Info) { text } else { format!("{}: {text}", r.label) };
+        let mut new = false;
         if !matches!(level, Level::Info) {
             // a rule's handler key names no page, only the rule
             let (page, element) = if r.of.page.is_empty() { (None, None) } else { (Some(r.of.page.clone()), Some(r.of.id.clone())) };
-            self.problems.ran(level, text.clone(), page, element);
+            new = self.problems.ran(level, text.clone(), page, element);
         }
         match r.session {
             Some(session) => self.send(session, &ServerMsg::Notice { text, level }),
             None => self.broadcast(&ServerMsg::Notice { text, level }),
         }
+        new
     }
 
     /// Applies an edit, saves what it touched and sends that to every screen. The screen

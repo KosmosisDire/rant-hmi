@@ -147,6 +147,11 @@ pub struct Computed {
     #[serde(default)]
     #[ts(optional)]
     pub set: Option<Setter>,
+    /// The most times a second it is worked out, which also gives each time as long as the time
+    /// between two.
+    #[serde(default)]
+    #[ts(optional)]
+    pub rate: Option<u16>,
     #[serde(default)]
     #[ts(optional)]
     pub unit: Option<String>,
@@ -794,6 +799,7 @@ mod tests {
             name: name.into(),
             get: get.into(),
             set: set.map(|(target, value)| Setter { target: target.into(), value: value.into() }),
+            rate: None,
             unit: None,
             note: None,
         };
@@ -953,7 +959,7 @@ mod tests {
         let read = Import { intent: Intent::Read, ..speed() };
         let call = Import { kind: Kind::Function, ..speed() };
         let own = Variable { name: "x".into(), start: value!(0), per: Per::Screen };
-        let worked = Computed { name: "x".into(), get: "1".into(), set: None, unit: None, note: None };
+        let worked = Computed { name: "x".into(), get: "1".into(), set: None, rate: None, unit: None, note: None };
         assert_eq!(why(Found::Import(&speed()), "a", false), None);
         assert_eq!(why(Found::Import(&read), "", true).unwrap().0, "X is imported to read. Import it to write to change it.");
         assert_eq!(why(Found::Import(&call), "", true).unwrap().0, "X is not a variable, so it cannot be set");

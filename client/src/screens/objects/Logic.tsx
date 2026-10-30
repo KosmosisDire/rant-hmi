@@ -12,6 +12,7 @@ import { HMI } from "../../state/names";
 import { DraftInput } from "../../ui/DraftInput";
 import { paint } from "../../ui/highlight";
 import { Activity, Monitor, MonitorOff, Power, Timer, Trash, Zap } from "../../ui/icons";
+import { RateField } from "./Computed";
 import { ItemPane } from "./Items";
 import type { Picking } from "./ObjectsScreen";
 
@@ -116,6 +117,7 @@ export function RuleView(p: { object: Thing; rule: Rule; picking: Picking }) {
                 <label>For ms</label>
                 <DraftInput value={String(w().ms)} accept={ms} onCommit={(t) => when({ ms: Number(t) })} />
               </div>
+              <RateField rate={w().rate} onCommit={(rate) => when({ rate })} />
             </>
           )}
         </Match>

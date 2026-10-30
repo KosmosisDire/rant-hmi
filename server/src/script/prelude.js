@@ -122,7 +122,7 @@
   // another realm, so its message tells it apart, not its class.
   const describe = (e) => {
     if (typeof e?.message !== "string") return text(e);
-    if (e.message === "interrupted") return `it ran ${__budget()} ms without waiting, so it was stopped`;
+    if (e.message === "interrupted") return __stopped();
     if (e.name === "CallError") return `${e.message} (${e.status.replaceAll("_", " ")})`;
     const line = /handler:(\d+)/.exec(e.stack ?? "");
     const message = e.message.replace(/^'?([\w$]+)'? is not defined$/, "$1 names no object, member or state");
