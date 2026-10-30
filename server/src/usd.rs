@@ -43,10 +43,10 @@ impl Robots {
     /// each time, as a file it could not find may come. The error is for the user.
     pub fn model(&self, file: &Path, folder: &Path) -> Result<(Bytes, String), String> {
         let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
-        if let Some(kept) = self.kept.lock().unwrap().get(file) {
-            if kept.times.iter().all(|(p, t)| modified(p) == *t) {
-                return Ok((kept.glb.clone(), kept.tag.clone()));
-            }
+        if let Some(kept) = self.kept.lock().unwrap().get(file)
+            && kept.times.iter().all(|(p, t)| modified(p) == *t)
+        {
+            return Ok((kept.glb.clone(), kept.tag.clone()));
         }
         let made = make(file, folder)?;
         let times: Vec<_> = made.read.iter().map(|p| (p.clone(), modified(p))).collect();
@@ -412,10 +412,10 @@ impl<'s> Robot<'s> {
                 surface.color = [1.0, 1.0, 1.0, 1.0];
                 surface.texture = Some(t);
             }
-            if let Some(Found::Value(v)) = input(self.stage, &shader, "inputs:diffuse_tint") {
-                if let Some(&tint) = colors(&v).first() {
-                    (0..3).for_each(|i| surface.color[i] *= tint[i]);
-                }
+            if let Some(Found::Value(v)) = input(self.stage, &shader, "inputs:diffuse_tint")
+                && let Some(&tint) = colors(&v).first()
+            {
+                (0..3).for_each(|i| surface.color[i] *= tint[i]);
             }
         }
         let number = |name: &str| match input(self.stage, &shader, name) {
@@ -480,8 +480,8 @@ impl<'s> Robot<'s> {
                 continue;
             }
             let mut ids = Vec::with_capacity(count);
-            for c in start..corner {
-                let point = corners[c] as usize;
+            for (c, &point) in corners.iter().enumerate().take(corner).skip(start) {
+                let point = point as usize;
                 let Some(&at) = points.get(point) else {
                     bad = true;
                     break;
@@ -1379,7 +1379,7 @@ over "arm"
             rel physics:body1 = </arm/link1>
             uniform token physics:axis = "Z"
             point3f physics:localPos0 = (0, 0, 1)
-            quatf physics:localRot1 = (0.7071068, 0.7071068, 0, 0)
+            quatf physics:localRot1 = (0.70710677, 0.70710677, 0, 0)
         }
         def PhysicsRevoluteJoint "loop"
         {
@@ -1435,7 +1435,7 @@ over "arm"
         assert_eq!((&joints[1]["parent"], &joints[1]["child"]), (&json!("/arm/base"), &json!("/arm/link1")));
         assert_eq!(joints[1]["axis"], json!([0.0, 0.0, 1.0]));
         assert_eq!(joints[1]["frames"][0]["translation"], json!([0.0, 0.0, 1.0]));
-        assert_eq!(joints[1]["frames"][1]["rotation"][3], json!(0.7071068f32));
+        assert_eq!(joints[1]["frames"][1]["rotation"][3], json!(std::f32::consts::FRAC_1_SQRT_2));
         assert_eq!(scene["robots"], json!([{ "name": "arm", "path": "/arm", "moving": [1] }]));
         assert_eq!((&joints[0]["robot"], &joints[1]["robot"]), (&json!(0), &json!(0)));
         assert_eq!(scene["problems"], json!([]));
