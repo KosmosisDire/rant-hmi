@@ -383,7 +383,8 @@ impl<'s> Robot<'s> {
     }
 
     /// Reads a material as UsdPreviewSurface, else as Omniverse's OmniPBR, the MDL Isaac Sim
-    /// writes. Any other shader keeps the defaults, which OmniPBR's are.
+    /// writes, else by what its inputs are called. What none of them finds keeps OmniPBR's
+    /// defaults.
     fn surface(&mut self, material: &sdf::Path) -> Surface {
         let mut surface = Surface { color: [0.2, 0.2, 0.2, 1.0], texture: None, metallic: 0.0, roughness: 0.5 };
         let Ok(material) = self.stage.prim(material.clone()) else { return surface };
@@ -393,7 +394,9 @@ impl<'s> Robot<'s> {
             true => ["inputs:diffuseColor", "inputs:diffuseColor", "inputs:metallic", "inputs:roughness", "inputs:opacity"],
             false => ["inputs:diffuse_color_constant", "inputs:diffuse_texture", "inputs:metallic_constant", "inputs:reflection_roughness_constant", "inputs:opacity_constant"],
         };
-        if let Some(found) = input(self.stage, &shader, names[0]) {
+        let first = input(self.stage, &shader, names[0]);
+        let known = first.is_some();
+        if let Some(found) = first {
             match found {
                 Found::Value(v) => {
                     if let Some(&[r, g, b]) = colors(&v).first() {
@@ -417,6 +420,9 @@ impl<'s> Robot<'s> {
             {
                 (0..3).for_each(|i| surface.color[i] *= tint[i]);
             }
+            if !known && surface.texture.is_none() && !omniverse(&shader) {
+                self.by_names(&shader, &mut surface);
+            }
         }
         let number = |name: &str| match input(self.stage, &shader, name) {
             Some(Found::Value(v)) => floats(&v).first().copied(),
@@ -429,6 +435,49 @@ impl<'s> Robot<'s> {
             surface.color[3] = number(names[4]).unwrap_or(1.0);
         }
         surface
+    }
+
+    /// Reads an MDL of its own, as Unreal writes one, by what its inputs are called: its base
+    /// colour texture times any tint, else its first colour, and its roughness and metalness.
+    fn by_names(&self, shader: &usd::Prim, surface: &mut Surface) {
+        let mut textures: Vec<(bool, PathBuf)> = Vec::new();
+        let (mut tint, mut color, mut rough, mut range) = ([1.0f32; 3], None, None, Vec::new());
+        for attr in shader.attributes_in_namespace("inputs").unwrap_or_default() {
+            let name = attr.name().trim_start_matches("inputs:").replace('_', "").to_lowercase();
+            let colour = ["albedo", "basecolor", "diffuse"].iter().any(|w| name.contains(w));
+            match input(self.stage, shader, attr.name()) {
+                Some(Found::Texture(Some(file))) => {
+                    // a colour texture's file ends _D or _BC when its input's name does not say
+                    let stem = file.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+                    if colour || ["_d", "_bc", "_basecolor", "_albedo", "_diffuse"].iter().any(|s| stem.ends_with(s)) {
+                        textures.push((colour, file));
+                    }
+                }
+                Some(Found::Value(v)) => match (colors(&v).first(), floats(&v).first()) {
+                    (Some(c), _) if name.contains("tint") => (0..3).for_each(|i| tint[i] *= c[i]),
+                    (Some(&c), _) if (colour || name.contains("color")) && !name.contains("emissi") => {
+                        color.get_or_insert(c);
+                    }
+                    (None, Some(&n)) if name == "roughness" => rough = Some(n),
+                    (None, Some(&n)) if name == "roughnessmin" || name == "roughnessmax" => range.push(n),
+                    (None, Some(&n)) if name == "metallic" || name == "metalness" => surface.metallic = n,
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        if let Some((_, file)) = textures.iter().find(|(named, _)| *named).or(textures.first()) {
+            surface.texture = Some(file.clone());
+            surface.color = [1.0, 1.0, 1.0, 1.0];
+        } else if let Some([r, g, b]) = color {
+            surface.color = [r, g, b, 1.0];
+        }
+        (0..3).for_each(|i| surface.color[i] *= tint[i]);
+        // a roughness map spans the range, which its middle stands for
+        if let (None, [low, high]) = (rough, range.as_slice()) {
+            rough = Some(((low + high) / 2.0).clamp(0.0, 1.0));
+        }
+        surface.roughness = rough.unwrap_or(surface.roughness);
     }
 
     /// A Mesh's faces as triangles, split by the material subsets bind.
@@ -885,6 +934,14 @@ fn shader_of(stage: &usd::Stage, material: &usd::Prim) -> Option<usd::Prim> {
     }
 }
 
+/// Whether a shader is one of Omniverse's own MDLs, as OmniPBR, whose inputs keep their names.
+fn omniverse(shader: &usd::Prim) -> bool {
+    match value(shader, "info:mdl:sourceAsset") {
+        Some(sdf::Value::AssetPath(asset)) => asset.authored_path.rsplit(['/', '\\']).next().is_some_and(|f| f.starts_with("Omni")),
+        _ => false,
+    }
+}
+
 enum Found {
     Value(sdf::Value),
     /// The image a texture reads, or none when it is not in the files folder.
@@ -1148,12 +1205,15 @@ fn vec2s(v: &sdf::Value) -> Option<Vec<[f32; 2]>> {
     })
 }
 
-/// Colours from a single colour or a list of them.
+/// Colours from a single colour or a list of them. A colour of four numbers, as Unreal's MDLs
+/// take, gives its first three.
 fn colors(v: &sdf::Value) -> Vec<[f32; 3]> {
     match v {
         sdf::Value::Vec3f(p) => vec![[p.x, p.y, p.z]],
         sdf::Value::Vec3d(p) => vec![[p.x as f32, p.y as f32, p.z as f32]],
         sdf::Value::Vec3h(p) => vec![[p.x.to_f32(), p.y.to_f32(), p.z.to_f32()]],
+        sdf::Value::Vec4f(p) => vec![[p.x, p.y, p.z]],
+        sdf::Value::Vec4d(p) => vec![[p.x as f32, p.y as f32, p.z as f32]],
         v => vec3s(v).unwrap_or_default(),
     }
 }
@@ -1519,6 +1579,50 @@ def Cube "box"
                 ("door", "/World/door", &json!([3])),
             ]
         );
+    }
+
+    /// Materials as Unreal writes them, each an MDL of its own read by its inputs' names.
+    #[test]
+    fn unreal_materials() {
+        let dir = scratch("unreal");
+        let material = |name: &str, inputs: &str| {
+            format!(
+                "def Material \"{name}\" {{\n token outputs:mdl:surface.connect = </Looks/{name}/Shader.outputs:out>\n\
+                 def Shader \"Shader\" {{\n uniform token info:implementationSource = \"sourceAsset\"\n\
+                 uniform asset info:mdl:sourceAsset = @MI_{name}.mdl@\n {inputs}\n token outputs:out\n }}\n}}\n"
+            )
+        };
+        let cube = |name: &str| format!("def Cube \"{name}\" (prepend apiSchemas = [\"MaterialBindingAPI\"]) {{ rel material:binding = </Looks/{name}> }}\n");
+        let text = format!(
+            "#usda 1.0\ndef Scope \"Looks\" {{\n{}{}{}}}\n{}{}{}",
+            material(
+                "Floor",
+                "float4 inputs:ColorAlbedo = (0.01, 0.02, 0.03, 0)\n asset inputs:MainNormalInput = @floor_N.png@\n\
+                 asset inputs:AlbedoTexture = @floor_D.png@\n float inputs:RoughnessMin = 0.2\n float inputs:RoughnessMax = 0.6"
+            ),
+            material("Paper", "float4 inputs:ColorAlbedo = (1, 0.5, 0, 1)\n float4 inputs:BaseColor_Tint = (0.5, 1, 1, 1)\n float inputs:Metallic = 0.25"),
+            material("Sign", "asset inputs:TextureSelection = @sign_d.png@\n float4 inputs:EmissionColor = (1, 0, 0, 1)"),
+            cube("Floor"),
+            cube("Paper"),
+            cube("Sign"),
+        );
+        write(&dir, "hall.usda", &text);
+        for image in ["floor_N.png", "floor_D.png", "sign_d.png"] {
+            write(&dir, image, "a picture");
+        }
+        let made = make(&dir.join("hall.usda"), &dir).unwrap();
+        let doc = json_of(&made.glb);
+        let pbr = |name: &str| doc["materials"].as_array().unwrap().iter().find(|m| m["name"] == name).unwrap()["pbrMetallicRoughness"].clone();
+        let floor = pbr("Floor");
+        assert_eq!(floor["baseColorFactor"], json!([1.0, 1.0, 1.0, 1.0]));
+        assert!(floor["baseColorTexture"].is_object());
+        assert!((floor["roughnessFactor"].as_f64().unwrap() - 0.4).abs() < 1e-6);
+        let paper = pbr("Paper");
+        assert_eq!(paper["baseColorFactor"], json!([0.5, 0.5, 0.0, 1.0]));
+        assert_eq!(paper["metallicFactor"], 0.25);
+        assert!(pbr("Sign")["baseColorTexture"].is_object());
+        let read: HashSet<String> = made.read.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
+        assert_eq!(read, ["hall.usda", "floor_D.png", "sign_d.png"].map(String::from).into());
     }
 
     #[test]

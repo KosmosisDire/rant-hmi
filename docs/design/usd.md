@@ -75,6 +75,10 @@ Claude's:
   reason, which the model shows as its fault.
 - **Looks**: UsdPreviewSurface, and OmniPBR's colour, tint, texture, metalness, roughness and
   opacity. A bound material wins over display colour. A texture is drawn when PNG or JPEG.
+- **An MDL of its own**, as the warehouses and the office Unreal exported, is read by what its
+  inputs are called: its albedo or base colour texture, else a texture whose file ends `_D` or
+  `_BC`, times any tint, else its first colour, and its roughness and metalness, the middle of a
+  range when it gives one.
 
 ## Robots tested
 
@@ -105,6 +109,9 @@ no file on disk answers, so they show as warnings and the base draws alone.
 
 - OmniPBR's separate opacity, roughness, metallic and normal textures. glTF keeps opacity in
   the colour texture, so a decal shows its whole rectangle.
+- What an MDL of its own works out in its code: masks that colour a cart's body and handle
+  apart, tiling, and inputs a material leaves at the MDL file's defaults, as a traffic cone's
+  orange.
 - References to http addresses, as NVIDIA's asset server. A robot that names one shows without
   that part until its files are collected into the project, as Isaac Sim's Collect does.
 - Mimic joints and closed loops move only by the joints given values.
