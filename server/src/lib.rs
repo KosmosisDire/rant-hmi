@@ -30,6 +30,7 @@ pub mod script;
 pub mod status;
 pub mod stun;
 pub mod tls;
+pub mod usd;
 pub mod value;
 pub mod watch;
 pub mod web;

@@ -25,6 +25,9 @@ if-addrs = "0.15"
 # a big column of numbers goes to a screen shuffled and LZ4 compressed, a block only
 lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode"] }
 notify = "8"
+# a USD robot a scene shows, read with its layers composed as Isaac Sim writes them
+openusd = "0.8"
+openusd-schemas = { version = "0.8", features = ["geom", "shade", "physics"] }
 rant-hmi-pack = { path = "../app/pack" }
 # fetches the runtimes apps are built from out of the release, on that aws-lc-rs and through any proxy set
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "system-proxy"] }
