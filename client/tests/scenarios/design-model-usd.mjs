@@ -119,7 +119,7 @@ export default async function ({ hmi, sys, d, eventually }) {
   await d.setField("Joints", "{ wrist: 1 }");
   await says("Model: joints: the model has no joint wrist");
   await d.setField("Joints", "{ joint1: { position: vec(0, 0, 1) } }");
-  await says("Model: joints: joint1 takes a number, as it turns");
+  await says("is not joint names each with a number, or a JointState");
   await d.setField("Joints", "{}");
 
   await d.setField("Source", '"files/robot/broken.usda"');

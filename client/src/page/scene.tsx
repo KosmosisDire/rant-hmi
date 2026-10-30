@@ -167,16 +167,15 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
     pose: (key) => as(key, "a pose, a position and an orientation each optional", poseOf),
     text: (key) => as(key, "text", (v) => (typeof v === "string" ? v : undefined)),
     joints: (key) =>
-      as(key, "names each with an angle or a pose, or a JointState", (v) => {
+      as(key, "joint names each with a number, or a JointState", (v) => {
         // a JointState's positions, as the page's change check passes over typed arrays
         const listed = numberList(Array.isArray(v) ? v : (v as { position?: unknown } | null)?.position);
         if (listed) return Array.from(listed);
         if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
-        const joints: Record<string, number | Pose> = {};
+        const joints: Record<string, number> = {};
         for (const [name, j] of Object.entries(v)) {
-          const turn = typeof j === "number" && Number.isFinite(j) ? j : typeof j === "object" && j !== null ? poseOf(j) : undefined;
-          if (turn === undefined) return undefined;
-          joints[name] = turn;
+          if (typeof j !== "number" || !Number.isFinite(j)) return undefined;
+          joints[name] = j;
         }
         return joints;
       }),

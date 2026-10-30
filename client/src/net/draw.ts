@@ -24,7 +24,6 @@ import {
   type Object3D,
   PerspectiveCamera,
   Points,
-  PropertyBinding,
   Quaternion,
   Scene,
   ShaderMaterial,
@@ -63,8 +62,8 @@ export interface Shown {
   points?: Float32Array | { follow: string };
   step?: number;
   src?: string;
-  /** Values by joint or node name, or a JointState's positions in the order `names` gives. */
-  joints?: Record<string, number | Pose> | number[];
+  /** A USD robot's values by joint name, or a JointState's positions in the order `names` gives. */
+  joints?: Record<string, number> | number[];
   names?: string[];
 }
 
@@ -256,9 +255,9 @@ async function made(url: string) {
   return new GLTFLoader().parseAsync(await got.arrayBuffer(), "");
 }
 
-/** A model's values by joint or node name: a list of positions in the order `names` gives, else
- *  in the order a USD robot lists the joints that move. */
-function named(model: Object3D, s: Shown, faults: string[]): Record<string, number | Pose> {
+/** A USD robot's values by joint name: a list of positions in the order `names` gives, else in
+ *  the order the robot lists its moving joints. */
+function named(model: Object3D, s: Shown, faults: string[]): Record<string, number> {
   const list = s.joints;
   if (!Array.isArray(list)) return list ?? {};
   const given = !!s.names?.length;
@@ -290,16 +289,15 @@ const frameOf = (f: Joint["frames"][number]) => new Matrix4().compose(new Vector
 /** Moves a USD robot's links by its joints, each child from its parent: a turning joint by an
  *  angle in radians about its axis, a sliding one by metres along it. A joint given no value, or
  *  a fixed one, keeps its child where the file puts it from its parent. */
-function move(model: Object3D, joints: Record<string, number | Pose>, faults: string[]) {
+function move(model: Object3D, joints: Record<string, number>, faults: string[]) {
   const list: Joint[] = model.userData.joints;
   const links: Map<string, { node: Object3D; rest: Matrix4 }> = (model.userData.links ??= new Map());
   if (links.size === 0) model.traverse((o) => o.userData.link && links.set(o.userData.link, { node: o, rest: o.matrix.clone() }));
   const kinds = new Map(list.map((j) => [j.name, j.kind]));
-  for (const [name, value] of Object.entries(joints)) {
+  for (const name of Object.keys(joints)) {
     const kind = kinds.get(name);
     if (!kind) faults.push(`joints: the model has no joint ${name}`);
     else if (kind === "fixed") faults.push(`joints: ${name} is fixed`);
-    else if (typeof value !== "number") faults.push(`joints: ${name} takes a number, as it ${kind === "revolute" ? "turns" : "slides"}`);
   }
   const unit: number = model.userData.metersPerUnit ?? 1;
   const world = new Map<string, Matrix4>();
@@ -309,7 +307,7 @@ function move(model: Object3D, joints: Record<string, number | Pose>, faults: st
     if (!child || parent === undefined) continue;
     const at = parent ? (world.get(j.parent!) ?? parent.rest).clone() : new Matrix4();
     const value = joints[j.name];
-    if (typeof value !== "number" || j.kind === "fixed") {
+    if (value === undefined || j.kind === "fixed") {
       if (parent) at.multiply(parent.rest.clone().invert());
       at.multiply(child.rest);
     } else {
@@ -322,30 +320,7 @@ function move(model: Object3D, joints: Record<string, number | Pose>, faults: st
   }
 }
 
-const [X, Z] = [new Vector3(1, 0, 0), new Vector3(0, 0, 1)];
-
-/** Turns each named node of a model from where its file puts it: by an angle about its own z,
- *  or by a pose. A node no longer named goes back. */
-function bend(model: Object3D, joints: Record<string, number | Pose>, faults: string[]) {
-  const rest: Map<Object3D, { position: Vector3; quaternion: Quaternion }> = (model.userData.rest ??= new Map());
-  for (const [node, r] of rest) {
-    node.position.copy(r.position);
-    node.quaternion.copy(r.quaternion);
-  }
-  for (const [name, j] of Object.entries(joints)) {
-    // the loader spells a node's name as an animation would
-    const node = model.getObjectByName(PropertyBinding.sanitizeNodeName(name));
-    if (!node) {
-      faults.push(`joints: the model has no node ${name}`);
-      continue;
-    }
-    if (!rest.has(node)) rest.set(node, { position: node.position.clone(), quaternion: node.quaternion.clone() });
-    const { position: at, orientation: turn } = typeof j === "number" ? { position: undefined, orientation: undefined } : j;
-    if (at) node.position.add(new Vector3(at.x, at.y, at.z).applyQuaternion(node.quaternion));
-    if (typeof j === "number") node.quaternion.multiply(new Quaternion().setFromAxisAngle(Z, j));
-    else if (turn) node.quaternion.multiply(new Quaternion(turn.x, turn.y, turn.z, turn.w).normalize());
-  }
-}
+const X = new Vector3(1, 0, 0);
 
 // Points as round dots as wide as their size in metres, never under a pixel, or a line through
 // them, in one colour or one each. Colours are sRGB and go out as they are, as nothing lights them.
@@ -527,7 +502,7 @@ const KINDS: Record<Part, Kind> = {
     },
   },
   // a glTF file, or a USD robot the HMI makes into one, its scene shared with every part showing
-  // it, and its named nodes turned or its joints moved
+  // it, and a robot's joints moved
   model: {
     make: () => new Group(),
     show: (o, s, found, h) => {
@@ -550,9 +525,8 @@ const KINDS: Record<Part, Kind> = {
       if (!got || !model) return;
       if (got.robot) found.warnings.push(...(model.userData.problems as string[]).map((p) => `src: ${p}`));
       if (s.joints === undefined) return;
-      const joints = named(model, s, found.faults);
-      if (got.robot) move(model, joints, found.faults);
-      else bend(model, joints, found.faults);
+      if (got.robot) move(model, named(model, s, found.faults), found.faults);
+      else if (Object.keys(s.joints).length > 0) found.faults.push(`joints: ${s.src} is glTF, which has no joints`);
     },
   },
 };

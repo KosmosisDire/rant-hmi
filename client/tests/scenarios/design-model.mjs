@@ -2,8 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // A designer shows a glTF model from the project's files in a scene, stood z up as its y up file
-// means, and turns one of its named nodes by joints. A node it lacks or a file that cannot load
-// says why on the scene.
+// means. Joints given to it, a file that cannot load and one outside the files say why on the
+// scene, as glTF has no joints.
 
 // a file holding a red square on its floor, from x 0.5 to 1.5, in the node Arm
 function square() {
@@ -31,7 +31,7 @@ function square() {
   return JSON.stringify(gltf);
 }
 
-export default async function ({ hmi, sys, d, eventually }) {
+export default async function ({ sys, d, eventually }) {
   mkdirSync(join(sys.project, "files", "cell"), { recursive: true });
   writeFileSync(join(sys.project, "files", "cell", "square.gltf"), square());
   await d.addPage("Model");
@@ -42,15 +42,11 @@ export default async function ({ hmi, sys, d, eventually }) {
   await d.shows(d.el(scene), 0.65, 0.5, red, "the square right of the middle, lying on the floor");
   await d.shows(d.el(scene), 0.35, 0.5, (c) => !red(c), "nothing left of the middle");
 
-  // a half turn of Arm about its own z swings the square to the other side, a value driving it
-  await d.setField("Joints", "{ Arm: Line.Speed * PI }");
-  hmi.set("Line.Speed", 1);
-  await d.shows(d.el(scene), 0.35, 0.5, red, "the square left of the middle with Arm turned half round");
-  await d.shows(d.el(scene), 0.65, 0.5, (c) => !red(c), "nothing right of the middle with Arm turned");
-
+  // a node named as a joint stays where the file puts it
   const says = (words) => eventually(async () => (await d.el(scene).getAttribute("title"))?.includes(words), `the scene to say ${words}`);
-  await d.setField("Joints", "{ Wrist: 1 }");
-  await says("Model: joints: the model has no node Wrist");
+  await d.setField("Joints", "{ Arm: PI }");
+  await says("Model: joints: files/cell/square.gltf is glTF, which has no joints");
+  await d.shows(d.el(scene), 0.65, 0.5, red, "the square still right of the middle");
   await d.setField("Source", '"files/missing.glb"');
   await says("Model: src: files/missing.glb cannot be loaded");
   // the project's own files are not the page's to load

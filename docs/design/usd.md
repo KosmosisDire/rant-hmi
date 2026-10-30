@@ -38,6 +38,8 @@ The user's:
   follow the robot's joints in the order the file gives.
 - Colours and textures, not colours only.
 - Testing on many robots, from Isaac's library, Hugging Face and others.
+- glTF stays for models that do not move, as a hall or a cell's frame. It has no joints, only
+  nodes, so its `joints` and `names` went: a robot is USD.
 
 Claude's:
 
