@@ -936,7 +936,13 @@ fn capsule(bottom: f32, top: f32, height: f32) -> Shape {
     for ring in 0..=rings as u32 {
         for i in 0..AROUND as u32 {
             let (a, b) = (ring * row + i, (ring + 1) * row + i);
-            list.extend([a, a + 1, b, b, a + 1, b + 1]);
+            // a pole's ring is one point, so the triangle with two corners there is left out
+            if ring > 0 {
+                list.extend([a, a + 1, b]);
+            }
+            if ring < rings as u32 {
+                list.extend([b, a + 1, b + 1]);
+            }
         }
     }
     shape.groups = vec![(0, list)];
