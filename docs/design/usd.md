@@ -83,6 +83,11 @@ Claude's:
   reason, which the model shows as its fault.
 - **Looks**: UsdPreviewSurface, and OmniPBR's colour, tint, texture, metalness, roughness and
   opacity. A bound material wins over display colour. A texture is drawn when PNG or JPEG.
+- **Draw calls**: parts that move together, each showing a mesh no other part shows, are
+  joined by material, and copies of one mesh on one link are its GPU instances
+  (`EXT_mesh_gpu_instancing`). A see through part stays alone, as each is drawn in order of how
+  far it is. Copies of a material, as each copy of a prop brings, are one. The office scene went
+  from 4265 draws to 394, a warehouse from 921 to 81.
 - **An MDL of its own**, as the warehouses and the office Unreal exported, is read by what its
   inputs are called: its albedo or base colour texture, else a texture whose file ends `_D` or
   `_BC`, times any tint, else its first colour, and its roughness and metalness, the middle of a

@@ -85,8 +85,8 @@ pub fn make(file: &Path, folder: &Path) -> Result<Made, String> {
         robot.problems.insert(within.iter().fold(problem, |p, w| p.replace(w, "")));
     }
     let mut read: Vec<PathBuf> = stage.layer_identifiers().into_iter().map(PathBuf::from).filter(|p| p.is_file()).collect();
-    read.extend(robot.images.keys().cloned());
-    let (glb, whole) = robot.finish(file)?;
+    let (glb, whole, images) = robot.finish(file)?;
+    read.extend(images);
     Ok(Made { glb, read, whole })
 }
 
@@ -273,7 +273,10 @@ struct Robot<'s> {
     nodes: Vec<Value>,
     /// The root's children.
     top: Vec<usize>,
+    /// The pieces read, by what makes two the same: an instance's prototype, else its prim.
     meshes: HashMap<String, usize>,
+    pieces: Vec<Piece>,
+    parts: Vec<Part>,
     mesh_list: Vec<Value>,
     looks: HashMap<String, Surface>,
     materials: HashMap<String, usize>,
@@ -334,6 +337,30 @@ struct Shape {
     groups: Vec<(usize, Vec<u32>)>,
 }
 
+/// A mesh or shape read once, however many places show it.
+#[derive(Default)]
+struct Piece {
+    shape: Shape,
+    looks: Vec<Look>,
+    double: bool,
+    name: String,
+}
+
+/// A place a piece shows: under a link node or the root, and where on it, none when its points
+/// already say.
+struct Part {
+    piece: usize,
+    link: Option<usize>,
+    at: Option<gf::Matrix4d>,
+}
+
+/// What joins parts into one mesh: their link, material and attributes, and the part itself when
+/// it is see through.
+type Joining = (Option<usize>, usize, [bool; 3], Option<usize>);
+
+/// A piece on a link, whose copies there are drawn as its instances.
+type OnLink = (usize, Option<usize>);
+
 const GEOMETRY: [&str; 8] = ["Mesh", "Cube", "Sphere", "Cylinder", "Cylinder_1", "Capsule", "Capsule_1", "Cone"];
 
 impl<'s> Robot<'s> {
@@ -348,6 +375,8 @@ impl<'s> Robot<'s> {
             nodes: vec![Value::Null],
             top: Vec::new(),
             meshes: HashMap::new(),
+            pieces: Vec::new(),
+            parts: Vec::new(),
             mesh_list: Vec::new(),
             looks: HashMap::new(),
             materials: HashMap::new(),
@@ -456,7 +485,7 @@ impl<'s> Robot<'s> {
         self.nodes.len() - 1
     }
 
-    /// A node for a mesh or shape under its link, sharing the mesh of every instance like it.
+    /// A part for a mesh or shape on its link, sharing the piece of every instance like it.
     fn geometry(&mut self, prim: &usd::Prim, kind: &str, link: Option<&str>) {
         let world = self.world(prim);
         let (parent, from) = match link.and_then(|l| self.links.get(l)) {
@@ -478,43 +507,116 @@ impl<'s> Robot<'s> {
             (false, Some(source)) => format!("{source} {double} {:?}", looks.iter().map(look_key).collect::<Vec<_>>()),
             _ => prim.path().as_str().to_string(),
         };
-        let mesh = match self.meshes.get(&key) {
-            Some(&mesh) => Some(mesh),
+        let piece = match self.meshes.get(&key) {
+            Some(&piece) => piece,
             None => {
                 let shape = match kind {
                     "Mesh" => self.mesh(prim, &subsets, &looks),
                     _ => solid(prim, kind),
                 };
-                let shape = match (shape, sheared) {
-                    (Some(mut shape), true) => {
-                        bake(&mut shape, &local);
-                        Some(shape)
-                    }
-                    (shape, _) => shape,
-                };
-                shape.map(|shape| {
-                    let mesh = self.write_mesh(&shape, &looks, double, name_of(prim));
-                    self.meshes.insert(key, mesh);
-                    mesh
-                })
+                let Some(mut shape) = shape else { return };
+                if sheared {
+                    bake(&mut shape, &local);
+                }
+                self.pieces.push(Piece { shape, looks, double, name: name_of(prim) });
+                self.meshes.insert(key, self.pieces.len() - 1);
+                self.pieces.len() - 1
             }
         };
-        let Some(mesh) = mesh else { return };
-        let mut node = json!({ "name": name_of(prim), "mesh": mesh });
-        if !sheared && local != gf::Matrix4d::IDENTITY {
-            node["matrix"] = matrix(&local);
-        }
-        let node = self.node(node);
-        match parent {
-            Some(parent) => {
-                let children = &mut self.nodes[parent]["children"];
-                match children.as_array_mut() {
-                    Some(list) => list.push(json!(node)),
-                    None => *children = json!([node]),
-                }
-            }
+        let at = (!sheared && local != gf::Matrix4d::IDENTITY).then_some(local);
+        self.parts.push(Part { piece, link: parent, at });
+    }
+
+    /// Puts a node under its link node, or under the root.
+    fn attach(&mut self, node: usize, link: Option<usize>) {
+        match link {
+            Some(link) => match self.nodes[link]["children"].as_array_mut() {
+                Some(list) => list.push(json!(node)),
+                None => self.nodes[link]["children"] = json!([node]),
+            },
             None => self.top.push(node),
         }
+    }
+
+    /// Writes the meshes and their nodes, and says whether any is drawn as instances. Parts that
+    fn lay_out(&mut self) -> bool {
+        let mut uses = vec![0usize; self.pieces.len()];
+        for part in &self.parts {
+            uses[part.piece] += 1;
+        }
+        let mut joined: Vec<(Joining, Shape)> = Vec::new();
+        let mut into: HashMap<Joining, usize> = HashMap::new();
+        let mut copies: Vec<(OnLink, Vec<Option<gf::Matrix4d>>)> = Vec::new();
+        let mut copy_of: HashMap<OnLink, usize> = HashMap::new();
+        for (index, part) in std::mem::take(&mut self.parts).into_iter().enumerate() {
+            if uses[part.piece] > 1 {
+                let at = *copy_of.entry((part.piece, part.link)).or_insert_with(|| {
+                    copies.push(((part.piece, part.link), Vec::new()));
+                    copies.len() - 1
+                });
+                copies[at].1.push(part.at);
+                continue;
+            }
+            let Piece { mut shape, looks, double, .. } = std::mem::take(&mut self.pieces[part.piece]);
+            if let Some(at) = &part.at {
+                bake(&mut shape, at);
+            }
+            let has = [!shape.normals.is_empty(), !shape.uvs.is_empty(), !shape.colors.is_empty()];
+            for (look, indices) in &shape.groups {
+                let material = self.material(&looks[*look], double);
+                let alone = self.material_list[material]["alphaMode"].is_string().then_some(index);
+                let key = (part.link, material, has, alone);
+                let at = *into.entry(key).or_insert_with(|| {
+                    joined.push((key, Shape::default()));
+                    joined.len() - 1
+                });
+                append(&mut joined[at].1, &shape, indices);
+            }
+        }
+        for ((link, material, _, _), shape) in joined {
+            let name = self.material_list[material]["name"].as_str().unwrap_or_default().to_string();
+            let mesh = self.write_mesh(&shape, &[material], &name);
+            let node = self.node(json!({ "name": name, "mesh": mesh }));
+            self.attach(node, link);
+        }
+        let (mut written, mut instanced) = (HashMap::new(), false);
+        for ((piece, link), places) in copies {
+            let mesh = match written.get(&piece) {
+                Some(&mesh) => mesh,
+                None => {
+                    let Piece { shape, looks, double, name } = std::mem::take(&mut self.pieces[piece]);
+                    let materials: Vec<usize> = looks.iter().map(|look| self.material(look, double)).collect();
+                    let mesh = self.write_mesh(&shape, &materials, &name);
+                    self.pieces[piece].name = name;
+                    written.insert(piece, mesh);
+                    mesh
+                }
+            };
+            let name = self.pieces[piece].name.clone();
+            if places.len() > 1 {
+                instanced = true;
+                let (mut moves, mut turns, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
+                for at in &places {
+                    let (t, r, s) = trs(&at.unwrap_or(gf::Matrix4d::IDENTITY));
+                    moves.push(t);
+                    turns.push(r);
+                    sizes.push(s);
+                }
+                let attributes = json!({ "TRANSLATION": self.glb.values(&moves, "VEC3"), "ROTATION": self.glb.values(&turns, "VEC4"), "SCALE": self.glb.values(&sizes, "VEC3") });
+                let node = self.node(json!({ "name": name, "mesh": mesh, "extensions": { "EXT_mesh_gpu_instancing": { "attributes": attributes } } }));
+                self.attach(node, link);
+                continue;
+            }
+            for at in places {
+                let mut node = json!({ "name": name, "mesh": mesh });
+                if let Some(at) = at {
+                    node["matrix"] = matrix(&at);
+                }
+                let node = self.node(node);
+                self.attach(node, link);
+            }
+        }
+        instanced
     }
 
     /// The look bound to the prim, else its display colour, else plain grey.
@@ -728,7 +830,8 @@ impl<'s> Robot<'s> {
         (!shape.groups.is_empty()).then_some(shape)
     }
 
-    fn write_mesh(&mut self, shape: &Shape, looks: &[Look], double: bool, name: String) -> usize {
+    /// Writes a mesh, each face group drawn in the material its look's place in `materials` names.
+    fn write_mesh(&mut self, shape: &Shape, materials: &[usize], name: &str) -> usize {
         let mut attributes = json!({ "POSITION": self.glb.floats(&shape.positions, "VEC3", true) });
         if !shape.normals.is_empty() {
             attributes["NORMAL"] = json!(self.glb.floats(&shape.normals, "VEC3", false));
@@ -742,10 +845,7 @@ impl<'s> Robot<'s> {
         let primitives: Vec<Value> = shape
             .groups
             .iter()
-            .map(|(look, indices)| {
-                let material = self.material(&looks[*look], double);
-                json!({ "attributes": attributes, "indices": self.glb.indices(indices), "material": material })
-            })
+            .map(|(look, indices)| json!({ "attributes": attributes, "indices": self.glb.indices(indices), "material": materials[*look] }))
             .collect();
         self.mesh_list.push(json!({ "name": name, "primitives": primitives }));
         self.mesh_list.len() - 1
@@ -928,9 +1028,9 @@ impl<'s> Robot<'s> {
         (robots, of)
     }
 
-    /// The model, and whether it holds the whole robot with no problems.
-    fn finish(mut self, file: &Path) -> Result<(Vec<u8>, bool), String> {
-        if self.mesh_list.is_empty() {
+    /// The model, whether it holds the whole robot with no problems, and the images it read.
+    fn finish(mut self, file: &Path) -> Result<(Vec<u8>, bool, Vec<PathBuf>), String> {
+        if self.parts.is_empty() {
             let mut why = String::from("it holds no mesh or shape to draw");
             if !self.problems.is_empty() {
                 let mut problems: Vec<_> = self.problems.into_iter().collect();
@@ -939,6 +1039,7 @@ impl<'s> Robot<'s> {
             }
             return Err(why);
         }
+        let instanced = self.lay_out();
         let up = self.stage.stage_metadata("upAxis").ok().flatten();
         let z_up = up.as_ref().and_then(sdf::Value::as_str) == Some("Z");
         let unit = match self.stage.stage_metadata("metersPerUnit").ok().flatten() {
@@ -975,7 +1076,10 @@ impl<'s> Robot<'s> {
             doc["textures"] = json!(textures);
             doc["samplers"] = json!([{ "wrapS": 10497, "wrapT": 10497 }]);
         }
-        Ok((self.glb.finish(doc), whole))
+        if instanced {
+            doc["extensionsUsed"] = json!(["EXT_mesh_gpu_instancing"]);
+        }
+        Ok((self.glb.finish(doc), whole, self.images.into_keys().collect()))
     }
 }
 
@@ -1278,6 +1382,59 @@ fn capsule(bottom: f32, top: f32, height: f32) -> Shape {
     shape
 }
 
+/// Adds the triangles `indices` picks of `from` to `to`'s one group, with only the points they use.
+fn append(to: &mut Shape, from: &Shape, indices: &[u32]) {
+    let mut moved = vec![u32::MAX; from.positions.len()];
+    if to.groups.is_empty() {
+        to.groups.push((0, Vec::new()));
+    }
+    for &i in indices {
+        let i = i as usize;
+        if moved[i] == u32::MAX {
+            moved[i] = to.positions.len() as u32;
+            to.positions.push(from.positions[i]);
+            if !from.normals.is_empty() {
+                to.normals.push(from.normals[i]);
+            }
+            if !from.uvs.is_empty() {
+                to.uvs.push(from.uvs[i]);
+            }
+            if !from.colors.is_empty() {
+                to.colors.push(from.colors[i]);
+            }
+        }
+        to.groups[0].1.push(moved[i]);
+    }
+}
+
+/// A transform as glTF's move, turn and scale, x y z, x y z w and x y z, a mirror in the x scale.
+fn trs(m: &gf::Matrix4d) -> ([f32; 3], [f32; 4], [f32; 3]) {
+    // glTF's columns are USD's rows
+    let column = |c: usize| [m.0[c * 4], m.0[c * 4 + 1], m.0[c * 4 + 2]];
+    let length = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(f64::MIN_POSITIVE);
+    let (x, y, z) = (column(0), column(1), column(2));
+    let turned = x[0] * (y[1] * z[2] - y[2] * z[1]) - x[1] * (y[0] * z[2] - y[2] * z[0]) + x[2] * (y[0] * z[1] - y[1] * z[0]);
+    let scale = [length(x) * if turned < 0.0 { -1.0 } else { 1.0 }, length(y), length(z)];
+    let columns = [x, y, z].iter().zip(scale).map(|(v, k)| v.map(|n| n / k)).collect::<Vec<_>>();
+    // row i of column j of the turn
+    let r = |i: usize, j: usize| columns[j][i];
+    let trace = r(0, 0) + r(1, 1) + r(2, 2);
+    let q = if trace > 0.0 {
+        let s = (trace + 1.0).sqrt() * 2.0;
+        [(r(2, 1) - r(1, 2)) / s, (r(0, 2) - r(2, 0)) / s, (r(1, 0) - r(0, 1)) / s, s / 4.0]
+    } else if r(0, 0) > r(1, 1) && r(0, 0) > r(2, 2) {
+        let s = (1.0 + r(0, 0) - r(1, 1) - r(2, 2)).sqrt() * 2.0;
+        [s / 4.0, (r(0, 1) + r(1, 0)) / s, (r(0, 2) + r(2, 0)) / s, (r(2, 1) - r(1, 2)) / s]
+    } else if r(1, 1) > r(2, 2) {
+        let s = (1.0 + r(1, 1) - r(0, 0) - r(2, 2)).sqrt() * 2.0;
+        [(r(0, 1) + r(1, 0)) / s, s / 4.0, (r(1, 2) + r(2, 1)) / s, (r(0, 2) - r(2, 0)) / s]
+    } else {
+        let s = (1.0 + r(2, 2) - r(0, 0) - r(1, 1)).sqrt() * 2.0;
+        [(r(0, 2) + r(2, 0)) / s, (r(1, 2) + r(2, 1)) / s, s / 4.0, (r(1, 0) - r(0, 1)) / s]
+    };
+    ([m.0[12] as f32, m.0[13] as f32, m.0[14] as f32], q.map(|n| n as f32), scale.map(|n| n as f32))
+}
+
 /// Moves a shape's points by `m`, for a transform its node cannot hold.
 fn bake(shape: &mut Shape, m: &gf::Matrix4d) {
     let normal = m.inverse().map(|inv| transpose(&inv)).unwrap_or(*m);
@@ -1425,6 +1582,14 @@ impl Glb {
             accessor["max"] = json!(max.to_vec());
         }
         self.accessors.push(accessor);
+        self.accessors.len() - 1
+    }
+
+    /// Numbers an extension reads, as instances' transforms, which take no target.
+    fn values<const N: usize>(&mut self, data: &[[f32; N]], kind: &str) -> usize {
+        let bytes: Vec<u8> = data.iter().flatten().flat_map(|f| f.to_le_bytes()).collect();
+        let view = self.view(&bytes, None);
+        self.accessors.push(json!({ "bufferView": view, "componentType": 5126, "count": data.len(), "type": kind }));
         self.accessors.len() - 1
     }
 
@@ -1641,20 +1806,20 @@ over "arm"
         let link = |path: &str| nodes.iter().find(|n| n["extras"]["link"] == path).unwrap_or_else(|| panic!("no link {path}"));
         assert_eq!(link("/arm/link1")["matrix"][14], 1.0);
         assert_eq!(nodes.iter().filter(|n| n["extras"]["link"].is_string()).count(), 2);
-        // both visuals share one mesh, and the guide cube is never drawn
+        // both visuals share one mesh, the plate's two looks are joined meshes of their own, and
+        // the guide cube is never drawn
         let drawn: Vec<&Value> = nodes.iter().filter(|n| n["mesh"].is_number()).collect();
-        assert_eq!(drawn.len(), 3);
-        assert_eq!(doc["meshes"].as_array().unwrap().len(), 2);
+        assert_eq!(drawn.len(), 4);
+        assert_eq!(doc["meshes"].as_array().unwrap().len(), 3);
         assert_eq!(link("/arm/base")["children"].as_array().unwrap().len(), 1);
-        assert_eq!(link("/arm/link1")["children"].as_array().unwrap().len(), 2);
-        let plate = &doc["meshes"].as_array().unwrap().iter().find(|m| m["name"] == "plate").unwrap()["primitives"];
-        let count = |p: &Value| doc["accessors"][p["indices"].as_u64().unwrap() as usize]["count"].as_u64().unwrap();
-        assert_eq!((count(&plate[0]), count(&plate[1])), (6, 3));
-        assert!(plate[0]["attributes"]["TEXCOORD_0"].is_number());
+        assert_eq!(link("/arm/link1")["children"].as_array().unwrap().len(), 3);
         let material = |p: &Value| &doc["materials"][p["material"].as_u64().unwrap() as usize];
-        assert_eq!(material(&plate[0])["pbrMetallicRoughness"]["baseColorFactor"], json!([0.0, 1.0, 0.0, 1.0]));
-        assert_eq!(material(&plate[1])["name"], "Blue");
-        assert_eq!(material(&plate[1])["pbrMetallicRoughness"]["roughnessFactor"], 0.75);
+        let plate = |name: &str| doc["meshes"].as_array().unwrap().iter().map(|m| &m["primitives"][0]).find(|p| material(p)["name"] == name).unwrap();
+        let count = |p: &Value| doc["accessors"][p["indices"].as_u64().unwrap() as usize]["count"].as_u64().unwrap();
+        assert_eq!((count(plate("displayColor")), count(plate("Blue"))), (6, 3));
+        assert!(plate("displayColor")["attributes"]["TEXCOORD_0"].is_number());
+        assert_eq!(material(plate("displayColor"))["pbrMetallicRoughness"]["baseColorFactor"], json!([0.0, 1.0, 0.0, 1.0]));
+        assert_eq!(material(plate("Blue"))["pbrMetallicRoughness"]["roughnessFactor"], 0.75);
         let painted = doc["materials"].as_array().unwrap().iter().find(|m| m["name"] == "Painted").unwrap();
         assert_eq!(painted["pbrMetallicRoughness"]["baseColorFactor"], json!([1.0, 1.0, 1.0, 1.0]));
         assert_eq!(painted["pbrMetallicRoughness"]["metallicFactor"], 0.25);
@@ -1754,6 +1919,66 @@ def Cube "box"
                 ("door", "/World/door", &json!([3])),
             ]
         );
+    }
+
+    /// Copies of one instanced prop drawn as instances of one mesh, each moved, turned and scaled
+    /// as its prim is, a mirror too.
+    #[test]
+    fn copies_are_instances() {
+        let dir = scratch("copies");
+        write(&dir, "hall.usda", r#"#usda 1.0
+class "parts"
+{
+    def Xform "crate"
+    {
+        def Cube "box"
+        {
+        }
+    }
+}
+def Xform "hall"
+{
+    def Xform "a" (instanceable = true
+        prepend references = </parts/crate>)
+    {
+    }
+    def Xform "b" (instanceable = true
+        prepend references = </parts/crate>)
+    {
+        double3 xformOp:translate = (1, 2, 3)
+        float xformOp:rotateZ = 90
+        double3 xformOp:scale = (2, 2, 2)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ", "xformOp:scale"]
+    }
+    def Xform "c" (instanceable = true
+        prepend references = </parts/crate>)
+    {
+        double3 xformOp:scale = (-1, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:scale"]
+    }
+}
+"#);
+        let glb = make(&dir.join("hall.usda"), &dir).unwrap().glb;
+        let doc = json_of(&glb);
+        assert_eq!(doc["meshes"].as_array().unwrap().len(), 1);
+        assert_eq!(doc["extensionsUsed"], json!(["EXT_mesh_gpu_instancing"]));
+        let node = doc["nodes"].as_array().unwrap().iter().find(|n| n["mesh"].is_number()).unwrap();
+        let attributes = &node["extensions"]["EXT_mesh_gpu_instancing"]["attributes"];
+        let numbers = |name: &str| numbers_of(&glb, &doc, attributes[name].as_u64().unwrap() as usize);
+        let near = |got: Vec<f32>, want: &[f32]| got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-5) && got.len() == want.len();
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        assert!(near(numbers("TRANSLATION"), &[0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0]), "{:?}", numbers("TRANSLATION"));
+        assert!(near(numbers("ROTATION"), &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, half, half, 0.0, 0.0, 0.0, 1.0]), "{:?}", numbers("ROTATION"));
+        assert!(near(numbers("SCALE"), &[1.0, 1.0, 1.0, 2.0, 2.0, 2.0, -1.0, 1.0, 1.0]), "{:?}", numbers("SCALE"));
+    }
+
+    /// The numbers an accessor of a made model holds, read from its binary chunk.
+    fn numbers_of(glb: &[u8], doc: &Value, accessor: usize) -> Vec<f32> {
+        let length = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let bin = &glb[20 + length + 8..];
+        let view = &doc["bufferViews"][doc["accessors"][accessor]["bufferView"].as_u64().unwrap() as usize];
+        let (at, size) = (view["byteOffset"].as_u64().unwrap() as usize, view["byteLength"].as_u64().unwrap() as usize);
+        bin[at..at + size].chunks(4).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect()
     }
 
     /// A gripper's finger that follows the driven one, as Isaac writes it with PhysX's mimic joint.

@@ -6,8 +6,8 @@ import { dirname, join } from "node:path";
 // lists its moving joints, or in the order names give. A joint it lacks, a count that does not
 // match, a file that is no USD and a layer it cannot find each say why. A joint that mimics
 // another moves with it. A file y up in centimetres stands z up in metres, as every RANT frame
-// does. A file of two robots takes each one's joints under its name, and the inspector lists the
-// robots a file holds.
+// does, and copies of one prop each show where they stand. A file of two robots takes each one's
+// joints under its name, and the inspector lists the robots a file holds.
 
 // a base and one link holding a red block at x 1, joined by joint1 turning about z, the
 // geometry a sublayer and the physics a reference
@@ -78,6 +78,36 @@ over "arm"
 }
 `,
   "broken.usda": "not a USD file",
+  // one red block shown twice, a metre either side along x
+  "copies.usda": `#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+class "parts"
+{
+    def Xform "block"
+    {
+        def Cube "cube"
+        {
+            double size = 0.5
+            color3f[] primvars:displayColor = [(1, 0, 0)]
+        }
+    }
+}
+def Xform "west" (instanceable = true
+    prepend references = </parts/block>)
+{
+    double3 xformOp:translate = (-1, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Xform "east" (instanceable = true
+    prepend references = </parts/block>)
+{
+    double3 xformOp:translate = (1, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+`,
   // y up in centimetres: a red block a metre along x and a blue one a metre along -z, which is
   // +y once z is up
   "yup.usda": `#usda 1.0
@@ -222,6 +252,12 @@ export default async function ({ page, hmi, sys, d, eventually }) {
   await d.shows(d.el(scene), 0.65, 0.5, red, "the block a metre along x right of the middle");
   await d.shows(d.el(scene), 0.5, 0.3, blue, "the block a metre along the file's -z at the top, +y");
   await d.shows(d.el(scene), 0.5, 0.7, (c) => !blue(c), "nothing at -y");
+
+  // copies of one prop are each drawn where they stand
+  await d.setField("Source", '"files/robot/copies.usda"');
+  await d.shows(d.el(scene), 0.35, 0.5, red, "the west copy left of the middle");
+  await d.shows(d.el(scene), 0.65, 0.5, red, "the east copy right of the middle");
+  await d.shows(d.el(scene), 0.5, 0.5, (c) => !red(c), "nothing between them");
 
   // two robots, each its joints under its name
   await d.setField("Source", '"files/robot/pair.usda"');
