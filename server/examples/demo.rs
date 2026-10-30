@@ -284,7 +284,8 @@ fn part_of(t: f64) -> Mesh {
     let turn = |[x, y, z]: [f32; 3]| [c * x - s * y, s * x + c * y, z];
     // each face's normal, two ways across it counterclockwise from outside, and its blue,
     // green and red
-    let faces: [([f32; 3], [f32; 3], [f32; 3], [u8; 3]); 6] = [
+    type Face = ([f32; 3], [f32; 3], [f32; 3], [u8; 3]);
+    let faces: [Face; 6] = [
         ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [60, 60, 220]),
         ([-1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [60, 200, 60]),
         ([0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [220, 120, 60]),
