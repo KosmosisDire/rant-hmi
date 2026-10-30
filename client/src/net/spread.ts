@@ -509,63 +509,57 @@ export function shaded(m: Meshed, range: number[] | undefined, pool: Pool): Uint
   return rgba;
 }
 
-/** The first `n` numbers of `kind` in `bytes`: a view over them where they start on the kind's
- *  width, else read into the pool. */
-function numbersOf(bytes: Uint8Array, kind: string, n: number, pool: Pool): ArrayLike<number> {
-  const View = VIEWS[kind];
-  if (View && bytes.byteOffset % View.BYTES_PER_ELEMENT === 0) return new View(bytes.buffer, bytes.byteOffset, n);
-  const [read, width] = [reading(viewOf(bytes), kind)!, WIDTH[kind]];
-  const out = pool.floats("values", n);
-  for (let i = 0; i < n; i++) out[i] = read(i * width);
-  return out;
-}
-
-/** A grid ready to draw: its cells along x, y and z, a cell's side, the pose of its first cell's
- *  outer corner, and colours along the ramp. A flat grid has one a cell, x fastest, clear where
- *  its value is outside the range. A deep one has the middles of its `n` cells in range, from
- *  the corner, and a colour each. */
-export interface Gridded {
-  cells: number[];
+/** A Grid's cells along x, y and z, a cell's side, the pose of its first cell's outer corner, and
+ *  where the GPU reads the number of the field drawn of each, x fastest. */
+export interface Cells {
+  cells: [number, number, number];
   side: number;
   origin?: PoseValue;
-  rgba: Uint8Array;
-  xyz?: Float32Array;
+  values: Input;
   n: number;
 }
 
 /** A Grid's cells by the numbers of one of its fields, of `kind`, in `bytes`. */
-export function gridOf(value: unknown, kind: string, bytes: Uint8Array, range: number[] | undefined, pool: Pool, faults: string[]): Gridded | undefined {
+export function gridSource(value: unknown, kind: string, bytes: Uint8Array, faults: string[]): Cells | undefined {
   const v = (value ?? {}) as { origin?: { pose?: PoseValue }; resolution?: unknown; cells_x?: unknown; cells_y?: unknown; cells_z?: unknown };
-  const cells = [v.cells_x, v.cells_y, v.cells_z].map((c) => (Number.isInteger(c) && (c as number) >= 0 ? (c as number) : NaN));
+  const cells = [v.cells_x, v.cells_y, v.cells_z].map((c) => (Number.isInteger(c) && (c as number) >= 0 ? (c as number) : NaN)) as Cells["cells"];
   const side = v.resolution;
   if (!cells.every(Number.isFinite) || typeof side !== "number" || !(side > 0)) return void faults.push("grid: the grid has no cells_x, cells_y and cells_z, or no resolution above 0");
   const width = WIDTH[kind];
   if (width === undefined) return void faults.push(`grid: the field's kind ${kind} is not a number`);
-  const [cx, cy, cz] = cells;
-  const all = cx * cy * cz;
-  if (bytes.length < all * width) return void faults.push(`grid: the field has ${bytes.length} bytes, not ${all * width} for ${all} cells of ${kind}`);
-  const values = numbersOf(bytes, kind, all, pool);
-  const [lo, hi] = endsOf(values, all, range);
-  const scale = 255 / (hi - lo || 1);
-  const origin = v.origin?.pose;
-  if (cz === 1) {
-    const rgba = pool.bytes("cells", all, 4);
-    for (let i = 0; i < all; i++) {
-      const x = values[i];
-      if (x >= lo && x <= hi) inked(rgba, 4 * i, x, lo, scale);
-      else rgba[4 * i + 3] = 0;
-    }
-    return { cells, side, origin, rgba, n: all };
+  const n = cells[0] * cells[1] * cells[2];
+  if (bytes.length < n * width) return void faults.push(`grid: the field has ${bytes.length} bytes, not ${n * width} for ${n} cells of ${kind}`);
+  return { cells, side, origin: v.origin?.pose, values: { bytes, kind, offset: 0, stride: width }, n };
+}
+
+/** The low and high of the first `n` numbers `v` gives, leaving out those not finite. */
+export function spanOfNumbers(v: Input, n: number): [number, number] {
+  const [list, step, first] = spaced(v, n);
+  let [lo, hi] = [Infinity, -Infinity];
+  for (let i = 0; i < n; i++) {
+    const k = list[i * step + first];
+    if (k - k !== 0) continue;
+    if (k < lo) lo = k;
+    if (k > hi) hi = k;
   }
+  return [lo, hi];
+}
+
+/** A deep grid's `n` cells from `lo` to `hi` as cubes: the middle of each from the corner, and its
+ *  colour along the ramp. */
+export function cubesOf(g: Cells, lo: number, hi: number, pool: Pool): { xyz: Float32Array; rgba: Uint8Array; n: number } {
+  const [values, step, first] = spaced(g.values, g.n);
+  const [[cx, cy, cz], side] = [g.cells, g.side];
+  const scale = 255 / (hi - lo || 1);
   let n = 0;
-  for (let i = 0; i < all; i++) if (values[i] >= lo && values[i] <= hi) n++;
+  for (let i = 0; i < g.n; i++) if (values[i * step + first] >= lo && values[i * step + first] <= hi) n++;
   const xyz = pool.floats("xyz", n, 3);
   const rgba = pool.bytes("cells", n, 4);
   let [i, j] = [0, 0];
   for (let c = 0; c < cz; c++)
     for (let b = 0; b < cy; b++)
       for (let a = 0; a < cx; a++, i++) {
-        const x = values[i];
+        const x = values[i * step + first];
         if (!(x >= lo && x <= hi)) continue;
         xyz[3 * j] = (a + 0.5) * side;
         xyz[3 * j + 1] = (b + 0.5) * side;
@@ -573,5 +567,5 @@ export function gridOf(value: unknown, kind: string, bytes: Uint8Array, range: n
         inked(rgba, 4 * j, x, lo, scale);
         j++;
       }
-  return { cells, side, origin, rgba, xyz, n };
+  return { xyz, rgba, n };
 }

@@ -1,6 +1,6 @@
-// A grid part draws a Rant Grid: a big flat map the worker keeps as a picture, coloured along the
-// ramp by its first field or another, cut to a range, and small voxels that came on the page as
-// a cube a cell.
+// A grid part draws a Rant Grid: a big flat map the worker keeps, read from its bytes on the GPU,
+// coloured along the ramp by its first field or another, cut to a range, and small voxels that
+// came on the page as a cube a cell.
 
 export default async function ({ hmi, d, check, eventually }) {
   await hmi.import("Cell.MapD", "Cell/Map");

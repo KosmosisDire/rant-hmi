@@ -59,7 +59,8 @@ Claude's:
   usually is. The page knows the names, so it says when there is no such field.
 - A flat grid is a picture, unlit so its colours read true, a cell a square with no blending
   between them, and drawn a little behind its plane so a `floor` on it still shows. A deep grid
-  is lit cubes. A grid wider than the screen's largest texture says so rather than draw wrong.
+  is lit cubes. A grid whose bytes the screen's largest texture cannot hold says so rather than
+  draw wrong.
 
 ## How it stays fast
 
@@ -91,8 +92,16 @@ Points are read on the GPU (`net/spread.ts` says where each number sits, `net/dr
 - A line is drawn as segments, an instance each that reads a point and the next.
 - New bytes of the same layout and length are written into the buffer they replace, so a lidar
   at 10 Hz makes no new one.
-- A 2D grid is one texture on one square, a pixel a cell. A 3D grid is one instanced mesh of
-  cubes, an instance per cell in range.
+- A flat grid's field goes to the GPU as its bytes, a byte a texel, on one square. The shader
+  reads each cell's number by its kind, as it reads a point's, and leaves out those outside
+  `range`, so a new `range` reads nothing either. Every ScalarKind draws as its I8 twin does,
+  pixel for pixel.
+- Its bytes lie in rows of a row of cells. A row too wide for the screen's largest texture,
+  16384 here, lies in narrower rows that divide the bytes, and the shader finds a cell's bytes
+  the same.
+- A flat grid's own ends are read on the CPU too: 6 ms for 2000 by 2000 I8 cells, 30 ms for
+  4000 by 4000 F32 cells.
+- A 3D grid is one instanced mesh of cubes, an instance per cell in range.
 - A mesh's triangles go to the GPU as they come, an index of 32 bit numbers.
 - Nothing is read again unless the value it came from is new.
 
@@ -100,8 +109,9 @@ A mesh never comes as code, only from the mesh, so a small one's vertices, bytes
 go to the worker as they came, and it reads them as it reads a big one. A grid is the same. Its
 fields are records with names, never a list the worker marks, so even a big one comes to the
 page whole, its bytes copied and marked. The page picks the field and hands the worker that
-field's ref, and the worker reads the grid's other numbers beside it, from the same value. Points may be written in
-code, which only the page reads, so a small cloud is laid out there instead. three.js takes a
+field's ref, and the worker reads the grid's other numbers beside it, from the same value.
+Points may be written in code, which only the page reads, so a small list is laid out there
+instead. three.js takes a
 vertex's colour as linear light, so a mesh's sRGB colours go through a table of 256.
 
 Measured in Chrome on an RTX 4080 laptop GPU: the worker's time from a new value to its draw
@@ -115,9 +125,14 @@ and the frame after, all medians of 10:
 | The same cut to a range | 47 ms | 4 ms | 8 ms |
 | A cloud of 1M points in its own rgb, 32 bytes a point | 64 ms | 9 ms | 7 ms |
 | A scan of 128 by 1024 | 15 ms | 0.5 ms | 4 ms |
+| A map of 2000 by 2000 I8 cells, its own ends | 20 ms | 8 ms | 1 ms |
+| The same cut to a range | 7 ms | 0.7 ms | 1.5 ms |
+| The same of F32 cells, its own ends | 45 ms | 13 ms | 1.6 ms |
+| A map of 4000 by 4000 F32 cells, its own ends | 98 ms | 49 ms | 1.7 ms |
 
 The cloud of 32 bytes a point is the bytes going to the GPU, which Chrome copies past 16 MB only
-as fast as its GPU process takes them.
+as fast as its GPU process takes them. A map's own ends take most of its time, and the 64 MB of
+the biggest the rest.
 
 Measured in Node, reading from the bytes into what the GPU is given:
 
@@ -125,8 +140,6 @@ Measured in Node, reading from the bytes into what the GPU is given:
 | --- | --- |
 | A mesh of 1M vertices and 2M triangles, its normals worked out | 54 ms |
 | The same along the ramp by z, cut to a range | 67 ms |
-| A map of 2000 by 2000 I8 cells, cut to a range | 15 ms |
-| The same of F32 cells, the values' own ends | 26 ms |
 | Voxels of 200 by 200 by 100, a tenth in range, each a cube's matrix and colour | 14 ms |
 
 Points with no z now lie at z 0, so a Path2D, a Polyline2D and a list of Double2 draw.
