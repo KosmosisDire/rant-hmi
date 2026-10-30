@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::value::value;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::*;
-use crate::logic::Rule;
+use crate::logic::{Rule, When};
 use crate::object::ObjectInfo;
 
 fn import(alias: &str, kind: Kind, intent: Intent) -> Import {
@@ -46,7 +47,7 @@ fn engine() -> (Script, UnboundedReceiver<FromScript>) {
     script.send(ToScript::Pages(vec![("Overview".into(), "overview".into()), ("RobotCell".into(), "robot-cell".into())]));
     script.send(ToScript::Objects(vec![line(Vec::new(), Vec::new())]));
     script.send(ToScript::Screen { session: 7, values: vec![("Line.jogMode".into(), value!("Joint"))] });
-    script.send(ToScript::Values(vec![
+    script.send(ToScript::values(vec![
         ("Line.count".into(), Some(value!(0))),
         ("Line.Speed".into(), Some(value!(1.0))),
         ("Line.Running".into(), None),
@@ -123,7 +124,7 @@ fn state_reads_by_its_name_over_others_from_its_start_then_its_screens_value() {
 fn values_reach_code_as_js_values_and_come_back_whole() {
     let (script, mut rx) = engine();
     let image = Value::map([("width", 2u32.into()), ("data", Value::Bytes(vec![0, 7, 255]))]);
-    script.send(ToScript::Values(vec![("Line.Settings".into(), Some(Value::map([("image", image), ("count", Value::Int(u64::MAX.into()))])))]));
+    script.send(ToScript::values(vec![("Line.Settings".into(), Some(Value::map([("image", image), ("count", Value::Int(u64::MAX.into()))])))]));
     let code = "log(Settings.image.data instanceof Uint8Array, Settings.image.data[2], typeof Settings.count);\n\
                 Settings = { image: { width: 3, data: new Uint8Array([9, 8]) }, count: Settings.count - 1n };";
     script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
@@ -342,14 +343,13 @@ fn conditions_are_judged_and_an_unknown_one_is_false() {
     let c = |id: &str, condition: &str| Rule { id: id.into(), name: id.into(), when: When::Turns { condition: condition.into(), ms: 0, rate: None }, code: String::new() };
     let rules = vec![c("fast", "Speed > 0.5"), c("slow", "Speed <= 0.5"), c("running", "Running"), c("broken", "Speed >"), c("writes", "(Speed = 3) > 0")];
     script.send(ToScript::Objects(vec![line(Vec::new(), rules)]));
-    let (_, truths, faults) = think(&script, &mut rx);
-    assert_eq!(truths, [("fast".to_string(), true), ("slow".to_string(), false), ("running".to_string(), false), ("writes".to_string(), false)]);
-    assert!(matches!(faults.as_slice(), [(id, Level::Fault, why)] if id == "writes" && why.contains("only reads")), "{faults:?}");
+    let t = think(&script, &mut rx, &[]);
+    assert_eq!(t.judged, truths(&[("broken", false), ("fast", true), ("running", false), ("slow", false), ("writes", false)]));
+    assert!(matches!(t.problems.as_slice(), [(id, Level::Fault, why)] if id == "writes" && why.contains("only reads")), "{:?}", t.problems);
     // only those that read what changed are judged again, once their period passed
-    script.send(ToScript::Values(vec![("Line.Speed".into(), Some(value!(0.2)))]));
+    script.send(ToScript::values(vec![("Line.Speed".into(), Some(value!(0.2)))]));
     std::thread::sleep(TICK);
-    let (_, truths, _) = think(&script, &mut rx);
-    assert_eq!(truths, [("fast".to_string(), false), ("slow".to_string(), true)]);
+    assert_eq!(think(&script, &mut rx, &[]).judged, truths(&[("fast", false), ("slow", true)]));
 }
 
 #[test]
@@ -428,8 +428,7 @@ fn code_does_math_on_numbers_vectors_turns_and_poses() {
     assert_eq!(writes(&said), [("Line.count".to_string(), value!(12)), ("Line.Settings".to_string(), value!({ "mode": "x(1, 2)", "target": 1 }))]);
 
     script.send(ToScript::Objects(vec![line(vec![computed("reach", "(vec(Speed, 0, 0) * 3).length()", None)], Vec::new())]));
-    let (got, _, _) = think(&script, &mut rx);
-    assert_eq!(got, [("Line.reach".to_string(), Some(value!(3)))]);
+    assert_eq!(think(&script, &mut rx, &[]).computed, values(&[("reach", Some(value!(3)))]));
 }
 
 fn computed(name: &str, get: &str, set: Option<(&str, &str)>) -> Computed {
@@ -440,12 +439,47 @@ fn computed(name: &str, get: &str, set: Option<(&str, &str)>) -> Computed {
 /// The backend's tick, the period of what names no rate.
 const TICK: Duration = Duration::from_millis(34);
 
-/// Asks the engine to work out what is due, and gives the computed values, the conditions'
-/// truths and the problems it met.
-#[allow(clippy::type_complexity)]
-fn think(script: &Script, rx: &mut UnboundedReceiver<FromScript>) -> (Vec<(String, Option<Value>)>, Vec<(String, bool)>, Vec<(String, Level, String)>) {
-    script.send(ToScript::Think { sample: Vec::new() });
-    next(rx, |m| if let FromScript::Thought { computed, judged, problems, .. } = m { Some((computed, judged, problems)) } else { None })
+/// What the readers worked out, each as it last did, by key, and the problems they met.
+#[derive(Default)]
+struct Thoughts {
+    computed: BTreeMap<String, Option<Value>>,
+    judged: BTreeMap<String, bool>,
+    sampled: BTreeMap<String, Option<Value>>,
+    problems: Vec<(String, Level, String)>,
+}
+
+/// Asks the readers to work out what is due, with the records named, and gives all they worked
+/// out since the last ask, once nothing runs and nothing more may start.
+fn think(script: &Script, rx: &mut UnboundedReceiver<FromScript>, sample: &[&str]) -> Thoughts {
+    script.think(sample.iter().map(|name| name.to_string()).collect());
+    let start = std::time::Instant::now();
+    while !script.readers.idle() {
+        assert!(start.elapsed() < Duration::from_secs(5), "the readers never went idle");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let mut t = Thoughts::default();
+    while let Ok(msg) = rx.try_recv() {
+        if let FromScript::Thought { computed, judged, sampled, problems } = msg {
+            t.computed.extend(computed);
+            t.judged.extend(judged);
+            t.sampled.extend(sampled);
+            t.problems.extend(problems);
+        }
+    }
+    t
+}
+
+/// Values by their name on the line.
+fn values(list: &[(&str, Option<Value>)]) -> BTreeMap<String, Option<Value>> {
+    list.iter().map(|(name, v)| (format!("Line.{name}"), v.clone())).collect()
+}
+
+fn truths(list: &[(&str, bool)]) -> BTreeMap<String, bool> {
+    list.iter().map(|(id, truth)| (id.to_string(), *truth)).collect()
+}
+
+fn keys<T>(map: &BTreeMap<String, T>) -> Vec<&str> {
+    map.keys().map(String::as_str).collect()
 }
 
 /// The next message of the kind `pick` takes, skipping the rest.
@@ -473,10 +507,12 @@ fn computed_values_are_worked_out_in_any_order_and_unknown_while_what_they_read_
         computed("percent", "Speed * 100", Some(("Speed", "v / 100"))),
         computed("on", "Running ? 1 : 0", None),
     ], Vec::new())]));
-    let (got, _, _) = think(&script, &mut rx);
-    assert_eq!(got, [("Line.half".to_string(), Some(value!(50))), ("Line.percent".to_string(), Some(value!(100))), ("Line.on".to_string(), None)]);
+    let got = think(&script, &mut rx, &[]).computed;
+    assert_eq!(got, values(&[("half", Some(value!(50))), ("on", None), ("percent", Some(value!(100)))]));
 
-    // handlers read them as any value, and a write goes back through the setter
+    // handlers read them as any value, as the loop sends them back, and a write goes back
+    // through the setter
+    script.send(ToScript::values(got));
     script.send(ToScript::Run { run: 1, session: Some(7), code: "count = half; percent = 250;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(writes(&said), [("Line.count".to_string(), value!(50)), ("Line.percent".to_string(), value!(250))]);
@@ -493,18 +529,16 @@ fn a_computed_value_is_worked_out_again_only_once_what_it_read_changed_or_while_
         computed("aim", "Target + 1", None),
         computed("blink", "Number.isInteger(time.now) ? Speed : 0", None),
     ], Vec::new())]));
-    let names = |list: Vec<(String, Option<Value>)>| list.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
-    assert_eq!(names(think(&script, &mut rx).0), ["Line.percent", "Line.aim", "Line.blink"]);
+    assert_eq!(keys(&think(&script, &mut rx, &[]).computed), ["Line.aim", "Line.blink", "Line.percent"]);
     std::thread::sleep(TICK);
-    assert_eq!(names(think(&script, &mut rx).0), ["Line.blink"], "only what reads the clock goes again");
-    script.send(ToScript::Values(vec![("Line.Target".into(), Some(value!(4)))]));
+    assert_eq!(keys(&think(&script, &mut rx, &[]).computed), ["Line.blink"], "only what reads the clock goes again");
+    script.send(ToScript::values(vec![("Line.Target".into(), Some(value!(4)))]));
     std::thread::sleep(TICK);
-    let (got, _, _) = think(&script, &mut rx);
-    assert_eq!(got, [("Line.aim".to_string(), Some(value!(5))), ("Line.blink".to_string(), Some(value!(1)))]);
+    assert_eq!(think(&script, &mut rx, &[]).computed, values(&[("aim", Some(value!(5))), ("blink", Some(value!(1)))]));
     // the loop sends a computed value back as it took it, which changes nothing
-    script.send(ToScript::Values(vec![("Line.percent".into(), Some(value!(100)))]));
+    script.send(ToScript::values(vec![("Line.percent".into(), Some(value!(100)))]));
     std::thread::sleep(TICK);
-    assert_eq!(names(think(&script, &mut rx).0), ["Line.blink"]);
+    assert_eq!(keys(&think(&script, &mut rx, &[]).computed), ["Line.blink"]);
 }
 
 #[test]
@@ -514,22 +548,21 @@ fn a_computed_value_or_a_condition_is_worked_out_at_its_rate_at_the_most_and_wit
     let busy = |ms: u32| format!("(() => {{ const t = Date.now(); while (Date.now() - t < {ms}); return Speed; }})()");
     let rule = Rule { id: "h1".into(), name: "Lit".into(), when: When::Turns { condition: "time.now > 0".into(), ms: 0, rate: Some(5) }, code: String::new() };
     script.send(ToScript::Objects(vec![line(vec![rated("heavy", &busy(120), 5), computed("over", &busy(100), None), rated("slow", "time.now > 0 ? Speed : 0", 5)], vec![rule])]));
-    let (got, judged, problems) = think(&script, &mut rx);
-    assert_eq!(got.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["Line.heavy", "Line.over", "Line.slow"]);
-    assert_eq!(judged, [("h1".to_string(), true)]);
-    let said = |key: &str| problems.iter().filter(|(k, _, _)| k == key).map(|(_, l, w)| (*l, w.as_str())).collect::<Vec<_>>();
+    let t = think(&script, &mut rx, &[]);
+    assert_eq!(keys(&t.computed), ["Line.heavy", "Line.over", "Line.slow"]);
+    assert_eq!(t.judged, truths(&[("h1", true)]));
+    let said = |key: &str| t.problems.iter().filter(|(k, _, _)| k == key).map(|(_, l, w)| (*l, w.as_str())).collect::<Vec<_>>();
     assert_eq!(said("Line.slow"), []);
     assert_eq!(said("Line.heavy"), [(Level::Warn, "it ran over half the 200 ms its rate gives it")], "a fifth of a second gives it 200 ms");
     assert_eq!(said("Line.over"), [(Level::Fault, "it ran all the 33 ms its rate gives it, so it was stopped")]);
-    assert_eq!(got[1].1, None, "a stopped value is unknown");
-    // what reads the clock goes again only once its period passed
-    std::thread::sleep(TICK);
-    let (got, judged, _) = think(&script, &mut rx);
-    assert!(got.is_empty() && judged.is_empty(), "{got:?} {judged:?}");
+    assert_eq!(t.computed["Line.over"], None, "a stopped value is unknown");
+    // what reads the clock goes again only once its period passed, which heavy's time did not
+    let t = think(&script, &mut rx, &[]);
+    assert!(t.computed.is_empty() && t.judged.is_empty(), "{:?} {:?}", t.computed, t.judged);
     std::thread::sleep(Duration::from_millis(200));
-    let (got, judged, _) = think(&script, &mut rx);
-    assert_eq!(got.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["Line.slow"]);
-    assert_eq!(judged, [("h1".to_string(), true)]);
+    let t = think(&script, &mut rx, &[]);
+    assert_eq!(keys(&t.computed), ["Line.slow"]);
+    assert_eq!(t.judged, truths(&[("h1", true)]));
 }
 
 #[test]
@@ -541,10 +574,67 @@ fn a_record_runs_within_the_time_between_its_samples() {
         crate::project::Record { name: "calm".into(), source: "(() => { const t = Date.now(); while (Date.now() - t < 100); return 2; })()".into(), every_ms: 1000, keep_s: 10 },
     ];
     script.send(ToScript::Objects(vec![o]));
-    script.send(ToScript::Think { sample: vec!["Line.fast".into(), "Line.calm".into()] });
-    let (sampled, problems) = next(&mut rx, |m| if let FromScript::Thought { sampled, problems, .. } = m { Some((sampled, problems)) } else { None });
-    assert_eq!(sampled, [("Line.fast".to_string(), None), ("Line.calm".to_string(), Some(value!(2)))]);
-    assert_eq!(problems, [("Line.fast".to_string(), Level::Fault, "it ran all the 50 ms between its samples, so it was stopped".to_string())]);
+    let t = think(&script, &mut rx, &["Line.fast", "Line.calm"]);
+    assert_eq!(t.sampled, values(&[("calm", Some(value!(2))), ("fast", None)]));
+    assert_eq!(t.problems, [("Line.fast".to_string(), Level::Fault, "it ran all the 50 ms between its samples, so it was stopped".to_string())]);
+}
+
+#[test]
+fn what_runs_long_holds_up_no_handler_and_no_other_computed_value() {
+    let (script, mut rx) = engine();
+    let heavy = Computed { rate: Some(5), ..computed("heavy", "(() => { const t = Date.now(); while (Date.now() - t < 150); return Speed; })()", None) };
+    script.send(ToScript::Objects(vec![line(vec![heavy, computed("double", "Speed * 2", None)], Vec::new())]));
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "count = 1;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let worked = |m: &FromScript, name: &str| matches!(m, FromScript::Thought { computed, .. } if computed.iter().any(|(n, _)| n == name));
+    let said = until_done(&mut rx, 1);
+    assert!(!said.iter().any(|m| worked(m, "Line.heavy")), "the handler waited for the heavy value");
+    let mut double = said.iter().any(|m| worked(m, "Line.double"));
+    loop {
+        let m = next(&mut rx, |m| matches!(m, FromScript::Thought { .. }).then_some(m));
+        if worked(&m, "Line.heavy") {
+            break;
+        }
+        double |= worked(&m, "Line.double");
+    }
+    assert!(double, "the double value waited for the heavy one");
+}
+
+#[test]
+fn what_waits_over_its_period_for_a_worker_is_told() {
+    let (script, mut rx) = engine();
+    // as many heavy values as there are workers hold them all, so the light one starts late, but
+    // its first run since the code changed waits on new readers and is not told
+    let heavy = |i: usize| Computed { rate: Some(5), ..computed(&format!("heavy{i}"), "(() => { const t = Date.now(); while (Date.now() - t < 80); return Speed; })()", None) };
+    let mut list: Vec<Computed> = (0..readers::workers()).map(heavy).collect();
+    list.push(computed("light", "Speed * 2", None));
+    script.send(ToScript::Objects(vec![line(list, Vec::new())]));
+    let t = think(&script, &mut rx, &[]);
+    assert_eq!((t.computed["Line.light"].clone(), t.problems), (Some(value!(2)), Vec::new()));
+    std::thread::sleep(Duration::from_millis(200));
+    script.send(ToScript::values(vec![("Line.Speed".into(), Some(value!(2)))]));
+    let t = think(&script, &mut rx, &[]);
+    assert_eq!(t.computed["Line.light"], Some(value!(4)));
+    assert_eq!(t.problems, [("Line.light".to_string(), Level::Warn, "it started over 33 ms late, as other code held every worker".to_string())]);
+}
+
+#[test]
+fn a_value_is_copied_into_code_once_till_something_changes() {
+    let (script, mut rx) = engine();
+    // read whole each time, the list would take seconds
+    let list: Vec<Value> = (0..5000).map(Value::Int).collect();
+    script.send(ToScript::values(vec![("Line.Target".into(), Some(Value::List(list)))]));
+    let sum = "(() => { let s = 0; for (let i = 0; i < Target.length; i++) s += Target[i]; return s; })()";
+    script.send(ToScript::Objects(vec![line(vec![Computed { rate: Some(1), ..computed("sum", sum, None) }], Vec::new())]));
+    let t = think(&script, &mut rx, &[]);
+    assert_eq!(t.computed, values(&[("sum", Some(value!(12497500)))]));
+    assert!(t.problems.is_empty(), "{:?}", t.problems);
+    // a copy changed in place lets go of it, and a write is read back
+    let code = "const s = Settings;\ndelete s.mode;\nlog(Settings.mode, s.mode);\nSettings.target = 7;\nlog(Settings.target, s.target);";
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let said = until_done(&mut rx, 1);
+    assert_eq!(end(&said), &End::Ok);
+    let logs: Vec<&str> = said.iter().filter_map(|m| if let FromScript::Log { text, .. } = m { Some(text.as_str()) } else { None }).collect();
+    assert_eq!(logs, ["Auto undefined", "7 120"]);
 }
 
 #[test]
@@ -583,8 +673,8 @@ fn a_computed_value_that_fails_or_runs_too_long_says_why() {
         computed("slow", "(() => { const t = Date.now(); while (Date.now() - t < 1000); return 1; })()", None),
         computed("unknown", "Running", None),
     ], Vec::new())]));
-    let (got, _, faults) = think(&script, &mut rx);
-    assert!(got.iter().all(|(_, v)| v.is_none()), "{got:?}");
+    let Thoughts { computed: got, problems: faults, .. } = think(&script, &mut rx, &[]);
+    assert!(got.values().all(Option::is_none), "{got:?}");
     let why = |key: &str| faults.iter().find(|(k, _, _)| k == key).map(|(_, _, w)| w.clone()).unwrap_or_default();
     assert!(why("Line.broken").contains("deeper"), "{faults:?}");
     assert_eq!(why("Line.slow"), "it ran all the 33 ms its rate gives it, so it was stopped", "{faults:?}");
@@ -595,7 +685,7 @@ fn a_computed_value_that_fails_or_runs_too_long_says_why() {
 fn an_imports_own_objects_and_lists_are_values_whole_filtered_or_picked() {
     let (script, mut rx) = engine();
     let groups = value!([{ "name": "a", "on": true }, { "name": "b", "on": false }]);
-    script.send(ToScript::Values(vec![("Line.Target".into(), Some(groups.clone()))]));
+    script.send(ToScript::values(vec![("Line.Target".into(), Some(groups.clone()))]));
     script.send(ToScript::Objects(vec![line(vec![
         computed("all", "Target", None),
         computed("on", "Target.filter((g) => g.on)", None),
@@ -604,16 +694,15 @@ fn an_imports_own_objects_and_lists_are_values_whole_filtered_or_picked() {
         computed("jog", "Jog", None),
         computed("after", "Speed + 1", None),
     ], Vec::new())]));
-    let (got, _, _) = think(&script, &mut rx);
-    let want = [
+    let want = values(&[
         ("all", Some(groups)),
         ("on", Some(value!([{ "name": "a", "on": true }]))),
         ("first", Some(value!({ "name": "a", "on": true }))),
         ("joints", Some(value!({ "position": [0.5, 1.5] }))),
         ("jog", None),
         ("after", Some(value!(2))),
-    ];
-    assert_eq!(got, want.map(|(name, v)| (format!("Line.{name}"), v)));
+    ]);
+    assert_eq!(think(&script, &mut rx, &[]).computed, want);
 
     // handlers write and send them too, and one read while unknown stops the run
     let code = "count = Target.filter((g) => !g.on);\nSettings = Joints;\nJog.send(Target[1]);";
@@ -632,9 +721,9 @@ fn an_imports_own_objects_and_lists_are_values_whole_filtered_or_picked() {
 fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
     let (script, mut rx) = engine();
     script.send(ToScript::Objects(vec![line(vec![computed("sneaky", "(Speed = 5, 1)", None), computed("plain", "Speed + 1", None)], Vec::new())]));
-    let (got, _, faults) = think(&script, &mut rx);
-    assert_eq!(got, [("Line.sneaky".to_string(), None), ("Line.plain".to_string(), Some(value!(2)))]);
-    assert!(matches!(faults.as_slice(), [(key, Level::Fault, why)] if key == "Line.sneaky" && why.contains("only reads")), "{faults:?}");
+    let t = think(&script, &mut rx, &[]);
+    assert_eq!(t.computed, values(&[("plain", Some(value!(2))), ("sneaky", None)]));
+    assert!(matches!(t.problems.as_slice(), [(key, Level::Fault, why)] if key == "Line.sneaky" && why.contains("only reads")), "{:?}", t.problems);
     script.send(ToScript::Run { run: 1, session: Some(7), code: "plain = 3;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert!(matches!(end(&said), End::Fault(text) if text.contains("no setter")));
@@ -644,7 +733,9 @@ fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
 fn a_setter_that_does_not_undo_its_getter_is_caught_on_a_try() {
     let (script, mut rx) = engine();
     script.send(ToScript::Objects(vec![line(vec![computed("good", "Speed * 100", Some(("Speed", "v / 100"))), computed("bad", "Speed * 100", Some(("Speed", "v * 4")))], Vec::new())]));
-    script.send(ToScript::Think { sample: Vec::new() });
+    // a try writes values like the one the loop sent back
+    let got = think(&script, &mut rx, &[]).computed;
+    script.send(ToScript::values(got));
     // a good one says nothing, so the first warning is the bad one's
     script.send(ToScript::Try { session: 7, name: "Line.good".into() });
     script.send(ToScript::Try { session: 7, name: "Line.bad".into() });

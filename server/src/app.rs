@@ -644,10 +644,6 @@ pub struct App {
     changed: BTreeSet<String>,
     /// Values sent since the last tick began, which wait for the next to go again.
     sent: HashSet<String>,
-    /// Whether the engine still works out the last ask, so the next waits for its answer and
-    /// asks never pile up behind slow code, and the records due meanwhile, read at the next.
-    thinking: bool,
-    due: Vec<String>,
     /// The values of the variables every screen shares.
     shared: HashMap<String, Value>,
     /// Each record's samples, oldest first, and when it next samples.
@@ -677,7 +673,7 @@ impl App {
         script.send(ToScript::Objects(project.objects().to_vec()));
         script.send(ToScript::Pages(pages.keys()));
         let shared: HashMap<String, Value> = project.flat().variables.iter().filter(|v| v.per == Per::Hmi).map(|v| (v.name.clone(), v.start.clone())).collect();
-        script.send(ToScript::Values(shared.iter().map(|(k, v)| (k.clone(), Some(v.clone()))).collect()));
+        script.send(ToScript::values(shared.iter().map(|(k, v)| (k.clone(), Some(v.clone())))));
         App {
             project,
             pages,
@@ -702,8 +698,6 @@ impl App {
             values: HashMap::new(),
             changed: BTreeSet::new(),
             sent: HashSet::new(),
-            thinking: false,
-            due: Vec::new(),
             shared,
             history: HashMap::new(),
             sample_at: HashMap::new(),
@@ -800,7 +794,7 @@ impl App {
             for id in previewing {
                 self.put_values(Some(id), held.clone());
             }
-            self.script.send(ToScript::Values(held.into_iter().map(|v| (v.alias, v.value.filter(|_| v.known))).collect()));
+            self.script.send(ToScript::values(held.into_iter().map(|v| (v.alias, v.value.filter(|_| v.known)))));
         }
     }
 
@@ -1310,7 +1304,7 @@ impl App {
         }
         if let Some(v) = self.shared.remove(from) {
             self.shared.insert(to.to_owned(), v.clone());
-            self.script.send(ToScript::Values(vec![(to.to_owned(), Some(v.clone()))]));
+            self.script.send(ToScript::values(vec![(to.to_owned(), Some(v.clone()))]));
             self.put_values(None, vec![known(to, &v)]);
         }
         let own: Vec<(u32, Value)> = self.sessions.iter_mut().filter_map(|(id, s)| s.vars.remove(from).map(|v| (*id, v))).collect();
@@ -1378,21 +1372,16 @@ impl App {
         }
     }
 
-    /// Asks the engine to work out what is due by the values it has now, with each record due,
-    /// unless it still works out the last ask.
+    /// Asks the readers to work out what is due by the values they have now, with each record
+    /// due.
     fn think(&mut self) {
-        self.sample();
-        if self.thinking {
-            return;
-        }
-        self.thinking = true;
-        self.script.send(ToScript::Think { sample: std::mem::take(&mut self.due) });
+        let sample = self.sample();
+        self.script.think(sample);
     }
 
-    /// Takes what the engine worked out, and tells of each that failed, by its key or a rule's
+    /// Takes what a reader worked out, and tells of each that failed, by its key or a rule's
     /// name, logging it the first time.
     fn thought(&mut self, computed: Vec<(String, Option<Value>)>, judged: Vec<(String, bool)>, sampled: Vec<(String, Option<Value>)>, problems: Vec<(String, Level, String)>) {
-        self.thinking = false;
         for (key, level, why) in problems {
             let rule = self.project.flat().rules.iter().find(|(_, r)| r.id == key).map(|(_, r)| r.name.clone());
             let text = format!("{}: {why}", rule.unwrap_or(key));
@@ -1421,8 +1410,8 @@ impl App {
         }
     }
 
-    /// Takes each record that is due for the next ask, and keeps when it is due next.
-    fn sample(&mut self) {
+    /// Gives each record that is due, and keeps when it is due next.
+    fn sample(&mut self) -> Vec<String> {
         let now = Instant::now();
         let mut due = Vec::new();
         for r in &self.project.flat().records {
@@ -1434,11 +1423,7 @@ impl App {
                 due.push(r.name.clone());
             }
         }
-        for name in due {
-            if !self.due.contains(&name) {
-                self.due.push(name);
-            }
-        }
+        due
     }
 
     /// Keeps what the engine read for each record, drops samples past its keep, and sends the
@@ -1464,7 +1449,7 @@ impl App {
             Per::Hmi => {
                 let value = kept_shared.unwrap_or_else(|| v.start.clone());
                 self.shared.insert(v.name.clone(), value.clone());
-                self.script.send(ToScript::Values(vec![(v.name.clone(), Some(value.clone()))]));
+                self.script.send(ToScript::values(vec![(v.name.clone(), Some(value.clone()))]));
                 self.put_values(None, vec![known(&v.name, &value)]);
             }
             Per::Screen => {
@@ -1660,7 +1645,7 @@ impl App {
                     // the engine took the write as the latest, so it hears what holds instead
                     if self.project.find(&alias).is_some() {
                         let now = self.update(&alias);
-                        self.script.send(ToScript::Values(vec![(alias, now.value.filter(|_| now.known))]));
+                        self.script.send(ToScript::values(vec![(alias, now.value.filter(|_| now.known))]));
                     }
                     self.tell(run, Level::Fault, text);
                 }
@@ -1897,7 +1882,7 @@ impl App {
                     self.put_values(Some(s), vec![known(alias, &now)]);
                 }
                 _ => {
-                    self.script.send(ToScript::Values(vec![(alias.to_owned(), Some(now.clone()))]));
+                    self.script.send(ToScript::values(vec![(alias.to_owned(), Some(now.clone()))]));
                     self.put_values(None, vec![known(alias, &now)]);
                 }
             }
@@ -1911,7 +1896,7 @@ impl App {
         slot.value = Some(whole.clone());
         slot.known = true;
         self.changed.insert(alias.to_owned());
-        self.script.send(ToScript::Values(vec![(alias.to_owned(), Some(whole))]));
+        self.script.send(ToScript::values(vec![(alias.to_owned(), Some(whole))]));
         Ok(())
     }
 
@@ -2040,7 +2025,7 @@ impl App {
             return;
         }
         let values: Vec<ValueUpdate> = aliases.iter().map(|a| self.update(a)).collect();
-        self.script.send(ToScript::Values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known))).collect()));
+        self.script.send(ToScript::values(values.iter().map(|v| (v.alias.clone(), v.value.clone().filter(|_| v.known)))));
         self.put_values(None, values);
         self.sent.extend(aliases.iter().cloned());
     }

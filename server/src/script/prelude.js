@@ -10,10 +10,20 @@
     }
   }
 
-  // each read is a fresh copy, so changing it changes nothing until it is written
-  const read = (alias) => {
+  const fresh = (alias) => {
     const value = __read(alias);
     if (value === undefined) throw new Unknown(alias);
+    return value;
+  };
+
+  // A value is copied in once till anything code reads changes, however often code reads it.
+  // Changing the copy changes nothing until it is written, and lets the copy go.
+  const copies = new Map();
+  const read = (alias) => {
+    const kept = copies.get(alias);
+    if (kept !== undefined && kept.at === __version()) return kept.value;
+    const value = fresh(alias);
+    if (value !== null && typeof value === "object" && !ArrayBuffer.isView(value)) copies.set(alias, { at: __version(), value });
     return value;
   };
 
@@ -29,7 +39,7 @@
     return new Proxy(value, {
       get: (target, key) => (typeof key === "symbol" ? target[key] : wrap(alias, target[key], [...path, key])),
       set: (target, key, v) => {
-        const whole = read(alias);
+        const whole = fresh(alias);
         let at = whole;
         for (const step of path) at = at[step];
         at[key] = v;
@@ -37,6 +47,8 @@
         target[key] = v;
         return true;
       },
+      deleteProperty: (target, key) => (copies.delete(alias), Reflect.deleteProperty(target, key)),
+      defineProperty: (target, key, how) => (copies.delete(alias), Reflect.defineProperty(target, key, how)),
     });
   };
 

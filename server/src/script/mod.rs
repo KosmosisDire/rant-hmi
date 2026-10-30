@@ -1,10 +1,12 @@
 //! Handlers run here, in QuickJS on a thread of its own, each run in its own context. A run's
-//! writes go out when it ends or awaits, so a stopped run leaves nothing half done.
+//! writes go out when it ends or awaits, so a stopped run leaves nothing half done. What only
+//! reads, as computed values, runs apart, in `readers`.
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -14,18 +16,15 @@ use rquickjs::{Context, Ctx, Exception, Function, Module, Object, Persistent, Pr
 use crate::value::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::logic::When;
 use crate::object::{self, Flat, owner};
 use crate::project::{self, Computed, Found, Import, Intent, Kind, Per, Variable};
 use crate::protocol::{EnumInfo, Level, Mode};
-use crate::rules::RATE;
+
+mod readers;
 
 /// How long a handler may run without waiting before it is stopped. One that runs over half of
 /// it is told.
 const BUDGET: Duration = Duration::from_millis(50);
-/// How early a computed value or a condition may start before its period passed, as asks come
-/// each tick of the backend and a tick wanders a little. Half a tick.
-const EARLY: Duration = Duration::from_millis(16);
 /// How long after an operator did something on a screen its handler may still start. One later
 /// is not run, as a jog that starts late moves a machine no one is steering.
 pub const LATE: Duration = Duration::from_millis(500);
@@ -40,8 +39,9 @@ pub enum ToScript {
     Forms(HashMap<String, Form>),
     /// The mesh's enums code names, whole, after any change.
     Enums(Vec<EnumInfo>),
-    /// Mesh imports and shared variables whose value changed, None while unknown.
-    Values(Vec<(String, Option<Value>)>),
+    /// Mesh imports and shared variables whose value changed, None while unknown, each shared
+    /// by the handlers and the readers rather than copied.
+    Values(Vec<(String, Option<Arc<Value>>)>),
     /// A screen's own variables that changed.
     Screen { session: u32, values: Vec<(String, Value)> },
     /// The mode a screen draws its pages in now.
@@ -50,10 +50,6 @@ pub enum ToScript {
     Gone(u32),
     /// State that starts over, by key, on the HMI and every screen.
     Forget(Vec<String>),
-    /// Works out each computed value and condition due, and reads the records named by key,
-    /// answered with `Thought`. One is due once something it read when last worked out changed,
-    /// and each time while it reads the clock, but no sooner than its rate lets it.
-    Think { sample: Vec<String> },
     /// What a write of `v` to a computed value gives its setter's target, answered with
     /// `Inverted`.
     Invert { session: Option<u32>, name: String, v: Value },
@@ -72,6 +68,12 @@ pub enum ToScript {
     Answer { call: u64, outcome: Result<Value, CallFailure> },
     /// One of a task call's progress updates, for the function the call was given.
     Progress { call: u64, value: Value },
+}
+
+impl ToScript {
+    pub fn values(list: impl IntoIterator<Item = (String, Option<Value>)>) -> ToScript {
+        ToScript::Values(list.into_iter().map(|(key, value)| (key, value.map(Arc::new))).collect())
+    }
 }
 
 /// A message's type by name and its fields, none for a bare type, so code may pass the fields
@@ -114,9 +116,9 @@ pub enum FromScript {
     Mode { run: u64, mode: Mode },
     /// How a run ended, and what its code returned, null for nothing.
     Done { run: u64, end: End, value: Value },
-    /// What a `Think` worked out: each computed value due and each record named, None where it
-    /// reads an unknown value or fails, and each condition due, false the same way. `problems`
-    /// says why each that failed did, and which ran long, by its key, or a rule's id.
+    /// What a reader worked out: a computed value or a record's sample, None where it reads an
+    /// unknown value or fails, or a condition's truth, false the same way. `problems` says why it
+    /// failed, or that it ran long or started late, by its key, or a rule's id.
     Thought { computed: Vec<(String, Option<Value>)>, judged: Vec<(String, bool)>, sampled: Vec<(String, Option<Value>)>, problems: Vec<(String, Level, String)> },
     /// What a write to the computed value `name` gives `target`, or why it gives nothing.
     Inverted { session: Option<u32>, name: String, target: String, value: Result<Value, String> },
@@ -246,17 +248,36 @@ pub enum End {
 #[derive(Clone)]
 pub struct Script {
     to: Sender<ToScript>,
+    readers: Arc<readers::Readers>,
 }
 
 impl Script {
     pub fn start(out: UnboundedSender<FromScript>) -> Script {
+        let readers = Arc::new(readers::Readers::start(out.clone()));
         let (to, from) = std::sync::mpsc::channel();
         std::thread::Builder::new().name("handlers".into()).spawn(move || engine(from, out)).expect("the handler thread starts");
-        Script { to }
+        Script { to, readers }
     }
 
+    /// Sends a message to the handlers, and what the readers need of it to them.
     pub fn send(&self, msg: ToScript) {
+        match &msg {
+            ToScript::Objects(list) => self.readers.objects(list),
+            ToScript::Enums(list) => self.readers.enums(list),
+            ToScript::Pages(list) => self.readers.pages(list),
+            ToScript::Values(list) => self.readers.values(list),
+            ToScript::Forget(keys) => self.readers.forget(keys),
+            _ => {}
+        }
         let _ = self.to.send(msg);
+    }
+
+    /// Asks the readers to work out each computed value and condition due, and the records
+    /// named by key, each answered with a `Thought`. One is due once something it read when last
+    /// worked out changed, and each time while it reads the clock, but no sooner than its rate
+    /// lets it.
+    pub fn think(&self, sample: Vec<String>) {
+        self.readers.think(sample);
     }
 }
 
@@ -274,47 +295,6 @@ struct Waiter {
 struct Read {
     keys: HashSet<String>,
     clock: bool,
-}
-
-/// Expressions of one kind, as computed values or conditions, each worked out again only once
-/// something it read changed, or each time while it reads the clock, at its rate at the most.
-#[derive(Default)]
-struct Watched {
-    /// What each read, by its name. One not here was not worked out since the objects changed.
-    read: HashMap<String, Read>,
-    stale: HashSet<String>,
-    started: HashMap<String, Instant>,
-}
-
-impl Watched {
-    fn changed(&mut self, key: &str) {
-        for (name, read) in &self.read {
-            if read.keys.contains(key) {
-                self.stale.insert(name.clone());
-            }
-        }
-    }
-
-    fn due(&self, name: &str) -> bool {
-        self.stale.contains(name) || self.read.get(name).is_none_or(|r| r.clock)
-    }
-
-    /// Whether its period passed since it last started.
-    fn ready(&self, name: &str, period: Duration) -> bool {
-        self.started.get(name).is_none_or(|t| t.elapsed() + EARLY >= period)
-    }
-
-    fn worked(&mut self, name: &str, read: Read, started: Instant) {
-        self.stale.remove(name);
-        self.read.insert(name.to_owned(), read);
-        self.started.insert(name.to_owned(), started);
-    }
-
-    fn forget(&mut self) {
-        self.read.clear();
-        self.stale.clear();
-        self.started.clear();
-    }
 }
 
 /// When the code running now is stopped. The interrupt handler asks it, once, so the code that
@@ -347,11 +327,6 @@ impl Watchdog {
     }
 }
 
-/// The time between two workings out at `rate` a second, the most each may take.
-fn period(rate: Option<u16>) -> Duration {
-    Duration::from_secs_f64(1.0 / f64::from(rate.unwrap_or(RATE.1).max(1)))
-}
-
 /// Why a handler was stopped, as its fault says.
 fn stopped() -> String {
     format!("it ran {} ms without waiting, so it was stopped", BUDGET.as_millis())
@@ -371,7 +346,7 @@ struct Shared {
     enums: Vec<EnumInfo>,
     variables: HashMap<String, Variable>,
     computed: HashMap<String, Computed>,
-    values: HashMap<String, Value>,
+    values: HashMap<String, Arc<Value>>,
     /// Each screen's own variables.
     screens: HashMap<u32, HashMap<String, Value>>,
     /// The mode each screen draws in.
@@ -391,32 +366,55 @@ struct Shared {
     waiters: HashMap<u64, Waiter>,
     timers: BinaryHeap<Reverse<(Instant, u64)>>,
     next: u64,
-    getters: Watched,
-    conditions: Watched,
-    /// How long each computed value, condition and record may run at a time, by its key, or a
-    /// rule's id.
-    limits: HashMap<String, Duration>,
     /// What the expression being worked out reads, while one is.
     reading: Option<Read>,
+    /// Counts each change of what code may read, so a run copies a value in once till then.
+    version: u64,
     watchdog: Rc<Watchdog>,
     /// The run whose code runs now till it waits, and since when.
     segment: Option<(u64, Instant)>,
 }
 
 impl Shared {
+    fn new(out: UnboundedSender<FromScript>, watchdog: Rc<Watchdog>) -> Shared {
+        Shared {
+            out,
+            objects: Vec::new(),
+            imports: HashMap::new(),
+            forms: HashMap::new(),
+            enums: Vec::new(),
+            variables: HashMap::new(),
+            computed: HashMap::new(),
+            values: HashMap::new(),
+            screens: HashMap::new(),
+            modes: HashMap::new(),
+            sessions: HashMap::new(),
+            bound: HashMap::new(),
+            returned: HashMap::new(),
+            pages: Vec::new(),
+            live: HashSet::new(),
+            pending: HashMap::new(),
+            waiters: HashMap::new(),
+            timers: BinaryHeap::new(),
+            next: 0,
+            reading: None,
+            version: 0,
+            watchdog,
+            segment: None,
+        }
+    }
+
     fn send(&self, msg: FromScript) {
         let _ = self.out.send(msg);
     }
 
-    /// The value under `key` changed, so what read it is due.
-    fn changed(&mut self, key: &str) {
-        self.getters.changed(key);
-        self.conditions.changed(key);
-    }
-
-    /// How long the computed value, condition or record `name` may run at a time.
-    fn limit(&self, name: &str) -> Duration {
-        self.limits.get(name).copied().unwrap_or_else(|| period(None))
+    /// Takes every object whole, and its members by key.
+    fn take(&mut self, list: Vec<object::Object>) {
+        let flat = Flat::of(&list);
+        self.imports = flat.imports.into_iter().map(|i| (i.alias.clone(), i)).collect();
+        self.variables = flat.variables.into_iter().map(|v| (v.name.clone(), v)).collect();
+        self.computed = flat.computed.into_iter().map(|c| (c.name.clone(), c)).collect();
+        self.objects = list;
     }
 
     /// What `key` names among the objects' members.
@@ -439,7 +437,7 @@ impl Shared {
         if let Some(state) = self.state(run, alias) {
             let held = match state.per {
                 Per::Screen => self.sessions.get(&run).copied().flatten().and_then(|s| self.screens.get(&s)?.get(alias)),
-                Per::Hmi => self.values.get(alias),
+                Per::Hmi => self.values.get(alias).map(Arc::as_ref),
             };
             return Some(held.unwrap_or(&state.start));
         }
@@ -447,10 +445,11 @@ impl Shared {
             let session = self.sessions.get(&run).copied().flatten()?;
             return self.screens.get(&session).and_then(|m| m.get(alias));
         }
-        self.values.get(alias)
+        self.values.get(alias).map(Arc::as_ref)
     }
 
     fn stage(&mut self, run: u64, alias: String, value: Value) {
+        self.version += 1;
         let list = self.pending.entry(run).or_default();
         match list.iter_mut().find(|(a, _)| *a == alias) {
             Some(slot) => slot.1 = value,
@@ -468,20 +467,15 @@ impl Shared {
     /// Takes a write going out as the latest value, so another run's write soon after builds on
     /// it and not on what the mesh has not echoed back yet. A refused one comes back corrected.
     fn hold(&mut self, run: u64, alias: &str, value: &Value) {
+        self.version += 1;
         match self.variables.get(alias).or_else(|| self.state(run, alias)).map(|v| v.per) {
             Some(Per::Screen) => {
                 if let Some(session) = self.sessions.get(&run).copied().flatten() {
                     self.screens.entry(session).or_default().insert(alias.to_owned(), value.clone());
                 }
             }
-            Some(Per::Hmi) => {
-                self.values.insert(alias.to_owned(), value.clone());
-                self.changed(alias);
-            }
-            None if self.imports.contains_key(alias) => {
-                self.values.insert(alias.to_owned(), value.clone());
-                self.changed(alias);
-            }
+            Some(Per::Hmi) => drop(self.values.insert(alias.to_owned(), Arc::new(value.clone()))),
+            None if self.imports.contains_key(alias) => drop(self.values.insert(alias.to_owned(), Arc::new(value.clone()))),
             None => {}
         }
     }
@@ -514,41 +508,8 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         let failure: Function = ctx.eval("(status, message) => Object.assign(new Error(message), { name: 'CallError', status })").expect("the failure maker compiles");
         ctx.globals().set("__failure", failure).expect("globals take a function");
     });
-    let shared = Rc::new(RefCell::new(Shared {
-        out,
-        objects: Vec::new(),
-        imports: HashMap::new(),
-        forms: HashMap::new(),
-        enums: Vec::new(),
-        variables: HashMap::new(),
-        computed: HashMap::new(),
-        values: HashMap::new(),
-        screens: HashMap::new(),
-        modes: HashMap::new(),
-        sessions: HashMap::new(),
-        bound: HashMap::new(),
-        returned: HashMap::new(),
-        pages: Vec::new(),
-        live: HashSet::new(),
-        pending: HashMap::new(),
-        waiters: HashMap::new(),
-        timers: BinaryHeap::new(),
-        next: 0,
-        getters: Watched::default(),
-        conditions: Watched::default(),
-        limits: HashMap::new(),
-        reading: None,
-        watchdog: watchdog.clone(),
-        segment: None,
-    }));
-    // conditions, records and computed values are read each in a reader made anew when what
-    // they read or say changes
-    let mut conditions: Vec<Source> = Vec::new();
-    let mut judge: Option<Reader> = None;
-    let mut records: Vec<Source> = Vec::new();
-    let mut sampler: Option<Reader> = None;
-    let mut getters: Vec<Source> = Vec::new();
-    let mut computer: Option<Reader> = None;
+    let shared = Rc::new(RefCell::new(Shared::new(out, watchdog.clone())));
+    // setters are read in a reader made anew when what they read or say changes
     let mut setters: Vec<Source> = Vec::new();
     let mut inverter: Option<Reader> = None;
     loop {
@@ -560,36 +521,10 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         match msg {
             Ok(ToScript::Objects(list)) => {
                 let flat = Flat::of(&list);
-                let own = |key: &str| Some(owner(key).to_owned());
-                conditions = flat.rules.iter().filter_map(|(o, r)| match &r.when {
-                    When::Turns { condition, .. } => Some((r.id.clone(), Some(o.clone()), format!("() => !!({condition}\n)"))),
-                    _ => None,
-                }).collect();
-                records = flat.records.iter().map(|r| (r.name.clone(), own(&r.name), format!("() => ({}\n)", r.source))).collect();
-                getters = flat.computed.iter().map(|c| (c.name.clone(), own(&c.name), format!("() => ({}\n)", c.get))).collect();
-                setters = flat.computed.iter().filter_map(|c| c.set.as_ref().map(|s| (c.name.clone(), own(&c.name), format!("(v) => ({}\n)", s.value)))).collect();
-                let mut st = shared.borrow_mut();
-                let rated = flat.rules.iter().filter_map(|(_, r)| match &r.when {
-                    When::Turns { rate, .. } => Some((r.id.clone(), period(*rate))),
-                    _ => None,
-                });
-                let sampled = flat.records.iter().map(|r| (r.name.clone(), Duration::from_millis(r.every_ms.into())));
-                st.limits = flat.computed.iter().map(|c| (c.name.clone(), period(c.rate))).chain(rated).chain(sampled).collect();
-                st.imports = flat.imports.into_iter().map(|i| (i.alias.clone(), i)).collect();
-                st.variables = flat.variables.into_iter().map(|v| (v.name.clone(), v)).collect();
-                st.computed = flat.computed.into_iter().map(|c| (c.name.clone(), c)).collect();
-                st.objects = list;
-                st.getters.forget();
-                st.conditions.forget();
+                setters = flat.computed.iter().filter_map(|c| c.set.as_ref().map(|s| (c.name.clone(), Some(owner(&c.name).to_owned()), format!("(v) => ({}\n)", s.value)))).collect();
+                shared.borrow_mut().take(list);
                 // every reader knows the names there are
-                (judge, sampler, computer, inverter) = (None, None, None, None);
-            }
-            Ok(ToScript::Think { sample }) => {
-                let computer = computer.get_or_insert_with(|| make_reader(&rt, &rw, &shared, &getters, 0));
-                let judge = judge.get_or_insert_with(|| make_reader(&rt, &rw, &shared, &conditions, 0));
-                let sampler = sampler.get_or_insert_with(|| make_reader(&rt, &rw, &shared, &records, 0));
-                let thought = think(&shared, computer, judge, sampler, &sample);
-                shared.borrow().send(thought);
+                inverter = None;
             }
             Ok(ToScript::Invert { session, name, v }) => {
                 let target = shared.borrow().computed.get(&name).and_then(|c| c.set.as_ref()).map(|s| s.target.clone());
@@ -597,6 +532,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 let found = inverter.iter().find_map(|(ctx, fns)| fns.iter().find(|(n, _)| *n == name).map(|(_, f)| (ctx, f.clone())));
                 let value = match (&target, found) {
                     (Some(_), Some((ctx, f))) => ctx.with(|ctx| {
+                        shared.borrow_mut().version += 1;
                         watchdog.arm(Instant::now(), BUDGET);
                         let got = to_js(&ctx, &v).and_then(|v| f.restore(&ctx)?.call::<_, rquickjs::Value>((v,))).and_then(from_js);
                         got.map_err(|_| {
@@ -615,11 +551,7 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
                 }
             }
             Ok(msg @ ToScript::Enums(_)) => {
-                (judge, sampler, computer, inverter) = (None, None, None, None);
-                let mut st = shared.borrow_mut();
-                st.getters.forget();
-                st.conditions.forget();
-                drop(st);
+                inverter = None;
                 handle(&rt, &rw, &home, &shared, msg);
             }
             Ok(msg) => handle(&rt, &rw, &home, &shared, msg),
@@ -648,130 +580,15 @@ fn engine(from: Receiver<ToScript>, out: UnboundedSender<FromScript>) {
         shared.borrow_mut().flush_all();
     }
     // every persistent goes before the runtime does
-    drop(judge);
+    drop(inverter);
     shared.borrow_mut().waiters.clear();
-}
-
-/// What gives a computed value or a condition its time, and a record its, in words.
-const RATED: &str = "its rate gives it";
-const SAMPLED: &str = "between its samples";
-
-/// Works out what a `Think` asks: each computed value due, each after those due it read when
-/// last worked out, then each condition due, then the records named. Each runs within its limit,
-/// and one that runs over half of it is told.
-fn think(shared: &Rc<RefCell<Shared>>, computer: &Reader, judge: &Reader, sampler: &Reader, sample: &[String]) -> FromScript {
-    let mut problems = Vec::new();
-    let mut work = |name: &String, ctx: &Context, f: &Persistent<Function<'static>>, of: &str| -> (Option<Value>, Read, Instant) {
-        let limit = shared.borrow().limit(name);
-        let start = Instant::now();
-        let (got, read) = tracked(shared, ctx, f, limit);
-        let span = format!("the {} ms {of}", limit.as_millis());
-        let value = match got {
-            Ok(v) => {
-                if start.elapsed() > limit / 2 {
-                    problems.push((name.clone(), Level::Warn, format!("it ran over half {span}")));
-                }
-                v
-            }
-            Err(why) => {
-                problems.push((name.clone(), Level::Fault, why.unwrap_or_else(|| format!("it ran all {span}, so it was stopped"))));
-                None
-            }
-        };
-        (value, read, start)
-    };
-    let getters: Vec<(&Context, &String, &Persistent<Function<'static>>)> = computer.iter().flat_map(|(ctx, fns)| fns.iter().map(move |(name, f)| (ctx, name, f))).collect();
-    let mut computed: Vec<(String, Option<Value>)> = Vec::new();
-    // each runs once, or twice where it first ran knowing nothing of what it reads, so one it
-    // reads further down the list has its value the second time
-    let mut ran: HashMap<&String, bool> = HashMap::new();
-    loop {
-        let next = {
-            let st = shared.borrow();
-            let ready = |n: &String| match ran.get(n) {
-                Some(again) => *again,
-                None => st.getters.ready(n, st.limit(n)),
-            };
-            let waiting: Vec<_> = getters.iter().filter(|(_, n, _)| st.getters.due(n) && ready(n)).collect();
-            let free = waiting.iter().find(|(_, n, _)| st.getters.read.get(*n).is_none_or(|r| !waiting.iter().any(|(_, m, _)| m != n && r.keys.contains(*m))));
-            free.or(waiting.first()).map(|g| **g)
-        };
-        let Some((ctx, name, f)) = next else { break };
-        let blind = !ran.contains_key(name) && !shared.borrow().getters.read.contains_key(name);
-        ran.insert(name, blind);
-        let (value, read, started) = work(name, ctx, f, RATED);
-        let mut st = shared.borrow_mut();
-        st.getters.worked(name, read, started);
-        if st.values.get(name) != value.as_ref() {
-            match &value {
-                Some(v) => st.values.insert(name.clone(), v.clone()),
-                None => st.values.remove(name),
-            };
-            st.changed(name);
-        }
-        drop(st);
-        match computed.iter_mut().find(|(n, _)| n == name) {
-            Some(slot) => slot.1 = value,
-            None => computed.push((name.clone(), value)),
-        }
-    }
-    let mut judged = Vec::new();
-    for (ctx, fns) in judge {
-        for (id, f) in fns {
-            let due = {
-                let st = shared.borrow();
-                st.conditions.due(id) && st.conditions.ready(id, st.limit(id))
-            };
-            if !due {
-                continue;
-            }
-            let (truth, read, started) = work(id, ctx, f, RATED);
-            shared.borrow_mut().conditions.worked(id, read, started);
-            judged.push((id.clone(), truth == Some(Value::Bool(true))));
-        }
-    }
-    let mut sampled = Vec::new();
-    for (ctx, fns) in sampler {
-        for (name, f) in fns.iter().filter(|(name, _)| sample.contains(name)) {
-            sampled.push((name.clone(), work(name, ctx, f, SAMPLED).0));
-        }
-    }
-    FromScript::Thought { computed, judged, sampled, problems }
-}
-
-/// Calls a reader's function `f`, noting what it reads, within `limit`: its value, None where it
-/// reads a value that is unknown, which is no fault, or why it failed, None where it ran out of
-/// time.
-fn tracked(shared: &Rc<RefCell<Shared>>, ctx: &Context, f: &Persistent<Function<'static>>, limit: Duration) -> (Result<Option<Value>, Option<String>>, Read) {
-    let watchdog = {
-        let mut st = shared.borrow_mut();
-        st.reading = Some(Read::default());
-        st.watchdog.clone()
-    };
-    watchdog.arm(Instant::now(), limit);
-    let got = ctx.with(|ctx| match f.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).and_then(from_js) {
-        Ok(v) => Ok(Some(v)),
-        Err(rquickjs::Error::Exception) => {
-            let e = ctx.catch();
-            if watchdog.fired.get() {
-                return Err(None);
-            }
-            if e.as_object().and_then(|o| o.get::<_, String>("name").ok()).as_deref() == Some("Unknown") {
-                return Ok(None);
-            }
-            let describe: rquickjs::Result<Function> = ctx.globals().get("__describe");
-            Err(Some(describe.and_then(|d| d.call((e,))).unwrap_or_else(|e| e.to_string())))
-        }
-        Err(e) => Err(Some(e.to_string())),
-    });
-    watchdog.disarm();
-    (got, shared.borrow_mut().reading.take().unwrap_or_default())
 }
 
 /// Starts a stretch of the run's code, which goes on till it waits, as long as a handler may run.
 fn begin(shared: &Rc<RefCell<Shared>>, run: u64) {
     let since = Instant::now();
     let mut st = shared.borrow_mut();
+    st.version += 1;
     st.segment = Some((run, since));
     st.watchdog.arm(since, BUDGET);
 }
@@ -817,7 +634,7 @@ const TRIAL: u64 = u64::MAX;
 fn try_setter(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, name: &str) -> Option<String> {
     let c = shared.borrow().computed.get(name).cloned()?;
     let set = c.set.clone()?;
-    let samples: Vec<Value> = match shared.borrow().values.get(name) {
+    let samples: Vec<Value> = match shared.borrow().values.get(name).map(Arc::as_ref) {
         Some(Value::Bool(_)) => vec![Value::Bool(true), Value::Bool(false)],
         Some(Value::Int(_) | Value::Float(_)) => [0.0, 1.0, 7.5, 50.0, -3.0].into_iter().map(Value::Float).collect(),
         _ => Vec::new(),
@@ -830,13 +647,17 @@ fn try_setter(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, name: &
     let watchdog = shared.borrow().watchdog.clone();
     let wrong = ctx.with(|ctx| {
         samples.into_iter().find_map(|v| {
+            shared.borrow_mut().version += 1;
             watchdog.arm(Instant::now(), BUDGET);
             let t = to_js(&ctx, &v).and_then(|x| put.clone().restore(&ctx)?.call::<_, rquickjs::Value>((x,))).and_then(from_js).ok();
             let Some(t) = t else {
                 ctx.catch();
                 return Some(format!("{name}'s setter fails for {v}"));
             };
-            shared.borrow_mut().pending.insert(TRIAL, vec![(set.target.clone(), t)]);
+            let mut st = shared.borrow_mut();
+            st.pending.insert(TRIAL, vec![(set.target.clone(), t)]);
+            st.version += 1;
+            drop(st);
             let back = get.clone().restore(&ctx).and_then(|f| f.call::<_, rquickjs::Value>(())).and_then(from_js).ok();
             match back {
                 Some(b) if same(&b, &v) => None,
@@ -913,7 +734,7 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
         ToScript::Forms(forms) => shared.borrow_mut().forms = forms,
         ToScript::Enums(enums) => shared.borrow_mut().enums = enums,
         // the loop takes these itself, since they need the readers it keeps
-        ToScript::Objects(_) | ToScript::Think { .. } | ToScript::Invert { .. } | ToScript::Try { .. } => {}
+        ToScript::Objects(_) | ToScript::Invert { .. } | ToScript::Try { .. } => {}
         ToScript::Pages(list) => shared.borrow_mut().pages = list,
         ToScript::Screen { session, values } => shared.borrow_mut().screens.entry(session).or_default().extend(values),
         ToScript::Mode { session, mode } => drop(shared.borrow_mut().modes.insert(session, mode)),
@@ -927,21 +748,15 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
             for key in &keys {
                 s.values.remove(key);
                 s.screens.values_mut().for_each(|m| drop(m.remove(key)));
-                s.changed(key);
             }
         }
         ToScript::Values(list) => {
             let mut s = shared.borrow_mut();
             for (alias, value) in list {
-                // a computed value comes back as the loop took it, which changes nothing
-                if s.values.get(&alias) == value.as_ref() {
-                    continue;
-                }
                 match value {
-                    Some(v) => s.values.insert(alias.clone(), v),
+                    Some(v) => s.values.insert(alias, v),
                     None => s.values.remove(&alias),
                 };
-                s.changed(&alias);
             }
         }
         ToScript::Run { run, session, code, p, at, bound, own, came, takes } => {
@@ -1082,6 +897,8 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         }
     };
     g.set("__read", Function::new(ctx.clone(), read)?)?;
+    let s = shared.clone();
+    g.set("__version", Function::new(ctx.clone(), move || s.borrow().version as f64)?)?;
 
     let s = shared.clone();
     let write = move |ctx: Ctx<'js>, alias: String, given: rquickjs::Value<'js>| -> rquickjs::Result<()> {
@@ -1109,7 +926,9 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     g.set("__yield", Function::new(ctx.clone(), yielded)?)?;
     let s = shared.clone();
     let thrown = move || {
-        s.borrow_mut().pending.remove(&run);
+        let mut st = s.borrow_mut();
+        st.pending.remove(&run);
+        st.version += 1;
     };
     g.set("__drop", Function::new(ctx.clone(), thrown)?)?;
 
