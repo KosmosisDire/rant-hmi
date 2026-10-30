@@ -171,6 +171,9 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
   downloaded into `files/downloaded` the first time.
 - A USD file may hold several robots, as a cell or a warehouse does. Each is named by the prim
   that holds it, and the inspector lists them with their moving joints.
+- A model stands z up in metres, as every RANT frame. A USD file is turned and scaled by its own
+  `upAxis` and `metersPerUnit`, centimetres when it gives none. A glTF file is y up in metres by
+  its standard.
 - The camera moves only by its properties. A scene added in the editor comes with a `<var>`
   its camera reads and handlers that move it.
 

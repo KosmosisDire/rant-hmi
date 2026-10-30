@@ -5,8 +5,9 @@ import { dirname, join } from "node:path";
 // Sim writes them, and moves it by its joints: by name, by a JointState in the order the robot
 // lists its moving joints, or in the order names give. A joint it lacks, a count that does not
 // match, a file that is no USD and a layer it cannot find each say why. A joint that mimics
-// another moves with it. A file of two robots takes each one's joints under its name, and the
-// inspector lists the robots a file holds.
+// another moves with it. A file y up in centimetres stands z up in metres, as every RANT frame
+// does. A file of two robots takes each one's joints under its name, and the inspector lists the
+// robots a file holds.
 
 // a base and one link holding a red block at x 1, joined by joint1 turning about z, the
 // geometry a sublayer and the physics a reference
@@ -77,6 +78,31 @@ over "arm"
 }
 `,
   "broken.usda": "not a USD file",
+  // y up in centimetres: a red block a metre along x and a blue one a metre along -z, which is
+  // +y once z is up
+  "yup.usda": `#usda 1.0
+(
+    metersPerUnit = 0.01
+    upAxis = "Y"
+)
+def Xform "hall"
+{
+    def Cube "east"
+    {
+        double size = 50
+        double3 xformOp:translate = (100, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        color3f[] primvars:displayColor = [(1, 0, 0)]
+    }
+    def Cube "north"
+    {
+        double size = 50
+        double3 xformOp:translate = (0, 0, -100)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        color3f[] primvars:displayColor = [(0, 0, 1)]
+    }
+}
+`,
   // the arm with a blue block at x -1 on a joint that mimics joint1, as a gripper's finger does
   "follow.usda": `#usda 1.0
 (
@@ -190,6 +216,12 @@ export default async function ({ page, hmi, sys, d, eventually }) {
   await d.shows(d.el(scene), 0.65, 0.5, blue, "the following block turned with joint1");
   await d.shows(d.el(scene), 0.35, 0.5, red, "the block turned by joint1");
   await d.setField("Joints", "{}");
+
+  // a y up file in centimetres turns and scales to z up in metres
+  await d.setField("Source", '"files/robot/yup.usda"');
+  await d.shows(d.el(scene), 0.65, 0.5, red, "the block a metre along x right of the middle");
+  await d.shows(d.el(scene), 0.5, 0.3, blue, "the block a metre along the file's -z at the top, +y");
+  await d.shows(d.el(scene), 0.5, 0.7, (c) => !blue(c), "nothing at -y");
 
   // two robots, each its joints under its name
   await d.setField("Source", '"files/robot/pair.usda"');
