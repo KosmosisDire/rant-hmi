@@ -1,18 +1,25 @@
-﻿// A designer adds a 3D scene, which starts with a floor and its axes, and a box in it whose pose
+// A designer adds a 3D scene, which starts with a floor and its axes, and a box in it whose pose
 // follows a value, seen by a camera the scene's properties aim. three.js loads only once a scene
 // shows. A value a part or the camera cannot use gives way to its default and says why on the
 // scene, a picked part rings its scene, and the run draws it as the editor does.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const loaded = () => page.evaluate(() => performance.getEntriesByType("resource").some((r) => /\/assets\/scene-[^/]*\.js$/.test(r.name)));
-  // the board draws the pages beside this one too, and the hidden run the start page as the
-  // editor opens, which may hold a scene of their own, as one an earlier scenario left
+  // the board draws the pages beside this one too, and those its flight to a new page passes
+  // over, and the hidden run the start page as the editor opens, any of which may hold a scene
+  // of its own, as one an earlier scenario left
   const holds = (els) => els.some((e) => e.tag === "scene" || holds(e.children));
-  const drawn = () => page.locator(".artboard .page-layer").evaluateAll((ls) => ls.map((l) => l.dataset.page));
-  const before = await drawn();
+  await page.evaluate(() => {
+    const drawn = (window.drawnPages = new Set());
+    const note = () => document.querySelectorAll(".artboard .page-layer").forEach((l) => drawn.add(l.dataset.page));
+    note();
+    new MutationObserver(note).observe(document.querySelector(".artboard"), { childList: true, subtree: true });
+  });
   await d.addPage("Scene");
-  const shown = [...before, ...(await drawn()), hmi.state.project?.start];
-  check(!(await loaded()) || shown.some((id) => holds(hmi.page(id)?.children ?? [])), "three.js loaded before any scene showed");
+  // loaded asked first, as a page drawn after it could load three.js only later
+  const early = await loaded();
+  const shown = [...(await page.evaluate(() => [...window.drawnPages])), hmi.state.project?.start];
+  check(!early || shown.some((id) => holds(hmi.page(id)?.children ?? [])), "three.js loaded before any scene showed");
   const scene = await d.add("scene", { Name: "cell", x: "4", y: "4", w: "40", h: "30", Target: "vec(10, 0, 0.5)" });
   await eventually(loaded, "three.js to load once a scene shows");
   const pageId = hmi.state.pages.find((p) => p.name === "Scene").id;
