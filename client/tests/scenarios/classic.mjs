@@ -116,7 +116,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const plus = await inside("Jog pad", "Button", { Name: "Plus", Repeat: "6", x: column(15), y: row, w: "6", h: "6", text: '"+"', textSize: "3" });
   await handlers([["press", "Cage.jogVel[index] = 1;"], ["release", "Cage.jogVel[index] = 0;"]]);
   await inside("Robot panel", "frame", { Name: "Divider", x: "1", y: "32", w: "45", h: "0.2", Fill: "$border", Radius: "" });
-  await inside("Robot panel", "Dropdown", { Name: "Job", x: "1", y: "33", w: "17", h: "4", value: "Cage.selectedJob", options: 'JobName.options.filter((j) => j != "None")' });
+  await inside("Robot panel", "Dropdown", { Name: "Job", x: "1", y: "33", w: "17", h: "4", value: "Cage.selectedJob", options: 'Job.options.filter((j) => j != "None")' });
   await inside("Robot panel", "frame", { Name: "State", x: "19", y: "33", w: "27", h: "4", Fill: "$panel3", Radius: "$radius" });
   await inside("State", "text", {
     Name: "State text",

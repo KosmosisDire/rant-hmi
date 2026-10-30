@@ -58,34 +58,15 @@ pub fn top_fields(shapes: &[Shape]) -> Vec<String> {
     if bare(shapes).is_some() { Vec::new() } else { shapes.iter().map(|s| s.field.name.clone()).collect() }
 }
 
-/// Adds each enum the shapes hold at any depth, unless one of that name is there: the named
-/// ones, or the anonymous ones by their field's name, so named ones go first.
-pub fn enums(shapes: &[Shape], anonymous: bool, out: &mut Vec<EnumInfo>) {
+/// Adds each enum the shapes hold at any depth by its type's name, unless one of that name is there.
+pub fn enums(shapes: &[Shape], out: &mut Vec<EnumInfo>) {
     for s in shapes {
-        let named = s.field.type_name.as_deref().filter(|n| !n.is_empty());
-        let name = match named {
-            Some(n) if !anonymous => Some(n.to_owned()),
-            // until Rant names every enum: drop this once it refuses anonymous ones
-            None if anonymous => pascal(&s.field.name),
-            _ => None,
-        };
+        let name = s.field.type_name.as_deref().filter(|n| !n.is_empty());
         if let Some(name) = name.filter(|n| s.field.kind == FieldType::Enum && !out.iter().any(|e| e.name == *n)) {
-            out.push(EnumInfo { name, options: s.options.clone() });
+            out.push(EnumInfo { name: name.to_owned(), options: s.options.clone() });
         }
-        enums(&s.members, anonymous, out);
+        enums(&s.members, out);
     }
-}
-
-/// A field's name as a type's, `job_name` as `JobName`, or none when code could not name it.
-fn pascal(field: &str) -> Option<String> {
-    let mut name = String::new();
-    for word in field.split('_') {
-        let mut chars = word.chars();
-        name.extend(chars.next().map(|c| c.to_ascii_uppercase()));
-        name.extend(chars);
-    }
-    let usable = name.starts_with(|c: char| c.is_ascii_alphabetic()) && name.chars().all(|c| c.is_ascii_alphanumeric());
-    usable.then_some(name)
 }
 
 fn join(prefix: &str, name: &str) -> String {
@@ -434,7 +415,8 @@ mod tests {
     fn nested_lists() {
         round_trip(
             "Stretch { speed: f32, pts: Double2[] }
-Course { id: u32, names: string[], grid: f32[][], rows: f32[3][], segments: Stretch[], tags: string<4>[2], modes: enum<u8> { Up, Down }[] }",
+Direction = enum<u8> { Up, Down }
+Course { id: u32, names: string[], grid: f32[][], rows: f32[3][], segments: Stretch[], tags: string<4>[2], modes: Direction[] }",
             value!({ "id": 7, "names": ["a", "a longer name", ""], "grid": [[1.0, 2.0], [], [3.0]], "rows": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
                     "segments": [ { "speed": 0.5, "pts": [ { "x": 1.0, "y": 2.0 }, { "x": 3.0, "y": 4.0 } ] }, { "speed": 1.5, "pts": [] } ],
                     "tags": ["ab", "cd"], "modes": ["Down", "Up"] }),
@@ -457,7 +439,8 @@ Routes { grid: f32[][], segments: Stretch[] }").unwrap();
         let schema = node
             .schema(
                 "LidarPoint { x: f32, y: f32, z: f32, intensity: u16 }
-Cloud { stamp: f64, points: LidarPoint[], corners: Double2[2], poses: Pose[], ranges: f32[], big: u64[], marks: { at: f32, on: bool }[] }
+Mark { at: f32, on: bool }
+Cloud { stamp: f64, points: LidarPoint[], corners: Double2[2], poses: Pose[], ranges: f32[], big: u64[], marks: Mark[] }
 ",
             )
             .unwrap();
@@ -497,21 +480,22 @@ Cloud { stamp: f64, points: LidarPoint[], corners: Double2[2], poses: Pose[], ra
 
     #[test]
     fn enums_by_name() {
-        round_trip("Line { mode: enum<u8> { Auto, Manual } }", value!({ "mode": "Manual" }));
+        round_trip("LineMode = enum<u8> { Auto, Manual }\nLine { mode: LineMode }", value!({ "mode": "Manual" }));
     }
 
     #[test]
-    fn enums_are_listed_once_and_an_anonymous_one_by_its_field() {
+    fn enums_are_listed_once_by_their_type_name() {
         let node = node();
         let schema = node.schema("LineMode = enum<u8> { Auto, Manual }
-Line { mode: LineMode, part: { side_now: enum<u8> { Left, Right }, line_mode: enum<u8> { Up, Down } }, last: LineMode }").unwrap();
+Side = enum<u8> { Left, Right }
+Part { side_now: Side, mode: LineMode }
+Line { mode: LineMode, part: Part, last: LineMode }").unwrap();
         let mut out = Vec::new();
-        enums(&shapes(&schema), false, &mut out);
-        enums(&shapes(&schema), true, &mut out);
+        enums(&shapes(&schema), &mut out);
         let names = |o: &[&str]| o.iter().map(|&n| n.to_owned()).collect::<Vec<_>>();
         assert_eq!(out, [
             EnumInfo { name: "LineMode".into(), options: names(&["Auto", "Manual"]) },
-            EnumInfo { name: "SideNow".into(), options: names(&["Left", "Right"]) },
+            EnumInfo { name: "Side".into(), options: names(&["Left", "Right"]) },
         ]);
     }
 

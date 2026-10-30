@@ -27,7 +27,7 @@ struct SafetyStatus {
 
 #[derive(rant::Enum, Clone, Copy, Debug, PartialEq, Default)]
 #[repr(u8)]
-enum Mode {
+enum RobotMode {
     #[default]
     Unknown,
     Teach,
@@ -47,7 +47,7 @@ enum CycleMode {
 
 #[derive(rant::Message, Clone, Default, PartialEq)]
 struct RobotState {
-    mode: Mode,
+    mode: RobotMode,
     cycle: CycleMode,
     servo_power: bool,
     start: bool,
@@ -178,7 +178,7 @@ fn main() -> Result<(), rant::Error> {
     let healthy = SafetyStatus { estop: true, lamp_green: true, ..Default::default() };
     let safety = node.variable_definition::<SafetyStatus>("Cage/Plc/gSafetyStatus", VariableOptions::new().initial(healthy.clone()).read_only(true))?;
 
-    let robot = Arc::new(Mutex::new(RobotState { mode: Mode::Remote, cycle: CycleMode::Auto, is_home: true, ..Default::default() }));
+    let robot = Arc::new(Mutex::new(RobotState { mode: RobotMode::Remote, cycle: CycleMode::Auto, is_home: true, ..Default::default() }));
     let state = node.variable_definition::<RobotState>("Cage/Gp12/RobotState", VariableOptions::new().initial(robot.lock().unwrap().clone()).read_only(true))?;
     let joints = node.publisher::<JointState>("Cage/Gp12/JointState", Qos::new())?;
     let jog = Arc::new(Mutex::new((Instant::now() - JOG_SILENCE, [0.0f64; 6])));

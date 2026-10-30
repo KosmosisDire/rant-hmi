@@ -272,23 +272,21 @@ impl Mesh {
             .collect()
     }
 
-    /// Each enum the attached imports' messages, answers and progress hold, by its type's name
-    /// or an anonymous one's field's, the first import's by alias where two share a name.
+    /// Each enum the attached imports' messages, answers and progress hold, by its type's name,
+    /// the first import's by alias where two share a name.
     pub fn enums(&self) -> Vec<EnumInfo> {
         let mut attached: Vec<(&String, &Attached)> = self.attached.iter().collect();
         attached.sort_by_key(|(alias, _)| *alias);
         let mut out = Vec::new();
-        for anonymous in [false, true] {
-            for (_, a) in &attached {
-                codec::enums(&a.shapes, anonymous, &mut out);
-                let others = match &a.handle {
-                    Handle::Function { answer, .. } => [answer.as_ref(), None],
-                    Handle::Task { progress, answer, .. } => [progress.as_ref(), answer.as_ref()],
-                    _ => [None, None],
-                };
-                for (_, shapes) in others.into_iter().flatten() {
-                    codec::enums(shapes, anonymous, &mut out);
-                }
+        for (_, a) in &attached {
+            codec::enums(&a.shapes, &mut out);
+            let others = match &a.handle {
+                Handle::Function { answer, .. } => [answer.as_ref(), None],
+                Handle::Task { progress, answer, .. } => [progress.as_ref(), answer.as_ref()],
+                _ => [None, None],
+            };
+            for (_, shapes) in others.into_iter().flatten() {
+                codec::enums(shapes, &mut out);
             }
         }
         out
