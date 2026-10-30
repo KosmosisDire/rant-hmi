@@ -350,11 +350,12 @@ impl Readers {
         });
     }
 
-    /// Whether nothing runs and nothing may start, so all that was worked out went out.
+    /// Whether nothing runs and nothing waits for a worker, so all that was worked out went out.
+    /// What came due by the clock alone since is left to the next ask, as the workers leave it.
     #[cfg(test)]
     pub(super) fn idle(&self) -> bool {
         let board = lock(&self.board);
-        board.flying.is_empty() && board.ready().is_empty()
+        board.flying.is_empty() && board.queued.is_empty()
     }
 }
 
@@ -448,6 +449,7 @@ fn worker(index: usize, board: &Shelf, out: UnboundedSender<FromScript>) {
         if let Some(thought) = b.apply(job, value, read, started, problems) {
             let _ = out.send(thought);
         }
+        b.mark(Instant::now());
         board.1.notify_all();
     }
 }
