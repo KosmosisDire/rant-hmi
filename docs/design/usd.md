@@ -68,6 +68,11 @@ Claude's:
   positions maps by place, never by name.
 - **Files**: only files inside the project's `files` folder are read, by a resolver that finds
   nothing outside it. A layer or texture outside it, or missing, is left out as a problem.
+- **Downloads** (the user's call): a layer or texture on a web server, as NVIDIA's asset server,
+  is downloaded into `files/downloaded/<host>/<path>` while the model is made, and read from
+  there after. A file a download names beside it, missing there, comes from beside it on the
+  server. Only USD layers and PNG or JPEG images are fetched, as nothing else is read. A
+  failure is a problem, and a host that never answers is not tried again for that model.
 - **Problems are warnings** on the model, which shows the rest. A model with problems is made
   again each time it is asked for, so a file added later is found.
 - **Serving**: `files/<robot>.usd?as=glb` makes it on a blocking thread, keeps it until a file
@@ -100,10 +105,10 @@ Sim, its joints moved, and its frames checked at rest.
 | Unitree G1 43 DOF | Hugging Face | 53 | 43 | 626k | 345 ms |
 | Piper, Franka with 2F-85 | Hugging Face | 11, 20 | 8, 15 | 184k, 237k | 90, 122 ms |
 | Isaac URDF importer test | Isaac 5.1 install | 7 | 6 | 1k | 9 ms |
-| arna2 | the user's | 6 | 4 | 329k | 216 ms |
+| arna2 | the user's | 15 | 11 | 420k | 2.4 s, 295 ms after |
 
-Times are a release build. arna2's arm and lidar are references to NVIDIA's asset server, which
-no file on disk answers, so they show as warnings and the base draws alone.
+Times are a release build. arna2's Kinova arm and lidar are on NVIDIA's asset server, which the
+first make downloads.
 
 ## Left out
 
@@ -112,8 +117,6 @@ no file on disk answers, so they show as warnings and the base draws alone.
 - What an MDL of its own works out in its code: masks that colour a cart's body and handle
   apart, tiling, and inputs a material leaves at the MDL file's defaults, as a traffic cone's
   orange.
-- References to http addresses, as NVIDIA's asset server. A robot that names one shows without
-  that part until its files are collected into the project, as Isaac Sim's Collect does.
 - Mimic joints and closed loops move only by the joints given values.
 - Models are plain floats. The biggest robots make 40 to 80 MB, which a screen loads once and
   then asks for by tag.

@@ -8,8 +8,8 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::SystemTime;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use openusd::ar::{self, Resolver};
@@ -66,7 +66,8 @@ impl Robots {
 /// names one outside it is left out as a problem. The error is for the user.
 pub fn make(file: &Path, folder: &Path) -> Result<Made, String> {
     let folder = fs::canonicalize(folder).map_err(|e| format!("could not open the files folder: {e}"))?;
-    let inside = Inside { folder: folder.clone(), files: ar::DefaultResolver::new() };
+    let downloads = Arc::new(Mutex::new(Vec::new()));
+    let inside = Inside::new(folder.clone(), downloads.clone());
     let stage = usd::Stage::builder()
         .resolver(inside)
         .schema_registry(openusd_schemas::schema_registry())
@@ -77,10 +78,11 @@ pub fn make(file: &Path, folder: &Path) -> Result<Made, String> {
     for prim in children(&top) {
         robot.walk(&prim, None, false);
     }
-    // a file is named from the files folder, as the page names it
-    let within = format!("{}{}", folder.display(), std::path::MAIN_SEPARATOR);
-    for problem in stage.composition_errors() {
-        robot.problems.insert(problem.to_string().replace(&within, ""));
+    // a file is named from the files folder, as the page names it, a download spelled without \\?\
+    let within = [folder.clone(), plain(&folder)].map(|f| format!("{}{}", f.display(), std::path::MAIN_SEPARATOR));
+    let problems = stage.composition_errors().into_iter().map(|p| p.to_string());
+    for problem in problems.chain(downloads.lock().unwrap().drain(..)) {
+        robot.problems.insert(within.iter().fold(problem, |p, w| p.replace(w, "")));
     }
     let mut read: Vec<PathBuf> = stage.layer_identifiers().into_iter().map(PathBuf::from).filter(|p| p.is_file()).collect();
     read.extend(robot.images.keys().cloned());
@@ -88,18 +90,156 @@ pub fn make(file: &Path, folder: &Path) -> Result<Made, String> {
     Ok(Made { glb, read, whole })
 }
 
-/// Finds only files inside the files folder, so a robot never reads one outside it.
+/// Finds only files inside the files folder, so a robot never reads one outside it. A file on a
+/// web server is downloaded into the folder's `downloaded` folder first, under its host and path.
 struct Inside {
     folder: PathBuf,
     files: ar::DefaultResolver,
+    /// Where downloads go, spelled as a file not there yet is.
+    mirror: PathBuf,
+    web: Mutex<Web>,
+    problems: Arc<Mutex<Vec<String>>>,
+}
+
+/// What downloading for one model keeps.
+#[derive(Default)]
+struct Web {
+    client: Option<reqwest::blocking::Client>,
+    /// The scheme each host was named with, as the downloads folder keeps only the host.
+    schemes: HashMap<String, String>,
+    /// The addresses that failed and the hosts that never answered, each tried once.
+    failed: HashSet<String>,
+}
+
+/// The files a model reads, the only ones worth downloading.
+const FETCHED: [&str; 7] = ["usd", "usda", "usdc", "usdz", "png", "jpg", "jpeg"];
+
+impl Inside {
+    fn new(folder: PathBuf, problems: Arc<Mutex<Vec<String>>>) -> Self {
+        let mirror = plain(&folder).join("downloaded");
+        Inside { folder, files: ar::DefaultResolver::new(), mirror, web: Mutex::default(), problems }
+    }
+
+    /// The file a web address is downloaded to, `downloaded/<host>/<path>`, a port after `+`.
+    /// None for anything but http and https.
+    fn mirrored(&self, address: &str) -> Option<String> {
+        // a layer's address may come with its slashes made one
+        let (scheme, rest) = address.split_once(':')?;
+        let scheme = scheme.to_ascii_lowercase();
+        if scheme != "http" && scheme != "https" {
+            return None;
+        }
+        let url = reqwest::Url::parse(&format!("{scheme}://{}", rest.trim_start_matches('/'))).ok()?;
+        let host = url.host_str()?;
+        let host = url.port().map_or_else(|| host.to_string(), |port| format!("{host}+{port}"));
+        let mut file = self.mirror.join(&host);
+        for segment in url.path_segments()? {
+            if matches!(segment, "" | "." | "..") || segment.contains(['\\', ':', '*', '?', '"', '<', '>', '|']) {
+                return None;
+            }
+            file.push(segment);
+        }
+        self.web.lock().unwrap().schemes.insert(host, scheme);
+        Some(file.to_string_lossy().into_owned())
+    }
+
+    /// Downloads a file the downloads folder lacks from the address it stands for, by way of a
+    /// `.part` file so only a whole one lands. A failure is a problem, and is not tried again.
+    fn download(&self, file: &Path) {
+        let ext = file.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let Ok(rest) = file.strip_prefix(&self.mirror) else { return };
+        let mut parts = rest.iter().map(|p| p.to_string_lossy().into_owned());
+        let Some(host) = parts.next() else { return };
+        let mut web = self.web.lock().unwrap();
+        let scheme = web.schemes.get(&host).map_or("https", String::as_str);
+        let address = format!("{scheme}://{}/{}", host.replace('+', ":"), parts.collect::<Vec<_>>().join("/"));
+        if !FETCHED.contains(&ext.as_str()) || web.failed.contains(&address) || web.failed.contains(&host) {
+            return;
+        }
+        if web.client.is_none() {
+            match reqwest::blocking::Client::builder().connect_timeout(Duration::from_secs(15)).timeout(Duration::from_secs(60)).build() {
+                Ok(client) => web.client = Some(client),
+                Err(e) => return self.problems.lock().unwrap().push(format!("{address}: could not download it: {e}")),
+            }
+        }
+        let Some(client) = &web.client else { return };
+        tracing::info!("downloading {address}");
+        if let Err((dead, why)) = fetch(client, &address, file) {
+            self.problems.lock().unwrap().push(format!("{address}: could not download it: {why}"));
+            web.failed.insert(if dead { host } else { address });
+        }
+    }
+}
+
+/// Fetches `address` into `file`. The error says whether the host never answered, and why.
+fn fetch(client: &reqwest::blocking::Client, address: &str, file: &Path) -> Result<(), (bool, String)> {
+    let failed = |e: reqwest::Error| (e.is_connect() || e.is_timeout(), e.without_url().to_string());
+    let mut response = client.get(address).send().and_then(|r| r.error_for_status()).map_err(failed)?;
+    let mut part = file.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    let written = file.parent().map_or(Ok(()), fs::create_dir_all).map_err(|e| (false, e.to_string())).and_then(|()| {
+        let mut out = fs::File::create(&part).map_err(|e| (false, e.to_string()))?;
+        response.copy_to(&mut out).map_err(failed)?;
+        drop(out);
+        fs::rename(&part, file).map_err(|e| (false, e.to_string()))
+    });
+    if written.is_err() {
+        let _ = fs::remove_file(&part);
+    }
+    written
+}
+
+/// A path with its `.` and `..` worked out, never past its root.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            part => out.push(part),
+        }
+    }
+    out
+}
+
+/// A path without Windows' `\\?\` in front, as a file not there yet is spelled.
+fn plain(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
 }
 
 impl Resolver for Inside {
     fn create_identifier(&self, asset_path: &str, anchor: Option<&ar::ResolvedPath>) -> String {
-        self.files.create_identifier(asset_path, anchor)
+        if let Some(file) = self.mirrored(asset_path) {
+            return file;
+        }
+        let id = self.files.create_identifier(asset_path, anchor);
+        // a bare name a download gives is the file beside it on its server, there yet or not
+        let beside = anchor.map(|a| plain(a)).filter(|a| a.starts_with(&self.mirror) && Path::new(&id).is_relative());
+        let id = match beside.as_deref().and_then(Path::parent) {
+            Some(dir) => lexical(&dir.join(&id)).to_string_lossy().into_owned(),
+            None => id,
+        };
+        // a download is named one way whether it is there yet or not
+        let spelled = plain(Path::new(&id));
+        match spelled.starts_with(&self.mirror) {
+            true => spelled.to_string_lossy().into_owned(),
+            false => id,
+        }
     }
     fn resolve(&self, asset_path: &str) -> Option<ar::ResolvedPath> {
-        let found = self.files.resolve(asset_path)?;
+        let asset_path = self.mirrored(asset_path).map_or(Cow::Borrowed(asset_path), Cow::Owned);
+        let wanted = plain(Path::new(&*asset_path));
+        if wanted.starts_with(&self.mirror) && !wanted.exists() {
+            self.download(&wanted);
+        }
+        let found = self.files.resolve(&asset_path)?;
         fs::canonicalize(&*found).is_ok_and(|real| real.starts_with(&self.folder)).then_some(found)
     }
     fn resolve_for_new_asset(&self, _asset_path: &str) -> Option<ar::ResolvedPath> {
@@ -1623,6 +1763,53 @@ def Cube "box"
         assert!(pbr("Sign")["baseColorTexture"].is_object());
         let read: HashSet<String> = made.read.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
         assert_eq!(read, ["hall.usda", "floor_D.png", "sign_d.png"].map(String::from).into());
+    }
+
+    /// Serves `files` over http on loopback while the tests run, and 404 for anything else.
+    fn serve(files: HashMap<&'static str, &'static str>) -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut request = [0u8; 4096];
+                let n = io::Read::read(&mut stream, &mut request).unwrap_or(0);
+                let line = String::from_utf8_lossy(&request[..n]);
+                let reply = match files.get(line.split_whitespace().nth(1).unwrap_or_default()) {
+                    Some(body) => format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()),
+                    None => "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_string(),
+                };
+                let _ = io::Write::write_all(&mut stream, reply.as_bytes());
+            }
+        });
+        port
+    }
+
+    /// A layer on a web server is downloaded into the files folder, and so is one it names
+    /// beside it. One that is not there is a problem.
+    #[test]
+    fn web_files_are_downloaded() {
+        let port = serve(HashMap::from([
+            ("/parts/box.usda", "#usda 1.0\n(\n    subLayers = [@shape.usda@]\n)\n"),
+            ("/parts/shape.usda", "#usda 1.0\ndef Cube \"box\"\n{\n}\n"),
+        ]));
+        let dir = scratch("web");
+        let cell = format!(
+            "#usda 1.0\ndef \"box\" (prepend references = @http://127.0.0.1:{port}/parts/box.usda@</box>)\n{{\n}}\n\
+             def Xform \"gone\" (prepend references = @http://127.0.0.1:{port}/parts/gone.usda@)\n{{\n}}\n"
+        );
+        write(&dir, "cell.usda", &cell);
+        let made = make(&dir.join("cell.usda"), &dir).unwrap();
+        let doc = json_of(&made.glb);
+        assert_eq!(doc["meshes"].as_array().unwrap().len(), 1);
+        let mirror = dir.join("downloaded").join(format!("127.0.0.1+{port}")).join("parts");
+        assert!(mirror.join("box.usda").is_file() && mirror.join("shape.usda").is_file());
+        assert!(!mirror.join("gone.usda").exists());
+        let problems = doc["scenes"][0]["extras"]["problems"].to_string();
+        assert!(problems.contains(&format!("http://127.0.0.1:{port}/parts/gone.usda: could not download it")), "{problems}");
+        assert!(problems.contains("404"), "{problems}");
+        // the downloads are read as the folder's own files
+        let read: HashSet<String> = made.read.iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
+        assert_eq!(read, ["cell.usda", "box.usda", "shape.usda"].map(String::from).into());
     }
 
     #[test]

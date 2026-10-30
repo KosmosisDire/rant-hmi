@@ -167,7 +167,8 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 - An `anchor` draws nothing. It places what it holds by its pose, as a frame of a TF tree.
 - A USD robot reads as Isaac Sim saves one: its layers, references and variants, meshes and
   shapes, colours and textures. Its collision shapes stay hidden. A layer or texture outside the
-  project's files is left out with a warning.
+  project's files is left out with a warning. One on a web server, as NVIDIA's asset server, is
+  downloaded into `files/downloaded` the first time.
 - A USD file may hold several robots, as a cell or a warehouse does. Each is named by the prim
   that holds it, and the inspector lists them with their moving joints.
 - The camera moves only by its properties. A scene added in the editor comes with a `<var>`

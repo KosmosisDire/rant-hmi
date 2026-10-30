@@ -29,8 +29,9 @@ notify = "8"
 openusd = "0.8"
 openusd-schemas = { version = "0.8", features = ["geom", "shade", "physics"] }
 rant-hmi-pack = { path = "../app/pack" }
-# fetches the runtimes apps are built from out of the release, on that aws-lc-rs and through any proxy set
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "system-proxy"] }
+# fetches the runtimes apps are built from out of the release, and the files a USD robot names on a
+# web server, on that aws-lc-rs and through any proxy set
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "stream", "system-proxy"] }
 # the HMI's own certificate for https, on the aws-lc-rs WebRTC already builds
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 rquickjs = "=0.14.0"
