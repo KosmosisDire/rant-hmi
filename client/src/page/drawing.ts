@@ -2,14 +2,14 @@
 // the screen, and what a drawing found that the element shows.
 
 /** What an element's own drawing found last: faults to show in the editor, whether a value it
- *  reads is not known yet, and warnings for what ran slow. */
+ *  reads is not known yet, and warnings, as for code that ran slow or a model read only in part. */
 export interface Drawn {
   faults: string[];
   unknown: boolean;
-  slow: string[];
+  warnings: string[];
 }
 
-export const CLEAN: Drawn = { faults: [], unknown: false, slow: [] };
+export const CLEAN: Drawn = { faults: [], unknown: false, warnings: [] };
 
 /** A function that runs `draw` soon after it is called, at most once a frame: in the frame the
  *  call came in when that frame has not drawn yet, else in the next. */

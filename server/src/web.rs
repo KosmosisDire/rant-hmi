@@ -38,6 +38,7 @@ use crate::apps::{self, Apps};
 use crate::flight::Flight;
 use crate::lanes::Lanes;
 use crate::protocol::ClientMsg;
+use crate::usd::Robots;
 
 /// How often the socket pings its screen, to hear what arrived and that it is there. The
 /// browser answers by itself, even in a hidden tab whose timers run slow, so a screen is lost
@@ -51,17 +52,30 @@ pub const SHARED: &str = "files";
 /// other path, index.html for one that names none.
 pub fn files(client: &Path, project: &Path) -> Router {
     let shared = project.join(SHARED);
+    let robots = Arc::new(Robots::default());
     let pages = ServeDir::new(client).fallback(ServeFile::new(client.join("index.html")));
     Router::new()
-        .route("/files/{*path}", get(move |extract::Path(path): extract::Path<String>, request: Request| shared_file(shared.clone(), path, request)))
+        .route(
+            "/files/{*path}",
+            get(move |extract::Path(path): extract::Path<String>, Query(asked): Query<Asked>, request: Request| {
+                shared_file(shared.clone(), robots.clone(), path, asked, request)
+            }),
+        )
         .fallback_service(pages)
         // a screen asks again each time, so after an update it loads the new client or file
         .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-cache")))
 }
 
+/// What a shared file's address may ask: `as=glb` for a USD robot made into a glTF model.
+#[derive(Deserialize)]
+struct Asked {
+    #[serde(rename = "as")]
+    made: Option<String>,
+}
+
 /// A file in the shared folder, never one outside it: a path that steps out or names a dot
 /// file is refused, and so is a link that leads out.
-async fn shared_file(folder: PathBuf, path: String, request: Request) -> Response {
+async fn shared_file(folder: PathBuf, robots: Arc<Robots>, path: String, asked: Asked, request: Request) -> Response {
     let named = Path::new(&path);
     let plain = named.components().all(|c| matches!(c, Component::Normal(n) if !n.to_string_lossy().starts_with('.')));
     let (Ok(root), Ok(file)) = (tokio::fs::canonicalize(&folder).await, tokio::fs::canonicalize(folder.join(named)).await) else {
@@ -70,9 +84,24 @@ async fn shared_file(folder: PathBuf, path: String, request: Request) -> Respons
     if !plain || !file.starts_with(&root) || !tokio::fs::metadata(&file).await.is_ok_and(|m| m.is_file()) {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let usd = file.extension().is_some_and(|e| ["usd", "usda", "usdc", "usdz"].contains(&e.to_string_lossy().to_lowercase().as_str()));
+    if usd && asked.made.as_deref() == Some("glb") {
+        return robot(robots, file, root, request.headers()).await;
+    }
     match ServeFile::new(file).oneshot(request).await {
         Ok(served) => served.into_response(),
         Err(never) => match never {},
+    }
+}
+
+/// A USD file made into a glTF model, else why it cannot be as text for the screen to show.
+async fn robot(robots: Arc<Robots>, file: PathBuf, root: PathBuf, headers: &HeaderMap) -> Response {
+    let seen = headers.get(header::IF_NONE_MATCH).cloned();
+    match tokio::task::spawn_blocking(move || robots.model(&file, &root)).await {
+        Ok(Ok((_, tag))) if seen.is_some_and(|s| s.as_bytes() == tag.as_bytes()) => StatusCode::NOT_MODIFIED.into_response(),
+        Ok(Ok((glb, tag))) => ([(header::CONTENT_TYPE, "model/gltf-binary".to_string()), (header::ETAG, tag)], glb).into_response(),
+        Ok(Err(why)) => (StatusCode::UNPROCESSABLE_ENTITY, why).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 

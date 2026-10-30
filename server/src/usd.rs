@@ -2,11 +2,16 @@
 //! scene's extras so a screen moves the links by joint values. docs/design/usd.md has the layout.
 
 use std::borrow::Cow;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::SystemTime;
 
+use bytes::Bytes;
 use openusd::ar::{self, Resolver};
 use openusd::{gf, sdf, usd};
 use openusd_schemas::geom::{Interpolation, Primvar, PrimvarsAPI, XformCache};
@@ -17,6 +22,44 @@ use serde_json::{Value, json};
 pub struct Made {
     pub glb: Vec<u8>,
     pub read: Vec<PathBuf>,
+    /// Whether it holds the whole robot with no problems.
+    pub whole: bool,
+}
+
+/// Models made from USD files, each kept until a file it read changes.
+#[derive(Default)]
+pub struct Robots {
+    kept: Mutex<HashMap<PathBuf, Kept>>,
+}
+
+struct Kept {
+    glb: Bytes,
+    tag: String,
+    times: Vec<(PathBuf, Option<SystemTime>)>,
+}
+
+impl Robots {
+    /// The model for a USD file and a tag that changes with it. One with problems is made again
+    /// each time, as a file it could not find may come. The error is for the user.
+    pub fn model(&self, file: &Path, folder: &Path) -> Result<(Bytes, String), String> {
+        let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+        if let Some(kept) = self.kept.lock().unwrap().get(file) {
+            if kept.times.iter().all(|(p, t)| modified(p) == *t) {
+                return Ok((kept.glb.clone(), kept.tag.clone()));
+            }
+        }
+        let made = make(file, folder)?;
+        let times: Vec<_> = made.read.iter().map(|p| (p.clone(), modified(p))).collect();
+        let mut hash = DefaultHasher::new();
+        (file, &times, made.glb.len()).hash(&mut hash);
+        let (glb, tag) = (Bytes::from(made.glb), format!("\"{:016x}\"", hash.finish()));
+        let mut kept = self.kept.lock().unwrap();
+        match made.whole {
+            true => kept.insert(file.to_path_buf(), Kept { glb: glb.clone(), tag: tag.clone(), times }),
+            false => kept.remove(file),
+        };
+        Ok((glb, tag))
+    }
 }
 
 /// Makes the USD file a model. Only files inside `folder` are read, so a layer or texture that
@@ -39,7 +82,8 @@ pub fn make(file: &Path, folder: &Path) -> Result<Made, String> {
     }
     let mut read: Vec<PathBuf> = stage.layer_identifiers().into_iter().map(PathBuf::from).filter(|p| p.is_file()).collect();
     read.extend(robot.images.keys().cloned());
-    Ok(Made { glb: robot.finish(file)?, read })
+    let (glb, whole) = robot.finish(file)?;
+    Ok(Made { glb, read, whole })
 }
 
 /// Finds only files inside the files folder, so a robot never reads one outside it.
@@ -592,7 +636,8 @@ impl<'s> Robot<'s> {
         (joints, names)
     }
 
-    fn finish(mut self, file: &Path) -> Result<Vec<u8>, String> {
+    /// The model, and whether it holds the whole robot with no problems.
+    fn finish(mut self, file: &Path) -> Result<(Vec<u8>, bool), String> {
         if self.mesh_list.is_empty() {
             let mut why = String::from("it holds no mesh or shape to draw");
             if !self.problems.is_empty() {
@@ -621,6 +666,7 @@ impl<'s> Robot<'s> {
             root["rotation"] = json!([-half, 0.0, 0.0, half]);
         }
         self.nodes[0] = root;
+        let whole = self.problems.is_empty();
         let mut problems: Vec<String> = self.problems.into_iter().collect();
         problems.sort();
         let textures: Vec<Value> = (0..self.glb.images.len()).map(|i| json!({ "source": i, "sampler": 0 })).collect();
@@ -636,7 +682,7 @@ impl<'s> Robot<'s> {
             doc["textures"] = json!(textures);
             doc["samplers"] = json!([{ "wrapS": 10497, "wrapT": 10497 }]);
         }
-        Ok(self.glb.finish(doc))
+        Ok((self.glb.finish(doc), whole))
     }
 }
 

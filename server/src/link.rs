@@ -119,7 +119,7 @@ fn unframed(mut body: &[u8]) -> impl Iterator<Item = &[u8]> {
 mod tests {
     use super::*;
     use axum::body::{Body, to_bytes};
-    use axum::http::Request;
+    use axum::http::{Request, header};
     use tokio::sync::mpsc::UnboundedReceiver;
     use tower::ServiceExt;
 
@@ -225,6 +225,31 @@ mod tests {
         if linked.is_ok() {
             assert_eq!(ask(&router, "GET", "/files/out.toml", Vec::new()).await.0, StatusCode::NOT_FOUND);
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_usd_robot_is_asked_for_as_a_model() {
+        let dir = std::env::temp_dir().join(format!("rant-hmi-test-robot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (client, project) = (dir.join("client"), dir.join("project"));
+        let cube = "#usda 1.0\ndef Cube \"box\"\n{\n}\n";
+        for (file, text) in [(client.join("index.html"), "page"), (project.join("files/box.usda"), cube), (project.join("files/bad.usda"), "not usd")] {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
+        }
+        let (door, _screens) = Door::new();
+        let router = router(&client, &project, door);
+        assert_eq!(ask(&router, "GET", "/files/box.usda", Vec::new()).await, (StatusCode::OK, Bytes::from(cube)));
+        let response = router.clone().oneshot(Request::get("/files/box.usda?as=glb").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let tag = response.headers()[header::ETAG].clone();
+        assert_eq!(&to_bytes(response.into_body(), usize::MAX).await.unwrap()[..4], b"glTF");
+        let again = Request::get("/files/box.usda?as=glb").header(header::IF_NONE_MATCH, tag).body(Body::empty()).unwrap();
+        assert_eq!(router.clone().oneshot(again).await.unwrap().status(), StatusCode::NOT_MODIFIED);
+        let (status, why) = ask(&router, "GET", "/files/bad.usda?as=glb", Vec::new()).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(String::from_utf8_lossy(&why).contains("could not read it as USD"), "{why:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

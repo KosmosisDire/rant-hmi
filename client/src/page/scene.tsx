@@ -5,7 +5,7 @@
 
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { drawing, onDrew } from "../net/connection";
-import type { Pose, Rgba, Shown, Vec3 } from "../net/draw";
+import type { Found, Pose, Rgba, Shown, Vec3 } from "../net/draw";
 import { column, numbers, refOf } from "../net/packed";
 import type { Element } from "../protocol/Element";
 import type { Value } from "../protocol/Value";
@@ -34,7 +34,8 @@ interface Read {
   sizes(key: string): Shown["size"];
   pose(key: string): Pose | undefined;
   text(key: string): string | undefined;
-  joints(key: string): Record<string, number | Pose> | undefined;
+  joints(key: string): Shown["joints"];
+  names(key: string): string[] | undefined;
   readonly drawn: Drawn;
 }
 
@@ -82,11 +83,13 @@ function rgbaList(v: unknown[]): Uint8Array | undefined {
   return out;
 }
 
-/** Sizes one per point, a copy of their numbers, or undefined unless each is one. */
-function sizeList(v: unknown[]): Float32Array | undefined {
+/** A list's numbers, or undefined unless each is one. They may be the list's own, so are
+ *  copied before they go. */
+function numberList(v: unknown): ArrayLike<number> | undefined {
+  if (!Array.isArray(v)) return undefined;
   const packed = numbers(v);
-  if (packed) return Float32Array.from(packed);
-  return v.every((n) => typeof n === "number" && Number.isFinite(n)) ? Float32Array.from(v as number[]) : undefined;
+  if (packed) return packed;
+  return v.every((n) => typeof n === "number" && Number.isFinite(n)) ? (v as number[]) : undefined;
 }
 
 /** Points' code, which may give a list the data worker keeps as it is. Anything else counts the
@@ -153,15 +156,18 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
         key,
         "a number, or a list of numbers one per point",
         (v) => {
-          const ref = refOf(v);
-          return ref ? { follow: ref } : Array.isArray(v) ? sizeList(v) : typeof v === "number" && Number.isFinite(v) ? v : undefined;
+          const [ref, list] = [refOf(v), numberList(v)];
+          return ref ? { follow: ref } : list ? Float32Array.from(list) : typeof v === "number" && Number.isFinite(v) ? v : undefined;
         },
         true,
       ),
     pose: (key) => as(key, "a pose, a position and an orientation each optional", poseOf),
     text: (key) => as(key, "text", (v) => (typeof v === "string" ? v : undefined)),
     joints: (key) =>
-      as(key, "names each with an angle or a pose", (v) => {
+      as(key, "names each with an angle or a pose, or a JointState", (v) => {
+        // a JointState's positions, as the page's change check passes over typed arrays
+        const listed = numberList(Array.isArray(v) ? v : (v as { position?: unknown } | null)?.position);
+        if (listed) return Array.from(listed);
         if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
         const joints: Record<string, number | Pose> = {};
         for (const [name, j] of Object.entries(v)) {
@@ -171,8 +177,13 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
         }
         return joints;
       }),
+    names: (key) =>
+      as(key, "a list of names or a JointNames", (v) => {
+        const list = Array.isArray(v) ? v : (v as { name?: unknown } | null)?.name;
+        return Array.isArray(list) && list.every((n) => typeof n === "string") ? [...list] : undefined;
+      }),
     get drawn() {
-      return { faults, unknown, slow: slowOf(slow) };
+      return { faults, unknown, warnings: slowOf(slow) };
     },
   };
 }
@@ -220,7 +231,7 @@ const SHOWS: Record<Part, (read: Read) => Omit<Shown, "visible">> = {
   cylinder: (r) => ({ radius: r.number("radius"), length: r.number("length"), opacity: r.number("opacity"), color: r.colour("color") }),
   points: (r) => ({ joined: r.flag("joined"), points: r.points("points"), size: r.sizes("size"), color: r.colours("color") }),
   grid: (r) => ({ size: r.number("size"), step: r.number("step"), color: r.colour("color") }),
-  model: (r) => ({ src: r.text("src"), joints: r.joints("joints") }),
+  model: (r) => ({ src: r.text("src"), joints: r.joints("joints"), names: r.names("names") }),
 };
 
 /** What a part reports to its scene: what it found, under a key of its own, and that it said
@@ -231,10 +242,10 @@ interface View {
 }
 
 let made = 0;
-/** Where what the worker found goes: a part's faults, a scene without WebGL. */
-const faultsOf = new Map<number, (faults: string[]) => void>();
+/** Where what the worker found goes: a part's faults and warnings, a scene without WebGL. */
+const foundOf = new Map<number, (found: Found) => void>();
 const blinds = new Map<number, () => void>();
-onDrew((d) => ("blind" in d ? blinds.get(d.blind)?.() : faultsOf.get(d.part)?.(d.faults)));
+onDrew((d) => ("blind" in d ? blinds.get(d.blind)?.() : foundOf.get(d.part)?.(d)));
 
 /** A part, or a copy of it per item when it repeats, in `parent`. */
 function Held(p: { element: Element; scope: Scope; scene: number; parent: number | null; view: View; design?: boolean }) {
@@ -252,10 +263,10 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
   drawing({ to: "part", part: id, scene: p.scene, parent: p.parent, kind: tag });
   // what the page read, and what the worker found showing it
   const [mine, setMine] = createSignal<Drawn>(CLEAN);
-  const [theirs, setTheirs] = createSignal<string[]>([]);
-  faultsOf.set(id, setTheirs);
+  const [theirs, setTheirs] = createSignal<Found>({ faults: [], warnings: [] });
+  foundOf.set(id, setTheirs);
   onCleanup(() => {
-    faultsOf.delete(id);
+    foundOf.delete(id);
     drawing({ to: "drop", part: id });
     p.view.found(key, null);
   });
@@ -281,7 +292,8 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
   createEffect(() => {
     const name = p.element.props.name ?? tag;
     const d = mine();
-    p.view.found(key, { faults: [...d.faults, ...theirs()].map((f) => `${name}: ${f}`), unknown: d.unknown, slow: d.slow.map((s) => `${name}: ${s}`) });
+    const named = (list: string[]) => list.map((f) => `${name}: ${f}`);
+    p.view.found(key, { faults: named([...d.faults, ...theirs().faults]), unknown: d.unknown, warnings: named([...d.warnings, ...theirs().warnings]) });
   });
   return <For each={p.element.children}>{(c) => <Held element={c} scope={p.scope} scene={p.scene} parent={id} view={p.view} design={p.design} />}</For>;
 }
@@ -303,7 +315,7 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
   createEffect(() => {
     const all = [camera().drawn, ...found().values(), ...(blind() ? [{ ...CLEAN, faults: ["this screen has no WebGL to draw a scene with"] }] : [])];
     const each = (pick: (d: Drawn) => string[]) => [...new Set(all.flatMap(pick))];
-    p.report(all.length === 1 ? all[0] : { faults: each((d) => d.faults), unknown: all.some((d) => d.unknown), slow: each((d) => d.slow) });
+    p.report(all.length === 1 ? all[0] : { faults: each((d) => d.faults), unknown: all.some((d) => d.unknown), warnings: each((d) => d.warnings) });
   });
   // the canvas's size in screen pixels, checked as it changes and as a part shows something new,
   // since a zoom changes it without a resize

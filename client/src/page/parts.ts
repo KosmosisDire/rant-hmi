@@ -17,7 +17,7 @@ export const PARTS = {
   points: { points: "[]", size: "0.05", joined: "false", color: "$accent" },
   grid: { size: "10", step: "1", color: "$border" },
   arrow: { vector: "vec(1, 0, 0)", color: "$accent" },
-  model: { src: '""', joints: "{}" },
+  model: { src: '""', joints: "{}", names: "[]" },
 } satisfies Partial<Record<Tag, Record<string, string>>>;
 
 export type Part = keyof typeof PARTS;

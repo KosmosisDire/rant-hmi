@@ -160,10 +160,14 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 | `points` | `points` | a list of points with `x`, `y` and `z`, as a Double3 list from the mesh |
 | `joined` | `points` | `true` to draw one line through them instead of dots |
 | `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
-| `src` | `model` | a glTF file, `.glb` or `.gltf`, as `"files/arm.glb"` or any URL |
-| `joints` | `model` | its named nodes moved from where the file puts them: `{ Elbow: 0.5 }` turns one by radians about its z, `{ Slide: { position: vec(0, 0, 0.2) } }` moves one by a pose |
+| `src` | `model` | a glTF file, `.glb` or `.gltf`, as `"files/arm.glb"` or any URL, or a USD robot in the project's files, as `"files/ur10e/ur10e.usd"` |
+| `joints` | `model` | for a USD robot, its joints by name, `{ elbow_joint: 0.5 }`, each turned by radians or slid by metres, or a JointState, as `Arm.JointState`. For glTF, its named nodes moved from where the file puts them: `{ Elbow: 0.5 }` turns one by radians about its z, `{ Slide: { position: vec(0, 0, 0.2) } }` moves one by a pose |
+| `names` | `model` | the joint each of a JointState's positions is for, a list or a JointNames, as `Arm.JointNames`. Left out, a USD robot takes its moving joints in the order Isaac Sim lists them |
 
 - An `anchor` draws nothing. It places what it holds by its pose, as a frame of a TF tree.
+- A USD robot reads as Isaac Sim saves one: its layers, references and variants, meshes and
+  shapes, colours and textures. Its collision shapes stay hidden. A layer or texture outside the
+  project's files is left out with a warning.
 - The camera moves only by its properties. A scene added in the editor comes with a `<var>`
   its camera reads and handlers that move it.
 

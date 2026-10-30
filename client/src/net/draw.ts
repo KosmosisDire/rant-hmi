@@ -18,6 +18,7 @@ import {
   HemisphereLight,
   Line,
   type Material,
+  Matrix4,
   Mesh,
   MeshLambertMaterial,
   type Object3D,
@@ -62,7 +63,9 @@ export interface Shown {
   points?: Float32Array | { follow: string };
   step?: number;
   src?: string;
-  joints?: Record<string, number | Pose>;
+  /** Values by joint or node name, or a JointState's positions in the order `names` gives. */
+  joints?: Record<string, number | Pose> | number[];
+  names?: string[];
 }
 
 /** Where a scene's camera orbits to, as `CAMERA` says. */
@@ -83,8 +86,14 @@ export type Drawing =
   | { to: "drop"; part: number }
   | { to: "end"; scene: number };
 
-/** What the scenes tell the page: a part's faults found here, or a scene that has no WebGL. */
-export type Drew = { part: number; faults: string[] } | { blind: number };
+/** What showing a part found: faults, and warnings for what it shows only in part. */
+export interface Found {
+  faults: string[];
+  warnings: string[];
+}
+
+/** What the scenes tell the page: what a part found here, or a scene that has no WebGL. */
+export type Drew = ({ part: number } & Found) | { blind: number };
 
 /** What the scenes need of the worker around them. */
 export interface Host {
@@ -180,16 +189,16 @@ interface Held {
   shown: Shown;
   /** The big values its points, colours and sizes follow, by property. */
   follows: Partial<Record<Followed, string>>;
-  /** The faults it told the page last. */
+  /** What it found that it told the page last. */
   said: string;
   /** Where its page is, which a model file it names is read from. */
   base: string;
 }
 
-/** How a part is made, and how it shows what it was told, adding the faults it finds. */
+/** How a part is made, and how it shows what it was told, adding what it finds. */
 interface Kind {
   make(): Object3D;
-  show(o: Object3D, s: Shown, faults: string[], h: Held): void;
+  show(o: Object3D, s: Shown, found: Found, h: Held): void;
 }
 
 /** A solid of one unit `geometry` that `shape` scales, lit, in its colour and opacity. */
@@ -215,8 +224,11 @@ function swap(o: Object3D, next?: Object3D) {
   if (next) o.add(next);
 }
 
-/** A model file as it loads: its scene, why it cannot be had, or null while it comes. */
-type Loaded = { scene: Object3D } | { error: string } | null;
+/** A model file as it loads: its scene and whether it is a USD robot, why it cannot be had, or
+ *  null while it comes. */
+type Loaded = { scene: Object3D; robot: boolean } | { error: string } | null;
+
+const USD = /\.usd[acz]?$/i;
 
 // each model file is loaded once, however many parts show it, which show it again once it comes
 const models = new Map<string, Loaded>();
@@ -224,15 +236,90 @@ let modelCame: (url: string) => void = () => {};
 function loaded(url: string): Loaded {
   if (!models.has(url)) {
     models.set(url, null);
-    new GLTFLoader()
-      .loadAsync(url)
+    const robot = USD.test(new URL(url).pathname);
+    (robot ? made(url) : new GLTFLoader().loadAsync(url))
       .then(
-        (m) => models.set(url, { scene: m.scene }),
+        (m) => models.set(url, { scene: m.scene, robot }),
         (e) => models.set(url, { error: e instanceof Error ? e.message : String(e) }),
       )
       .finally(() => modelCame(url));
   }
   return models.get(url)!;
+}
+
+/** A USD file as the HMI makes it into a glTF model, which says why it cannot as text. */
+async function made(url: string) {
+  const asked = new URL(url);
+  asked.searchParams.set("as", "glb");
+  const got = await fetch(asked);
+  if (!got.ok) throw new Error((await got.text()) || got.statusText);
+  return new GLTFLoader().parseAsync(await got.arrayBuffer(), "");
+}
+
+/** A model's values by joint or node name: a list of positions in the order `names` gives, else
+ *  in the order a USD robot lists the joints that move. */
+function named(model: Object3D, s: Shown, faults: string[]): Record<string, number | Pose> {
+  const list = s.joints;
+  if (!Array.isArray(list)) return list ?? {};
+  const given = !!s.names?.length;
+  const names: string[] = given ? s.names! : (model.userData.names ?? []);
+  if (names.length === 0) {
+    faults.push("joints: a list of positions needs names, as this model lists none");
+    return {};
+  }
+  const many = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
+  if (names.length !== list.length) faults.push(`joints: ${many(list.length, "position")} for ${many(names.length, given ? "name" : "moving joint")}`);
+  return Object.fromEntries(names.slice(0, list.length).map((name, i) => [name, list[i]]));
+}
+
+/** A USD robot's joint as the HMI lists it in its model, parents first. */
+interface Joint {
+  name: string;
+  kind: "revolute" | "prismatic" | "fixed";
+  /** The link it moves from, or null for the world. */
+  parent: string | null;
+  child: string;
+  axis: [number, number, number];
+  /** Where the joint is in the parent and in the child. */
+  frames: { translation: [number, number, number]; rotation: [number, number, number, number] }[];
+}
+
+const ONE = new Vector3(1, 1, 1);
+const frameOf = (f: Joint["frames"][number]) => new Matrix4().compose(new Vector3(...f.translation), new Quaternion(...f.rotation), ONE);
+
+/** Moves a USD robot's links by its joints, each child from its parent: a turning joint by an
+ *  angle in radians about its axis, a sliding one by metres along it. A joint given no value, or
+ *  a fixed one, keeps its child where the file puts it from its parent. */
+function move(model: Object3D, joints: Record<string, number | Pose>, faults: string[]) {
+  const list: Joint[] = model.userData.joints;
+  const links: Map<string, { node: Object3D; rest: Matrix4 }> = (model.userData.links ??= new Map());
+  if (links.size === 0) model.traverse((o) => o.userData.link && links.set(o.userData.link, { node: o, rest: o.matrix.clone() }));
+  const kinds = new Map(list.map((j) => [j.name, j.kind]));
+  for (const [name, value] of Object.entries(joints)) {
+    const kind = kinds.get(name);
+    if (!kind) faults.push(`joints: the model has no joint ${name}`);
+    else if (kind === "fixed") faults.push(`joints: ${name} is fixed`);
+    else if (typeof value !== "number") faults.push(`joints: ${name} takes a number, as it ${kind === "revolute" ? "turns" : "slides"}`);
+  }
+  const unit: number = model.userData.metersPerUnit ?? 1;
+  const world = new Map<string, Matrix4>();
+  for (const j of list) {
+    const child = links.get(j.child);
+    const parent = j.parent === null ? null : links.get(j.parent);
+    if (!child || parent === undefined) continue;
+    const at = parent ? (world.get(j.parent!) ?? parent.rest).clone() : new Matrix4();
+    const value = joints[j.name];
+    if (typeof value !== "number" || j.kind === "fixed") {
+      if (parent) at.multiply(parent.rest.clone().invert());
+      at.multiply(child.rest);
+    } else {
+      const axis = new Vector3(...j.axis);
+      const step = j.kind === "revolute" ? new Matrix4().makeRotationAxis(axis, value) : new Matrix4().makeTranslation(axis.multiplyScalar(value / unit));
+      at.multiply(frameOf(j.frames[0])).multiply(step).multiply(frameOf(j.frames[1]).invert());
+    }
+    world.set(j.child, at);
+    at.decompose(child.node.position, child.node.quaternion, child.node.scale);
+  }
 }
 
 const [X, Z] = [new Vector3(1, 0, 0), new Vector3(0, 0, 1)];
@@ -409,13 +496,13 @@ const KINDS: Record<Part, Kind> = {
   // dots, or one line through them, made again when that changes
   points: {
     make: () => new Group(),
-    show: (o, s, faults, h) => {
+    show: (o, s, found, h) => {
       const was = o.children[0];
       const px = scenes.get(h.scene)?.px ?? { value: 1 };
       if (s.joined !== undefined && (!was || was instanceof Line !== s.joined)) swap(o, s.joined ? new Line(new BufferGeometry(), dots(px)) : new Points(new BufferGeometry(), dots(px)));
       const drawn = o.children[0] as Line<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial> | undefined;
       if (!drawn) return;
-      lay(drawn, h, faults);
+      lay(drawn, h, found.faults);
       const m = drawn.material;
       if (Array.isArray(s.color)) m.uniforms.uColor.value.set(...s.color);
       if (typeof s.size === "number") m.uniforms.uSize.value = s.size;
@@ -439,10 +526,11 @@ const KINDS: Record<Part, Kind> = {
       if (grid) paint(grid.material as Painted, s);
     },
   },
-  // a glTF file, its scene shared with every part showing it and its named nodes turned
+  // a glTF file, or a USD robot the HMI makes into one, its scene shared with every part showing
+  // it, and its named nodes turned or its joints moved
   model: {
     make: () => new Group(),
-    show: (o, s, faults, h) => {
+    show: (o, s, found, h) => {
       if (s.src === undefined) return;
       const url = s.src.trim() === "" ? "" : new URL(s.src, h.base).href;
       if (o.userData.url !== url) {
@@ -450,7 +538,7 @@ const KINDS: Record<Part, Kind> = {
         swap(o);
       }
       const got = url === "" ? null : loaded(url);
-      if (got && "error" in got) return void faults.push(`src: ${s.src} cannot be loaded: ${got.error}`);
+      if (got && "error" in got) return void found.faults.push(`src: ${s.src} cannot be loaded: ${got.error}`);
       if (got && o.children.length === 0) {
         const copy = got.scene.clone();
         copy.userData.shared = true;
@@ -458,7 +546,13 @@ const KINDS: Record<Part, Kind> = {
         copy.quaternion.setFromAxisAngle(X, Math.PI / 2);
         o.add(copy);
       }
-      if (s.joints && o.children[0]) bend(o.children[0], s.joints, faults);
+      const model = o.children[0];
+      if (!got || !model) return;
+      if (got.robot) found.warnings.push(...(model.userData.problems as string[]).map((p) => `src: ${p}`));
+      if (s.joints === undefined) return;
+      const joints = named(model, s, found.faults);
+      if (got.robot) move(model, joints, found.faults);
+      else bend(model, joints, found.faults);
     },
   },
 };
@@ -540,9 +634,9 @@ function redraw(d: Drawn | undefined) {
   else setTimeout(drawAll, wait);
 }
 
-/** Shows what part `h` was told, and tells the page the faults that found once they change. */
+/** Shows what part `h` was told, and tells the page what that found once it changes. */
 function show(id: number, h: Held) {
-  const faults: string[] = [];
+  const found: Found = { faults: [], warnings: [] };
   const s = h.shown;
   if (s.pose) {
     const { position: at, orientation: turn } = s.pose;
@@ -550,13 +644,13 @@ function show(id: number, h: Held) {
     if (turn) h.o.quaternion.set(turn.x, turn.y, turn.z, turn.w).normalize();
     else h.o.quaternion.identity();
   }
-  KINDS[h.kind].show(h.o, s, faults, h);
+  KINDS[h.kind].show(h.o, s, found, h);
   // a value not known yet draws nothing rather than something untrue
   h.o.visible = s.visible;
-  const said = faults.join("\n");
+  const said = JSON.stringify(found);
   if (said !== h.said) {
     h.said = said;
-    host.post({ part: id, faults });
+    host.post({ part: id, ...found });
   }
   redraw(scenes.get(h.scene));
 }

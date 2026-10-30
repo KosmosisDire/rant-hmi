@@ -497,7 +497,7 @@ function ElementView(p: ElementProps & { at?: At }) {
   const [drawn, setDrawn] = createSignal<Drawn>(CLEAN);
   const faults = () => [...look().faults, ...drawn().faults];
   useFaults(() => p.element.id, faults);
-  useFaults(() => p.element.id, () => [...look().slow, ...drawn().slow], "warn");
+  useFaults(() => p.element.id, () => [...look().slow, ...drawn().warnings], "warn");
   const q = actingWhile(p, () => look().enabled);
   const press = usePress(q);
   const inner = (c: Element, i: () => number) => <Placed element={c} scope={p.scope} room={look().holder} order={i()} overrides={p.overrides} design={p.design} act={q.act} inside={p.inside} />;
@@ -645,7 +645,7 @@ function CanvasView(p: { context: Context; draw: string | undefined; scope: Scop
         const slow = new Set<string>();
         const r = time("draw", p.draw, () => runDraw(p.draw ?? "", p.scope, own), slow);
         if (r.ok && slow.size === 0) return p.report(CLEAN);
-        p.report({ faults: r.ok || r.unknown ? [] : [`draw: ${r.error}`], unknown: !r.ok && !!r.unknown, slow: slowOf(slow) });
+        p.report({ faults: r.ok || r.unknown ? [] : [`draw: ${r.error}`], unknown: !r.ok && !!r.unknown, warnings: slowOf(slow) });
       });
     };
     const schedule = oncePerFrame(draw);
