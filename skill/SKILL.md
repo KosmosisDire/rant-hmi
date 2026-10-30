@@ -162,5 +162,10 @@ choices below.
 - Keep logic in objects where it fits: a `<computed>` for a derived value, a `<record>` for a
   plot's history, an `<on>` with `every`, `when` or `change` for what must happen with no
   screen open. Page handlers are for what an operator does.
+- To show a PointCloud, LaserScan, Path or Polyline, give it whole to a `points` part in a
+  `<scene>`, as `points="Cell.Cloud"`, with `joined="true"` for a line. A Mesh goes to a `mesh`
+  part and a Grid to a `grid` part. The GPU reads their bytes, so never unpack them in a
+  computed value or a canvas. `field='"intensity"'` colours them from blue to red, and
+  `range="[0, 255]"` sets its ends and hides what falls outside. A `floor` draws ground lines.
 - A choice for the machine is a `<var>` with `per="hmi"`. An operator's own, as a jog mode or
   a picked tab, is a `<var>` each screen keeps.
