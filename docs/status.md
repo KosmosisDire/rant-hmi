@@ -48,7 +48,7 @@ What is wrong now, as the editor's list shows them:
 | Field | Is |
 | --- | --- |
 | `screen` | the screen that found it, 0 for the HMI itself |
-| `source` | `page` for a value or drawing that fails, `run` for a handler or logic that stopped, `hmi` for a fault in the HMI itself |
+| `source` | `page` for a value or drawing that fails or runs over half a frame, `run` for a handler or logic that stopped or ran long, `hmi` for a fault in the HMI itself |
 | `level` | `warn` or `fault` |
 | `text` | what went wrong |
 | `page`, `element` | where it is, empty for none |

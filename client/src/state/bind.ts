@@ -595,14 +595,25 @@ setClock(() => {
 const MATH_NAMES = Object.keys(LIBRARY);
 const MATH = Object.values(LIBRARY);
 
-/** `body` as a function of the scope with math's arithmetic and names, or why it does not
- *  compile. Code says on which line, past the `lines` the body adds before it. */
-function make<T>(body: string, lines?: number): T | string {
+/** The ms spent making code into functions so far, which never counts as time the code took. */
+let making = 0;
+export const makingMs = () => making;
+
+/** `code` in the `body` it wraps it in, as a function of the scope with math's arithmetic and
+ *  names, or why it does not compile, made once and kept in `kept`. Code says on which line,
+ *  past the `lines` the body adds before it. */
+function make<T>(kept: Map<string, T | string>, code: string, body: (code: string) => string, lines?: number): T | string {
+  let fn = kept.get(code);
+  if (fn !== undefined) return fn;
+  const start = performance.now();
   try {
-    return new Function("scope", ...MATH_NAMES, arith(body, lines)) as T;
+    fn = new Function("scope", ...MATH_NAMES, arith(body(code), lines)) as T;
   } catch (e) {
-    return (e as Error).message ?? String(e);
+    fn = (e as Error).message ?? String(e);
   }
+  making += performance.now() - start;
+  kept.set(code, fn);
+  return fn;
 }
 
 const handlers = new Map<string, ((scope: object, ...math: unknown[]) => Promise<void>) | string>();
@@ -611,11 +622,7 @@ const handlers = new Map<string, ((scope: object, ...math: unknown[]) => Promise
  *  the inputs, a two way one written back, or a page's that touches only the screen's own.
  *  Any other name is refused, so nothing leaks onto the page. */
 export function runHandler(code: string, scope: Scope, emit: ((name: string, payload?: unknown) => void) | undefined, p: unknown, from: From) {
-  let fn = handlers.get(code);
-  if (fn === undefined) {
-    fn = make<(scope: object, ...math: unknown[]) => Promise<void>>(`return (async () => { with (scope) {\n${code}\n} })();`, 1);
-    handlers.set(code, fn);
-  }
+  const fn = make(handlers, code, (c) => `return (async () => { with (scope) {\n${c}\n} })();`, 1);
   if (typeof fn === "string") return ranInto(from, fn, "fault");
   const own: Record<string, unknown> = emit ? { p, emit } : { p };
   // the run reads back what it wrote, as the backend's runs do, before the binding catches up.
@@ -692,11 +699,7 @@ const drawers = new Map<string, ((scope: object, ...math: unknown[]) => void) | 
 /** Runs a canvas's draw code with `own`, its context and size, over a scope it only reads. Run
  *  in a tracking scope, it follows what the code read, as an expression does. */
 export function runDraw(code: string, scope: Scope, own: Record<string, unknown>): Resolved {
-  let fn = drawers.get(code);
-  if (fn === undefined) {
-    fn = make<(scope: object, ...math: unknown[]) => void>(`with (scope) {\n${code}\n}`, 1);
-    drawers.set(code, fn);
-  }
+  const fn = make(drawers, code, (c) => `with (scope) {\n${c}\n}`, 1);
   if (typeof fn === "string") return { ok: false, error: fn };
   const names = new Proxy(
     {},
@@ -743,13 +746,8 @@ export function colours(src: string): string {
 const compiled = new Map<string, ((scope: object, ...math: unknown[]) => unknown) | string>();
 
 function compile(src: string): ((scope: object, ...math: unknown[]) => unknown) | string {
-  let fn = compiled.get(src);
-  if (fn === undefined) {
-    // `with` routes bare names through the scope, which needs sloppy mode, as new Function gives
-    fn = make<(scope: object, ...math: unknown[]) => unknown>(`with (scope) { return (${colours(src)}\n); }`);
-    compiled.set(src, fn);
-  }
-  return fn;
+  // `with` routes bare names through the scope, which needs sloppy mode, as new Function gives
+  return make(compiled, src, (c) => `with (scope) { return (${colours(c)}\n); }`);
 }
 
 /** A property's value now. Run inside a memo, it updates when what it reads changes. */

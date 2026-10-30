@@ -15,6 +15,7 @@ import { readFar, readWhole } from "../state/store";
 import { onResize } from "../ui/size";
 import { kind } from "../lang/math.js";
 import { CLEAN, type Drawn, oncePerFrame, pixelsOf } from "./drawing";
+import { slowOf, timer } from "./slow";
 import { CAMERA, isPart, type Part, PARTS, POSE, rgbaOf } from "./parts";
 import { Repeated } from "./repeat";
 
@@ -96,23 +97,31 @@ function farResolve(code: string | undefined, scope: Scope): Resolved {
   return r;
 }
 
-function reader(props: Element["props"], defaults: Record<string, string>, scope: Scope): Read {
+/** What `props` read as, each timed by `time`, which the part or scene keeps between reads. */
+function reader(props: Element["props"], defaults: Record<string, string>, scope: Scope, time: ReturnType<typeof timer>): Read {
   const faults: string[] = [];
+  const slow = new Set<string>();
   let unknown = false;
   // a value that will not read gives way to the default, as CSS drops one it cannot take
-  const as = <T,>(key: string, what: string, read: (v: unknown) => T | undefined, far = false): T | undefined => {
-    for (const code of props[key] === undefined ? [defaults[key]] : [props[key], defaults[key]]) {
-      const r = far ? farResolve(code, scope) : resolve(code, scope);
-      if (!r.ok && r.unknown) {
-        unknown = true;
+  const as = <T,>(key: string, what: string, read: (v: unknown) => T | undefined, far = false): T | undefined =>
+    time(
+      key,
+      props[key],
+      () => {
+        for (const code of props[key] === undefined ? [defaults[key]] : [props[key], defaults[key]]) {
+          const r = far ? farResolve(code, scope) : resolve(code, scope);
+          if (!r.ok && r.unknown) {
+            unknown = true;
+            return undefined;
+          }
+          const v = r.ok ? read(r.value) : undefined;
+          if (v !== undefined) return v;
+          if (code === props[key]) faults.push(r.ok ? `${key}: ${short(r.value as Value)} is not ${what}` : `${key}: ${r.error}`);
+        }
         return undefined;
-      }
-      const v = r.ok ? read(r.value) : undefined;
-      if (v !== undefined) return v;
-      if (code === props[key]) faults.push(r.ok ? `${key}: ${short(r.value as Value)} is not ${what}` : `${key}: ${r.error}`);
-    }
-    return undefined;
-  };
+      },
+      slow,
+    );
   const vector = (v: unknown) => (kind(v) === "vec3" ? vec3(v as Vec3) : undefined);
   return {
     number: (key) => as(key, "a number", (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)),
@@ -163,7 +172,7 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
         return joints;
       }),
     get drawn() {
-      return { faults, unknown };
+      return { faults, unknown, slow: slowOf(slow) };
     },
   };
 }
@@ -252,8 +261,9 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
   });
   // what was sent last, as a new value often reads the same, and the worker draws what it follows
   let said = "";
+  const time = timer();
   createEffect(() => {
-    const read = reader(p.element.props, PARTS[tag], p.scope);
+    const read = reader(p.element.props, PARTS[tag], p.scope, time);
     const pose = read.pose(POSE);
     const shown: Shown = { ...SHOWS[tag](read), pose, visible: false };
     const d = read.drawn;
@@ -271,7 +281,7 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
   createEffect(() => {
     const name = p.element.props.name ?? tag;
     const d = mine();
-    p.view.found(key, { faults: [...d.faults, ...theirs()].map((f) => `${name}: ${f}`), unknown: d.unknown });
+    p.view.found(key, { faults: [...d.faults, ...theirs()].map((f) => `${name}: ${f}`), unknown: d.unknown, slow: d.slow.map((s) => `${name}: ${s}`) });
   });
   return <For each={p.element.children}>{(c) => <Held element={c} scope={p.scope} scene={p.scene} parent={id} view={p.view} design={p.design} />}</For>;
 }
@@ -285,13 +295,15 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
   const [blind, setBlind] = createSignal(false);
   // what each part found, which the scene shows as its own
   const [found, setFound] = createSignal(new Map<symbol, Drawn>(), { equals: false });
+  const time = timer();
   const camera = createMemo(() => {
-    const read = reader(p.element.props, CAMERA, p.scope);
+    const read = reader(p.element.props, CAMERA, p.scope, time);
     return { target: read.vector("target"), yaw: read.number("yaw"), pitch: read.number("pitch"), distance: read.number("distance"), drawn: read.drawn };
   });
   createEffect(() => {
-    const all = [camera().drawn, ...found().values(), ...(blind() ? [{ faults: ["this screen has no WebGL to draw a scene with"], unknown: false }] : [])];
-    p.report(all.length === 1 ? all[0] : { faults: [...new Set(all.flatMap((d) => d.faults))], unknown: all.some((d) => d.unknown) });
+    const all = [camera().drawn, ...found().values(), ...(blind() ? [{ ...CLEAN, faults: ["this screen has no WebGL to draw a scene with"] }] : [])];
+    const each = (pick: (d: Drawn) => string[]) => [...new Set(all.flatMap(pick))];
+    p.report(all.length === 1 ? all[0] : { faults: each((d) => d.faults), unknown: all.some((d) => d.unknown), slow: each((d) => d.slow) });
   });
   // the canvas's size in screen pixels, checked as it changes and as a part shows something new,
   // since a zoom changes it without a resize

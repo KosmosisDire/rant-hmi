@@ -22,6 +22,7 @@ import { FIT, picture, PictureView } from "../ui/Picture";
 import { follow, taken } from "../ui/press";
 import { componentAct, type Act, numberOf, QUICKEST } from "./act";
 import { CLEAN, type Drawn, oncePerFrame, pixelsOf } from "./drawing";
+import { slowOf, timer } from "./slow";
 import { useGamepads } from "./gamepads";
 import { useKeys } from "./keys";
 import { svgOf } from "./markup";
@@ -382,12 +383,14 @@ function usePress(p: ElementProps & { at?: At }) {
 function ElementView(p: ElementProps & { at?: At }) {
   if (SHAPES.has(p.element.tag)) return <ShapeView {...p} />;
   if (p.element.tag === "group") return <GroupView {...p} />;
+  const time = timer();
   const look = createMemo(() => {
     const style: Record<string, string> = {};
     const faults: string[] = [];
+    const slow = new Set<string>();
     let unknown = false;
     const take = (key: string, text = p.element.props[key], how = resolve): unknown => {
-      const r = how(text, p.scope);
+      const r = time(key, text, () => how(text, p.scope), slow);
       if (r.ok) return r.value;
       if (r.unknown) unknown = true;
       else faults.push(`${key}: ${r.error}`);
@@ -488,12 +491,13 @@ function ElementView(p: ElementProps & { at?: At }) {
     // one not enabled dims, and one not worked out yet counts as not enabled
     const enabled = p.element.props.enabled === undefined || !!take("enabled");
     if (!enabled) style.opacity = String(Number(style.opacity ?? 1) * DIM);
-    return { style, unknown, faults, text, value, diagram, markup, canvas, media, scroller, enabled, holder: { ox, oy, flow, first } as Holder };
+    return { style, unknown, faults, slow: slowOf(slow), text, value, diagram, markup, canvas, media, scroller, enabled, holder: { ox, oy, flow, first } as Holder };
   });
   // what its own drawing found last, known only once it draws
   const [drawn, setDrawn] = createSignal<Drawn>(CLEAN);
   const faults = () => [...look().faults, ...drawn().faults];
   useFaults(() => p.element.id, faults);
+  useFaults(() => p.element.id, () => [...look().slow, ...drawn().slow], "warn");
   const q = actingWhile(p, () => look().enabled);
   const press = usePress(q);
   const inner = (c: Element, i: () => number) => <Placed element={c} scope={p.scope} room={look().holder} order={i()} overrides={p.overrides} design={p.design} act={q.act} inside={p.inside} />;
@@ -623,10 +627,11 @@ function CanvasView(p: { context: Context; draw: string | undefined; scope: Scop
   let canvas!: HTMLCanvasElement;
   onMount(() => {
     const ctx = p.context === "2d" ? canvas.getContext("2d") : canvas.getContext("webgl2");
-    if (!ctx) return p.report({ faults: [`context: this screen has no ${p.context} context`], unknown: false });
+    if (!ctx) return p.report({ ...CLEAN, faults: [`context: this screen has no ${p.context} context`] });
     // what the code made once, until the context is lost
     let keep: Record<string, unknown> = {};
     let gone = false;
+    const time = timer();
     const draw = () => {
       if (gone) return;
       const { w, h, k, pw, ph } = pixelsOf(canvas);
@@ -637,8 +642,10 @@ function CanvasView(p: { context: Context; draw: string | undefined; scope: Scop
       } else ctx.viewport(0, 0, pw, ph);
       const own = { [p.context === "2d" ? "ctx" : "gl"]: ctx, width: w / UNIT, height: h / UNIT, keep };
       track(() => {
-        const r = runDraw(p.draw ?? "", p.scope, own);
-        p.report(r.ok ? CLEAN : { faults: r.unknown ? [] : [`draw: ${r.error}`], unknown: !!r.unknown });
+        const slow = new Set<string>();
+        const r = time("draw", p.draw, () => runDraw(p.draw ?? "", p.scope, own), slow);
+        if (r.ok && slow.size === 0) return p.report(CLEAN);
+        p.report({ faults: r.ok || r.unknown ? [] : [`draw: ${r.error}`], unknown: !r.ok && !!r.unknown, slow: slowOf(slow) });
       });
     };
     const schedule = oncePerFrame(draw);
@@ -657,17 +664,19 @@ function CanvasView(p: { context: Context; draw: string | undefined; scope: Scop
 
 /** A shape in a diagram: each property an SVG attribute, its value an expression. */
 function ShapeView(p: ElementProps & { at?: At }) {
+  const time = timer();
   const look = createMemo(() => {
     const attrs: Record<string, string> = {};
     const style: Record<string, string> = {};
     const faults: string[] = [];
+    const slow = new Set<string>();
     let unknown = false;
     let text = "";
     // one not worked out yet counts as not enabled
     let enabled = p.element.props.enabled === undefined;
     for (const [key, value] of Object.entries(p.element.props)) {
       if (key === "name" || key === "repeat") continue;
-      const r = resolve(value, p.scope);
+      const r = time(key, value, () => resolve(value, p.scope), slow);
       if (!r.ok) {
         if (r.unknown) unknown = true;
         else faults.push(`${key}: ${r.error}`);
@@ -683,9 +692,10 @@ function ShapeView(p: ElementProps & { at?: At }) {
     if (Object.keys(style).length > 0) Object.assign(style, { "transform-box": "fill-box", "transform-origin": style["transform-origin"] ?? "50% 50%" });
     // CSS opacity overrides the attribute's
     if (!enabled) style.opacity = String(Number(attrs.opacity ?? 1) * DIM);
-    return { attrs, style, faults, unknown, text, enabled };
+    return { attrs, style, faults, slow: slowOf(slow), unknown, text, enabled };
   });
   useFaults(() => p.element.id, () => look().faults);
+  useFaults(() => p.element.id, () => look().slow, "warn");
   const q = actingWhile(p, () => look().enabled);
   const press = usePress(q);
   return (

@@ -1,14 +1,15 @@
 // What a canvas and a scene share: drawing at most once a frame, at the pixels they cover on
 // the screen, and what a drawing found that the element shows.
 
-/** What an element's own drawing found last: faults to show in the editor, and whether a value
- *  it reads is not known yet. */
+/** What an element's own drawing found last: faults to show in the editor, whether a value it
+ *  reads is not known yet, and warnings for what ran slow. */
 export interface Drawn {
   faults: string[];
   unknown: boolean;
+  slow: string[];
 }
 
-export const CLEAN: Drawn = { faults: [], unknown: false };
+export const CLEAN: Drawn = { faults: [], unknown: false, slow: [] };
 
 /** A function that runs `draw` soon after it is called, at most once a frame: in the frame the
  *  call came in when that frame has not drawn yet, else in the next. */
