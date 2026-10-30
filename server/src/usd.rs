@@ -77,8 +77,10 @@ pub fn make(file: &Path, folder: &Path) -> Result<Made, String> {
     for prim in children(&top) {
         robot.walk(&prim, None, false);
     }
+    // a file is named from the files folder, as the page names it
+    let within = format!("{}{}", folder.display(), std::path::MAIN_SEPARATOR);
     for problem in stage.composition_errors() {
-        robot.problems.insert(problem.to_string());
+        robot.problems.insert(problem.to_string().replace(&within, ""));
     }
     let mut read: Vec<PathBuf> = stage.layer_identifiers().into_iter().map(PathBuf::from).filter(|p| p.is_file()).collect();
     read.extend(robot.images.keys().cloned());
@@ -1354,6 +1356,9 @@ over "arm"
 def Xform "robot" (prepend references = @../arm.usda@)
 {
 }
+def Xform "ghost" (prepend references = </nothing>)
+{
+}
 def Cube "box"
 {
 }
@@ -1363,6 +1368,8 @@ def Cube "box"
         assert_eq!(doc["meshes"].as_array().unwrap().len(), 1);
         let problems = doc["scenes"][0]["extras"]["problems"].to_string();
         assert!(problems.contains("arm.usda"), "{problems}");
+        // a file in the folder is named from it
+        assert!(problems.contains("@robot.usda@</nothing>"), "{problems}");
         let real = fs::canonicalize(&inside).unwrap();
         assert!(made.read.iter().all(|p| p.starts_with(&real)), "{:?}", made.read);
     }
