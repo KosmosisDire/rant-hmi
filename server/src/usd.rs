@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
+use meshopt::{EncodeExpMode, decode_filter_exp, encode_filter_exp, encode_filter_oct, encode_index_buffer, encode_vertex_buffer};
 use openusd::ar::{self, Resolver};
 use openusd::{gf, sdf, usd};
 use openusd_schemas::geom::{Interpolation, Primvar, PrimvarsAPI, XformCache};
@@ -538,8 +539,11 @@ impl<'s> Robot<'s> {
         }
     }
 
-    /// Writes the meshes and their nodes, and says whether any is drawn as instances. Parts that
-    fn lay_out(&mut self) -> bool {
+    /// Writes the meshes and their nodes. Parts that move together, each showing a piece no
+    /// other part shows, are joined by material, so a hall of thousands of props draws in a few
+    /// calls. The copies of one piece on one link are its instances. A see through part stays
+    /// alone, as each is drawn in order of how far it is.
+    fn lay_out(&mut self) -> Result<(), String> {
         let mut uses = vec![0usize; self.pieces.len()];
         for part in &self.parts {
             uses[part.piece] += 1;
@@ -575,7 +579,7 @@ impl<'s> Robot<'s> {
         }
         for ((link, material, _, _), shape) in joined {
             let name = self.material_list[material]["name"].as_str().unwrap_or_default().to_string();
-            let mesh = self.write_mesh(&shape, &[material], &name);
+            let mesh = self.write_mesh(&shape, &[material], &name)?;
             let node = self.node(json!({ "name": name, "mesh": mesh }));
             self.attach(node, link);
         }
@@ -586,7 +590,7 @@ impl<'s> Robot<'s> {
                 None => {
                     let Piece { shape, looks, double, name } = std::mem::take(&mut self.pieces[piece]);
                     let materials: Vec<usize> = looks.iter().map(|look| self.material(look, double)).collect();
-                    let mesh = self.write_mesh(&shape, &materials, &name);
+                    let mesh = self.write_mesh(&shape, &materials, &name)?;
                     self.pieces[piece].name = name;
                     written.insert(piece, mesh);
                     mesh
@@ -616,7 +620,10 @@ impl<'s> Robot<'s> {
                 self.attach(node, link);
             }
         }
-        instanced
+        if instanced {
+            self.glb.used.insert("EXT_mesh_gpu_instancing");
+        }
+        Ok(())
     }
 
     /// The look bound to the prim, else its display colour, else plain grey.
@@ -831,24 +838,26 @@ impl<'s> Robot<'s> {
     }
 
     /// Writes a mesh, each face group drawn in the material its look's place in `materials` names.
-    fn write_mesh(&mut self, shape: &Shape, materials: &[usize], name: &str) -> usize {
-        let mut attributes = json!({ "POSITION": self.glb.floats(&shape.positions, "VEC3", true) });
+    /// A position keeps 16 bits, a texture coordinate 14 and a colour 12, a fraction of a
+    /// millimetre on a robot and a few on a hall.
+    fn write_mesh(&mut self, shape: &Shape, materials: &[usize], name: &str) -> Result<usize, String> {
+        let mut attributes = json!({ "POSITION": self.glb.floats(&shape.positions, "VEC3", 16, true)? });
         if !shape.normals.is_empty() {
-            attributes["NORMAL"] = json!(self.glb.floats(&shape.normals, "VEC3", false));
+            attributes["NORMAL"] = json!(self.glb.normals(&shape.normals)?);
         }
         if !shape.uvs.is_empty() {
-            attributes["TEXCOORD_0"] = json!(self.glb.floats(&shape.uvs, "VEC2", false));
+            attributes["TEXCOORD_0"] = json!(self.glb.floats(&shape.uvs, "VEC2", 14, false)?);
         }
         if !shape.colors.is_empty() {
-            attributes["COLOR_0"] = json!(self.glb.floats(&shape.colors, "VEC3", false));
+            attributes["COLOR_0"] = json!(self.glb.floats(&shape.colors, "VEC3", 12, false)?);
         }
-        let primitives: Vec<Value> = shape
-            .groups
-            .iter()
-            .map(|(look, indices)| json!({ "attributes": attributes, "indices": self.glb.indices(indices), "material": materials[*look] }))
-            .collect();
+        let mut primitives = Vec::new();
+        for (look, indices) in &shape.groups {
+            let indices = self.glb.indices(indices, shape.positions.len())?;
+            primitives.push(json!({ "attributes": attributes, "indices": indices, "material": materials[*look] }));
+        }
         self.mesh_list.push(json!({ "name": name, "primitives": primitives }));
-        self.mesh_list.len() - 1
+        Ok(self.mesh_list.len() - 1)
     }
 
     fn material(&mut self, look: &Look, double: bool) -> usize {
@@ -1039,7 +1048,7 @@ impl<'s> Robot<'s> {
             }
             return Err(why);
         }
-        let instanced = self.lay_out();
+        self.lay_out().map_err(|e| format!("could not pack its meshes: {e}"))?;
         let up = self.stage.stage_metadata("upAxis").ok().flatten();
         let z_up = up.as_ref().and_then(sdf::Value::as_str) == Some("Z");
         let unit = match self.stage.stage_metadata("metersPerUnit").ok().flatten() {
@@ -1075,9 +1084,6 @@ impl<'s> Robot<'s> {
         if !textures.is_empty() {
             doc["textures"] = json!(textures);
             doc["samplers"] = json!([{ "wrapS": 10497, "wrapT": 10497 }]);
-        }
-        if instanced {
-            doc["extensionsUsed"] = json!(["EXT_mesh_gpu_instancing"]);
         }
         Ok((self.glb.finish(doc), whole, self.images.into_keys().collect()))
     }
@@ -1550,13 +1556,19 @@ fn colors(v: &sdf::Value) -> Vec<[f32; 3]> {
     }
 }
 
-/// A glTF binary's buffer and the views and accessors into it.
+/// A glTF binary's buffer and the views and accessors into it. A mesh's views are packed by
+/// meshopt, and decode into a second buffer only a reader makes.
 #[derive(Default)]
 struct Glb {
     bin: Vec<u8>,
+    /// How long the packed views are once decoded, together.
+    unpacked: usize,
     views: Vec<Value>,
     accessors: Vec<Value>,
     images: Vec<Value>,
+    /// The extensions the model uses, and those a reader must know to read it.
+    used: BTreeSet<&'static str>,
+    required: BTreeSet<&'static str>,
 }
 
 impl Glb {
@@ -1571,18 +1583,57 @@ impl Glb {
         self.views.len() - 1
     }
 
-    fn floats<const N: usize>(&mut self, data: &[[f32; N]], kind: &str, bounds: bool) -> usize {
-        let bytes: Vec<u8> = data.iter().flatten().flat_map(|f| f.to_le_bytes()).collect();
-        let view = self.view(&bytes, Some(34962));
+    /// A view of `count` items `stride` bytes long, packed by meshopt as `mode` and decoded
+    /// through `filter`.
+    fn packed(&mut self, packed: &[u8], count: usize, stride: usize, mode: &str, filter: Option<&str>, target: u32) -> usize {
+        self.bin.resize(self.bin.len().next_multiple_of(4), 0);
+        let mut how = json!({ "buffer": 0, "byteOffset": self.bin.len(), "byteLength": packed.len(), "byteStride": stride, "mode": mode, "count": count });
+        if let Some(filter) = filter {
+            how["filter"] = json!(filter);
+        }
+        self.bin.extend_from_slice(packed);
+        let mut view = json!({ "buffer": 1, "byteOffset": self.unpacked, "byteLength": count * stride, "target": target, "extensions": { "KHR_meshopt_compression": how } });
+        // only vertex attributes take a stride
+        if target == 34962 {
+            view["byteStride"] = json!(stride);
+        }
+        self.unpacked = (self.unpacked + count * stride).next_multiple_of(4);
+        self.used.insert("KHR_meshopt_compression");
+        self.required.insert("KHR_meshopt_compression");
+        self.views.push(view);
+        self.views.len() - 1
+    }
+
+    /// Numbers for a vertex attribute, kept to `bits` with an exponent each component shares, as
+    /// meshopt packs floats best. Bounds are of what the reader decodes.
+    fn floats<const N: usize>(&mut self, data: &[[f32; N]], kind: &str, bits: i32, bounds: bool) -> Result<usize, String> {
+        let mut kept = encode_filter_exp(data, bits, EncodeExpMode::SharedComponent);
+        let packed = encode_vertex_buffer(&kept).map_err(|e| e.to_string())?;
+        let view = self.packed(&packed, data.len(), N * 4, "ATTRIBUTES", Some("EXPONENTIAL"), 34962);
         let mut accessor = json!({ "bufferView": view, "componentType": 5126, "count": data.len(), "type": kind });
         if bounds {
-            let min: [f32; N] = std::array::from_fn(|i| data.iter().map(|v| v[i]).fold(f32::INFINITY, f32::min));
-            let max: [f32; N] = std::array::from_fn(|i| data.iter().map(|v| v[i]).fold(f32::NEG_INFINITY, f32::max));
+            decode_filter_exp(&mut kept);
+            let read: Vec<[f32; N]> = kept.iter().map(|v| v.map(f32::from_bits)).collect();
+            let min: [f32; N] = std::array::from_fn(|i| read.iter().map(|v| v[i]).fold(f32::INFINITY, f32::min));
+            let max: [f32; N] = std::array::from_fn(|i| read.iter().map(|v| v[i]).fold(f32::NEG_INFINITY, f32::max));
             accessor["min"] = json!(min.to_vec());
             accessor["max"] = json!(max.to_vec());
         }
         self.accessors.push(accessor);
-        self.accessors.len() - 1
+        Ok(self.accessors.len() - 1)
+    }
+
+    /// Unit normals as two signed bytes on an octahedron, which KHR_mesh_quantization lets a
+    /// normal be.
+    fn normals(&mut self, data: &[[f32; 3]]) -> Result<usize, String> {
+        let four: Vec<[f32; 4]> = data.iter().map(|n| [n[0], n[1], n[2], 0.0]).collect();
+        let kept: Vec<[i8; 4]> = encode_filter_oct(&four, 8);
+        let packed = encode_vertex_buffer(&kept).map_err(|e| e.to_string())?;
+        let view = self.packed(&packed, data.len(), 4, "ATTRIBUTES", Some("OCTAHEDRAL"), 34962);
+        self.used.insert("KHR_mesh_quantization");
+        self.required.insert("KHR_mesh_quantization");
+        self.accessors.push(json!({ "bufferView": view, "componentType": 5120, "normalized": true, "count": data.len(), "type": "VEC3" }));
+        Ok(self.accessors.len() - 1)
     }
 
     /// Numbers an extension reads, as instances' transforms, which take no target.
@@ -1593,16 +1644,28 @@ impl Glb {
         self.accessors.len() - 1
     }
 
-    fn indices(&mut self, data: &[u32]) -> usize {
-        let bytes: Vec<u8> = data.iter().flat_map(|i| i.to_le_bytes()).collect();
-        let view = self.view(&bytes, Some(34963));
-        self.accessors.push(json!({ "bufferView": view, "componentType": 5125, "count": data.len(), "type": "SCALAR" }));
-        self.accessors.len() - 1
+    /// Triangles, two bytes a corner when `vertices` allows.
+    fn indices(&mut self, data: &[u32], vertices: usize) -> Result<usize, String> {
+        let packed = encode_index_buffer(data, vertices).map_err(|e| e.to_string())?;
+        let (stride, kind) = if vertices <= 1 << 16 { (2, 5123) } else { (4, 5125) };
+        let view = self.packed(&packed, data.len(), stride, "TRIANGLES", None, 34963);
+        self.accessors.push(json!({ "bufferView": view, "componentType": kind, "count": data.len(), "type": "SCALAR" }));
+        Ok(self.accessors.len() - 1)
     }
 
     fn finish(mut self, mut doc: Value) -> Vec<u8> {
         self.bin.resize(self.bin.len().next_multiple_of(4), 0);
-        doc["buffers"] = json!([{ "byteLength": self.bin.len() }]);
+        let mut buffers = vec![json!({ "byteLength": self.bin.len() })];
+        if self.unpacked > 0 {
+            buffers.push(json!({ "byteLength": self.unpacked, "extensions": { "KHR_meshopt_compression": { "fallback": true } } }));
+        }
+        doc["buffers"] = json!(buffers);
+        if !self.used.is_empty() {
+            doc["extensionsUsed"] = json!(self.used);
+        }
+        if !self.required.is_empty() {
+            doc["extensionsRequired"] = json!(self.required);
+        }
         doc["bufferViews"] = json!(self.views);
         doc["accessors"] = json!(self.accessors);
         if !self.images.is_empty() {
@@ -1961,7 +2024,8 @@ def Xform "hall"
         let glb = make(&dir.join("hall.usda"), &dir).unwrap().glb;
         let doc = json_of(&glb);
         assert_eq!(doc["meshes"].as_array().unwrap().len(), 1);
-        assert_eq!(doc["extensionsUsed"], json!(["EXT_mesh_gpu_instancing"]));
+        assert_eq!(doc["extensionsUsed"], json!(["EXT_mesh_gpu_instancing", "KHR_mesh_quantization", "KHR_meshopt_compression"]));
+        assert_eq!(doc["extensionsRequired"], json!(["KHR_mesh_quantization", "KHR_meshopt_compression"]));
         let node = doc["nodes"].as_array().unwrap().iter().find(|n| n["mesh"].is_number()).unwrap();
         let attributes = &node["extensions"]["EXT_mesh_gpu_instancing"]["attributes"];
         let numbers = |name: &str| numbers_of(&glb, &doc, attributes[name].as_u64().unwrap() as usize);

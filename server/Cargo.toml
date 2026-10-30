@@ -24,6 +24,8 @@ getrandom = "0.3"
 if-addrs = "0.15"
 # a big column of numbers goes to a screen shuffled and LZ4 compressed, a block only
 lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode"] }
+# a USD robot's meshes go to a screen packed as three.js's MeshoptDecoder reads them
+meshopt = "0.7"
 notify = "8"
 # a USD robot a scene shows, read with its layers composed as Isaac Sim writes them
 openusd = "0.8"

@@ -88,6 +88,11 @@ Claude's:
   (`EXT_mesh_gpu_instancing`). A see through part stays alone, as each is drawn in order of how
   far it is. Copies of a material, as each copy of a prop brings, are one. The office scene went
   from 4265 draws to 394, a warehouse from 921 to 81.
+- **Packing**: meshes are packed by meshopt (`KHR_meshopt_compression`), which three.js
+  decodes in WebAssembly. A position keeps 16 bits with an exponent shared per component, a
+  fraction of a millimetre on a robot and a few on a hall, a normal two bytes on an octahedron
+  (`KHR_mesh_quantization`), a texture coordinate 14 bits. Robots are five to six times smaller,
+  as UR10e from 41 MB to 6.7 MB, and scenes about half.
 - **An MDL of its own**, as the warehouses and the office Unreal exported, is read by what its
   inputs are called: its albedo or base colour texture, else a texture whose file ends `_D` or
   `_BC`, times any tint, else its first colour, and its roughness and metalness, the middle of a
@@ -126,5 +131,5 @@ first make downloads.
   apart, tiling, and inputs a material leaves at the MDL file's defaults, as a traffic cone's
   orange.
 - Closed loops move only by the joints given values.
-- Models are plain floats. The biggest robots make 40 to 80 MB, which a screen loads once and
-  then asks for by tag.
+- Textures go as their files are, PNG or JPEG, and are most of a scene's bytes: the office's
+  281 MB is 233 MB of them. A screen loads a model once and then asks for it by tag.

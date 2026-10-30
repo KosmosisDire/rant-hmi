@@ -34,6 +34,7 @@ import {
   Vector4,
   WebGLRenderer,
 } from "three";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { CAMERA, type Part, rgbaOf } from "../page/parts";
 import type { Column } from "./packed";
@@ -261,7 +262,8 @@ async function made(url: string) {
   asked.searchParams.set("as", "glb");
   const got = await fetch(asked);
   if (!got.ok) throw new Error((await got.text()) || got.statusText);
-  return new GLTFLoader().parseAsync(await got.arrayBuffer(), "");
+  // its meshes come packed by meshopt
+  return new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(await got.arrayBuffer(), "");
 }
 
 /** A robot in a USD model, and its moving joints by their place in the model's list. */
