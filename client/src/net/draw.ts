@@ -19,8 +19,14 @@ import {
   Group,
   HemisphereLight,
   InstancedBufferAttribute,
+  InstancedBufferGeometry,
+  InstancedInterleavedBuffer,
   InstancedMesh,
+  InterleavedBuffer,
+  InterleavedBufferAttribute,
+  IntType,
   Line,
+  LineSegments,
   type Material,
   Matrix4,
   Mesh,
@@ -44,7 +50,26 @@ import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { CAMERA, type Part, rgbaOf } from "../page/parts";
 import type { Column } from "./packed";
-import { cloudOf, type Gridded, gridOf, laidOf, listOf, meshOf, type PoseValue, Pool, ramped, scanOf, shaded, type Spread } from "./spread";
+import {
+  cloudSource,
+  type Gridded,
+  gridOf,
+  type Input,
+  inputOf,
+  laidSource,
+  listSource,
+  meshOf,
+  type Numbers,
+  type PoseValue,
+  Pool,
+  RAMP,
+  scanSource,
+  seeThrough,
+  shaded,
+  type Source,
+  spanOf,
+  WIDTH,
+} from "./spread";
 
 export type Vec3 = { x: number; y: number; z: number };
 export type Pose = { position?: Vec3; orientation?: Vec3 & { w: number } };
@@ -66,19 +91,17 @@ export interface Shown {
   length?: number;
   vector?: Vec3;
   joined?: boolean;
-  /** Each point's x, y and z after the one before, or the big value it follows: a list, or the
-   *  bytes of a PointCloud or the ranges of a LaserScan, whose other fields sit beside them. */
-  points?: Float32Array | { follow: string; as?: "cloud" | "scan" };
+  /** Each point's x, y and z after the one before, a small cloud or scan as it came, or the big
+   *  value it follows: a list, a PointCloud's bytes or a LaserScan's ranges. */
+  points?: Float32Array | { follow: string; as?: "cloud" | "scan" } | { cloud: unknown; data: Uint8Array } | { scan: unknown; ranges: Float32Array; intensities?: Float32Array };
   /** The number of each point its colour comes from, along the ramp, or "" for none. */
   field?: string;
   /** The low and high ends of `field` drawn, or empty for the values' own. */
   range?: number[];
   /** A cloud's own colours, as its colour is left out. */
   own?: boolean;
-  /** For points laid out on the page, the number `field` gives each, and the pose a cloud's
-   *  points are measured from. */
+  /** For points laid out on the page, the number `field` gives each. */
   values?: Float32Array;
-  origin?: Pose;
   /** A mesh's vertices, their bytes and its triangles as the page sent them, or the big value
    *  it follows by its vertices' bytes, whose other fields sit beside them, or null for none. */
   mesh?: { follow: string } | { vertices: unknown; data: Uint8Array; triangles: Uint32Array } | null;
@@ -150,10 +173,10 @@ type Followed = (typeof FOLLOWED)[number];
 const isFollow = (v: unknown): v is { follow: string } => typeof v === "object" && v !== null && "follow" in v;
 const isVec3 = (v: unknown): v is Vec3 => typeof v === "object" && v !== null && "x" in v;
 
-const isList = (c: unknown): c is ArrayLike<number> => ArrayBuffer.isView(c) && !(c instanceof DataView);
+const isList = (c: unknown): c is Numbers => ArrayBuffer.isView(c) && !(c instanceof DataView);
 
 /** A part's dots or line. */
-type Dotted = Line<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial>;
+type Dotted = LineSegments<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial>;
 
 /** Marks the first `items` of `a` to go to the GPU at the next draw. */
 function touched(a: BufferAttribute, items: number) {
@@ -420,36 +443,132 @@ function move(model: Object3D, values: Map<number, number>) {
 
 const X = new Vector3(1, 0, 0);
 
+// Points read straight from the bytes they came in, each number from four bytes, or eight for a
+// wide kind, as WebGL hands a shader bytes as they are but numbers only of a few kinds.
+const NUMBERS = `
+uint wordOf(uvec4 b) { return b.x | b.y << 8 | b.z << 16 | b.w << 24; }
+// a 64 bit float as a 32 bit one, its lowest bits dropped
+float doubleOf(uint lo, uint hi) {
+  int e = int((hi >> 20) & 0x7ffu) - 896;
+  if (e <= 0) return 0.0;
+  return uintBitsToFloat((hi & 0x80000000u) | uint(min(e, 255)) << 23 | (hi & 0xfffffu) << 3 | lo >> 29);
+}
+float numberOf(uvec4 lo, uvec4 hi, int kind) {
+  uint w = wordOf(lo);
+  if (kind == 0) return float(int(w << 24) >> 24);
+  if (kind == 1) return float(w & 0xffu);
+  if (kind == 2) return float(int(w << 16) >> 16);
+  if (kind == 3) return float(w & 0xffffu);
+  if (kind == 4) return float(int(w));
+  if (kind == 5) return float(w);
+  if (kind == 6) return uintBitsToFloat(w);
+  uint h = wordOf(hi);
+  if (kind == 7) return doubleOf(w, h);
+  // one that fits its low word as it is, as a float has too few bits to add the two
+  if (kind == 8) return int(h) == int(w) >> 31 ? float(int(w)) : float(int(h)) * 4294967296.0 + float(w);
+  return h == 0u ? float(w) : float(h) * 4294967296.0 + float(w);
+}
+// by its bits, as a compiler may take a float to be finite
+bool finiteOf(uvec4 lo, uvec4 hi, int kind) {
+  if (kind == 6) return (wordOf(lo) & 0x7f800000u) != 0x7f800000u;
+  if (kind == 7) return ((wordOf(hi) >> 20) & 0x7ffu) < 1151u;
+  return true;
+}`;
+
+/** Each ScalarKind as the shader numbers it. */
+const CODES: Record<string, number> = { I8: 0, U8: 1, I16: 2, U16: 3, I32: 4, U32: 5, F32: 6, F64: 7, I64: 8, U64: 9 };
+
+/** What a points shader reads: each input's kind, a colour's byte order, the axis its ramp goes
+ *  by, whether its points are a scan's returns, and whether it draws the line through them. */
+interface Reads {
+  kinds: Partial<Record<"X" | "Y" | "Z" | "V" | "S", string>>;
+  colour?: string;
+  axis?: number;
+  scan: boolean;
+  joined: boolean;
+}
+
 // Points as round dots as wide as their size in metres, never under a pixel, or a line through
-// them, in one colour or one each. Colours are sRGB and go out as they are, as nothing lights them.
-const DOTS_VERTEX = `
+// them. Colours are sRGB and go out as they are, as nothing lights them.
+function dotsVertex(r: Reads): string {
+  const decls: string[] = [];
+  // a line's segment is an instance, its ends this point and the next
+  const pick = (a: string) => (r.joined ? `(next ? ${a}n : ${a})` : a);
+  const attribute = (a: string) => decls.push(`attribute uvec4 ${a};`, ...(r.joined ? [`attribute uvec4 ${a}n;`] : []));
+  const read = (name: keyof Reads["kinds"]) => {
+    const kind = r.kinds[name]!;
+    const wide = WIDTH[kind] === 8;
+    attribute(`a${name}`);
+    if (wide) attribute(`a${name}2`);
+    const args = `${pick(`a${name}`)}, ${wide ? pick(`a${name}2`) : "uvec4(0u)"}, ${CODES[kind]}`;
+    return { value: `numberOf(${args})`, ok: `finiteOf(${args})` };
+  };
+  const body: string[] = [];
+  if (r.scan) {
+    const range = read("X");
+    const beam = r.joined ? "gl_InstanceID + int(next)" : "gl_VertexID";
+    body.push(
+      `float r = ${range.value};`,
+      `ok = ${range.ok} && r >= uBeams.z && (uBeams.w <= 0.0 || r <= uBeams.w);`,
+      `float turn = uBeams.x + floor(float(${beam}) / uEchoes) * uBeams.y;`,
+      "p = vec3(r * cos(turn), r * sin(turn), 0.0);",
+    );
+  } else {
+    const [x, y, z] = [read("X"), read("Y"), r.kinds.Z ? read("Z") : undefined];
+    body.push(`p = vec3(${x.value}, ${y.value}, ${z?.value ?? "0.0"});`, `ok = ${x.ok} && ${y.ok} && ${z?.ok ?? "true"};`);
+  }
+  if (r.kinds.V) {
+    const v = read("V");
+    body.push(`float v = ${v.value};`, `ok = ok && ${v.ok};`);
+  } else if (r.axis !== undefined) body.push(`float v = p[${r.axis}];`);
+  if (r.kinds.V || r.axis !== undefined)
+    body.push("ok = ok && v >= uLow && v <= uHigh;", "colour = vec4(texelFetch(uRamp, ivec2(clamp(int((v - uLow) * uScale + 0.5), 0, 255), 0), 0).rgb, 1.0);");
+  else if (r.colour) {
+    attribute("aC");
+    const c = `vec4(${pick("aC")})`;
+    body.push(`colour = ${r.colour === "RGBA" ? c : r.colour === "BGRA" ? `${c}.zyxw` : `vec4(${c}.zyx, 255.0)`} / 255.0;`);
+  } else body.push("colour = uColor;");
+  body.push(`size = ${r.kinds.S ? read("S").value : "uSize"};`);
+  const other = r.joined ? ["vec3 q;", "vec4 c;", "float s;", "ok = pointAt(true, q, c, s) && ok;", "if (gl_VertexID == 1) {", "  p = q;", "  colour = c;", "}"] : [];
+  return `
 uniform vec4 uColor;
 uniform float uSize;
 uniform float uHeight;
-#ifdef COLORS
-attribute vec4 pointColor;
-#endif
-#ifdef SIZES
-attribute float pointSize;
-#endif
+uniform float uLow;
+uniform float uHigh;
+uniform float uScale;
+uniform sampler2D uRamp;
+uniform vec4 uBeams;
+uniform float uEchoes;
+${decls.join("\n")}
 varying vec4 vColor;
 varying float vPx;
+${NUMBERS}
+bool pointAt(bool next, out vec3 p, out vec4 colour, out float size) {
+  bool ok;
+  ${body.join("\n  ")}
+  return ok;
+}
 void main() {
-  vec4 at = modelViewMatrix * vec4(position, 1.0);
+  vec3 p;
+  vec4 colour;
+  float size;
+  bool ok = pointAt(false, p, colour, size);
+  ${other.join("\n  ")}
+  vColor = colour;
+  vPx = 1.0;
+  if (!ok) {
+    // past the far plane, so never drawn
+    gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+    gl_PointSize = 1.0;
+    return;
+  }
+  vec4 at = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * at;
-  #ifdef COLORS
-  vColor = pointColor;
-  #else
-  vColor = uColor;
-  #endif
-  #ifdef SIZES
-  float size = pointSize;
-  #else
-  float size = uSize;
-  #endif
   vPx = max(size * projectionMatrix[1][1] * uHeight * 0.5 / -at.z, 1.0);
   gl_PointSize = vPx;
 }`;
+}
 const DOTS_FRAGMENT = `
 varying vec4 vColor;
 varying float vPx;
@@ -463,9 +582,29 @@ void main() {
   gl_FragColor = vec4(vColor.rgb, a);
 }`;
 
+// the ramp as the shader looks a colour up in it, its bytes as they are
+const RAMP_MAP = (() => {
+  const rgba = new Uint8Array(256 * 4);
+  for (let i = 0; i < 256; i++) rgba.set([RAMP[3 * i], RAMP[3 * i + 1], RAMP[3 * i + 2], 255], 4 * i);
+  const map = new DataTexture(rgba, 256, 1);
+  map.needsUpdate = true;
+  return map;
+})();
+
 /** The material of a part's dots or line, sized for the canvas whose height in px is `px`. */
 function dots(px: { value: number }) {
-  return new ShaderMaterial({ uniforms: { uColor: { value: new Vector4(1, 1, 1, 1) }, uSize: { value: 0.05 }, uHeight: px }, vertexShader: DOTS_VERTEX, fragmentShader: DOTS_FRAGMENT });
+  const uniforms = {
+    uColor: { value: new Vector4(1, 1, 1, 1) },
+    uSize: { value: 0.05 },
+    uHeight: px,
+    uLow: { value: 0 },
+    uHigh: { value: 1 },
+    uScale: { value: 255 },
+    uRamp: { value: RAMP_MAP },
+    uBeams: { value: new Vector4() },
+    uEchoes: { value: 1 },
+  };
+  return new ShaderMaterial({ uniforms, vertexShader: dotsVertex({ kinds: { X: "F32", Y: "F32" }, scan: false, joined: false }), fragmentShader: DOTS_FRAGMENT });
 }
 
 /** What a part's `key` is drawn from: what the page laid out, or the newest of the big value it
@@ -488,29 +627,29 @@ function coloursOf(c: Float32Array | Uint8Array | Column): Uint8Array | undefine
 /** The path of what holds the list `ref` names, as a cloud holds its bytes. */
 const holderOf = (ref: string) => ref.slice(0, ref.lastIndexOf("/"));
 
-/** The points `drawn` draws: a list, a cloud's or a scan's, read again only when the value or
- *  what it is asked to show is new. */
-function spreadOf(h: Held, points: Float32Array | Uint8Array | Column, pool: Pool, found: string[]): Spread | undefined {
+/** Where the points a part draws sit: in a cloud's bytes or a scan's ranges, the worker's or as
+ *  the page sent them, or in a list's columns or the page's. */
+function pointsSource(h: Held, found: string[]): Source | undefined {
   const s = h.shown;
   const field = s.field || undefined;
+  const p = s.points;
+  if (p && !isFollow(p) && !(p instanceof Float32Array)) return "cloud" in p ? cloudSource(p.cloud, p.data, field, !!s.own, found) : scanSource(p.scan, p.ranges, p.intensities, field, found);
+  const points = sourceOf(h, "points");
   const ref = h.follows.points;
-  const as = isFollow(s.points) ? s.points.as : undefined;
+  if (!points) return undefined;
+  const as = isFollow(p) ? p.as : undefined;
   if (as && ref) {
     const holder = host.value(holderOf(ref));
     if (as === "cloud") {
-      if (points instanceof Uint8Array) return cloudOf(holder, points, field, !!s.own, pool, found);
+      if (points instanceof Uint8Array) return cloudSource(holder, points, field, !!s.own, found);
       return void found.push("points: the cloud's data is not bytes");
     }
     const intensities = host.column(`${holderOf(ref)}/intensities`);
-    if (isList(points)) return scanOf(holder, points, isList(intensities) ? intensities : undefined, field, pool, found);
+    if (isList(points)) return scanSource(holder, points, isList(intensities) ? intensities : undefined, field, found);
     return void found.push("points: the scan's ranges are not numbers");
   }
-  if (points instanceof Float32Array) {
-    const laid = laidOf(points, field, s.values, pool);
-    if (s.origin) laid.origin = s.origin;
-    return laid;
-  }
-  if (!ArrayBuffer.isView(points)) return listOf(points, field, pool, found);
+  if (points instanceof Float32Array) return laidSource(points, field, s.values);
+  if (!ArrayBuffer.isView(points)) return listSource(points, field, found);
   found.push("points: the value is not a list of points, each with numbers x, y and z");
 }
 
@@ -523,59 +662,103 @@ function place(drawn: Object3D, origin: PoseValue | undefined) {
   else drawn.quaternion.identity();
 }
 
-/** Lays out what `drawn` draws: its points, their colours along the ramp by `field`, or as given
- *  one each, or a cloud's own, and their sizes when each has one. It is laid out again only when
- *  one of them is new, and none yet, as before a big value first comes, draws what it drew. */
+/** Hands the GPU the bytes `inputs` sit in, a buffer each, read four bytes at a time as `a` and
+ *  the input's name. New bytes of the same layout and length are written into the old buffers. */
+function bind(drawn: Dotted, inputs: [string, Input][], n: number, joined: boolean) {
+  const held: Input[] = [];
+  const shape: unknown[] = [n, joined];
+  for (const [name, input] of inputs) {
+    let k = held.findIndex((b) => b.bytes === input.bytes && b.stride === input.stride);
+    if (k < 0) k = held.push(input) - 1;
+    shape.push(name, k, input.offset, WIDTH[input.kind] === 8);
+  }
+  shape.push(held.map((b) => [b.stride, b.bytes.length]));
+  const key = JSON.stringify(shape);
+  const was = drawn.geometry.userData;
+  if (was.key === key) {
+    (was.buffers as InterleavedBuffer[]).forEach((b, i) => {
+      if (b.array === held[i].bytes) return;
+      b.array = held[i].bytes;
+      b.needsUpdate = true;
+    });
+    return;
+  }
+  drawn.geometry.dispose();
+  const g = joined ? new InstancedBufferGeometry() : new BufferGeometry();
+  const buffers = held.map((b) => (joined ? new InstancedInterleavedBuffer(b.bytes, b.stride, 1) : new InterleavedBuffer(b.bytes, b.stride)));
+  const word = (k: number, offset: number) => Object.assign(new InterleavedBufferAttribute(buffers[k], 4, offset), { gpuType: IntType });
+  for (const [name, input] of inputs) {
+    const k = held.findIndex((b) => b.bytes === input.bytes && b.stride === input.stride);
+    const words = WIDTH[input.kind] === 8 ? ["", "2"] : [""];
+    words.forEach((w, i) => {
+      g.setAttribute(`a${name}${w}`, word(k, input.offset + 4 * i));
+      if (joined) g.setAttribute(`a${name}${w}n`, word(k, input.offset + 4 * i + input.stride));
+    });
+  }
+  if (g instanceof InstancedBufferGeometry) {
+    g.instanceCount = Math.max(n - 1, 0);
+    g.setDrawRange(0, 2);
+  } else g.setDrawRange(0, n);
+  g.userData = { key, buffers };
+  drawn.geometry = g;
+}
+
+/** Says where what `drawn` draws sits for the GPU to read: its points, a value each for the ramp
+ *  or a colour each, and a size each. Only the ramp's own ends are read here, once a value. */
 function lay(drawn: Dotted, h: Held, faults: string[]) {
   const s = h.shown;
-  const from = [...FOLLOWED.map((k) => sourceOf(h, k)), s.field, JSON.stringify(s.range), s.own, s.values, JSON.stringify(s.origin)];
-  const [points, rgba, sizes] = from as (Float32Array | Uint8Array | Column | undefined)[];
+  // a cloud or scan the page sent is new each time, and the rest are new as their values are
+  const sent = s.points && !isFollow(s.points) && !(s.points instanceof Float32Array) ? s.points : undefined;
+  const from = [sent, ...FOLLOWED.slice(0, 3).map((k) => sourceOf(h, k)), s.field, s.own, s.values];
   const u = drawn.userData;
-  if (!points || (u.from && from.every((f, i) => f === u.from[i]))) return void faults.push(...(u.faults ?? []));
-  u.from = from;
-  const found: string[] = (u.faults = []);
-  const pool: Pool = (u.pool ??= new Pool());
-  const spread = spreadOf(h, points, pool, found);
-  if (!spread) return void faults.push(...found);
-  let each: ArrayLike<number> | undefined = isList(sizes) ? sizes : undefined;
-  if (sizes && !each) found.push("size: the value is not a list of numbers");
-  else if (each && each.length !== spread.n) {
-    found.push(`size: ${each.length} sizes for ${spread.n} points`);
-    each = undefined;
-  }
-  let colours: Uint8Array | undefined;
-  let ramp = false;
-  if (s.field && spread.values) {
-    const r = ramped(spread, s.range, each, pool);
-    [colours, each, ramp] = [r.rgba, r.sizes, true];
-  } else if (!s.field && rgba) {
-    const given = coloursOf(rgba);
-    if (!given) found.push("color: the value is not a list of colours");
-    else if (given.length !== 4 * spread.n) found.push(`color: ${given.length / 4} colours for ${spread.n} points`);
-    else {
-      colours = pool.bytes("colours", spread.n, 4);
-      colours.set(given);
+  if (!(u.from && from.every((f, i) => f === u.from[i]))) {
+    u.from = from;
+    const found: string[] = (u.faults = []);
+    const src = pointsSource(h, found);
+    if (src) {
+      const [rgba, sizes] = [sourceOf(h, "color"), sourceOf(h, "size")];
+      let size: Input | undefined;
+      if (sizes && !isList(sizes)) found.push("size: the value is not a list of numbers");
+      else if (sizes && sizes.length !== src.n) found.push(`size: ${sizes.length} sizes for ${src.n} points`);
+      else if (sizes) size = inputOf(sizes);
+      let colour: Input | undefined;
+      if (!s.field && rgba) {
+        const given = coloursOf(rgba);
+        if (!given) found.push("color: the value is not a list of colours");
+        else if (given.length !== 4 * src.n) found.push(`color: ${given.length / 4} colours for ${src.n} points`);
+        else colour = { bytes: given, kind: "RGBA", offset: 0, stride: 4 };
+      } else if (!s.field && s.own) colour = src.colour;
+      // a line has no sizes
+      const joined = drawn instanceof LineSegments;
+      const inputs = Object.entries({ X: src.x, Y: src.y, Z: src.z, V: src.value, S: joined ? undefined : size, C: colour }).filter((e): e is [string, Input] => e[1] !== undefined);
+      bind(drawn, inputs, src.n, joined);
+      const kinds = Object.fromEntries(inputs.filter(([k]) => k !== "C").map(([k, input]) => [k, input.kind]));
+      const m = drawn.material;
+      const vertexShader = dotsVertex({ kinds, colour: colour?.kind, axis: src.axis, scan: !!src.beams, joined });
+      if (m.vertexShader !== vertexShader) Object.assign(m, { vertexShader, needsUpdate: true });
+      const defines = joined ? {} : { DOTS: "" };
+      if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
+      const b = src.beams;
+      if (b) {
+        m.uniforms.uBeams.value.set(b.start, b.turn, b.low, b.high);
+        m.uniforms.uEchoes.value = b.echoes;
+      }
+      place(drawn, src.origin);
+      // any colour see through, which then draws over what is behind without hiding it
+      u.seeThrough = colour ? seeThrough(colour, src.n) : false;
+      u.source = src;
+      u.span = undefined;
     }
-  } else if (!s.field && s.own) colours = spread.rgba;
-  const kept = each && !ramp ? pool.floats("sizes", spread.n) : (each as Float32Array | undefined);
-  if (each && !ramp) for (let i = 0; i < spread.n; i++) kept![i] = each[i];
-  upload(drawn, spread.n, spread.box, {
-    position: [spread.xyz, 3, false],
-    pointColor: colours && [colours, 4, true],
-    pointSize: kept && [kept, 1, false],
-  });
-  place(drawn, spread.origin);
+  }
+  faults.push(...u.faults);
+  const src: Source | undefined = u.source;
+  if (!src || !s.field || !(src.value || src.axis !== undefined)) return;
+  const given = s.range?.length === 2 && s.range.every(Number.isFinite);
+  const [lo, hi]: number[] = given ? s.range! : (u.span ??= spanOf(src));
   const m = drawn.material;
-  const defines: Record<string, string> = {};
-  if (colours) defines.COLORS = "";
-  if (kept) defines.SIZES = "";
-  if (drawn instanceof Points) defines.DOTS = "";
-  if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
-  // any colour see through, which then draws over what is behind without hiding it
-  let see = false;
-  if (colours && !ramp) for (let i = 3; i < 4 * spread.n && !see; i += 4) see = colours[i] < 255;
-  u.seeThrough = see;
-  faults.push(...found);
+  m.uniforms.uLow.value = lo;
+  m.uniforms.uHigh.value = hi;
+  m.uniforms.uScale.value = 255 / (hi - lo || 1);
 }
 
 // sRGB bytes as the linear light three.js takes a vertex's colour in
@@ -753,8 +936,13 @@ const KINDS: Record<Part, Kind> = {
     show: (o, s, found, h) => {
       const was = o.children[0];
       const px = scenes.get(h.scene)?.px ?? { value: 1 };
-      if (s.joined !== undefined && (!was || was instanceof Line !== s.joined)) swap(o, s.joined ? new Line(new BufferGeometry(), dots(px)) : new Points(new BufferGeometry(), dots(px)));
-      const drawn = o.children[0] as Line<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial> | undefined;
+      if (s.joined !== undefined && (!was || was instanceof LineSegments !== s.joined)) {
+        const made = s.joined ? new LineSegments(new BufferGeometry(), dots(px)) : new Points(new BufferGeometry(), dots(px));
+        // the GPU alone knows where its points are
+        made.frustumCulled = false;
+        swap(o, made);
+      }
+      const drawn = o.children[0] as Dotted | undefined;
       if (!drawn) return;
       lay(drawn, h, found.faults);
       const m = drawn.material;

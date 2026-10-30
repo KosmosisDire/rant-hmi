@@ -1,11 +1,11 @@
-// What a scene draws from Rant's standard types, read in the data worker: a PointCloud's points
-// from its bytes, a LaserScan's returns, those of a list, a Path or a Polyline, a Mesh's
+// What a scene draws from Rant's standard types, read in the data worker: where the GPU finds
+// the points of a PointCloud, a LaserScan, a list, a Path or a Polyline in their bytes, a Mesh's
 // triangles, a Grid's cells, the number a field gives each, and the colour a ramp gives that
 // number. three.js stays out, so any way of drawing can read them.
 
 import type { Column } from "./packed";
 
-type Numbers = Exclude<Column, Fields>;
+export type Numbers = Exclude<Column, Fields>;
 interface Fields {
   readonly [field: string]: Column;
 }
@@ -54,18 +54,6 @@ export class Pool {
 }
 
 const AXES = ["x", "y", "z"];
-const emptyBox = () => [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-
-/** Grows `box` round point x, y, z. */
-function widen(box: number[], x: number, y: number, z: number) {
-  if (x < box[0]) box[0] = x;
-  if (y < box[1]) box[1] = y;
-  if (z < box[2]) box[2] = z;
-  if (x > box[3]) box[3] = x;
-  if (y > box[4]) box[4] = y;
-  if (z > box[5]) box[5] = z;
-}
-
 /** The axis `field` takes the values of, or -1. */
 const axisOf = (field: string | undefined) => (field ? AXES.indexOf(field) : -1);
 
@@ -76,63 +64,8 @@ function axisValues(s: Spread, axis: number, pool: Pool) {
   s.values = values;
 }
 
-/** A list's points, of records with numbers x and y and maybe z, or with such a `position`, as
- *  Poses, Pose2Ds and Double2s have, and the numbers `field` names of each. */
-export function listOf(c: Column, field: string | undefined, pool: Pool, faults: string[]): Spread | undefined {
-  if (!isFields(c)) return void faults.push("points: the value is not a list of points, each with numbers x, y and z");
-  const at = isFields(c.position) ? c.position : c;
-  const [x, y, z] = [at.x, at.y, at.z];
-  if (!isNumbers(x) || !isNumbers(y)) return void faults.push("points: the value is not a list of points, each with numbers x, y and z");
-  const n = x.length;
-  const xyz = pool.floats("xyz", n, 3);
-  const box = emptyBox();
-  const flat = !isNumbers(z);
-  for (let i = 0; i < n; i++) {
-    const [a, b, d] = [x[i], y[i], flat ? 0 : (z as Numbers)[i]];
-    xyz[3 * i] = a;
-    xyz[3 * i + 1] = b;
-    xyz[3 * i + 2] = d;
-    widen(box, a, b, d);
-  }
-  const s: Spread = { n, xyz, box };
-  const axis = axisOf(field);
-  if (axis >= 0) axisValues(s, axis, pool);
-  else if (field) {
-    const own = isNumbers(c[field]) ? c[field] : at[field];
-    if (!isNumbers(own)) faults.push(`field: ${field} is not a number each point has`);
-    else s.values = copyInto(pool.floats("values", n), own, n);
-  }
-  return s;
-}
-
-function copyInto(out: Float32Array, from: ArrayLike<number>, n: number): Float32Array {
-  for (let i = 0; i < n; i++) out[i] = from[i];
-  return out;
-}
-
-/** Points laid out on the page, each one's x, y and z after the one before, and the numbers
- *  the page read for `field` when it is not an axis. */
-export function laidOf(given: Float32Array, field: string | undefined, values: Float32Array | undefined, pool: Pool): Spread {
-  const n = Math.floor(given.length / 3);
-  const xyz = pool.floats("xyz", n, 3);
-  const box = emptyBox();
-  for (let i = 0; i < n; i++) {
-    const [a, b, d] = [given[3 * i], given[3 * i + 1], given[3 * i + 2]];
-    xyz[3 * i] = a;
-    xyz[3 * i + 1] = b;
-    xyz[3 * i + 2] = d;
-    widen(box, a, b, d);
-  }
-  const s: Spread = { n, xyz, box };
-  const axis = axisOf(field);
-  if (axis >= 0) axisValues(s, axis, pool);
-  // a field the page could not read it said so of
-  else if (field && values?.length === n) s.values = copyInto(pool.floats("values", n), values, n);
-  return s;
-}
-
 /** How many bytes a number of each ScalarKind takes. */
-const WIDTH: Record<string, number> = { I8: 1, U8: 1, I16: 2, U16: 2, I32: 4, U32: 4, F32: 4, F64: 8, I64: 8, U64: 8 };
+export const WIDTH: Record<string, number> = { I8: 1, U8: 1, I16: 2, U16: 2, I32: 4, U32: 4, F32: 4, F64: 8, I64: 8, U64: 8 };
 
 /** The typed arrays that read each ScalarKind in place, little endian as every browser's
  *  machine is. */
@@ -193,6 +126,189 @@ function layoutOf(value: unknown) {
 /** A cloud's bytes as words, when they start on one. */
 const wordsOf = (bytes: Uint8Array) => (bytes.byteOffset % 4 === 0 ? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2) : undefined);
 const viewOf = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+/** Where the GPU reads a number of each point: in `bytes`, of `kind`, the first `offset` bytes
+ *  in and each next `stride` on. A colour's kind is its bytes' order, RGBA, or PCL's BGRA or BGR. */
+export interface Input {
+  bytes: Uint8Array;
+  kind: string;
+  offset: number;
+  stride: number;
+}
+
+/** A LaserScan's beams: the first one's angle and the turn to each next, the ranges a return
+ *  lies within, and how many echoes each beam has. */
+export interface Beams {
+  start: number;
+  turn: number;
+  low: number;
+  high: number;
+  echoes: number;
+}
+
+/** `n` points as the GPU reads them: x, y and maybe z, or a scan's ranges in `x` and its beams,
+ *  the number `field` gives each or the axis it is, a colour each, and their origin. */
+export interface Source {
+  n: number;
+  x: Input;
+  y?: Input;
+  z?: Input;
+  beams?: Beams;
+  value?: Input;
+  axis?: number;
+  colour?: Input;
+  origin?: PoseValue;
+}
+
+// a list as bytes, the same each time it is read, so a value drawn again is not sent again
+const asBytes = new WeakMap<Numbers, Uint8Array>();
+const bytesOf = (list: Numbers): Uint8Array => {
+  if (list instanceof Uint8Array) return list;
+  let bytes = asBytes.get(list);
+  if (!bytes) asBytes.set(list, (bytes = new Uint8Array(list.buffer, list.byteOffset, list.byteLength)));
+  return bytes;
+};
+
+const KIND_OF = new Map<unknown, string>(Object.entries(VIEWS).map(([kind, View]) => [View, kind]));
+
+/** A list's numbers, one after another, where the GPU reads them. */
+export const inputOf = (list: Numbers): Input => ({ bytes: bytesOf(list), kind: KIND_OF.get(list.constructor)!, offset: 0, stride: list.BYTES_PER_ELEMENT });
+
+/** A PointCloud's points where they sit in its bytes: x, y and z, the number `field` names, and
+ *  its `rgb` or `rgba` field's colours when `own` asks for them. */
+export function cloudSource(value: unknown, bytes: Uint8Array, field: string | undefined, own: boolean, faults: string[]): Source | undefined {
+  const { step, named, origin } = layoutOf(value);
+  const [fx, fy, fz] = AXES.map(named);
+  if (!fx || !fy || !fz || step <= 0) return void faults.push("points: the cloud has no x, y and z fields that fit its point_step");
+  // as far apart as WebGL reads a vertex's numbers
+  if (step > 255) return void faults.push(`points: the cloud's points are ${step} bytes each, over the 255 a GPU reads`);
+  const at = (f: CloudField, kind = f.kind): Input => ({ bytes, kind, offset: f.offset, stride: step });
+  const s: Source = { n: Math.floor(bytes.length / step), x: at(fx), y: at(fy), z: at(fz), origin };
+  const axis = axisOf(field);
+  if (axis >= 0) s.axis = axis;
+  else if (field) {
+    const f = named(field);
+    if (f) s.value = at(f);
+    else faults.push(`field: the cloud has no number field ${field}`);
+  }
+  const colour = own && !field ? (named("rgba") ?? named("rgb")) : undefined;
+  if (colour && WIDTH[colour.kind] === 4) s.colour = at(colour, colour.name === "rgba" ? "BGRA" : "BGR");
+  return s;
+}
+
+/** A LaserScan's returns, placed by their beams' angles on the GPU, with a `range` and an
+ *  `intensity` each for `field`. */
+export function scanSource(value: unknown, ranges: Numbers, intensities: Numbers | undefined, field: string | undefined, faults: string[]): Source {
+  const v = (value ?? {}) as Record<string, unknown>;
+  const num = (k: string) => (typeof v[k] === "number" ? (v[k] as number) : 0);
+  const beams = { start: num("angle_min"), turn: num("angle_step"), low: num("range_min"), high: num("range_max"), echoes: Math.max(1, num("echoes")) };
+  const s: Source = { n: ranges.length, x: inputOf(ranges), beams };
+  const axis = axisOf(field);
+  if (field === "range") s.value = s.x;
+  else if (field === "intensity") {
+    if (intensities && intensities.length === ranges.length) s.value = inputOf(intensities);
+    else faults.push("field: the scan has no intensity for each range");
+  } else if (axis >= 0) s.axis = axis;
+  else if (field) faults.push(`field: a scan's points have x, y, z, range and intensity, not ${field}`);
+  return s;
+}
+
+/** A list's points, of records with numbers x and y and maybe z, or with such a `position`, as
+ *  Poses, Pose2Ds and Double2s have, and the numbers `field` names of each. */
+export function listSource(c: Column, field: string | undefined, faults: string[]): Source | undefined {
+  const not = "points: the value is not a list of points, each with numbers x, y and z";
+  if (!isFields(c)) return void faults.push(not);
+  const at = isFields(c.position) ? c.position : c;
+  const [x, y, z] = [at.x, at.y, at.z];
+  if (!isNumbers(x) || !isNumbers(y)) return void faults.push(not);
+  const s: Source = { n: x.length, x: inputOf(x), y: inputOf(y), z: isNumbers(z) ? inputOf(z) : undefined };
+  const axis = axisOf(field);
+  if (axis >= 0) s.axis = axis;
+  else if (field) {
+    const own = isNumbers(c[field]) ? c[field] : at[field];
+    if (isNumbers(own)) s.value = inputOf(own);
+    else faults.push(`field: ${field} is not a number each point has`);
+  }
+  return s;
+}
+
+/** Points laid out on the page, each one's x, y and z after the one before, and the numbers the
+ *  page read for `field` when it is not an axis. */
+export function laidSource(xyz: Float32Array, field: string | undefined, values: Float32Array | undefined): Source {
+  const bytes = bytesOf(xyz);
+  const at = (offset: number): Input => ({ bytes, kind: "F32", offset, stride: 12 });
+  const s: Source = { n: Math.floor(xyz.length / 3), x: at(0), y: at(4), z: at(8) };
+  const axis = axisOf(field);
+  if (axis >= 0) s.axis = axis;
+  // a field the page could not read it said so of
+  else if (field && values?.length === s.n) s.value = inputOf(values);
+  return s;
+}
+
+// the typed array last made over some bytes, so a cloud's fields are all read through one
+const over = new WeakMap<Uint8Array, ArrayLike<number>>();
+
+/** The numbers `input` gives `n` points: a typed array over its bytes where they sit on their own
+ *  width, with the step from one to the next and where the first is, else copied out. */
+function spaced({ bytes, kind, offset, stride }: Input, n: number): [ArrayLike<number>, number, number] {
+  const [View, width] = [VIEWS[kind], WIDTH[kind]];
+  if (View && bytes.byteOffset % width === 0 && offset % width === 0 && stride % width === 0) {
+    let list = over.get(bytes);
+    if (!(list instanceof View)) over.set(bytes, (list = new View(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / width))));
+    return [list, stride / width, offset / width];
+  }
+  const read = reading(viewOf(bytes), kind)!;
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) out[i] = read(i * stride + offset);
+  return [out, 1, 0];
+}
+
+/** The low and high of the numbers a source's points give for its field, leaving out the points
+ *  the GPU leaves out: one not finite, or a scan's return outside its ranges. */
+export function spanOf(s: Source): [number, number] {
+  const n = s.n;
+  const x = spaced(s.x, n);
+  let [lo, hi] = [Infinity, -Infinity];
+  const b = s.beams;
+  if (b) {
+    const [r, sr, ar] = x;
+    const [v, sv, av] = s.value ? spaced(s.value, n) : x;
+    for (let i = 0; i < n; i++) {
+      const range = r[i * sr + ar];
+      if (range - range !== 0 || range < b.low || (b.high > 0 && range > b.high)) continue;
+      const a = b.start + Math.floor(i / b.echoes) * b.turn;
+      const k = s.value ? v[i * sv + av] : s.axis === 0 ? range * Math.cos(a) : s.axis === 1 ? range * Math.sin(a) : 0;
+      if (k - k !== 0) continue;
+      if (k < lo) lo = k;
+      if (k > hi) hi = k;
+    }
+    return [lo, hi];
+  }
+  // no z reads as one 0 for every point
+  const axes = [x, spaced(s.y!, n), s.z ? spaced(s.z, n) : ([new Float32Array(1), 0, 0] as const)];
+  const [[px, sx, ax], [py, sy, ay], [pz, sz, az]] = axes;
+  const [v, sv, av] = s.value ? spaced(s.value, n) : axes[s.axis ?? 0];
+  // one loop for every field, with no branch in it but the points left out
+  for (let i = 0; i < n; i++) {
+    const a = px[i * sx + ax];
+    const c = py[i * sy + ay];
+    const d = pz[i * sz + az];
+    // NaN and infinities alike, as a cloud that is not dense marks a missing point
+    if (a - a !== 0 || c - c !== 0 || d - d !== 0) continue;
+    const k = v[i * sv + av];
+    if (k - k !== 0) continue;
+    if (k < lo) lo = k;
+    if (k > hi) hi = k;
+  }
+  return [lo, hi];
+}
+
+/** Whether any of the first `n` colours `c` gives is see through. */
+export function seeThrough(c: Input, n: number): boolean {
+  if (c.kind === "BGR") return false;
+  for (let i = 0, at = c.offset + 3; i < n; i++, at += c.stride) if (c.bytes[at] < 255) return true;
+  return false;
+}
 
 /** A PointCloud's points from its bytes: those with x, y and z all finite, the numbers `field`
  *  names, and its `rgb` or `rgba` field's colours when `own` asks for them, packed blue, green,
@@ -334,46 +450,10 @@ function normalsOf(xyz: Float32Array, n: number, index: Uint32Array, m: number, 
   }
 }
 
-/** A LaserScan's returns as points in its xy plane, each beam's echoes together, those outside
- *  its ranges or not finite left out. Each has a `range` and an `intensity` for `field`. */
-export function scanOf(value: unknown, ranges: ArrayLike<number>, intensities: ArrayLike<number> | undefined, field: string | undefined, pool: Pool, faults: string[]): Spread {
-  const v = (value ?? {}) as Record<string, unknown>;
-  const num = (k: string) => (typeof v[k] === "number" ? (v[k] as number) : 0);
-  const [start, turn, low, high] = [num("angle_min"), num("angle_step"), num("range_min"), num("range_max")];
-  const echoes = Math.max(1, num("echoes"));
-  const axis = axisOf(field);
-  let by: ArrayLike<number> | undefined;
-  if (field === "range") by = ranges;
-  else if (field === "intensity") {
-    if (intensities && intensities.length === ranges.length) by = intensities;
-    else faults.push("field: the scan has no intensity for each range");
-  } else if (field && axis < 0) faults.push(`field: a scan's points have x, y, z, range and intensity, not ${field}`);
-  const n = ranges.length;
-  const xyz = pool.floats("xyz", n, 3);
-  const values = by ? pool.floats("values", n) : undefined;
-  const box = emptyBox();
-  let j = 0;
-  for (let i = 0; i < n; i++) {
-    const r = ranges[i];
-    if (!Number.isFinite(r) || r < low || (high > 0 && r > high)) continue;
-    const a = start + Math.floor(i / echoes) * turn;
-    const [x, y] = [r * Math.cos(a), r * Math.sin(a)];
-    xyz[3 * j] = x;
-    xyz[3 * j + 1] = y;
-    xyz[3 * j + 2] = 0;
-    widen(box, x, y, 0);
-    if (values) values[j] = by![i];
-    j++;
-  }
-  const s: Spread = { n: j, xyz, box, values };
-  if (axis >= 0) axisValues(s, axis, pool);
-  return s;
-}
-
 /** Turbo, as robotics tools colour intensity and height: 256 colours from low to high, a byte
  *  each of red, green and blue, Anton Mikhailov's polynomial fit. Only its tenth to ninth tenth,
  *  blue to dark red, as its ends are near black and vanish on a dark scene. */
-const RAMP = (() => {
+export const RAMP = (() => {
   const out = new Uint8Array(256 * 3);
   const poly = (t: number, c: number[]) => c.reduceRight((acc, k) => acc * t + k, 0);
   const R = [0.13572138, 4.6153926, -42.66032258, 132.13108234, -152.94239396, 59.28637943];
@@ -427,44 +507,6 @@ export function shaded(m: Meshed, range: number[] | undefined, pool: Pool): Uint
   }
   m.m = j;
   return rgba;
-}
-
-/** Keeps the points whose value lies in `range`, or within the values' own low and high when it
- *  is empty, each coloured on the ramp, and their sizes when each has one. Values not finite are
- *  left out too. */
-export function ramped(s: Spread, range: number[] | undefined, sizes: ArrayLike<number> | undefined, pool: Pool): { rgba: Uint8Array; sizes?: Float32Array } {
-  const values = s.values!;
-  const [lo, hi] = endsOf(values, s.n, range);
-  const scale = 255 / (hi - lo || 1);
-  const rgba = pool.bytes("ramp", s.n, 4);
-  const kept = sizes ? pool.floats("sizes", s.n) : undefined;
-  const xyz = s.xyz;
-  let [x0, y0, z0, x1, y1, z1] = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-  let j = 0;
-  for (let i = 0; i < s.n; i++) {
-    const v = values[i];
-    if (!(v >= lo && v <= hi)) continue;
-    const k = 3 * i;
-    const m = 3 * j;
-    const x = xyz[k];
-    const y = xyz[k + 1];
-    const z = xyz[k + 2];
-    xyz[m] = x;
-    xyz[m + 1] = y;
-    xyz[m + 2] = z;
-    if (x < x0) x0 = x;
-    if (x > x1) x1 = x;
-    if (y < y0) y0 = y;
-    if (y > y1) y1 = y;
-    if (z < z0) z0 = z;
-    if (z > z1) z1 = z;
-    inked(rgba, 4 * j, v, lo, scale);
-    if (kept) kept[j] = sizes![i];
-    j++;
-  }
-  s.n = j;
-  s.box = [x0, y0, z0, x1, y1, z1];
-  return { rgba, sizes: kept };
 }
 
 /** The first `n` numbers of `kind` in `bytes`: a view over them where they start on the kind's

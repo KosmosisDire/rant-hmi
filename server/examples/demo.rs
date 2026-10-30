@@ -256,11 +256,12 @@ fn lidar_of(t: f64) -> LaserScan {
     LaserScan { angle_min: -std::f32::consts::PI, angle_step: step, time_step: 0.0, range_min: 0.05, range_max: 10.0, echoes: 1, ranges, intensities }
 }
 
-/// A planned path of 40 poses round an ellipse, each facing along it, turning as time goes.
+/// A planned path of 400 poses round an ellipse, each facing along it, turning as time goes. It
+/// is big, so its 64 bit positions reach the scene as the worker keeps them.
 fn plan_of(t: f64) -> Path {
-    let poses = (0..40)
+    let poses = (0..400)
         .map(|i| {
-            let a = t * 0.2 + i as f64 * std::f64::consts::TAU / 40.0;
+            let a = t * 0.2 + i as f64 * std::f64::consts::TAU / 400.0;
             let heading = (0.5 * a.cos()).atan2(-1.5 * a.sin()) / 2.0;
             Pose {
                 position: Double3 { x: 1.5 * a.cos(), y: 0.5 * a.sin(), z: 0.05 },

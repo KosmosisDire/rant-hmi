@@ -1,11 +1,12 @@
 // Points take Rant's standard types as they come: a PointCloud in its own colours or along the
-// ramp by a field, cut to a range, a LaserScan's returns and a Path as a line. The worker reads
-// them from their bytes, and a field the value lacks says so on the scene.
+// ramp by a field, cut to a range, a LaserScan's returns and a Path as a line. The GPU reads them
+// from their bytes, big or small, and a field the value lacks says so on the scene.
 
 export default async function ({ hmi, d, check, eventually }) {
   await hmi.import("Cell.CloudD", "Cell/Cloud");
   await hmi.import("Cell.LidarD", "Cell/Lidar");
   await hmi.import("Cell.PlanD", "Cell/Plan");
+  await hmi.import("Cell.PartD", "Cell/Part");
   await d.addPage("Scene data");
   const pageId = hmi.state.pages.find((p) => p.name === "Scene data").id;
   // seen from above, x to the right, the 4 by 2 m floor and the 6 by 4 m room in view
@@ -53,5 +54,24 @@ export default async function ({ hmi, d, check, eventually }) {
   // a path as one line through its poses, round an ellipse 3 m across
   await hmi.setProps(pageId, dots, { points: "Cell.PlanD", field: '""', range: "[]", joined: "true", color: '"#00ff00"' });
   await sees({ green: "g > 150 && r < 100 && b < 100" }, (s) => s.green > 100, "the path drawn round its ellipse");
+  await quiet();
+  // its far half by y left out, with no line across from one end of the rest to the other
+  const lit = "r + g + b > 150";
+  let ring = 0;
+  await hmi.setProps(pageId, dots, { field: '"y"' });
+  await sees({ lit }, (s) => (ring = s.lit) > 100, "the path along the ramp by y");
+  await hmi.setProps(pageId, dots, { range: "[0, 1]" });
+  await sees({ lit }, (s) => s.lit > 0.3 * ring && s.lit < 0.7 * ring, `half the path, of ${ring} pixels`);
+
+  // a small cloud, the box's vertices, as the page sent it: its own colours, then one each with a
+  // size each, on the eight corners 0.4 m apart
+  await hmi.setProps(pageId, dots, { points: "Cell.PartD.vertices", field: '""', range: "[]", joined: "false", color: null, size: "0.2" });
+  await sees({ orange: own.orange }, (s) => s.orange > 60, "the box's corners in their own colours");
+  await quiet();
+  await hmi.setProps(pageId, dots, { color: "Array.from({ length: 24 }, () => '#ff00ff')", size: "Array.from({ length: 24 }, () => 0.2)" });
+  let big = 0;
+  await sees({ magenta: "r > 200 && b > 200 && g < 80" }, (s) => (big = s.magenta) > 100, "the corners in magenta");
+  await hmi.setProps(pageId, dots, { size: "Array.from({ length: 24 }, () => 0.1)" });
+  await sees({ magenta: "r > 200 && b > 200 && g < 80" }, (s) => s.magenta > 20 && s.magenta < 0.5 * big, `smaller corners, of ${big} pixels`);
   await quiet();
 }

@@ -7,7 +7,6 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import { drawing, onDrew } from "../net/connection";
 import type { Found, Pose, Rgba, Shown, Vec3 } from "../net/draw";
 import { column, fieldsOf, numbers, refOf } from "../net/packed";
-import { cloudOf, Pool, scanOf, type Spread } from "../net/spread";
 import type { Element } from "../protocol/Element";
 import type { Value } from "../protocol/Value";
 import { resolve, type Resolved, type Scope } from "../state/bind";
@@ -27,7 +26,7 @@ interface Read {
   flag(key: string): boolean | undefined;
   vector(key: string): Vec3 | undefined;
   /** Points from a value, `field`'s number of each, and a cloud's own colours when `own`. */
-  points(key: string, field: string | undefined, own: boolean): Laid | undefined;
+  points(key: string, field: string | undefined): Laid | undefined;
   mesh(key: string): Shown["mesh"];
   /** A Grid by its field `field`, or its first. */
   grid(key: string, field: string | undefined): Shown["grid"];
@@ -89,14 +88,11 @@ function listOfPoints(v: unknown): { list: unknown; as?: "cloud" | "scan" } {
   return { list: v };
 }
 
-/** Points laid out here, for the worker to draw as they are: each one's x, y and z after the
- *  one before, the number `field` gives each, a cloud's own colours, and the pose its points are
- *  measured from. */
+/** What a points part draws, for the worker: a list's points laid out here, each one's x, y and
+ *  z after the one before, and the number `field` gives each, or a cloud or scan as it came. */
 interface Laid {
   points: Shown["points"];
   values?: Float32Array;
-  rgba?: Uint8Array;
-  origin?: Pose;
 }
 
 /** The number `field` names of each item of a list, or of its `position`, or undefined. */
@@ -116,31 +112,30 @@ function valuesOf(list: unknown[], field: string): Float32Array | undefined {
 }
 
 /** What a points part draws from a value: the list or bytes the worker keeps, by their ref, or,
- *  for one that came small, points laid out here by the same readers. Faults go to `say`. */
-function pointsOf(v: unknown, field: string | undefined, own: boolean, say: (fault: string) => void): Laid | undefined {
+ *  for one that came small, a cloud's or scan's parts copied to be sent, or a list's points laid
+ *  out here. Faults go to `say`. */
+function pointsOf(v: unknown, field: string | undefined, say: (fault: string) => void): Laid | undefined {
   const { list, as } = listOfPoints(v);
   const ref = refOf(list);
   if (ref) return { points: as ? { follow: ref, as } : { follow: ref } };
-  const found: string[] = [];
-  const pool = new Pool();
-  let s: Spread | undefined;
-  if (as === "cloud") s = list instanceof Uint8Array ? cloudOf(v, list, field, own, pool, found) : undefined;
-  else if (as === "scan") {
-    const ranges = numberList(list);
-    const intensities = numberList((v as { intensities?: unknown }).intensities);
-    s = ranges && scanOf(v, ranges, intensities, field, pool, found);
-  } else {
-    const xyz = positions(list);
-    if (!xyz) return undefined;
-    // x, y and z are the worker's to read from the points
-    const values = field && !["x", "y", "z"].includes(field) ? valuesOf(list as unknown[], field) : undefined;
-    if (field && !["x", "y", "z"].includes(field) && !values) say(`field: ${field} is not a number each point has`);
-    return { points: xyz, values };
+  const o = v as Record<string, unknown>;
+  if (as === "cloud") {
+    if (!(list instanceof Uint8Array) || !Array.isArray(o.fields)) return undefined;
+    const origin = { pose: poseOf((o.origin as { pose?: unknown } | undefined)?.pose) };
+    return { points: { cloud: { fields: o.fields.map((f) => ({ ...f })), point_step: o.point_step, origin }, data: list.slice() } };
   }
-  found.forEach(say);
-  if (!s) return undefined;
-  const n = s.n;
-  return { points: s.xyz.slice(0, 3 * n), values: s.values?.slice(0, n), rgba: s.rgba?.slice(0, 4 * n), origin: s.origin && poseOf(s.origin) };
+  if (as === "scan") {
+    const [ranges, intensities] = [numberList(list), numberList(o.intensities)];
+    if (!ranges) return undefined;
+    const { angle_min, angle_step, range_min, range_max, echoes } = o;
+    return { points: { scan: { angle_min, angle_step, range_min, range_max, echoes }, ranges: Float32Array.from(ranges), intensities: intensities && Float32Array.from(intensities) } };
+  }
+  const xyz = positions(list);
+  if (!xyz) return undefined;
+  // x, y and z are the worker's to read from the points
+  const values = field && !["x", "y", "z"].includes(field) ? valuesOf(list as unknown[], field) : undefined;
+  if (field && !["x", "y", "z"].includes(field) && !values) say(`field: ${field} is not a number each point has`);
+  return { points: xyz, values };
 }
 
 /** A Mesh as the worker draws it: by the ref of its vertices' bytes when the worker keeps them,
@@ -290,11 +285,11 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
     number: (key) => as(key, "a number", (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)),
     flag: (key) => as(key, "true or false", (v) => (typeof v === "boolean" ? v : undefined)),
     vector: (key) => as(key, "a 3D vector", vector),
-    points: (key, field, own) =>
+    points: (key, field) =>
       as(
         key,
         "a list of points each with numbers x and y, a PointCloud, a LaserScan, a Path or a Polyline",
-        (v) => pointsOf(v, field, own, (f) => faults.push(f)),
+        (v) => pointsOf(v, field, (f) => faults.push(f)),
         isKeptPoints,
       ),
     mesh: (key) => as(key, "a Mesh", meshOf, isKeptMesh),
@@ -395,19 +390,16 @@ const SHOWS: Record<Part, (read: Read) => Omit<Shown, "visible">> = {
   cylinder: (r) => ({ radius: r.number("radius"), length: r.number("length"), opacity: r.number("opacity"), color: r.colour("color") }),
   points: (r) => {
     const field = r.text("field");
-    const own = !r.given("color");
-    const laid = r.points("points", field || undefined, own);
+    const laid = r.points("points", field || undefined);
     return {
       joined: r.flag("joined"),
       points: laid?.points,
       values: laid?.values,
-      origin: laid?.origin,
       size: r.sizes("size"),
-      // a small cloud's own colours, laid out here
-      color: laid?.rgba ?? r.colours("color"),
+      color: r.colours("color"),
       field,
       range: r.range("range"),
-      own,
+      own: !r.given("color"),
     };
   },
   mesh: (r) => ({ mesh: r.mesh("mesh"), color: r.colour("color"), opacity: r.number("opacity"), field: r.text("field"), range: r.range("range"), own: !r.given("color") }),
@@ -466,7 +458,9 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
     // lists laid out here go to the worker whole, and are always new
     const mesh = shown.mesh && "data" in shown.mesh ? [shown.mesh.data, shown.mesh.triangles] : [];
     const grid = shown.grid && "data" in shown.grid ? [shown.grid.data] : [];
-    const laid = [shown.points, shown.color, shown.size, shown.values, ...mesh, ...grid].filter((v) => ArrayBuffer.isView(v)) as (Float32Array | Uint8Array | Uint32Array)[];
+    const pts = shown.points;
+    const sent = pts && "data" in pts ? [pts.data] : pts && "ranges" in pts ? [pts.ranges, pts.intensities] : [];
+    const laid = [pts, shown.color, shown.size, shown.values, ...sent, ...mesh, ...grid].filter((v) => ArrayBuffer.isView(v)) as (Float32Array | Uint8Array | Uint32Array)[];
     const now = JSON.stringify(shown, (_, v) => (ArrayBuffer.isView(v) ? undefined : v));
     if (now === said && laid.length === 0) return;
     said = now;

@@ -28,6 +28,12 @@ The user's, 2026-10-30:
   unknown -1 cells stay empty.
 - **A `mesh` part** draws a Mesh.
 - **Fast**, asked while planning.
+- **Read on the GPU**, asked once the four steps were built: a value's bytes go to the GPU as
+  they came and the shader reads its numbers, over reading them in the worker into arrays. On
+  this branch, before review.
+- **A mesh with no normals is lit smooth**, its normals summed on the GPU, over facets or a sum
+  on the CPU.
+- **Voxels by marching rays** through them, kept only if they draw faster than cubes.
 
 Claude's:
 
@@ -44,6 +50,9 @@ Claude's:
 - A mesh keeps every vertex, as its triangles count them, and leaves out a triangle with a
   vertex outside `range`. Its normals are its `normal_x`, `normal_y` and `normal_z` fields, as
   PCL names them, or else worked out from the triangles round each vertex, each by its area.
+- A line through points breaks where one is not drawn, where it was joined across before: a
+  segment reads both its ends, so one left out takes both its segments.
+- A cloud's points over 255 bytes apart say so, as WebGL reads a vertex's numbers no further.
 - A mesh is lit from both sides, as a scanned surface is seen from under it too. `mesh="null"`
   draws none, as a model's `src=""` does.
 - A grid's `field` names one of its fields, its first when left out, as a map's occupancy
@@ -62,18 +71,26 @@ a picture or a video frame reads as it did, and only lists make a value far. The
 the worker, off the page's thread. The page reads a cloud's small parts and hands the worker
 the ref of its bytes, which the worker reads beside the fields that hold them.
 
-A small value comes on the page's own socket and has no ref. Its points are laid out on the page
-by the same readers (`net/spread.ts`, no three.js in it) and sent to the worker as arrays, as a
-small list's points always were.
+A small cloud or scan comes on the page's own socket and has no ref. The page sends its bytes
+and numbers as they came, and the worker reads them as it reads a big one. A list is laid out on
+the page as each point's x, y and z.
 
-- The worker reads a new cloud in one pass into a positions array, and colours or ramp values
-  when shown, computing the bounds on the way, as three.js should be given them.
-- It reads x, y and z straight from the bytes as 32 bit floats when they are, a word at a time,
-  and through a DataView for any other kind.
-- Points that are not finite, and those outside `range`, are left out in that pass, so they cost
-  the GPU nothing.
-- A part keeps its arrays and its GPU buffers, written in place while the count fits and only
-  made again when it grows, so a lidar at 10 Hz makes no garbage and no new buffer.
+Points are read on the GPU (`net/spread.ts` says where each number sits, `net/draw.ts` reads it):
+
+- A cloud's bytes, a scan's ranges and a list's columns go to the GPU as they came, a buffer
+  each. The shader reads each number by its kind, offset and stride, four bytes at a time as
+  WebGL hands them, eight for F64, I64 and U64, at any offset. Every ScalarKind draws as its F32
+  twin does, pixel for pixel.
+- A scan's returns are placed by their beam's angle in the shader.
+- Points that are not finite, and those outside `range`, are put past the far plane by the
+  shader. Each costs a vertex, which is nothing to a GPU at 1M.
+- `range` is a uniform, so a new one draws again with nothing read. A new `field` reads another
+  offset of the same bytes.
+- A `range` left empty takes the values' own ends, read on the CPU once a value: the one read
+  left, 5 ms for 1M points.
+- A line is drawn as segments, an instance each that reads a point and the next.
+- New bytes of the same layout and length are written into the buffer they replace, so a lidar
+  at 10 Hz makes no new one.
 - A 2D grid is one texture on one square, a pixel a cell. A 3D grid is one instanced mesh of
   cubes, an instance per cell in range.
 - A mesh's triangles go to the GPU as they come, an index of 32 bit numbers.
@@ -87,14 +104,25 @@ field's ref, and the worker reads the grid's other numbers beside it, from the s
 code, which only the page reads, so a small cloud is laid out there instead. three.js takes a
 vertex's colour as linear light, so a mesh's sRGB colours go through a table of 256.
 
+Measured in Chrome on an RTX 4080 laptop GPU: the worker's time from a new value to its draw
+sent, which holds back every scene and the values coming in, before and after reading on the GPU,
+and the frame after, all medians of 10:
+
+| Value | Before | After | Frame |
+| --- | --- | --- | --- |
+| A cloud of 1M points, x, y and z, 16 bytes a point | 15 ms | 2 ms | 2 ms |
+| The same along the ramp by intensity, its own ends | 66 ms | 10 ms | 5 ms |
+| The same cut to a range | 47 ms | 4 ms | 8 ms |
+| A cloud of 1M points in its own rgb, 32 bytes a point | 64 ms | 9 ms | 7 ms |
+| A scan of 128 by 1024 | 15 ms | 0.5 ms | 4 ms |
+
+The cloud of 32 bytes a point is the bytes going to the GPU, which Chrome copies past 16 MB only
+as fast as its GPU process takes them.
+
 Measured in Node, reading from the bytes into what the GPU is given:
 
 | Value | Time |
 | --- | --- |
-| A cloud of 1M points, x, y and z | 12 ms |
-| The same in its own rgb | 15 ms |
-| The same along the ramp by intensity | 21 ms |
-| A scan of 128 by 1024 | 3 ms |
 | A mesh of 1M vertices and 2M triangles, its normals worked out | 54 ms |
 | The same along the ramp by z, cut to a range | 67 ms |
 | A map of 2000 by 2000 I8 cells, cut to a range | 15 ms |
@@ -111,9 +139,13 @@ scene to refuse it. It now checks that they draw flat.
 2. `points` takes a PointCloud, LaserScan, Path and Polyline, and `field` and `range`.
 3. `mesh`.
 4. `grid` for a Grid.
+5. Points read on the GPU.
+6. A flat grid as its field's bytes in a texture.
+7. A mesh read on the GPU, its normals summed there.
+8. Voxels by marching rays, kept only if faster than cubes.
 
 Each step has a scenario drawing it from the demo line, which publishes a cloud, a scan, a
-path, a small turning box and rolling ground as meshes, a map of the scan's room, big, and a
+big path of 64 bit poses, a small turning box and rolling ground as meshes, a map of the scan's room, big, and a
 ball as voxels, small. The scenarios count the
 scene's pixels of each colour with the designer's `count` and `sees`.
 

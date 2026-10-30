@@ -158,11 +158,11 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 | `radius` | `sphere`, `cylinder` | `0.5` |
 | `length` | `cylinder` | along its z, `1` |
 | `points` | `points` | a list of points with `x`, `y` and maybe `z`, as a Double3 list from the mesh, or a PointCloud, a LaserScan, a Path or a Polyline. A cloud's points sit at its `origin` |
-| `joined` | `points` | `true` to draw one line through them instead of dots |
+| `joined` | `points` | `true` to draw one line through them instead of dots, broken where a point is not drawn |
 | `mesh` | `mesh` | a Mesh, as `Cell.Part`, `null` for none. Its vertices sit at their cloud's `origin`, and their `normal_x`, `normal_y` and `normal_z` light it when it has them |
 | `grid` | `grid` | a Grid, as `Cell.Map`, `null` for none. Its first cell's outer corner sits at its `origin`. A flat one draws as a picture, a square a cell, a deep one as a cube a cell |
 | `field` | `points`, `mesh`, `grid` | a number each point or vertex has, or a grid's field, which colours it from blue to red, as `"intensity"`, or `"z"` for height. A scan's points have `range` and `intensity`. A grid takes its first field when left out |
-| `range` | `points`, `mesh` | the low and high ends of `field`, as `[0, 100]`, its values' own when left out. A point outside it is not drawn, nor a triangle with a vertex outside it, nor a cell |
+| `range` | `points`, `mesh`, `grid` | the low and high ends of `field`, as `[0, 100]`, its values' own when left out. A point outside it is not drawn, nor a triangle with a vertex outside it, nor a cell |
 | `vector` | `arrow` | where it points from its pose, as long as it is, `vec(1, 0, 0)` |
 | `src` | `model` | a USD file in the project's files, as `"files/ur10e/ur10e.usd"`, or a glTF file, `.glb` or `.gltf`, as `"files/hall.glb"` or any URL, which stays as its file puts it |
 | `joints` | `model` | a USD robot's joints by name, `{ elbow_joint: 0.5 }`, each turned by radians or slid by metres, or a JointState, as `Arm.JointState`. A file of several robots takes each one's under its name, `{ carter_1: { left_wheel: 2 }, arm: Arm.JointState }`. A joint that mimics another, as a gripper's finger, follows it unless given its own. A glTF model has none |
