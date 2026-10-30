@@ -3,8 +3,8 @@
 //! and a home it counts, the same view as MJPEG video, a label camera showing a real conveyor
 //! shot with a parcel and its labels, a 3D scan of the cell's floor with that part on it, and
 //! the floor's heat as points each with a colour and a size, and the robot's routes, each leg
-//! a list of points of its own. The same floor as a PointCloud, a room's walls as a LaserScan
-//! and a planned Path, as the standard types carry them.
+//! a list of points of its own. The same floor as a PointCloud, a room's walls as a LaserScan,
+//! a planned Path, a turning part and rolling ground as Meshes, as the standard types carry them.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use rant::types::{
-    AlignedBox2D, Color, Double2, Double3, Empty, Float3, Image, ImageFormat, JointState, LaserScan, Path, PointCloud, PointField, Pose, Quaternion, ScalarKind,
+    AlignedBox2D, Color, Double2, Double3, Empty, Float3, Image, ImageFormat, JointState, LaserScan, Mesh, Path, PointCloud, PointField, Pose, Quaternion, ScalarKind,
     Timestamp, Transform, VideoCodec, VideoFrame,
 };
 use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, Request, TaskOptions, TaskRequest, VariableOptions};
@@ -104,6 +104,8 @@ fn main() -> Result<(), rant::Error> {
     let cloud = node.publisher::<PointCloud>("Cell/Cloud", Qos::new())?;
     let lidar = node.publisher::<LaserScan>("Cell/Lidar", Qos::new())?;
     let plan = node.publisher::<Path>("Cell/Plan", Qos::new())?;
+    let part = node.publisher::<Mesh>("Cell/Part", Qos::new())?;
+    let ground = node.publisher::<Mesh>("Cell/Ground", Qos::new())?;
     let jog = Arc::new(Mutex::new(None::<f64>));
     let heard = jog.clone();
     let _jog = node.subscriber::<f64>("Line1/Jog", Qos::new(), move |m| *heard.lock().unwrap() = Some(m.into_inner()))?;
@@ -185,6 +187,8 @@ fn main() -> Result<(), rant::Error> {
             cloud.send(&cloud_of(t))?;
             lidar.send(&lidar_of(t))?;
             plan.send(&plan_of(t))?;
+            part.send(&part_of(t))?;
+            ground.send(&ground_of(t))?;
         }
         next += Duration::from_millis(50);
         match next.checked_duration_since(Instant::now()) {
@@ -211,9 +215,7 @@ fn scan_of(t: f64) -> Scan {
 /// The floor of `scan_of` as a PCL cloud: x, y, z and intensity as 32 bit floats, then rgb
 /// packed blue, green, red, as PCL packs it. The part is orange and brighter, the floor grey.
 fn cloud_of(t: f64) -> PointCloud {
-    let fields = [("x", 0), ("y", 4), ("z", 8), ("intensity", 12), ("rgb", 16)]
-        .map(|(name, offset)| PointField { name: name.to_owned(), offset, kind: ScalarKind::F32, count: 1 })
-        .to_vec();
+    let fields = floats(&["x", "y", "z", "intensity", "rgb"]);
     let mut data = Vec::with_capacity(20_000 * 20);
     for p in scan_of(t).points {
         let on = p.z > 0.0;
@@ -262,6 +264,67 @@ fn plan_of(t: f64) -> Path {
         })
         .collect();
     Path { poses }
+}
+
+/// Each of `names` a 32 bit float, one after another from the start of a point.
+fn floats(names: &[&str]) -> Vec<PointField> {
+    names.iter().zip(0..).map(|(name, i)| PointField { name: (*name).to_owned(), offset: 4 * i, kind: ScalarKind::F32, count: 1 }).collect()
+}
+
+/// A box 0.4 m wide turning about z, as a Mesh of its six faces, four vertices each with the
+/// face's normal and colour, so its edges stay sharp. Its top is orange.
+fn part_of(t: f64) -> Mesh {
+    let (s, c) = ((t * 0.5).sin() as f32, (t * 0.5).cos() as f32);
+    let turn = |[x, y, z]: [f32; 3]| [c * x - s * y, s * x + c * y, z];
+    // each face's normal, two ways across it counterclockwise from outside, and its blue,
+    // green and red
+    let faces: [([f32; 3], [f32; 3], [f32; 3], [u8; 3]); 6] = [
+        ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [60, 60, 220]),
+        ([-1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [60, 200, 60]),
+        ([0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [220, 120, 60]),
+        ([0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [60, 200, 220]),
+        ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [40, 140, 230]),
+        ([0.0, 0.0, -1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [120, 120, 120]),
+    ];
+    let (mut data, mut triangles) = (Vec::with_capacity(24 * 28), Vec::with_capacity(36));
+    for (k, (n, u, v, bgr)) in faces.iter().enumerate() {
+        for (a, b) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            let at = turn([0, 1, 2].map(|i| 0.2 * (n[i] + a * u[i] + b * v[i])));
+            for x in at.into_iter().chain(turn(*n)) {
+                data.extend(x.to_le_bytes());
+            }
+            data.extend([bgr[0], bgr[1], bgr[2], 0]);
+        }
+        let first = 4 * k as u32;
+        triangles.extend([0, 1, 2, 0, 2, 3].map(|i| first + i));
+    }
+    let fields = floats(&["x", "y", "z", "normal_x", "normal_y", "normal_z", "rgb"]);
+    Mesh { vertices: PointCloud { origin: Transform::identity(), width: 0, fields, point_step: 28, dense: true, data }, triangles }
+}
+
+/// Ground 4 by 4 m rolling 0.2 m up and down, as a Mesh of 100 by 100 vertices with x, y and z
+/// only, its hills moving along x as time goes.
+fn ground_of(t: f64) -> Mesh {
+    const N: u32 = 100;
+    let mut data = Vec::with_capacity((N * N * 12) as usize);
+    for j in 0..N {
+        for i in 0..N {
+            let (x, y) = (i as f32 * 0.04 - 2.0, j as f32 * 0.04 - 2.0);
+            let z = 0.2 * (2.0 * x + 0.5 * t as f32).sin() * (1.5 * y).cos();
+            for v in [x, y, z] {
+                data.extend(v.to_le_bytes());
+            }
+        }
+    }
+    let mut triangles = Vec::with_capacity(((N - 1) * (N - 1) * 6) as usize);
+    for j in 0..N - 1 {
+        for i in 0..N - 1 {
+            let a = j * N + i;
+            triangles.extend([a, a + 1, a + N + 1, a, a + N + 1, a + N]);
+        }
+    }
+    let vertices = PointCloud { origin: Transform::identity(), width: N, fields: floats(&["x", "y", "z"]), point_step: 12, dense: true, data };
+    Mesh { vertices, triangles }
 }
 
 /// Two legs of 2 and 3 points, the second's last point moving along x, and two route names.

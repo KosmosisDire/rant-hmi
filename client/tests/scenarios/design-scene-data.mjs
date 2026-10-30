@@ -2,7 +2,7 @@
 // ramp by a field, cut to a range, a LaserScan's returns and a Path as a line. The worker reads
 // them from their bytes, and a field the value lacks says so on the scene.
 
-export default async function ({ page, hmi, d, check, eventually }) {
+export default async function ({ hmi, d, check, eventually }) {
   await hmi.import("Cell.CloudD", "Cell/Cloud");
   await hmi.import("Cell.LidarD", "Cell/Lidar");
   await hmi.import("Cell.PlanD", "Cell/Plan");
@@ -15,29 +15,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const says = (words) => eventually(async () => (await el.getAttribute("title"))?.includes(words), `the scene to say ${words}`);
   const quiet = async () => check(!(await el.getAttribute("title"))?.includes("cloud:"), `the scene says ${await el.getAttribute("title")}`);
 
-  // how many pixels of the scene each test takes
-  const count = (tests) =>
-    el.screenshot().then((png) =>
-      page.evaluate(
-        async ([png, tests]) => {
-          const img = new Image();
-          img.src = `data:image/png;base64,${png}`;
-          await img.decode();
-          const c = new OffscreenCanvas(img.width, img.height).getContext("2d");
-          c.drawImage(img, 0, 0);
-          const px = c.getImageData(0, 0, img.width, img.height).data;
-          const fns = Object.fromEntries(Object.entries(tests).map(([k, f]) => [k, new Function("r", "g", "b", `return ${f}`)]));
-          const out = Object.fromEntries(Object.keys(tests).map((k) => [k, 0]));
-          for (let i = 0; i < px.length; i += 4) for (const k in fns) if (fns[k](px[i], px[i + 1], px[i + 2])) out[k]++;
-          return out;
-        },
-        [png.toString("base64"), tests],
-      ),
-    );
-  const sees = async (tests, ok, what) => {
-    let seen;
-    await eventually(async () => ok((seen = await count(tests))), () => `${what}, not ${JSON.stringify(seen)}`);
-  };
+  const sees = (tests, ok, what) => d.sees(el, tests, ok, what);
 
   // its own rgb: a grey floor and an orange part
   const own = { grey: "Math.abs(r - 120) < 25 && Math.abs(g - 120) < 25 && Math.abs(b - 120) < 25", orange: "r > 180 && g > 100 && g < 180 && b < 90" };
@@ -56,7 +34,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   // a field the cloud has not
   await hmi.setProps(pageId, dots, { field: '"nope"', range: "[]" });
-  await says("cloud: points: field: the cloud has no number field nope");
+  await says("cloud: field: the cloud has no number field nope");
 
   // a lidar's returns on the room's walls, 3 m to either side, and on the post
   await hmi.setProps(pageId, dots, { points: "Cell.LidarD", field: '""', range: "[]", size: "0.08", color: '"#ffff00"' });

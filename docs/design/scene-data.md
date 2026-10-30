@@ -40,6 +40,12 @@ Claude's:
   tenth, blue to dark red: its ends are near black and vanished on a dark scene.
 - A cloud's `rgb` or `rgba` field colours it when `color` is left out, packed as PCL packs it.
 - `floor`, not "floor grid": a tag is one word.
+- A fault about `field` is the field's own, `cloud: field: the cloud has no number field nope`.
+- A mesh keeps every vertex, as its triangles count them, and leaves out a triangle with a
+  vertex outside `range`. Its normals are its `normal_x`, `normal_y` and `normal_z` fields, as
+  PCL names them, or else worked out from the triangles round each vertex, each by its area.
+- A mesh is lit from both sides, as a scanned surface is seen from under it too. `mesh="null"`
+  draws none, as a model's `src=""` does.
 
 ## How it stays fast
 
@@ -68,6 +74,22 @@ small list's points always were.
 - A mesh's triangles go to the GPU as they come, an index of 32 bit numbers.
 - Nothing is read again unless the value it came from is new.
 
+A mesh never comes as code, only from the mesh, so a small one's vertices, bytes and triangles
+go to the worker as they came, and it reads them as it reads a big one. Points may be written in
+code, which only the page reads, so a small cloud is laid out there instead. three.js takes a
+vertex's colour as linear light, so a mesh's sRGB colours go through a table of 256.
+
+Measured in Node, reading from the bytes into what the GPU is given:
+
+| Value | Time |
+| --- | --- |
+| A cloud of 1M points, x, y and z | 13 ms |
+| The same in its own rgb | 18 ms |
+| The same along the ramp by intensity | 27 ms |
+| A scan of 128 by 1024 | 4 ms |
+| A mesh of 1M vertices and 2M triangles, its normals worked out | 54 ms |
+| The same along the ramp by z, cut to a range | 67 ms |
+
 Points with no z now lie at z 0, so a Path2D, a Polyline2D and a list of Double2 draw.
 `run-big-import-edit` read a cloud without z to see the page sent fewer fields, and expected the
 scene to refuse it. It now checks that they draw flat.
@@ -80,7 +102,8 @@ scene to refuse it. It now checks that they draw flat.
 4. `grid` for a Grid.
 
 Each step has a scenario drawing it from the demo line, which publishes a cloud, a scan, a
-path, a mesh and a map.
+path, a small turning box and rolling ground as meshes, and a map. The scenarios count the
+scene's pixels of each colour with the designer's `count` and `sees`.
 
 ## Later
 

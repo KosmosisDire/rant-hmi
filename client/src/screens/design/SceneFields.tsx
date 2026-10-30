@@ -11,7 +11,7 @@ import type { Spec } from "./ShapeFields";
 import { parentOf } from "./tree";
 
 /** The parts the inspector and the menu add, in the order they list them. */
-export const PART_KINDS: Part[] = ["box", "sphere", "cylinder", "points", "arrow", "axes", "floor", "model", "anchor"];
+export const PART_KINDS: Part[] = ["box", "sphere", "cylinder", "points", "mesh", "arrow", "axes", "floor", "model", "anchor"];
 
 /** How far one pixel of scrub moves each length, angle or share. */
 const STEPS: Record<string, number> = { size: 0.05, radius: 0.05, length: 0.05, step: 0.1, opacity: 0.01, yaw: 0.02, pitch: 0.02, distance: 0.1 };
@@ -44,6 +44,7 @@ const STARTS: Record<Part, Record<string, string>> = {
   sphere: { name: "Sphere", pose: STANDS },
   cylinder: { name: "Cylinder", pose: STANDS },
   points: { name: "Points", points: "[vec(-1, 0, 0.5), vec(0, 0, 1), vec(1, 0, 0.5)]", size: "0.1" },
+  mesh: { name: "Mesh" },
   floor: { name: "Floor" },
   arrow: { name: "Arrow", vector: "vec(0, 0, 1)" },
   model: { name: "Model" },

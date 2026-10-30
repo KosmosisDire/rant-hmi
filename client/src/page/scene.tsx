@@ -26,9 +26,9 @@ interface Read {
   number(key: string): number | undefined;
   flag(key: string): boolean | undefined;
   vector(key: string): Vec3 | undefined;
-  /** Each point's x, y and z after the one before, or the ref of the big value they are. */
   /** Points from a value, `field`'s number of each, and a cloud's own colours when `own`. */
   points(key: string, field: string | undefined, own: boolean): Laid | undefined;
+  mesh(key: string): Shown["mesh"];
   /** No numbers for the values' own ends, or a low and a high. */
   range(key: string): number[] | undefined;
   /** Whether the part sets `key` itself, not leaving it to its default. */
@@ -132,13 +132,28 @@ function pointsOf(v: unknown, field: string | undefined, own: boolean, say: (fau
     if (!xyz) return undefined;
     // x, y and z are the worker's to read from the points
     const values = field && !["x", "y", "z"].includes(field) ? valuesOf(list as unknown[], field) : undefined;
-    if (field && !["x", "y", "z"].includes(field) && !values) say(`points: field: ${field} is not a number each point has`);
+    if (field && !["x", "y", "z"].includes(field) && !values) say(`field: ${field} is not a number each point has`);
     return { points: xyz, values };
   }
   found.forEach(say);
   if (!s) return undefined;
   const n = s.n;
   return { points: s.xyz.slice(0, 3 * n), values: s.values?.slice(0, n), rgba: s.rgba?.slice(0, 4 * n), origin: s.origin && poseOf(s.origin) };
+}
+
+/** A Mesh as the worker draws it: by the ref of its vertices' bytes when the worker keeps them,
+ *  or for one that came small, its parts copied to be sent. Null draws none. */
+function meshOf(v: unknown): Shown["mesh"] {
+  if (v === null) return null;
+  const { vertices: c, triangles } = (v ?? {}) as { vertices?: Record<string, unknown>; triangles?: unknown };
+  if (typeof c !== "object" || c === null || !("point_step" in c && "fields" in c && "data" in c)) return undefined;
+  const ref = refOf(c.data);
+  if (ref) return { follow: ref };
+  const list = numberList(triangles);
+  if (!(c.data instanceof Uint8Array) || !list || !Array.isArray(c.fields)) return undefined;
+  const fields = c.fields.map((f) => ({ ...f }));
+  const origin = { pose: poseOf((c.origin as { pose?: unknown } | undefined)?.pose) };
+  return { vertices: { fields, point_step: c.point_step, origin }, data: c.data.slice(), triangles: Uint32Array.from(list) };
 }
 
 /** Colours one per point, a byte each of red, green, blue and alpha, from a list of Colors or
@@ -216,6 +231,7 @@ function farResolve(code: string | undefined, scope: Scope, kept: (v: unknown) =
 
 const isKept = (v: unknown) => refOf(v) !== undefined;
 const isKeptPoints = (v: unknown) => refOf(listOfPoints(v).list) !== undefined;
+const isKeptMesh = (v: unknown) => refOf((v as { vertices?: { data?: unknown } } | null)?.vertices?.data) !== undefined;
 
 /** What `props` read as, each timed by `time`, which the part or scene keeps between reads. */
 function reader(props: Element["props"], defaults: Record<string, string>, scope: Scope, time: ReturnType<typeof timer>): Read {
@@ -254,6 +270,7 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
         (v) => pointsOf(v, field, own, (f) => faults.push(f)),
         isKeptPoints,
       ),
+    mesh: (key) => as(key, "a Mesh", meshOf, isKeptMesh),
     colour: (key) => as(key, "a colour", colourOf),
     colours: (key) =>
       as(
@@ -365,6 +382,7 @@ const SHOWS: Record<Part, (read: Read) => Omit<Shown, "visible">> = {
       own,
     };
   },
+  mesh: (r) => ({ mesh: r.mesh("mesh"), color: r.colour("color"), opacity: r.number("opacity"), field: r.text("field"), range: r.range("range"), own: !r.given("color") }),
   floor: (r) => ({ size: r.number("size"), step: r.number("step"), color: r.colour("color") }),
   model: (r) => ({ src: r.text("src"), joints: r.joints("joints"), names: r.names("names") }),
 };
@@ -417,7 +435,8 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
     shown.visible = !d.unknown;
     setMine(d);
     // lists laid out here go to the worker whole, and are always new
-    const laid = [shown.points, shown.color, shown.size, shown.values].filter((v) => ArrayBuffer.isView(v)) as (Float32Array | Uint8Array)[];
+    const sent = shown.mesh && "data" in shown.mesh ? [shown.mesh.data, shown.mesh.triangles] : [];
+    const laid = [shown.points, shown.color, shown.size, shown.values, ...sent].filter((v) => ArrayBuffer.isView(v)) as (Float32Array | Uint8Array | Uint32Array)[];
     const now = JSON.stringify(shown, (_, v) => (ArrayBuffer.isView(v) ? undefined : v));
     if (now === said && laid.length === 0) return;
     said = now;

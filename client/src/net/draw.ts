@@ -13,6 +13,7 @@ import {
   Color,
   CylinderGeometry,
   DirectionalLight,
+  DoubleSide,
   GridHelper,
   Group,
   HemisphereLight,
@@ -38,7 +39,7 @@ import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { CAMERA, type Part, rgbaOf } from "../page/parts";
 import type { Column } from "./packed";
-import { cloudOf, laidOf, listOf, Pool, ramped, scanOf, type Spread } from "./spread";
+import { cloudOf, laidOf, listOf, meshOf, type PoseValue, Pool, ramped, scanOf, shaded, type Spread } from "./spread";
 
 export type Vec3 = { x: number; y: number; z: number };
 export type Pose = { position?: Vec3; orientation?: Vec3 & { w: number } };
@@ -73,6 +74,9 @@ export interface Shown {
    *  points are measured from. */
   values?: Float32Array;
   origin?: Pose;
+  /** A mesh's vertices, their bytes and its triangles as the page sent them, or the big value
+   *  it follows by its vertices' bytes, whose other fields sit beside them, or null for none. */
+  mesh?: { follow: string } | { vertices: unknown; data: Uint8Array; triangles: Uint32Array } | null;
   step?: number;
   src?: string;
   /** A USD robot's values by joint name, or a JointState's positions in the order `names` gives,
@@ -133,7 +137,7 @@ export interface Host {
 export const aliasOf = (ref: string) => ref.split("/")[0];
 
 /** What a part may follow in a big value the worker keeps, rather than be sent. */
-const FOLLOWED = ["points", "color", "size"] as const;
+const FOLLOWED = ["points", "color", "size", "mesh"] as const;
 type Followed = (typeof FOLLOWED)[number];
 const isFollow = (v: unknown): v is { follow: string } => typeof v === "object" && v !== null && "follow" in v;
 const isVec3 = (v: unknown): v is Vec3 => typeof v === "object" && v !== null && "x" in v;
@@ -143,29 +147,38 @@ const isList = (c: unknown): c is ArrayLike<number> => ArrayBuffer.isView(c) && 
 /** A part's dots or line. */
 type Dotted = Line<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial>;
 
-/** Puts `n` points and what each carries on `drawn`, from arrays a pool keeps, so a new value
- *  writes in place and only one that grew makes a new geometry. three.js is given the sphere
- *  round `box`, as it would walk every point for it before the first draw. */
-function upload(drawn: Dotted, n: number, box: number[], arrays: Record<string, [Float32Array | Uint8Array, number, boolean] | undefined>) {
+/** Puts `n` points and what each carries on `drawn`, and a mesh's first `index[1]` vertex
+ *  numbers, from arrays a pool keeps, so a new value writes in place and only one that grew makes
+ *  a new geometry. three.js is given the sphere round `box`, as it would walk every point for it
+ *  before the first draw. */
+function upload(
+  drawn: { geometry: BufferGeometry },
+  n: number,
+  box: number[],
+  arrays: Record<string, [Float32Array | Uint8Array, number, boolean] | undefined>,
+  index?: [Uint32Array, number],
+) {
   let g = drawn.geometry;
   const names = Object.keys(arrays).filter((k) => arrays[k]);
-  const fits = names.length === Object.keys(g.attributes).length && names.every((k) => g.getAttribute(k)?.array === arrays[k]![0]);
-  if (fits)
-    for (const k of names) {
-      const a = g.getAttribute(k) as BufferAttribute;
-      a.clearUpdateRanges();
-      a.addUpdateRange(0, n * a.itemSize);
-      a.needsUpdate = true;
-    }
-  else {
+  const fits = names.length === Object.keys(g.attributes).length && names.every((k) => g.getAttribute(k)?.array === arrays[k]![0]) && g.index?.array === index?.[0];
+  const update = (a: BufferAttribute, items: number) => {
+    a.clearUpdateRanges();
+    a.addUpdateRange(0, items * a.itemSize);
+    a.needsUpdate = true;
+  };
+  if (fits) {
+    for (const k of names) update(g.getAttribute(k) as BufferAttribute, n);
+    if (index) update(g.index!, index[1]);
+  } else {
     g.dispose();
     g = drawn.geometry = new BufferGeometry();
     for (const k of names) {
       const [array, size, normalized] = arrays[k]!;
       g.setAttribute(k, new BufferAttribute(array, size, normalized));
     }
+    if (index) g.setIndex(new BufferAttribute(index[0], 1));
   }
-  g.setDrawRange(0, n);
+  g.setDrawRange(0, index ? index[1] : n);
   if (n > 0 && box.every(Number.isFinite)) {
     const [lo, hi] = [new Vector3(box[0], box[1], box[2]), new Vector3(box[3], box[4], box[5])];
     g.boundingSphere = new Sphere(lo.clone().add(hi).multiplyScalar(0.5), lo.distanceTo(hi) / 2);
@@ -483,6 +496,15 @@ function spreadOf(h: Held, points: Float32Array | Uint8Array | Column, pool: Poo
   found.push("points: the value is not a list of points, each with numbers x, y and z");
 }
 
+/** Puts what a cloud's points draw at its origin, in the frame of what holds the part. */
+function place(drawn: Object3D, origin: PoseValue | undefined) {
+  const at = origin?.position;
+  const turn = origin?.orientation;
+  drawn.position.set(at?.x ?? 0, at?.y ?? 0, at?.z ?? 0);
+  if (turn) drawn.quaternion.set(turn.x, turn.y, turn.z, turn.w).normalize();
+  else drawn.quaternion.identity();
+}
+
 /** Lays out what `drawn` draws: its points, their colours along the ramp by `field`, or as given
  *  one each, or a cloud's own, and their sizes when each has one. It is laid out again only when
  *  one of them is new, and none yet, as before a big value first comes, draws what it drew. */
@@ -524,12 +546,7 @@ function lay(drawn: Dotted, h: Held, faults: string[]) {
     pointColor: colours && [colours, 4, true],
     pointSize: kept && [kept, 1, false],
   });
-  // a cloud's points sit at its origin, in the frame of what holds the part
-  const at = spread.origin?.position;
-  const turn = spread.origin?.orientation;
-  drawn.position.set(at?.x ?? 0, at?.y ?? 0, at?.z ?? 0);
-  if (turn) drawn.quaternion.set(turn.x, turn.y, turn.z, turn.w).normalize();
-  else drawn.quaternion.identity();
+  place(drawn, spread.origin);
   const m = drawn.material;
   const defines: Record<string, string> = {};
   if (colours) defines.COLORS = "";
@@ -540,6 +557,49 @@ function lay(drawn: Dotted, h: Held, faults: string[]) {
   let see = false;
   if (colours && !ramp) for (let i = 3; i < 4 * spread.n && !see; i += 4) see = colours[i] < 255;
   u.seeThrough = see;
+  faults.push(...found);
+}
+
+// sRGB bytes as the linear light three.js takes a vertex's colour in
+const LINEAR = Float32Array.from({ length: 256 }, (_, i) => (i <= 10 ? i / 255 / 12.92 : ((i / 255 + 0.055) / 1.055) ** 2.4));
+
+/** A part's lit triangles. */
+type Meshy = Mesh<BufferGeometry, MeshLambertMaterial>;
+
+/** Lays out the triangles `drawn` draws: its vertices, their normals, and their colours along the
+ *  ramp by `field`, leaving out triangles outside `range`, or a cloud's own. It is laid out again
+ *  only when one of them is new. */
+function layMesh(drawn: Meshy, h: Held, faults: string[]) {
+  const s = h.shown;
+  const ref = h.follows.mesh;
+  const sent = s.mesh && !isFollow(s.mesh) ? s.mesh : undefined;
+  // a mesh the worker keeps holds its vertices and beside them its triangles
+  const [vertices, data, triangles] = ref
+    ? [host.value(holderOf(ref)), host.column(ref), host.column(`${holderOf(holderOf(ref))}/triangles`)]
+    : [sent?.vertices, sent?.data, sent?.triangles];
+  const from = [data, triangles, s.field, JSON.stringify(s.range), s.own];
+  const u = drawn.userData;
+  if (!data || (u.from && from.every((f, i) => f === u.from[i]))) return void faults.push(...(u.faults ?? []));
+  u.from = from;
+  const found: string[] = (u.faults = []);
+  const pool: Pool = (u.pool ??= new Pool());
+  let m;
+  if (!(data instanceof Uint8Array)) found.push("mesh: the vertices' data is not bytes");
+  else if (!isList(triangles)) found.push("mesh: the triangles are not numbers");
+  else m = meshOf(vertices, data, triangles, s.field || undefined, !!s.own, pool, found);
+  if (!m) return void faults.push(...found);
+  const rgba = s.field && m.values ? shaded(m, s.range, pool) : !s.field && s.own ? m.rgba : undefined;
+  const colours = rgba && pool.floats("linear", m.n, 3);
+  if (colours)
+    for (let i = 0; i < m.n; i++) {
+      colours[3 * i] = LINEAR[rgba![4 * i]];
+      colours[3 * i + 1] = LINEAR[rgba![4 * i + 1]];
+      colours[3 * i + 2] = LINEAR[rgba![4 * i + 2]];
+    }
+  upload(drawn, m.n, m.box, { position: [m.xyz, 3, false], normal: [m.normals, 3, false], color: colours && [colours, 3, false] }, [m.index, m.m]);
+  place(drawn, m.origin);
+  const mat = drawn.material;
+  if (mat.vertexColors !== !!colours) Object.assign(mat, { vertexColors: !!colours, needsUpdate: true });
   faults.push(...found);
 }
 
@@ -595,6 +655,18 @@ const KINDS: Record<Part, Kind> = {
       if (typeof s.size === "number") m.uniforms.uSize.value = s.size;
       const see = drawn.userData.seeThrough || (Array.isArray(s.color) && s.color[3] < 1);
       if (m.transparent !== see) Object.assign(m, { transparent: see, depthWrite: !see, needsUpdate: true });
+    },
+  },
+  // triangles lit from both sides, as a scanned surface is seen from under it too
+  mesh: {
+    make: () => new Group().add(new Mesh(new BufferGeometry(), new MeshLambertMaterial({ side: DoubleSide }))),
+    show: (o, s, found, h) => {
+      const drawn = o.children[0] as Meshy;
+      drawn.visible = s.mesh !== null;
+      if (drawn.visible) layMesh(drawn, h, found.faults);
+      paint(drawn.material, s, s.opacity);
+      // its own colours or the ramp's, which the material's colour would tint
+      if (drawn.material.vertexColors) drawn.material.color.setRGB(1, 1, 1);
     },
   },
   // three.js lays a grid on its xz plane and makes its lines once, in white its material then

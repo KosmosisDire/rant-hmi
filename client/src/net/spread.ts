@@ -34,14 +34,17 @@ export interface Spread {
 /** Arrays a part keeps from one value to the next, grown as one needs and never shrunk, so a
  *  stream of clouds makes no garbage. Each holds whole items of its width. */
 export class Pool {
-  private kept = new Map<string, Float32Array | Uint8Array>();
+  private kept = new Map<string, Float32Array | Uint8Array | Uint32Array>();
   floats(key: string, items: number, width = 1): Float32Array {
     return this.get(key, items, width, Float32Array) as Float32Array;
   }
   bytes(key: string, items: number, width = 1): Uint8Array {
     return this.get(key, items, width, Uint8Array) as Uint8Array;
   }
-  private get(key: string, items: number, width: number, Kind: typeof Float32Array | typeof Uint8Array) {
+  uints(key: string, items: number, width = 1): Uint32Array {
+    return this.get(key, items, width, Uint32Array) as Uint32Array;
+  }
+  private get(key: string, items: number, width: number, Kind: typeof Float32Array | typeof Uint8Array | typeof Uint32Array) {
     const had = this.kept.get(key);
     if (had && had.length >= items * width) return had;
     const made = new Kind(Math.ceil(items * 1.25) * width);
@@ -96,7 +99,7 @@ export function listOf(c: Column, field: string | undefined, pool: Pool, faults:
   if (axis >= 0) axisValues(s, axis, pool);
   else if (field) {
     const own = isNumbers(c[field]) ? c[field] : at[field];
-    if (!isNumbers(own)) faults.push(`points: field: ${field} is not a number each point has`);
+    if (!isNumbers(own)) faults.push(`field: ${field} is not a number each point has`);
     else s.values = copyInto(pool.floats("values", n), own, n);
   }
   return s;
@@ -165,18 +168,28 @@ function fieldReader(f: CloudField, step: number, dv: DataView, words: Float32Ar
   return read && ((i) => read(i * step + f.offset));
 }
 
-/** A PointCloud's points from its bytes: those with x, y and z all finite, the numbers `field`
- *  names, and its `rgb` or `rgba` field's colours when `own` asks for them, packed blue, green,
- *  red and alpha as PCL packs them. */
-export function cloudOf(value: unknown, bytes: Uint8Array, field: string | undefined, own: boolean, pool: Pool, faults: string[]): Spread | undefined {
+/** A PointCloud's point_step, its origin, and its field of a name whose number fits in a point. */
+function layoutOf(value: unknown) {
   const v = (value ?? {}) as { fields?: unknown; point_step?: unknown; origin?: { pose?: PoseValue } };
   const fields = (Array.isArray(v.fields) ? v.fields : []) as CloudField[];
   const step = typeof v.point_step === "number" ? v.point_step : 0;
   const named = (name: string) => fields.find((f) => f.name === name && WIDTH[f.kind] !== undefined && f.offset + WIDTH[f.kind] <= step);
+  return { step, named, origin: v.origin?.pose };
+}
+
+/** A cloud's bytes as words, when they start on one. */
+const wordsOf = (bytes: Uint8Array) => (bytes.byteOffset % 4 === 0 ? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2) : undefined);
+const viewOf = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+/** A PointCloud's points from its bytes: those with x, y and z all finite, the numbers `field`
+ *  names, and its `rgb` or `rgba` field's colours when `own` asks for them, packed blue, green,
+ *  red and alpha as PCL packs them. A mesh's vertices are all kept, as its triangles count them. */
+export function cloudOf(value: unknown, bytes: Uint8Array, field: string | undefined, own: boolean, pool: Pool, faults: string[], mesh = false): Spread | undefined {
+  const { step, named, origin } = layoutOf(value);
   const [fx, fy, fz] = AXES.map(named);
-  if (!fx || !fy || !fz || step <= 0) return void faults.push("points: the cloud has no x, y and z fields that fit its point_step");
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const words = bytes.byteOffset % 4 === 0 ? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2) : undefined;
+  if (!fx || !fy || !fz || step <= 0) return void faults.push(mesh ? "mesh: the vertices have no x, y and z fields that fit their point_step" : "points: the cloud has no x, y and z fields that fit its point_step");
+  const dv = viewOf(bytes);
+  const words = wordsOf(bytes);
   const onWords = (f: CloudField) => words !== undefined && step % 4 === 0 && f.kind === "F32" && f.offset % 4 === 0;
   // PCL's usual x, y and z are 32 bit floats on words, read here with no call a point
   const fast = onWords(fx) && onWords(fy) && onWords(fz);
@@ -189,7 +202,7 @@ export function cloudOf(value: unknown, bytes: Uint8Array, field: string | undef
     const f = named(field);
     rv = f && fieldReader(f, step, dv, words);
     if (f && fast && onWords(f)) av = f.offset >> 2;
-    if (!rv) faults.push(`points: field: the cloud has no number field ${field}`);
+    if (!rv) faults.push(`field: the cloud has no number field ${field}`);
   }
   const colour = own && !field ? (named("rgba") ?? named("rgb")) : undefined;
   const alpha = colour?.name === "rgba";
@@ -205,17 +218,20 @@ export function cloudOf(value: unknown, bytes: Uint8Array, field: string | undef
     const y = fast ? words![w + ay] : ry(i);
     const z = fast ? words![w + az] : rz(i);
     // NaN and infinities alike, as a cloud that is not dense marks a missing point
-    if (x - x !== 0 || y - y !== 0 || z - z !== 0) continue;
+    const missing = x - x !== 0 || y - y !== 0 || z - z !== 0;
+    if (missing && !mesh) continue;
     const k = 3 * j;
     xyz[k] = x;
     xyz[k + 1] = y;
     xyz[k + 2] = z;
-    if (x < x0) x0 = x;
-    if (x > x1) x1 = x;
-    if (y < y0) y0 = y;
-    if (y > y1) y1 = y;
-    if (z < z0) z0 = z;
-    if (z > z1) z1 = z;
+    if (!missing) {
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      if (z < z0) z0 = z;
+      if (z > z1) z1 = z;
+    }
     if (values) values[j] = av >= 0 ? words![w + av] : rv!(i);
     if (rgba) {
       const at = i * step + colour!.offset;
@@ -226,9 +242,83 @@ export function cloudOf(value: unknown, bytes: Uint8Array, field: string | undef
     }
     j++;
   }
-  const s: Spread = { n: j, xyz, box: [x0, y0, z0, x1, y1, z1], values, rgba, origin: v.origin?.pose };
+  const s: Spread = { n: j, xyz, box: [x0, y0, z0, x1, y1, z1], values, rgba, origin };
   if (axis >= 0) axisValues(s, axis, pool);
   return s;
+}
+
+/** A mesh ready to draw: every vertex as a point with a normal each, and the first `m` of
+ *  `index`, its triangles' vertex numbers three at a time. */
+export interface Meshed extends Spread {
+  normals: Float32Array;
+  index: Uint32Array;
+  m: number;
+}
+
+/** A Mesh from its vertices' cloud, their bytes and its triangles: every vertex, its normal from
+ *  the fields normal_x, normal_y and normal_z, or else from the triangles round it. */
+export function meshOf(vertices: unknown, bytes: Uint8Array, triangles: ArrayLike<number>, field: string | undefined, own: boolean, pool: Pool, faults: string[]): Meshed | undefined {
+  const s = cloudOf(vertices, bytes, field, own, pool, faults, true);
+  if (!s) return undefined;
+  const m = triangles.length - (triangles.length % 3);
+  if (m !== triangles.length) faults.push(`mesh: ${triangles.length} vertex numbers, not three for each triangle`);
+  const index = pool.uints("index", m);
+  let top = 0;
+  for (let i = 0; i < m; i++) {
+    const k = triangles[i];
+    if (k > top) top = k;
+    index[i] = k;
+  }
+  if (m > 0 && top >= s.n) return void faults.push(`mesh: a triangle has vertex ${top}, past the last of its ${s.n} vertices`);
+  const normals = pool.floats("normals", s.n, 3);
+  const { step, named } = layoutOf(vertices);
+  const given = ["normal_x", "normal_y", "normal_z"].map(named);
+  if (given.every((f) => f)) {
+    const [dv, words] = [viewOf(bytes), wordsOf(bytes)];
+    const [nx, ny, nz] = given.map((f) => fieldReader(f!, step, dv, words)!);
+    for (let i = 0; i < s.n; i++) {
+      normals[3 * i] = nx(i);
+      normals[3 * i + 1] = ny(i);
+      normals[3 * i + 2] = nz(i);
+    }
+  } else normalsOf(s.xyz, s.n, index, m, normals);
+  return { ...s, normals, index, m };
+}
+
+/** Each vertex's normal, the sum of its triangles' each weighted by its area, made one long. */
+function normalsOf(xyz: Float32Array, n: number, index: Uint32Array, m: number, out: Float32Array) {
+  out.fill(0, 0, 3 * n);
+  for (let t = 0; t < m; t += 3) {
+    const a = 3 * index[t];
+    const b = 3 * index[t + 1];
+    const c = 3 * index[t + 2];
+    const ux = xyz[b] - xyz[a];
+    const uy = xyz[b + 1] - xyz[a + 1];
+    const uz = xyz[b + 2] - xyz[a + 2];
+    const vx = xyz[c] - xyz[a];
+    const vy = xyz[c + 1] - xyz[a + 1];
+    const vz = xyz[c + 2] - xyz[a + 2];
+    const x = uy * vz - uz * vy;
+    const y = uz * vx - ux * vz;
+    const z = ux * vy - uy * vx;
+    // a triangle on a missing vertex leaves its others as they are
+    if (x - x !== 0 || y - y !== 0 || z - z !== 0) continue;
+    out[a] += x;
+    out[a + 1] += y;
+    out[a + 2] += z;
+    out[b] += x;
+    out[b + 1] += y;
+    out[b + 2] += z;
+    out[c] += x;
+    out[c + 1] += y;
+    out[c + 2] += z;
+  }
+  for (let i = 0; i < 3 * n; i += 3) {
+    const l = Math.sqrt(out[i] * out[i] + out[i + 1] * out[i + 1] + out[i + 2] * out[i + 2]) || 1;
+    out[i] /= l;
+    out[i + 1] /= l;
+    out[i + 2] /= l;
+  }
 }
 
 /** A LaserScan's returns as points in its xy plane, each beam's echoes together, those outside
@@ -243,8 +333,8 @@ export function scanOf(value: unknown, ranges: ArrayLike<number>, intensities: A
   if (field === "range") by = ranges;
   else if (field === "intensity") {
     if (intensities && intensities.length === ranges.length) by = intensities;
-    else faults.push("points: field: the scan has no intensity for each range");
-  } else if (field && axis < 0) faults.push(`points: field: a scan's points have x, y, z, range and intensity, not ${field}`);
+    else faults.push("field: the scan has no intensity for each range");
+  } else if (field && axis < 0) faults.push(`field: a scan's points have x, y, z, range and intensity, not ${field}`);
   const n = ranges.length;
   const xyz = pool.floats("xyz", n, 3);
   const values = by ? pool.floats("values", n) : undefined;
@@ -283,18 +373,53 @@ const RAMP = (() => {
   return out;
 })();
 
+/** The low and high ends of the ramp: `range`, or the first `n` values' own when it is empty. */
+function endsOf(values: Float32Array, n: number, range: number[] | undefined): [number, number] {
+  if (range && range.length === 2 && range.every(Number.isFinite)) return [range[0], range[1]];
+  let [lo, hi] = [Infinity, -Infinity];
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return [lo, hi];
+}
+
+/** Colours each vertex of a mesh on the ramp by its value, and keeps only the triangles whose
+ *  three values lie in `range`, or within the values' own low and high when it is empty. */
+export function shaded(m: Meshed, range: number[] | undefined, pool: Pool): Uint8Array {
+  const values = m.values!;
+  const [lo, hi] = endsOf(values, m.n, range);
+  const scale = 255 / (hi - lo || 1);
+  const rgba = pool.bytes("ramp", m.n, 4);
+  for (let i = 0; i < m.n; i++) {
+    const v = values[i];
+    const at = 3 * (((Math.min(hi, Math.max(lo, v)) - lo) * scale + 0.5) | 0);
+    rgba[4 * i] = RAMP[at];
+    rgba[4 * i + 1] = RAMP[at + 1];
+    rgba[4 * i + 2] = RAMP[at + 2];
+    rgba[4 * i + 3] = 255;
+  }
+  const index = m.index;
+  let j = 0;
+  for (let t = 0; t < m.m; t += 3) {
+    const [a, b, c] = [values[index[t]], values[index[t + 1]], values[index[t + 2]]];
+    if (!(a >= lo && a <= hi && b >= lo && b <= hi && c >= lo && c <= hi)) continue;
+    index[j] = index[t];
+    index[j + 1] = index[t + 1];
+    index[j + 2] = index[t + 2];
+    j += 3;
+  }
+  m.m = j;
+  return rgba;
+}
+
 /** Keeps the points whose value lies in `range`, or within the values' own low and high when it
  *  is empty, each coloured on the ramp, and their sizes when each has one. Values not finite are
  *  left out too. */
 export function ramped(s: Spread, range: number[] | undefined, sizes: ArrayLike<number> | undefined, pool: Pool): { rgba: Uint8Array; sizes?: Float32Array } {
   const values = s.values!;
-  let [lo, hi] = range && range.length === 2 && range.every(Number.isFinite) ? range : [Infinity, -Infinity];
-  if (lo > hi)
-    for (let i = 0; i < s.n; i++) {
-      const v = values[i];
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
-    }
+  const [lo, hi] = endsOf(values, s.n, range);
   const scale = 255 / (hi - lo || 1);
   const rgba = pool.bytes("ramp", s.n, 4);
   const kept = sizes ? pool.floats("sizes", s.n) : undefined;

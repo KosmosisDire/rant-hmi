@@ -71,6 +71,7 @@ export { default as PanelRight } from "lucide-solid/icons/panel-right";
 export { default as Parentheses } from "lucide-solid/icons/parentheses";
 export { default as PenTool } from "lucide-solid/icons/pen-tool";
 export { default as Pentagon } from "lucide-solid/icons/pentagon";
+export { default as Pyramid } from "lucide-solid/icons/pyramid";
 export { default as Pin } from "lucide-solid/icons/pin";
 export { default as PinOff } from "lucide-solid/icons/pin-off";
 export { default as Play } from "lucide-solid/icons/play";
