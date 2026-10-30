@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "rant-hmi"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -2410,8 +2410,8 @@ dependencies = [
 
 [[package]]
 name = "rant-macros"
-version = "0.0.39"
-source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.39#2775a64a5f3ad07ee5861bbc2d2ba28d61117cd9"
+version = "0.0.40"
+source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.40#1d59715167a073788dfb747042cb504fed1ba3b3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2420,8 +2420,8 @@ dependencies = [
 
 [[package]]
 name = "rant-middleware"
-version = "0.0.39"
-source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.39#2775a64a5f3ad07ee5861bbc2d2ba28d61117cd9"
+version = "0.0.40"
+source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.40#1d59715167a073788dfb747042cb504fed1ba3b3"
 dependencies = [
  "cc",
  "rant-macros",
