@@ -2,6 +2,8 @@
 // where it runs. Completion and the call hint read this, and tests hold each place's real names
 // to it, so no function goes without either.
 
+import { NAMES } from "rant-math/names";
+
 /** Where code runs, each in words. A token, an input's default and a variable's start read alike
  *  on every screen. A name with no `places` is read everywhere. */
 export const PLACES = {
@@ -45,6 +47,7 @@ export const API = [
   { name: "fromEuler", takes: ["roll", "pitch", "yaw"], words: "a quaternion from roll, pitch and yaw in radians" },
   { name: "mix", takes: ["a", "b", "t"], words: "a colour from a toward b by t" },
   { name: "time", words: "the clock", fields: [{ name: "now", words: "ms since 1970, moving where it shows" }] },
+  { name: "math", words: "Rant Math: poses, shapes, fits, cameras, images and point clouds", fields: NAMES },
 
   { name: "notify", takes: ["text"], words: "tell this screen", places: ["handler"] },
   { name: "log", takes: ["...values"], words: "write to the log", places: ["handler"] },

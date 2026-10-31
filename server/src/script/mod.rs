@@ -140,12 +140,20 @@ pub(crate) const MATH: (&str, &str) = ("math.js", include_str!("../../../client/
 pub(crate) const ARITH: (&str, &str) = ("arith.js", include_str!("../../../client/src/lang/arith.js"));
 /// Every name code reads besides the project's own, as completion lists them.
 const API: (&str, &str) = ("api.js", include_str!("../../../client/src/lang/api.js"));
+/// Rant Math's names, which api.js lists under `math`.
+const MATH_NAMES: (&str, &str) = ("rant-math/names", rant_math::quickjs::NAMES);
 
 /// Runs a module in `ctx` and gives its exports. One it imports must have run there first.
 pub(crate) fn module<'js>(ctx: &Ctx<'js>, (name, source): (&str, &str)) -> rquickjs::Result<Object<'js>> {
     let (module, done) = Module::declare(ctx.clone(), name, source)?.eval()?;
     done.finish::<()>()?;
     module.namespace()
+}
+
+/// What api.js exports, with what it imports run first.
+fn api_module<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
+    module(ctx, MATH_NAMES)?;
+    module(ctx, API)
 }
 
 /// Whether code already has `name` or cannot bind it: JavaScript's words and globals, the math
@@ -159,7 +167,7 @@ pub fn reserved(name: &str) -> bool {
             let mut names: Vec<String> = ctx.eval("Object.getOwnPropertyNames(globalThis)")?;
             let library: Object = module(&ctx, MATH)?.get("LIBRARY")?;
             names.extend(library.keys::<String>().collect::<rquickjs::Result<Vec<_>>>()?);
-            let api: Vec<Object> = module(&ctx, API)?.get("API")?;
+            let api: Vec<Object> = api_module(&ctx)?.get("API")?;
             names.extend(api.iter().map(|a| a.get::<_, String>("name")).collect::<rquickjs::Result<Vec<_>>>()?);
             Ok::<_, rquickjs::Error>(names)
         })
@@ -175,7 +183,7 @@ pub(crate) fn api() -> serde_json::Value {
     let ctx = Context::full(&rt).expect("QuickJS makes a context");
     let text = ctx
         .with(|ctx| {
-            let exports = module(&ctx, API)?;
+            let exports = api_module(&ctx)?;
             ctx.json_stringify(exports)?.expect("api.js exports values").to_string()
         })
         .expect("api.js loads");
@@ -869,8 +877,13 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let library: Object = math.get("LIBRARY")?;
     for name in library.keys::<String>() {
         let name = name?;
-        g.set(name.as_str(), library.get::<_, rquickjs::Value>(name.as_str())?)?;
+        if name != "math" {
+            g.set(name.as_str(), library.get::<_, rquickjs::Value>(name.as_str())?)?;
+        }
     }
+    // Rant Math is made only for code that reads it, since every run has a context of its own
+    let lazily: Function = ctx.eval("(make) => { let made; Object.defineProperty(globalThis, 'math', { get: () => (made ??= make()), set: (v) => { made = v; }, enumerable: true, configurable: true }); }")?;
+    lazily.call::<_, ()>((Function::new(ctx.clone(), |ctx: Ctx<'js>| rant_math::quickjs::install(&ctx))?,))?;
     // what reads the clock is worked out again each time it is asked
     let s = shared.clone();
     let clock = move || {

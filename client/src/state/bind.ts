@@ -5,6 +5,7 @@ import { createSignal, getListener, onCleanup } from "solid-js";
 import { unwrap } from "solid-js/store";
 import { arith } from "../lang/arith.js";
 import { isHex, tokens } from "../lang/lex";
+import * as rantMath from "rant-math";
 import { LIBRARY, setClock } from "../lang/math.js";
 import { send } from "../net/connection";
 import { Far, packed } from "../net/packed";
@@ -590,6 +591,8 @@ setClock(() => {
   if (!frame) frame = requestAnimationFrame(tick);
   return frameTime();
 });
+
+LIBRARY.math = rantMath;
 
 // The math library's names come in as the compiled function's parameters, under the scope's own
 const MATH_NAMES = Object.keys(LIBRARY);

@@ -333,6 +333,8 @@ export const LIBRARY = {
   fromEuler,
   mix,
   time,
+  // Rant Math, which each place fills: the wasm binding in a page, the Rust crate on the system.
+  math: null,
   __add,
   __sub,
   __mul,

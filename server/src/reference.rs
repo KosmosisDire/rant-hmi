@@ -98,7 +98,9 @@ fn names() -> String {
             None => "Read everywhere".to_owned(),
         };
         let mut rows = format!("| `{name}` | {} |\n", text(&a["words"]));
-        for f in a["fields"].as_array().into_iter().flatten() {
+        // Rant Math's hundreds of calls have docs of their own, and completion lists them
+        let listed = if text(&a["name"]) == "math" { None } else { a["fields"].as_array() };
+        for f in listed.into_iter().flatten() {
             writeln!(rows, "| `{}.{}` | {} |", text(&a["name"]), called(f), text(&f["words"])).unwrap();
         }
         match groups.iter_mut().find(|(h, _)| *h == heading) {

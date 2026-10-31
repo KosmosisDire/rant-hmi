@@ -71,6 +71,7 @@ A stopped task call fails with `e.status` `"cancelled"`.
 | `mix(a, b, t)` | a colour from a toward b by t |
 | `time` | the clock |
 | `time.now` | ms since 1970, moving where it shows |
+| `math` | Rant Math: poses, shapes, fits, cameras, images and point clouds |
 
 ### Read in a page's handlers
 
@@ -175,6 +176,22 @@ Robot.Pose * Tool                        // poses combine
 ```
 
 Vectors multiply and divide by a number, or part by part by a vector of their size.
+
+## Rant Math
+
+`math` holds every call of Rant Math, the same in what a screen draws and on the system: poses, axes,
+shapes, fits, cameras, images and point clouds. Each takes and gives plain values as the mesh sends them.
+
+```js
+math.poseInverse(Robot.Pose)
+math.axesPointTo(math.axesOf("Unity"), Robot.Pose.position)
+math.pointsFitPlane(Scan.points, { tolerance: 0.01 }).normal
+math.shapeDistance(math.shapeFromSphere({ center: vec(0, 0, 0), radius: 1 }), Tool.position)
+```
+
+A call that cannot answer throws a `math.MathError` whose `kind` says why, such as `"Degenerate"`. One
+that can miss, such as a raycast, gives `null`. Names run as in JavaScript, so C's `rant_pose_inverse`
+is `math.poseInverse`, and completion lists them after `math.`.
 
 ## Colours
 

@@ -105,6 +105,8 @@ The HMI does these by itself. Never build them:
 - Files: a saved change reaches every screen. A file with a mistake is refused and the last
   good one stays.
 - Records sample and logic runs on the backend, whether a screen is open or not.
+- Geometry: `math` holds Rant Math in all code, a page's and the system's: poses, axes, shapes,
+  fits, cameras, images and point clouds, as `math.poseInverse(p)`. Write none of that by hand.
 
 You write the rest: objects, pages, components, tokens, handlers, logic, and the safety
 choices below.

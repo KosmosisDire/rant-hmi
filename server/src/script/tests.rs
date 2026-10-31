@@ -86,6 +86,42 @@ fn end(said: &[FromScript]) -> &End {
 }
 
 #[test]
+fn rant_math_answers_a_handler_as_it_answers_a_page() {
+    let (script, mut rx) = engine();
+    let code = r#"
+        const pose = { position: { x: 1, y: 2, z: 3 }, orientation: { x: 0, y: 0, z: 0, w: 1 } };
+        log(math.poseApply(math.poseInverse(pose), pose.position).x);
+        log(math.pointsBounds([{ x: 1, y: 0, z: 0 }, { x: -1, y: 2, z: 5 }]).max.z);
+        log(math.planeRaycast({ position: { x: 0, y: 0, z: 0 }, normal: { x: 0, y: 0, z: 1 } }, { origin: { x: 0, y: 0, z: 5 }, direction: { x: 0, y: 0, z: 1 } }));
+        log(math.axesPointTo(math.axesOf("Unity"), { x: 1, y: 0, z: 0 }).z);
+        const line = math.shapeFromPolyline([{ x: 0, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }]);
+        log(math.shapeDistance(line, { x: 1, y: 3, z: 0 }));
+        try { math.matrix3x3Inverse([[0, 0, 0], [0, 0, 0], [0, 0, 0]]); } catch (e) { log(e.kind, e instanceof math.MathError); }
+        const tree = math.kdtreeCreate([{ x: 0, y: 0, z: 0 }, { x: 5, y: 0, z: 0 }]);
+        log(math.kdtreeNearest(tree, { x: 4, y: 0, z: 0 }, 1)[0][0]);
+    "#;
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let said = until_done(&mut rx, 1);
+    let logged: Vec<String> = said.iter().filter_map(|m| if let FromScript::Log { text, .. } = m { Some(text.clone()) } else { None }).collect();
+    assert_eq!(end(&said), &End::Ok);
+    assert_eq!(logged, ["0", "5", "null", "1", "3", "Degenerate true", "1"]);
+}
+
+#[test]
+fn making_rant_math_takes_little_of_a_handlers_budget() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "const t = Date.now(); const k = Object.keys(math).length; log(k > 400, Date.now() - t < 25);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    assert!(until_done(&mut rx, 1).iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "true true")));
+}
+
+#[test]
+fn a_run_that_leaves_rant_math_alone_makes_none() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "log(Object.getOwnPropertyDescriptor(globalThis, 'math').get !== undefined);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    assert!(until_done(&mut rx, 1).iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "true")));
+}
+
+#[test]
 fn a_run_writes_what_it_sets_when_it_ends() {
     let (script, mut rx) = engine();
     script.send(ToScript::Run { run: 1, session: Some(7), code: "Speed = Speed + 1;\nSpeed = Speed * 2;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
@@ -751,7 +787,7 @@ fn a_handler_reads_what_the_api_lists_and_nothing_more() {
     let (standard, listed, theirs) = ctx
         .with(|ctx| {
             let standard: Vec<String> = ctx.eval("Object.getOwnPropertyNames(globalThis)")?;
-            let api_in: Function = module(&ctx, API)?.get("apiIn")?;
+            let api_in: Function = api_module(&ctx)?.get("apiIn")?;
             let listed: Vec<Object> = api_in.call(("handler",))?;
             let name = |a: &Object| a.get::<_, String>("name");
             let theirs = listed.iter().filter(|a| a.get::<_, Option<bool>>("standard").ok().flatten() == Some(true)).map(name).collect::<rquickjs::Result<Vec<_>>>()?;
