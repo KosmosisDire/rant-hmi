@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "rant-hmi"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "anyhow",
  "axum",
@@ -2410,8 +2410,8 @@ dependencies = [
 
 [[package]]
 name = "rant-macros"
-version = "0.0.40"
-source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.40#1d59715167a073788dfb747042cb504fed1ba3b3"
+version = "0.0.41"
+source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.41#19ff8918736bd21ee43e6d517cd12101075bef8f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2420,12 +2420,18 @@ dependencies = [
 
 [[package]]
 name = "rant-middleware"
-version = "0.0.40"
-source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.40#1d59715167a073788dfb747042cb504fed1ba3b3"
+version = "0.0.41"
+source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.41#19ff8918736bd21ee43e6d517cd12101075bef8f"
 dependencies = [
  "cc",
  "rant-macros",
+ "rant-types",
 ]
+
+[[package]]
+name = "rant-types"
+version = "0.0.41"
+source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.41#19ff8918736bd21ee43e6d517cd12101075bef8f"
 
 [[package]]
 name = "rcgen"
