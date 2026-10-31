@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "rant-hmi"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "anyhow",
  "axum",
@@ -2348,6 +2348,7 @@ dependencies = [
  "openusd-schemas",
  "quinn-proto",
  "rant-hmi-pack",
+ "rant-math",
  "rant-middleware",
  "rcgen",
  "reqwest",
@@ -2416,6 +2417,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "rant-math"
+version = "0.0.1"
+source = "git+https://github.com/KosmosisDire/rant-math?tag=crate-v0.0.1#3aaf6d7e3a155de6da3becfd2abcaf5b79e6233e"
+dependencies = [
+ "cc",
+ "rant-types",
+ "rquickjs",
 ]
 
 [[package]]
