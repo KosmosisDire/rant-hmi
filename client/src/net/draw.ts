@@ -478,8 +478,9 @@ function readers(r: Reads) {
   return { decls, pick, attribute, read };
 }
 
-// Points as round dots as wide as their size in metres, never under a pixel, or a line through
-// them. Colours are sRGB and go out as they are, as nothing lights them.
+// Points as round dots as wide as their size in metres, never under a pixel nor over 64, as dots
+// near the eye would each fill the scene, or a line through them. Colours are sRGB and go out as
+// they are, as nothing lights them.
 function dotsVertex(r: Reads): string {
   const { decls, pick, attribute, read } = readers(r);
   const body: string[] = [];
@@ -544,7 +545,7 @@ void main() {
   }
   vec4 at = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * at;
-  vPx = max(size * projectionMatrix[1][1] * uHeight * 0.5 / -at.z, 1.0);
+  vPx = clamp(size * projectionMatrix[1][1] * uHeight * 0.5 / -at.z, 1.0, 64.0);
   gl_PointSize = vPx;
 }`;
 }

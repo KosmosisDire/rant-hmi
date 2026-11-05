@@ -152,7 +152,7 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 | `opacity` | `box`, `sphere`, `cylinder`, `mesh`, `grid` | `1` |
 | `size` | `box` | its edges, `vec(1, 1, 1)` |
 | `size` | `axes` | how long its arrows are, `1` |
-| `size` | `points` | how wide each dot is in metres, `0.05`, or a list, one per point |
+| `size` | `points` | how wide each dot is in metres, `0.05`, or a list, one per point, at most 64 px |
 | `size` | `floor` | how wide it is, `10` |
 | `step` | `floor` | the gap between its lines, `1` |
 | `radius` | `sphere`, `cylinder` | `0.5` |

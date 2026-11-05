@@ -25,6 +25,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await hmi.setProps(pageId, dots, { color: '["#ff0000"]' });
   await says("dots: color: 1 colours for 2 points");
 
+  // a dot 1 m across half a metre from the eye is no wider than 64 px, not the whole scene
+  await hmi.setProps(pageId, dots, { points: "[vec(0, 0, 3.5)]", color: '"#ff0000"', size: "1" });
+  const near = { red: "r > 150 && g < 80 && b < 80" };
+  await d.sees(el, near, (s) => s.red > 500 && s.red < Math.PI * 32 * 32, "the near dot 64 px across at most");
+
   // a thermal cloud's colours and sizes, beside its points, drawn by the worker from the mesh
   await hmi.setProps(pageId, dots, { points: "Cell.HeatC.points", color: "Cell.HeatC.colors", size: "Cell.HeatC.sizes" });
   const count = async () => {
