@@ -1,8 +1,9 @@
 // Points take a colour and a size each, as lists beside their points: written in code, or a big
-// value's lists from the mesh, which the worker draws as they come. Sizes are metres across. A
-// list as long as no points says so on the scene.
+// value's lists from the mesh, which the worker draws as they come. Sizes are metres across, at
+// most 64 px, and a dot is one colour to its edge. A list as long as no points says so on the
+// scene.
 
-export default async function ({ page, hmi, d, check, eventually }) {
+export default async function ({ page, hmi, sys, d, check, eventually }) {
   await hmi.import("Cell.HeatC", "Cell/Heat");
   await d.addPage("Coloured points");
   const pageId = hmi.state.pages.find((p) => p.name === "Coloured points").id;
@@ -29,6 +30,25 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await hmi.setProps(pageId, dots, { points: "[vec(0, 0, 3.5)]", color: '"#ff0000"', size: "1" });
   const near = { red: "r > 150 && g < 80 && b < 80" };
   await d.sees(el, near, (s) => s.red > 500 && s.red < Math.PI * 32 * 32, "the near dot 64 px across at most");
+
+  // on a screen, which draws the scene pixel for pixel, a dot is one colour to its edge, never a
+  // ring of the page showing through it
+  await hmi.setProps(pageId, dots, { points: "[vec(0, 0, 3)]", size: "0.3" });
+  const started = hmi.next((m) => m.type === "project");
+  hmi.send({ type: "set_start", page: pageId });
+  await started;
+  const screen = await page.context().newPage();
+  try {
+    await screen.goto(`${sys.url}/run`);
+    const shown = screen.locator(`.run-layer:not([hidden]) .el[data-id="${scene}"]`);
+    const red = "r > 200 && g < 60 && b < 60";
+    await d.sees(shown, { red }, (s) => s.red > 500, "the dot drawn on the screen");
+    const [br, bg, bb] = await d.colour(shown, 0.02, 0.02);
+    const ring = `!(${red}) && Math.abs(r - ${br}) + Math.abs(g - ${bg}) + Math.abs(b - ${bb}) > 12`;
+    await d.sees(shown, { red, ring }, (s) => s.red > 500 && s.ring === 0, "the dot one red to its edge");
+  } finally {
+    await screen.close();
+  }
 
   // a thermal cloud's colours and sizes, beside its points, drawn by the worker from the mesh
   await hmi.setProps(pageId, dots, { points: "Cell.HeatC.points", color: "Cell.HeatC.colors", size: "Cell.HeatC.sizes" });

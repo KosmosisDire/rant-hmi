@@ -522,7 +522,6 @@ uniform vec4 uBeams;
 uniform float uEchoes;
 ${decls.join("\n")}
 varying vec4 vColor;
-varying float vPx;
 ${NUMBERS}
 bool pointAt(bool next, out vec3 p, out vec4 colour, out float size) {
   bool ok;
@@ -536,7 +535,6 @@ void main() {
   bool ok = pointAt(false, p, colour, size);
   ${other.join("\n  ")}
   vColor = colour;
-  vPx = 1.0;
   if (!ok) {
     // past the far plane, so never drawn
     gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
@@ -545,21 +543,17 @@ void main() {
   }
   vec4 at = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * at;
-  vPx = clamp(size * projectionMatrix[1][1] * uHeight * 0.5 / -at.z, 1.0, 64.0);
-  gl_PointSize = vPx;
+  gl_PointSize = clamp(size * projectionMatrix[1][1] * uHeight * 0.5 / -at.z, 1.0, 64.0);
 }`;
 }
 const DOTS_FRAGMENT = `
 varying vec4 vColor;
-varying float vPx;
 void main() {
-  float a = vColor.a;
   #ifdef DOTS
-  // round, its edge eased over a pixel
-  a *= clamp((1.0 - length(gl_PointCoord * 2.0 - 1.0)) * vPx * 0.5 + 0.5, 0.0, 1.0);
-  if (a <= 0.0) discard;
+  // round and one colour to its edge, as an eased edge let what is behind the canvas through
+  if (length(gl_PointCoord * 2.0 - 1.0) > 1.0) discard;
   #endif
-  gl_FragColor = vec4(vColor.rgb, a);
+  gl_FragColor = vColor;
 }`;
 
 // the ramp as the shader looks a colour up in it, its bytes as they are
