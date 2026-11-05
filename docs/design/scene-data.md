@@ -97,8 +97,12 @@ Points are read on the GPU (`net/spread.ts` says where each number sits, `net/dr
 - A `range` left empty takes the values' own ends, read on the CPU once a value: the one read
   left, 5 ms for 1M points.
 - A line is drawn as segments, an instance each that reads a point and the next.
-- New bytes of the same layout and length are written into the buffer they replace, so a lidar
-  at 10 Hz makes no new one.
+- A part keeps two sets of buffers, made empty by their size with a quarter to spare, never
+  with bytes. New bytes go into the set it is not drawing, 4 MB a frame, and it draws them once
+  all are there. A lidar at 10 Hz and a map a few points longer make no new one.
+- A scene draws only while the GPU has under two of its frames left to draw, and a value is
+  taken once it is drawn. So no write waits on a GPU still drawing, and a slow GPU never queues
+  frames behind the rest of the screen.
 - A flat grid's field goes to the GPU as its bytes, a byte a texel, on one square. The shader
   reads each cell's number by its kind, as it reads a point's, and leaves out those outside
   `range`, so a new `range` reads nothing either. Every ScalarKind draws as its I8 twin does,
@@ -112,8 +116,8 @@ Points are read on the GPU (`net/spread.ts` says where each number sits, `net/dr
   side so a ray starts in each pixel it covers, even from inside. The shader walks the ray from
   cell to cell to the first in `range`, lights that cell's face and writes its depth where the
   ray meets it. Nothing is laid out on the CPU, so a new `range` reads nothing.
-- A mesh's vertex bytes go to the GPU as a cloud's do, and its triangles as they come, an index
-  of 32 bit numbers.
+- A mesh's vertex bytes go to the GPU as a cloud's do, and its triangles too, an index of 32
+  bit numbers.
 - A mesh without normals is drawn twice more when a value is new: each vertex's position into a
   float texel of its own, then each triangle's normal added into its three vertices' texels by
   blending. The mesh's shader reads its vertex's texel by its number. Its triangles go to the
@@ -161,6 +165,13 @@ triangles. Each mesh was timed in a browser of its own, as Chrome takes a mesh's
 slowly once another mesh's is freed, and each voxel case too. Cubes took 4 to 15 ms a frame for
 the same voxels, where rays take 2 or less. Every cell's own ends are the rest of their time.
 
+A screen on the GPU of an Intel Core Ultra 7 265 drew a map of 1M points, seen from inside it,
+at 3 frames a second. Its worker waited in `bufferData` and `bufferSubData` up to 13 s at a time
+while Chrome's GPU process waited on the GPU, and the whole computer lagged. Here a 1M point map
+of 32 bytes a point, 2 a second and seen from inside, draws at 60 frames a second on the RTX
+4080 and on the UHD Graphics of an i9-13900HX alike, before the shares and after, its worker's
+longest task 25 to 35 ms. The shares were not yet tried on the 265.
+
 Points with no z now lie at z 0, so a Path2D, a Polyline2D and a list of Double2 draw.
 `run-big-import-edit` read a cloud without z to see the page sent fewer fields, and expected the
 scene to refuse it. It now checks that they draw flat.
@@ -175,10 +186,11 @@ scene to refuse it. It now checks that they draw flat.
 6. A flat grid as its field's bytes in a texture.
 7. A mesh read on the GPU, its normals summed there.
 8. Voxels by marching rays, kept as they are faster than cubes.
+9. Bytes to the GPU a share a frame, and no more than two frames ahead of it.
 
 Each step has a scenario drawing it from the demo line, which publishes a cloud, a scan, a
 big path of 64 bit poses, a small turning box and rolling ground as meshes, a map of the scan's
-room, big, and a ball as voxels, small. The scenarios count the scene's pixels of each colour
+room, big, a ball as voxels, small, and the room as a cloud of 500000 points, 8 MB. The scenarios count the scene's pixels of each colour
 with the designer's `count` and `sees`. Checked in a browser while building, pixel against
 pixel: every ScalarKind draws as its twin, summed normals light a mesh within 2 levels of exact
 ones, and rays light voxels as cubes did.

@@ -2,7 +2,8 @@
 // The page reads each part's properties and says what it shows. A part whose points follow a big
 // value the worker keeps draws each new one as it comes, never waiting for the page, and the
 // value is said to be taken once drawn. Each scene draws when what it shows changes, at most once
-// a frame and never more than IN_FLIGHT frames ahead of the GPU.
+// a frame and never more than IN_FLIGHT frames ahead of the GPU. Big bytes go to the GPU a SHARE
+// a frame into buffers a part keeps, while it draws what it drew before.
 
 import {
   ArrowHelper,
@@ -18,11 +19,11 @@ import {
   DirectionalLight,
   DoubleSide,
   FloatType,
+  GLBufferAttribute,
   GridHelper,
   HalfFloatType,
   Group,
   HemisphereLight,
-  InstancedBufferAttribute,
   InstancedBufferGeometry,
   InstancedInterleavedBuffer,
   InterleavedBuffer,
@@ -217,6 +218,7 @@ const SHARED = new Set<BufferGeometry>([BLOCK, BALL, ROD, FLAT, BOX]);
 
 /** A part as the worker holds it. */
 interface Held {
+  id: number;
   o: Object3D;
   kind: Part;
   scene: number;
@@ -639,54 +641,177 @@ function place(drawn: Object3D, origin: PoseValue | undefined) {
   else drawn.quaternion.identity();
 }
 
-/** Hands the GPU the bytes `inputs` sit in, a buffer each, read four bytes at a time as `a` and
- *  the input's name, and a mesh's first `index[1]` vertex numbers. New bytes of the same layout and
- *  length are written into the old buffers. */
-function bind(drawn: { geometry: BufferGeometry }, inputs: [string, Input][], n: number, joined: boolean, index?: [Uint32Array, number]) {
+// The most bytes a frame writes to the GPU, as Chrome takes a write past 16 MB only as fast as its
+// GPU process hands it on, which holds the worker meanwhile.
+const SHARE = 4 << 20;
+
+/** A buffer on the GPU that this file writes, a share a frame, and three.js binds as it finds it,
+ *  as it does a GLBufferAttribute, never writing it whole itself. Its stride counts elements of
+ *  `elementSize` bytes. */
+type OnGpu = InterleavedBuffer & { isGLBufferAttribute: true; buffer: WebGLBuffer; type: number; elementSize: number; capacity: number };
+
+/** A part's geometry as it was laid out, its buffers, and the bytes each holds, which a new value
+ *  is written into in place of when its layout is the same and it fits. */
+interface Laid {
+  key: string;
+  gl: WebGL2RenderingContext;
+  buffers: OnGpu[];
+  bytes: Uint8Array[];
+  /** A mesh's vertex numbers, as its index and as its triangles to sum normals from. */
+  index?: { buffer: WebGLBuffer; capacity: number; attribute: GLBufferAttribute; of?: Uint32Array };
+  triangles?: OnGpu;
+}
+
+/** What a part shows next: its geometry as its bytes go to the GPU, a share a frame, and how it
+ *  then shows it, once they have. */
+interface Staged {
+  part: number;
+  scene: Drawn;
+  geometry: BufferGeometry;
+  writes: { target: number; buffer: WebGLBuffer; bytes: Uint8Array; at: number }[];
+  then: () => void;
+}
+const staging = new Map<Object3D, Staged>();
+
+// room for a value a little bigger than this one, as a growing map's is
+const room = (bytes: number) => Math.ceil(bytes * 1.25);
+
+/** An empty buffer of `capacity` bytes on the GPU, bound to `target`, which WebGL keeps it to. */
+function emptyBuffer(gl: WebGL2RenderingContext, target: number, capacity: number): WebGLBuffer {
+  const b = gl.createBuffer()!;
+  gl.bindBuffer(target, b);
+  gl.bufferData(target, capacity, gl.DYNAMIC_DRAW);
+  return b;
+}
+
+/** A mesh's vertex numbers as bytes. */
+const bytesOfIndex = (index: [Uint32Array, number]) => new Uint8Array(index[0].buffer, index[0].byteOffset, 4 * index[1]);
+
+/** Frees a geometry and the buffers of its own on the GPU. */
+function retire(g: BufferGeometry | undefined) {
+  if (!g) return;
+  const laid = g.userData.laid as Laid | undefined;
+  if (laid && !laid.gl.isContextLost()) {
+    for (const b of [...laid.buffers, ...(laid.triangles ? [laid.triangles] : [])]) laid.gl.deleteBuffer(b.buffer);
+    if (laid.index) laid.gl.deleteBuffer(laid.index.buffer);
+  }
+  g.dispose();
+}
+
+/** Lays out the bytes `inputs` sit in for the GPU of `h`'s scene, a buffer each, read four bytes at
+ *  a time as `a` and the input's name, and a mesh's first `index[1]` vertex numbers, and its
+ *  triangles too when `sums` its normals. The part goes on drawing what it drew until they are all
+ *  on the GPU, then shows them as `then` says. Bytes the part drew last go there again only if
+ *  their layout changed. */
+function stage(drawn: Object3D & { geometry: BufferGeometry }, h: Held, inputs: [string, Input][], n: number, joined: boolean, then: () => void, index?: [Uint32Array, number], sums = false) {
+  const d = scenes.get(h.scene);
+  if (!d?.renderer) return;
+  const renderer = d.renderer;
+  const gl = renderer.getContext() as WebGL2RenderingContext;
   const held: Input[] = [];
-  const shape: unknown[] = [n, joined, index?.[0].length];
+  const shape: unknown[] = [joined, !!index, sums];
   for (const [name, input] of inputs) {
     let k = held.findIndex((b) => b.bytes === input.bytes && b.stride === input.stride);
     if (k < 0) k = held.push(input) - 1;
     shape.push(name, k, input.offset, WIDTH[input.kind] === 8);
   }
-  shape.push(held.map((b) => [b.stride, b.bytes.length]));
+  shape.push(held.map((b) => b.stride));
   const key = JSON.stringify(shape);
-  const was = drawn.geometry.userData;
-  if (was.key === key) {
-    (was.buffers as InterleavedBuffer[]).forEach((b, i) => {
-      if (b.array === held[i].bytes) return;
-      b.array = held[i].bytes;
-      b.needsUpdate = true;
+  const front = drawn.geometry.userData.laid as Laid | undefined;
+  const same = (l: Laid) => l.key === key && l.bytes.every((b, i) => b === held[i].bytes) && (!index || l.index?.of === index[0]);
+  const was = staging.get(drawn);
+  staging.delete(drawn);
+  if (front && same(front)) {
+    if (was && was.geometry !== drawn.userData.spare) retire(was.geometry);
+    return then();
+  }
+  // into the geometry the part drew before, or one half written, if the bytes fit
+  const fits = (l: Laid | undefined) => l?.key === key && l.gl === gl && l.buffers.every((b, i) => b.capacity >= held[i].bytes.length) && (!index || l.index!.capacity >= 4 * index[1]);
+  let g = [was?.geometry, drawn.userData.spare as BufferGeometry | undefined].find((c) => c && fits(c.userData.laid));
+  for (const c of [was?.geometry, drawn.userData.spare]) if (c !== g) retire(c);
+  drawn.userData.spare = undefined;
+  // an element buffer is bound to the vertex array three.js has bound, so to none here
+  gl.bindVertexArray(null);
+  if (!g) {
+    g = joined ? new InstancedBufferGeometry() : new BufferGeometry();
+    const buffers = held.map((b) => {
+      const capacity = room(b.bytes.length);
+      const buffer = emptyBuffer(gl, gl.ARRAY_BUFFER, capacity);
+      const on = joined ? new InstancedInterleavedBuffer(new Uint8Array(0), b.stride, 1) : new InterleavedBuffer(new Uint8Array(0), b.stride);
+      // as many points as fit, which three.js limits a line's segments to
+      return Object.assign(on, { isGLBufferAttribute: true as const, buffer, type: gl.UNSIGNED_BYTE, elementSize: 1, capacity, count: Math.floor(capacity / b.stride) });
     });
-    const at = drawn.geometry.index;
-    if (index && at && at.array !== index[0]) {
-      at.array = index[0];
-      at.needsUpdate = true;
+    const word = (k: number, offset: number) => Object.assign(new InterleavedBufferAttribute(buffers[k], 4, offset), { gpuType: IntType });
+    for (const [name, input] of inputs) {
+      const k = held.findIndex((b) => b.bytes === input.bytes && b.stride === input.stride);
+      const words = WIDTH[input.kind] === 8 ? ["", "2"] : [""];
+      words.forEach((w, i) => {
+        g!.setAttribute(`a${name}${w}`, word(k, input.offset + 4 * i));
+        if (joined) g!.setAttribute(`a${name}${w}n`, word(k, input.offset + 4 * i + input.stride));
+      });
     }
-    return;
+    const laid: Laid = { key, gl, buffers, bytes: [] };
+    if (index) {
+      const capacity = room(4 * index[1]);
+      const buffer = emptyBuffer(gl, gl.ELEMENT_ARRAY_BUFFER, capacity);
+      const attribute = new GLBufferAttribute(buffer, gl.UNSIGNED_INT, 1, 4, Math.floor(capacity / 4));
+      laid.index = { buffer, capacity, attribute };
+      g.setIndex(attribute as unknown as BufferAttribute);
+      if (sums) {
+        const triangles = new InstancedInterleavedBuffer(new Uint32Array(0), 3, 1);
+        laid.triangles = Object.assign(triangles, { isGLBufferAttribute: true as const, buffer: emptyBuffer(gl, gl.ARRAY_BUFFER, capacity), type: gl.UNSIGNED_INT, elementSize: 4, capacity, count: Math.floor(capacity / 12) });
+      }
+    }
+    g.userData.laid = laid;
   }
-  drawn.geometry.dispose();
-  const g = joined ? new InstancedBufferGeometry() : new BufferGeometry();
-  const buffers = held.map((b) => (joined ? new InstancedInterleavedBuffer(b.bytes, b.stride, 1) : new InterleavedBuffer(b.bytes, b.stride)));
-  const word = (k: number, offset: number) => Object.assign(new InterleavedBufferAttribute(buffers[k], 4, offset), { gpuType: IntType });
-  for (const [name, input] of inputs) {
-    const k = held.findIndex((b) => b.bytes === input.bytes && b.stride === input.stride);
-    const words = WIDTH[input.kind] === 8 ? ["", "2"] : [""];
-    words.forEach((w, i) => {
-      g.setAttribute(`a${name}${w}`, word(k, input.offset + 4 * i));
-      if (joined) g.setAttribute(`a${name}${w}n`, word(k, input.offset + 4 * i + input.stride));
-    });
-  }
+  renderer.resetState();
+  const laid = g.userData.laid as Laid;
+  laid.bytes = held.map((b) => b.bytes);
+  const writes: Staged["writes"] = held.map((b, i) => ({ target: gl.ARRAY_BUFFER, buffer: laid.buffers[i].buffer, bytes: b.bytes, at: 0 }));
   if (g instanceof InstancedBufferGeometry) {
     g.instanceCount = Math.max(n - 1, 0);
     g.setDrawRange(0, 2);
   } else if (index) {
-    g.setIndex(new BufferAttribute(index[0], 1));
+    laid.index!.of = index[0];
+    writes.push({ target: gl.ELEMENT_ARRAY_BUFFER, buffer: laid.index!.buffer, bytes: bytesOfIndex(index), at: 0 });
+    if (laid.triangles) writes.push({ target: gl.ARRAY_BUFFER, buffer: laid.triangles.buffer, bytes: bytesOfIndex(index), at: 0 });
     g.setDrawRange(0, index[1]);
   } else g.setDrawRange(0, n);
-  g.userData = { key, buffers };
-  drawn.geometry = g;
+  staging.set(drawn, { part: h.id, scene: d, geometry: g, writes, then });
+  redraw(d);
+}
+
+/** Writes the next shares of what parts of `d` show next to the GPU, at most `left` bytes, and
+ *  shows each whose bytes are all there. The bytes it has left. */
+function write(d: Drawn, left: number): number {
+  const gl = d.renderer!.getContext() as WebGL2RenderingContext;
+  const ours = [...staging].filter(([, s]) => s.scene === d);
+  if (ours.length === 0) return left;
+  gl.bindVertexArray(null);
+  for (const [, s] of ours) {
+    for (const w of s.writes) {
+      const n = Math.min(left, w.bytes.length - w.at);
+      if (n <= 0) continue;
+      gl.bindBuffer(w.target, w.buffer);
+      gl.bufferSubData(w.target, w.at, w.bytes, w.at, n);
+      w.at += n;
+      left -= n;
+    }
+  }
+  // three.js draws on from the state it knows of
+  d.renderer!.resetState();
+  for (const [drawn, s] of ours) {
+    if (s.writes.some((w) => w.at < w.bytes.length)) continue;
+    staging.delete(drawn);
+    const shown = drawn as Object3D & { geometry: BufferGeometry };
+    if (shown.geometry.userData.laid) shown.userData.spare = shown.geometry;
+    else retire(shown.geometry);
+    shown.geometry = s.geometry;
+    s.then();
+    const h = parts.get(s.part);
+    if (h) show(s.part, h);
+  }
+  return left;
 }
 
 /** Says where what `drawn` draws sits for the GPU to read: its points, a value each for the ramp
@@ -717,23 +842,24 @@ function lay(drawn: Dotted, h: Held, faults: string[]) {
       // a line has no sizes
       const joined = drawn instanceof LineSegments;
       const inputs = Object.entries({ X: src.x, Y: src.y, Z: src.z, V: src.value, S: joined ? undefined : size, C: colour }).filter((e): e is [string, Input] => e[1] !== undefined);
-      bind(drawn, inputs, src.n, joined);
-      const kinds = Object.fromEntries(inputs.filter(([k]) => k !== "C").map(([k, input]) => [k, input.kind]));
-      const m = drawn.material;
-      const vertexShader = dotsVertex({ kinds, colour: colour?.kind, axis: src.axis, scan: !!src.beams, joined });
-      if (m.vertexShader !== vertexShader) Object.assign(m, { vertexShader, needsUpdate: true });
-      const defines = joined ? {} : { DOTS: "" };
-      if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
-      const b = src.beams;
-      if (b) {
-        m.uniforms.uBeams.value.set(b.start, b.turn, b.low, b.high);
-        m.uniforms.uEchoes.value = b.echoes;
-      }
-      place(drawn, src.origin);
-      // any colour see through, which then draws over what is behind without hiding it
-      u.seeThrough = colour ? seeThrough(colour, src.n) : false;
-      u.source = src;
-      u.span = undefined;
+      stage(drawn, h, inputs, src.n, joined, () => {
+        const kinds = Object.fromEntries(inputs.filter(([k]) => k !== "C").map(([k, input]) => [k, input.kind]));
+        const m = drawn.material;
+        const vertexShader = dotsVertex({ kinds, colour: colour?.kind, axis: src.axis, scan: !!src.beams, joined });
+        if (m.vertexShader !== vertexShader) Object.assign(m, { vertexShader, needsUpdate: true });
+        const defines = joined ? {} : { DOTS: "" };
+        if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
+        const b = src.beams;
+        if (b) {
+          m.uniforms.uBeams.value.set(b.start, b.turn, b.low, b.high);
+          m.uniforms.uEchoes.value = b.echoes;
+        }
+        place(drawn, src.origin);
+        // any colour see through, which then draws over what is behind without hiding it
+        u.seeThrough = colour ? seeThrough(colour, src.n) : false;
+        u.source = src;
+        u.span = undefined;
+      });
     }
   }
   faults.push(...u.faults);
@@ -843,9 +969,9 @@ class Sums {
     this.place.frustumCulled = this.add.frustumCulled = false;
   }
 
-  /** Sums the normals of the `n` vertices `mesh` reads by `kinds`, from the triangles of the first
-   *  `index[1]` vertex numbers. */
-  run(renderer: WebGLRenderer, mesh: BufferGeometry, kinds: Reads["kinds"], index: [Uint32Array, number], n: number) {
+  /** Sums the normals of the `n` vertices `mesh` reads by `kinds`, from its first `triangles`,
+   *  which it holds as numbers too. */
+  run(renderer: WebGLRenderer, mesh: BufferGeometry, kinds: Reads["kinds"], triangles: number, n: number) {
     const wide = (this.wide = Math.min(n, renderer.capabilities.maxTextureSize));
     const high = Math.ceil(n / wide);
     for (const t of [this.positions, this.normals]) t.setSize(wide, high);
@@ -864,18 +990,14 @@ class Sums {
     const vertexShader = placeVertex({ kinds: { X: kinds.X, Y: kinds.Y, Z: kinds.Z }, scan: false, joined: false });
     if (this.place.material.vertexShader !== vertexShader) Object.assign(this.place.material, { vertexShader, needsUpdate: true });
     // the triangles as numbers it reads, as WebGL keeps a mesh's index for drawing alone
-    const g = this.add.geometry;
-    const was = g.getAttribute("aT") as InstancedBufferAttribute | undefined;
-    if (was?.array.length === index[0].length) {
-      if (was.array !== index[0]) {
-        was.array = index[0];
-        was.needsUpdate = true;
-      }
-    } else {
-      g.dispose();
-      g.setAttribute("aT", Object.assign(new InstancedBufferAttribute(index[0], 3), { gpuType: IntType }));
+    if (this.add.geometry.userData.of !== mesh) {
+      letGo(this.add.geometry);
+      const g = (this.add.geometry = new InstancedBufferGeometry());
+      g.setAttribute("aT", Object.assign(new InterleavedBufferAttribute((mesh.userData.laid as Laid).triangles!, 3, 0), { gpuType: IntType }));
+      g.userData.of = mesh;
     }
-    g.instanceCount = index[1] / 3;
+    const g = this.add.geometry as InstancedBufferGeometry;
+    g.instanceCount = triangles;
     g.setDrawRange(0, 3);
     const target = renderer.getRenderTarget();
     renderer.setRenderTarget(this.positions);
@@ -887,7 +1009,7 @@ class Sums {
 
   dispose() {
     letGo(this.place.geometry);
-    this.add.geometry.dispose();
+    letGo(this.add.geometry);
     for (const m of [this.place.material, this.add.material]) m.dispose();
     this.positions.dispose();
     this.normals.dispose();
@@ -990,30 +1112,44 @@ function layMesh(drawn: Meshy, h: Held, faults: string[]) {
     let index: [Uint32Array, number] | undefined;
     if (!(data instanceof Uint8Array)) found.push("mesh: the vertices' data is not bytes");
     else if ((src = cloudSource(vertices, data, s.field || undefined, !!s.own, found, true))) index = trianglesOf(triangles, src.n, found);
-    if (src && index) {
+    const renderer = scenes.get(h.scene)?.renderer;
+    if (src && index && renderer) {
       const [nx, ny, nz] = src.normals ?? [];
       const inputs = Object.entries({ X: src.x, Y: src.y, Z: src.z, V: src.value, C: src.colour, NX: nx, NY: ny, NZ: nz }).filter((e): e is [string, Input] => e[1] !== undefined);
-      bind(drawn, inputs, src.n, false, index);
-      const kinds = Object.fromEntries(inputs.filter(([k]) => k !== "C").map(([k, input]) => [k, input.kind]));
-      const m = drawn.material;
-      const reads: Reads = { kinds, colour: src.colour?.kind, axis: src.axis, scan: false, joined: false };
-      if (JSON.stringify(reads) !== JSON.stringify(m.userData.reads)) Object.assign(m, { needsUpdate: true }).userData.reads = reads;
-      if (m.vertexColors !== !!src.colour) Object.assign(m, { vertexColors: !!src.colour, needsUpdate: true });
-      const renderer = scenes.get(h.scene)?.renderer;
-      const most = renderer?.capabilities.maxTextureSize ?? 0;
-      if (src.normals || !renderer) {
-        u.sums?.dispose();
-        u.sums = undefined;
-      } else if (!renderer.extensions.has("EXT_color_buffer_float")) found.push("mesh: this screen cannot work out normals, so the vertices need normal_x, normal_y and normal_z");
-      else if (src.n > most * most) found.push(`mesh: ${src.n} vertices, more than this screen works out normals for`);
-      else (u.sums ??= new Sums()).run(renderer, drawn.geometry, kinds, index, src.n);
-      m.userData.uniforms.uNormals.value = u.sums?.normals.texture ?? null;
-      m.userData.uniforms.uWide.value = u.sums?.wide ?? 1;
-      place(drawn, src.origin);
-      // its own colours or the ramp's, which the material's colour would tint
-      u.coloured = !!src.colour || !!src.value || src.axis !== undefined;
-      u.source = src;
-      u.span = undefined;
+      const most = renderer.capabilities.maxTextureSize;
+      const floats = renderer.extensions.has("EXT_color_buffer_float");
+      if (!src.normals && !floats) found.push("mesh: this screen cannot work out normals, so the vertices need normal_x, normal_y and normal_z");
+      else if (!src.normals && src.n > most * most) found.push(`mesh: ${src.n} vertices, more than this screen works out normals for`);
+      const sums = !src.normals && floats && src.n <= most * most;
+      const triangles = index[1] / 3;
+      stage(
+        drawn,
+        h,
+        inputs,
+        src.n,
+        false,
+        () => {
+          const kinds = Object.fromEntries(inputs.filter(([k]) => k !== "C").map(([k, input]) => [k, input.kind]));
+          const m = drawn.material;
+          const reads: Reads = { kinds, colour: src.colour?.kind, axis: src.axis, scan: false, joined: false };
+          if (JSON.stringify(reads) !== JSON.stringify(m.userData.reads)) Object.assign(m, { needsUpdate: true }).userData.reads = reads;
+          if (m.vertexColors !== !!src.colour) Object.assign(m, { vertexColors: !!src.colour, needsUpdate: true });
+          if (sums) (u.sums ??= new Sums()).run(renderer, drawn.geometry, kinds, triangles, src.n);
+          else {
+            u.sums?.dispose();
+            u.sums = undefined;
+          }
+          m.userData.uniforms.uNormals.value = u.sums?.normals.texture ?? null;
+          m.userData.uniforms.uWide.value = u.sums?.wide ?? 1;
+          place(drawn, src.origin);
+          // its own colours or the ramp's, which the material's colour would tint
+          u.coloured = !!src.colour || !!src.value || src.axis !== undefined;
+          u.source = src;
+          u.span = undefined;
+        },
+        index,
+        sums,
+      );
     }
   }
   faults.push(...(u.faults ?? []));
@@ -1417,7 +1553,10 @@ const KINDS: Record<Part, Kind> = {
 function free(o: Object3D, root = o) {
   if (o.userData.shared || (o !== root && o.userData.part)) return;
   if (o instanceof Mesh || o instanceof Line || o instanceof Points) {
-    if (!SHARED.has(o.geometry)) o.geometry.dispose();
+    if (!SHARED.has(o.geometry)) retire(o.geometry);
+    retire(o.userData.spare);
+    retire(staging.get(o)?.geometry);
+    staging.delete(o);
     const m = o.material as MeshBasicMaterial;
     m.map?.dispose();
     // the bytes a shader reads are its own, and its ramp shared
@@ -1467,8 +1606,11 @@ function drawAll() {
   }
   following.clear();
   queued = false;
+  let left = SHARE;
   for (const d of dirty) {
     if (d.renderer && !idle(d)) continue;
+    // before it leaves the list, as a part shown once its bytes are on the GPU puts it back
+    if (d.renderer) left = write(d, left);
     dirty.delete(d);
     if (!d.renderer) continue;
     last = performance.now();
@@ -1486,13 +1628,16 @@ function drawAll() {
     const gl = d.renderer.getContext() as WebGL2RenderingContext;
     d.fences.push(gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)!);
   }
-  // a scene the GPU is still drawing is tried again soon, its values not yet taken
+  // a scene the GPU is still drawing is tried again soon, and one whose parts' bytes are still
+  // going to the GPU the next frame, their values not yet taken
+  for (const s of staging.values()) dirty.add(s.scene);
   if (dirty.size > 0) {
     queued = true;
     setTimeout(drawAll, Math.max(4, last + 16 - performance.now()));
   }
+  const pending = (h: Held) => dirty.has(scenes.get(h.scene)!) || [...staging.values()].some((s) => s.part === h.id);
   for (const [alias, seq] of owed) {
-    if ([...parts.values()].some((h) => follows(h, alias) && dirty.has(scenes.get(h.scene)!))) continue;
+    if ([...parts.values()].some((h) => follows(h, alias) && pending(h))) continue;
     host.took(alias, seq);
     owed.delete(alias);
   }
@@ -1573,8 +1718,19 @@ export function hear(m: Drawing) {
       const aim = { target: new Vector3(), yaw: Number(CAMERA.yaw), pitch: Number(CAMERA.pitch), distance: Number(CAMERA.distance) };
       const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base, fences: [] };
       scenes.set(m.scene, d);
+      // three.js makes its own buffers again, and the parts with buffers of their own lay theirs out again
       m.canvas.addEventListener("webglcontextrestored", () => {
         d.fences = [];
+        for (const h of parts.values()) {
+          if (h.scene !== m.scene) continue;
+          h.o.traverse((o) => {
+            if (!o.userData.from || !(o instanceof Mesh || o instanceof Points || o instanceof LineSegments)) return;
+            staging.delete(o);
+            o.geometry = new BufferGeometry();
+            o.userData = {};
+          });
+          show(h.id, h);
+        }
         redraw(d);
       });
       return redraw(d);
@@ -1596,6 +1752,7 @@ export function hear(m: Drawing) {
       const d = scenes.get(m.scene);
       scenes.delete(m.scene);
       dirty.delete(d!);
+      for (const [o, s] of staging) if (s.scene === d) staging.delete(o);
       d?.renderer?.dispose();
       d?.renderer?.forceContextLoss();
       return;
@@ -1606,7 +1763,7 @@ export function hear(m: Drawing) {
       const o = KINDS[m.kind].make();
       o.userData.part = true;
       parent?.add(o);
-      parts.set(m.part, { o, kind: m.kind, scene: m.scene, shown: { visible: false }, follows: {}, said: "", base: d?.base ?? "" });
+      parts.set(m.part, { id: m.part, o, kind: m.kind, scene: m.scene, shown: { visible: false }, follows: {}, said: "", base: d?.base ?? "" });
       return;
     }
     case "show": {

@@ -5,7 +5,8 @@
 //! the floor's heat as points each with a colour and a size, and the robot's routes, each leg
 //! a list of points of its own. The same floor as a PointCloud, a room's walls as a LaserScan,
 //! a planned Path, a turning part and rolling ground as Meshes, the room as a map and a ball as
-//! voxels in Grids, as the standard types carry them.
+//! voxels in Grids, as the standard types carry them. The room scanned whole as a big
+//! PointCloud too, a second apart.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
@@ -109,6 +110,8 @@ fn main() -> Result<(), rant::Error> {
     let ground = node.publisher::<Mesh>("Cell/Ground", Qos::new())?;
     let map = node.publisher::<Grid>("Cell/Map", Qos::new())?;
     let voxels = node.publisher::<Grid>("Cell/Voxels", Qos::new())?;
+    let room = node.publisher::<PointCloud>("Cell/Room", Qos::new())?;
+    let room_points = room_points();
     let jog = Arc::new(Mutex::new(None::<f64>));
     let heard = jog.clone();
     let _jog = node.subscriber::<f64>("Line1/Jog", Qos::new(), move |m| *heard.lock().unwrap() = Some(m.into_inner()))?;
@@ -195,6 +198,9 @@ fn main() -> Result<(), rant::Error> {
             map.send(&map_of(t))?;
             voxels.send(&voxels_of(t))?;
         }
+        if frame.is_multiple_of(20) {
+            room.send(&room_of(&room_points, frame / 20))?;
+        }
         next += Duration::from_millis(50);
         match next.checked_duration_since(Instant::now()) {
             Some(wait) => std::thread::sleep(wait),
@@ -273,6 +279,41 @@ fn plan_of(t: f64) -> Path {
 }
 
 /// Each of `names` a 32 bit float, one after another from the start of a point.
+const ROOM: usize = 500_000;
+
+/// The points of the room of `lidar_of` scanned whole, 6 by 4 m and 2 m high, on its walls and
+/// floor: x, y, z and intensity as 32 bit floats, 16 bytes a point, the same each time.
+fn room_points() -> Vec<u8> {
+    let mut seed = 1u32;
+    let mut unit = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed as f32 / u32::MAX as f32
+    };
+    let mut data = Vec::with_capacity(ROOM * 16);
+    for _ in 0..ROOM {
+        let (u, v) = (unit(), unit());
+        let (x, y, z) = match (unit() * 5.0) as u32 {
+            0 => (u * 6.0 - 3.0, -2.0, v * 2.0),
+            1 => (u * 6.0 - 3.0, 2.0, v * 2.0),
+            2 => (-3.0, u * 4.0 - 2.0, v * 2.0),
+            3 => (3.0, u * 4.0 - 2.0, v * 2.0),
+            _ => (u * 6.0 - 3.0, v * 4.0 - 2.0, 0.0),
+        };
+        for f in [x, y, z, 100.0] {
+            data.extend(f.to_le_bytes());
+        }
+    }
+    data
+}
+
+/// The room's cloud, a few points short some seconds, as a growing map's count changes.
+fn room_of(points: &[u8], k: u64) -> PointCloud {
+    let n = ROOM - (k % 7) as usize;
+    PointCloud { origin: Transform::identity(), width: n as u32, fields: floats(&["x", "y", "z", "intensity"]), point_step: 16, dense: true, data: points[..n * 16].to_vec() }
+}
+
 fn floats(names: &[&str]) -> Vec<PointField> {
     names.iter().zip(0..).map(|(name, i)| PointField { name: (*name).to_owned(), offset: 4 * i, kind: ScalarKind::F32, count: 1 }).collect()
 }
