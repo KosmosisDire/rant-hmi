@@ -2,7 +2,7 @@
 // The page reads each part's properties and says what it shows. A part whose points follow a big
 // value the worker keeps draws each new one as it comes, never waiting for the page, and the
 // value is said to be taken once drawn. Each scene draws when what it shows changes, at most once
-// a frame.
+// a frame and never more than IN_FLIGHT frames ahead of the GPU.
 
 import {
   ArrowHelper,
@@ -1441,7 +1441,12 @@ interface Drawn {
   /** Its height in px, as its dots read it to size themselves. */
   px: { value: number };
   base: string;
+  /** Each signalled once the GPU has drawn the frame it follows, the newest last. */
+  fences: WebGLSync[];
 }
+
+// frames the GPU may have yet to draw, so the worker works on the next while it draws one
+const IN_FLIGHT = 2;
 
 const scenes = new Map<number, Drawn>();
 const parts = new Map<number, Held>();
@@ -1462,9 +1467,11 @@ function drawAll() {
   }
   following.clear();
   queued = false;
-  last = performance.now();
   for (const d of dirty) {
+    if (d.renderer && !idle(d)) continue;
+    dirty.delete(d);
     if (!d.renderer) continue;
+    last = performance.now();
     d.renderer.setSize(d.width, d.height, false);
     d.px.value = d.height;
     d.eye.aspect = d.width / d.height;
@@ -1476,11 +1483,31 @@ function drawAll() {
     d.head.position.copy(d.eye.position);
     d.head.target.position.copy(target);
     d.renderer.render(d.scene, d.eye);
+    const gl = d.renderer.getContext() as WebGL2RenderingContext;
+    d.fences.push(gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)!);
   }
-  dirty.clear();
-  for (const [alias, seq] of owed) host.took(alias, seq);
-  owed.clear();
+  // a scene the GPU is still drawing is tried again soon, its values not yet taken
+  if (dirty.size > 0) {
+    queued = true;
+    setTimeout(drawAll, Math.max(4, last + 16 - performance.now()));
+  }
+  for (const [alias, seq] of owed) {
+    if ([...parts.values()].some((h) => follows(h, alias) && dirty.has(scenes.get(h.scene)!))) continue;
+    host.took(alias, seq);
+    owed.delete(alias);
+  }
 }
+
+/** Whether `d` may be drawn, the GPU having fewer than IN_FLIGHT of its frames to draw, so it
+ *  never falls behind, as a GPU shared with the rest of the screen then would. */
+function idle(d: Drawn): boolean {
+  const gl = d.renderer!.getContext() as WebGL2RenderingContext;
+  if (gl.isContextLost()) d.fences = [];
+  while (d.fences.length > 0 && gl.getSyncParameter(d.fences[0], gl.SYNC_STATUS) === gl.SIGNALED) gl.deleteSync(d.fences.shift()!);
+  return d.fences.length < IN_FLIGHT;
+}
+
+const follows = (h: Held, alias: string) => Object.values(h.follows).some((f) => aliasOf(f) === alias);
 
 /** Draws `d` soon, at once unless the last draw was within a frame. A timer, not the worker's
  *  frames, so a hidden page still draws and takes its values. */
@@ -1544,9 +1571,12 @@ export function hear(m: Drawing) {
       scene.add(sky, head, head.target, group);
       // where the camera last could be worked out, kept while a value cannot be read
       const aim = { target: new Vector3(), yaw: Number(CAMERA.yaw), pitch: Number(CAMERA.pitch), distance: Number(CAMERA.distance) };
-      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base };
+      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base, fences: [] };
       scenes.set(m.scene, d);
-      m.canvas.addEventListener("webglcontextrestored", () => redraw(d));
+      m.canvas.addEventListener("webglcontextrestored", () => {
+        d.fences = [];
+        redraw(d);
+      });
       return redraw(d);
     }
     case "size": {
@@ -1604,13 +1634,13 @@ export function hear(m: Drawing) {
 /** A new value of import `alias` came, its columns kept by the worker: each part following one
  *  draws it next. True when one does. Given batch `seq`, the draw says it took that. */
 export function came(alias: string, seq?: number): boolean {
-  let follows = false;
+  let any = false;
   for (const [id, h] of parts) {
-    if (!Object.values(h.follows).some((f) => aliasOf(f) === alias) || !scenes.has(h.scene)) continue;
-    follows = true;
+    if (!follows(h, alias) || !scenes.has(h.scene)) continue;
+    any = true;
     if (seq !== undefined) owed.set(alias, seq);
     following.add(id);
     redraw(scenes.get(h.scene));
   }
-  return follows;
+  return any;
 }
