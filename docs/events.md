@@ -36,10 +36,10 @@ tables below show each with its default.
 
 | Event | When | Settings |
 | --- | --- | --- |
-| `tap` | Pressed and let go on it. | `button="left"` |
+| `tap` | Pressed and let go on it, unless a hold was heard. | `button="left"` |
 | `press` | Pressed down. Ends with `release`. | `button="left"` |
 | `release` | Let go, anywhere. Ends a `press`. | `button="left"` |
-| `hold` | Held down a while. | `button="left"`, `after="500"` |
+| `hold` | Held down on it a while, never once it leaves. | `button="left"`, `after="500"` |
 | `repeat` | Again and again while pressed. | `button="left"`, `every="100"` |
 | `drag` | Moved while pressed. | `button="left"` |
 | `outside` | A press anywhere else. |  |

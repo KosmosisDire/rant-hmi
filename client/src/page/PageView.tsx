@@ -286,6 +286,14 @@ function usePress(p: ElementProps & { at?: At }) {
     let held: ReturnType<typeof setTimeout> | undefined;
     let beat: ReturnType<typeof setInterval> | undefined;
     let begun = false;
+    // a press a hold was heard on taps nothing, so a hold and a tap never both act
+    let holding = false;
+    const hold = () => {
+      const now = brings(last);
+      if (!now.inside) return;
+      holding = p.element.handlers.some((h) => takes(h, "hold", { button }) && act?.hears(p.element, h, p.scope));
+      send("hold", now);
+    };
     const begin = () => {
       begun = true;
       setPressed(true);
@@ -293,7 +301,7 @@ function usePress(p: ElementProps & { at?: At }) {
       send("drag", { ...at, dx: 0, dy: 0 });
       // a hold counts from the finger going down, however long the press waited to begin
       const ms = msOf("hold", "after", button);
-      if (ms !== undefined) held = setTimeout(() => send("hold", brings(last)), Math.max(0, ms - (performance.now() - e.timeStamp)));
+      if (ms !== undefined) held = setTimeout(hold, Math.max(0, ms - (performance.now() - e.timeStamp)));
       // a repeat runs at once, then on each beat until the press ends
       const every = msOf("repeat", "every", button);
       if (every !== undefined) {
@@ -311,7 +319,10 @@ function usePress(p: ElementProps & { at?: At }) {
     let next: PointerEvent | null = null;
     const flush = () => {
       if (!next) return;
-      send("drag", { ...brings(next), ...moved(el, next.clientX - sent.clientX, next.clientY - sent.clientY) });
+      const now = brings(next);
+      // a hold needs the pointer over it throughout, so one that leaves holds nothing this press
+      if (!now.inside) clearTimeout(held);
+      send("drag", { ...now, ...moved(el, next.clientX - sent.clientX, next.clientY - sent.clientY) });
       [sent, next] = [next, null];
     };
     const move = (m: PointerEvent) => {
@@ -336,7 +347,7 @@ function usePress(p: ElementProps & { at?: At }) {
       setPressed(false);
       const at = brings(u ?? last);
       send("release", at);
-      if (u?.type === "pointerup" && at.inside) send("tap", at);
+      if (u?.type === "pointerup" && at.inside && !holding) send("tap", at);
     };
     const stop = follow(e, { move, end, yields: true, keeps: drags });
     // one that stops taking events while pressed, as when it is no longer enabled, ends its press
@@ -924,19 +935,20 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
 
 /** The parts a pointer event is in: the named elements from the one hit out to the instance's
  *  box, those inside a nested instance left to it, and `root`. */
-function partsAt(target: EventTarget | null, box: HTMLElement): string[] {
-  const out = ["root"];
+function partsAt(target: EventTarget | null, box: HTMLElement): [string, globalThis.Element][] {
+  const out: [string, globalThis.Element][] = [["root", box]];
   for (let el = target as HTMLElement | null; el && el !== box; el = el.parentElement) {
-    if (el.classList.contains("el") && el.dataset.name && el.closest(".instance") === box) out.push(el.dataset.name);
+    if (el.classList.contains("el") && el.dataset.name && el.closest(".instance") === box) out.push([el.dataset.name, el]);
   }
   return out;
 }
 
 /** An instance's own variables and its parts' pointer state. `heldFor` ticks each frame while
- *  something is pressed, so an expression reading it fills as a hold goes on. */
+ *  something is pressed, so an expression reading it fills as a hold goes on, and stays 0 once
+ *  the press leaves the part, as a hold does. */
 function keep(): Kept & { press(e: PointerEvent): void; over(e: PointerEvent): void; leave(): void } {
   const [vars, setVars] = createStore<Record<string, unknown>>({});
-  const [parts, setParts] = createStore<Record<string, { pressed: boolean; hovered: boolean; since: number }>>({});
+  const [parts, setParts] = createStore<Record<string, { pressed: boolean; hovered: boolean; since: number; away?: boolean }>>({});
   const [now, setNow] = createSignal(performance.now());
   let frame = 0;
   const tick = () => {
@@ -944,7 +956,7 @@ function keep(): Kept & { press(e: PointerEvent): void; over(e: PointerEvent): v
     frame = Object.values(parts).some((s) => s.pressed) ? requestAnimationFrame(tick) : 0;
   };
   onCleanup(() => cancelAnimationFrame(frame));
-  const mark = (names: string[], change: { pressed?: boolean; since?: number }) =>
+  const mark = (names: string[], change: { pressed?: boolean; since?: number; away?: boolean }) =>
     setParts(
       produce((all) => {
         for (const n of names) all[n] = { ...(all[n] ?? { pressed: false, hovered: false, since: 0 }), ...change };
@@ -968,17 +980,34 @@ function keep(): Kept & { press(e: PointerEvent): void; over(e: PointerEvent): v
       ),
     part: (name) => {
       const s = parts[name];
-      return { pressed: !!s?.pressed, hovered: !!s?.hovered, heldFor: s?.pressed ? Math.max(0, now() - s.since) : 0 };
+      return { pressed: !!s?.pressed, hovered: !!s?.hovered, heldFor: s?.pressed && !s.away ? Math.max(0, now() - s.since) : 0 };
     },
     press: (e) => {
       if (e.button !== 0) return;
-      const names = partsAt(e.target, e.currentTarget as HTMLElement);
-      mark(names, { pressed: true, since: performance.now() });
+      const at = partsAt(e.target, e.currentTarget as HTMLElement);
+      const names = at.map(([n]) => n);
+      mark(names, { pressed: true, since: performance.now(), away: false });
       if (!frame) frame = requestAnimationFrame(tick);
-      follow(e, { end: () => mark(names, { pressed: false }), yields: true });
+      // where the pointer went is read at most once a frame
+      let next: PointerEvent | null = null;
+      const check = () => {
+        if (!next) return;
+        const left = at.filter(([n, el]) => !parts[n]?.away && !pointer(el, next!, null).inside).map(([n]) => n);
+        next = null;
+        if (left.length > 0) mark(left, { away: true });
+      };
+      const move = (m: PointerEvent) => {
+        if (!next) requestAnimationFrame(check);
+        next = m;
+      };
+      const end = () => {
+        next = null;
+        mark(names, { pressed: false });
+      };
+      follow(e, { move, end, yields: true });
     },
     over: (e) => {
-      const names = new Set(partsAt(e.target, e.currentTarget as HTMLElement));
+      const names = new Set(partsAt(e.target, e.currentTarget as HTMLElement).map(([n]) => n));
       setParts(
         produce((all) => {
           for (const n of new Set([...Object.keys(all), ...names])) all[n] = { ...(all[n] ?? { pressed: false, since: 0 }), hovered: names.has(n) };

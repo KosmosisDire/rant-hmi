@@ -24,6 +24,7 @@ page with an interface first.
 
 Inside it, code reads its inputs and vars by name, and each part's `pressed`, `hovered` and
 `heldFor` in ms by the part's name, `root` for the whole: `thumb.pressed ? $accent : $panel`.
+`heldFor` drops to 0 once the press leaves the part, and no `hold` comes from that press.
 
 ## Placing one
 

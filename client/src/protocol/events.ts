@@ -10,7 +10,7 @@ export const EVENTS: readonly EventInfo[] = [
   {
     "name": "tap",
     "from": "pointer",
-    "words": "pressed and let go on it",
+    "words": "pressed and let go on it, unless a hold was heard",
     "once": true,
     "settings": [
       {
@@ -264,7 +264,7 @@ export const EVENTS: readonly EventInfo[] = [
   {
     "name": "hold",
     "from": "pointer",
-    "words": "held down a while",
+    "words": "held down on it a while, never once it leaves",
     "once": true,
     "settings": [
       {

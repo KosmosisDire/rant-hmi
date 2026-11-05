@@ -259,11 +259,11 @@ const fn gamepad(name: &'static str, words: &'static str, settings: &'static [Se
 
 /// Every event, in the order an element lists its handlers. A component's own come after.
 pub const EVENTS: &[EventInfo] = &[
-    pointer("tap", "pressed and let go on it", true, &[MOUSE, WHILE]),
+    pointer("tap", "pressed and let go on it, unless a hold was heard", true, &[MOUSE, WHILE]),
     EventInfo { ends_with: Some("release"), ..pointer("press", "pressed down", true, &[MOUSE, WHILE]) },
     // an end is heard whenever what it ends was, so it takes no while
     pointer("release", "let go, anywhere", true, &[MOUSE]),
-    pointer("hold", "held down a while", true, &[MOUSE, AFTER, WHILE]),
+    pointer("hold", "held down on it a while, never once it leaves", true, &[MOUSE, AFTER, WHILE]),
     pointer("repeat", "again and again while pressed", true, &[MOUSE, EVERY, WHILE]),
     EventInfo { brings: MOVED, gathers: MOVES, ..pointer("drag", "moved while pressed", false, &[MOUSE, WHILE]) },
     pointer("outside", "a press anywhere else", true, &[WHILE]),

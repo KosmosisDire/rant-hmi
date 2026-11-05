@@ -286,7 +286,7 @@ function opened(before: string): { at: number; commas: number } | null {
 const POINTER_STATE: Suggestion[] = [
   { label: "pressed", insert: "pressed", icon: "member", type: "true while pressed" },
   { label: "hovered", insert: "hovered", icon: "member", type: "true while the pointer is over it" },
-  { label: "heldFor", insert: "heldFor", icon: "member", type: "ms pressed, 0 while not" },
+  { label: "heldFor", insert: "heldFor", icon: "member", type: "ms pressed on it, 0 once the press leaves" },
 ];
 
 /** What a component's code names: its inputs, its variables and its parts. */
