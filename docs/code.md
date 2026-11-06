@@ -140,6 +140,26 @@ Math.floor(time.now / 500) % 2 ? $red : $panel     // on and off each half secon
 new Date(time.now).toLocaleTimeString()            // the screen's clock
 ```
 
+## Unknown values
+
+A member is unknown while its node is off the mesh, before it sends a value, and while the
+screen has no link to the system. A function or task is unknown while its node is off the
+mesh. Code that reads or calls one stops: a property shows the unknown look, and a handler
+stops.
+
+`??` gives what follows it while what comes before is unknown, and `?.()` skips a call, so
+code goes on without that member:
+
+```js
+(Sensor.Present ?? false) ? $green : $panel       // a sensor that is missing reads as empty
+Line.Speed = Panel.Target ?? 0.5;                 // the tap works without the panel
+await Arm.Stop?.();                               // stops the arm if it is there
+```
+
+A skipped call gives `undefined`. A call that reaches its node and fails still throws.
+`??=` reads first, so it stops on an unknown member and never writes over a value that has not
+arrived yet.
+
 ## Keys, gamepads and the link
 
 What a screen draws reads its own keys, gamepads and link:

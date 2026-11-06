@@ -6,7 +6,7 @@ import { unwrap } from "solid-js/store";
 import { arith } from "../lang/arith.js";
 import { isHex, tokens } from "../lang/lex";
 import * as rantMath from "rant-math";
-import { LIBRARY, setClock } from "../lang/math.js";
+import { LIBRARY, setClock, Unknown } from "../lang/math.js";
 import { send } from "../net/connection";
 import { Far, packed } from "../net/packed";
 import type { Page } from "../protocol/Page";
@@ -98,12 +98,6 @@ export function isConstant(value: string | undefined): boolean {
   if (!value || isNumber(value)) return true;
   const v = value.trim();
   return /^#[0-9a-f]{3,8}$/i.test(v) || /^(true|false|null)$/.test(v) || /^"(?:[^"\\]|\\.)*"$/.test(v) || /^'(?:[^'\\]|\\.)*'$/.test(v);
-}
-
-class Unknown extends Error {
-  constructor(readonly alias: string) {
-    super(`${alias} is unknown`);
-  }
 }
 
 export type Resolved =

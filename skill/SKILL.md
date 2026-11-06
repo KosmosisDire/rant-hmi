@@ -87,9 +87,13 @@ The HMI does these by itself. Never build them:
 
 - Live values: every value redraws as it changes, on every screen. Write no polling, timers
   or refresh code.
-- Missing data: an element showing a value not known yet draws hatched, and a handler that
-  reads one stops. `Hmi.Status.missing` lists the mesh members not on the mesh. Add no
-  fallback such as `Line.Speed ?? 0`, which would show a made up value as real.
+- Missing data: an element showing a value not known yet draws hatched, a scene part draws as a
+  grey ghost or not at all, and a handler that reads or calls one stops. `Hmi.Status.missing`
+  lists the mesh members not on the mesh.
+  `a ?? b` gives b while a is unknown, and `await Arm.Stop?.()` skips the call while Arm's
+  node is off the mesh, so code that can go on without a member says so with `??` or `?.()`.
+  Give a fallback only where it is what a missing node means, never to hide one:
+  `Line.Speed ?? 0` shows a made up value as real.
 - Where code runs: write no client and server split.
 - Connections: a screen reconnects by itself. Video plays as H264 when rant-transcoder runs
   on the camera's host, else as the pictures come. Write no player or reconnect code.

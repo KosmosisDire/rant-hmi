@@ -200,6 +200,44 @@ fn reading_an_unknown_value_stops_the_run_and_drops_its_writes() {
 }
 
 #[test]
+fn an_unknown_value_left_of_a_nullish_gives_way_to_the_right() {
+    let (script, mut rx) = engine();
+    let code = "Speed = (Running ?? 2) + 1;\nSettings = { mode: Running ?? \"Off\", target: (await Promise.resolve(Running)) ?? Speed };";
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let said = until_done(&mut rx, 1);
+    assert_eq!(end(&said), &End::Ok);
+    assert_eq!(writes(&said), [("Line.Speed".to_string(), value!(3)), ("Line.Settings".to_string(), value!({ "mode": "Off", "target": 3 }))]);
+
+    // `??=` reads first, so it never writes over a value that has not arrived yet
+    script.send(ToScript::Run { run: 3, session: Some(7), code: "Running ??= true;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let said = until_done(&mut rx, 3);
+    assert!(writes(&said).is_empty());
+    assert_eq!(end(&said), &End::Unknown("Line.Running".into()));
+
+    // only an unknown value gives way, not a mistake
+    script.send(ToScript::Run { run: 2, session: Some(7), code: "Speed = Settings.nope.deeper ?? 1;".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    assert!(matches!(end(&until_done(&mut rx, 2)), End::Fault(text) if text.contains("deeper")));
+
+    script.send(ToScript::Objects(vec![line(vec![computed("shown", "Running ?? \"stopped\"", None)], Vec::new())]));
+    assert_eq!(think(&script, &mut rx, &[]).computed, values(&[("shown", Some(value!("stopped")))]));
+}
+
+#[test]
+fn a_function_off_the_mesh_is_unknown_and_an_optional_call_skips_it() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Missing(HashSet::from(["Line.Reset".to_string(), "Line.Fill".to_string()])));
+    script.send(ToScript::Run { run: 1, session: Some(7), code: "await Reset();".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    assert_eq!(end(&until_done(&mut rx, 1)), &End::Unknown("Line.Reset".into()));
+
+    let code = "Speed = 4;\nconst r = await Line.Reset?.();\nFill?.(5, (p) => {});\nSettings = { mode: r ?? \"skipped\" };";
+    script.send(ToScript::Run { run: 2, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let said = until_done(&mut rx, 2);
+    assert_eq!(end(&said), &End::Ok);
+    assert!(!said.iter().any(|m| matches!(m, FromScript::Call { .. })), "a call went out");
+    assert_eq!(writes(&said), [("Line.Speed".to_string(), value!(4)), ("Line.Settings".to_string(), value!({ "mode": "skipped" }))]);
+}
+
+#[test]
 fn mistakes_say_what_and_where() {
     let (script, mut rx) = engine();
     let cases = [

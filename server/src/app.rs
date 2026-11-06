@@ -654,6 +654,8 @@ pub struct App {
     started_at: Timestamp,
     /// What the engine was last told each import's message is made of.
     forms: HashMap<String, Form>,
+    /// The functions and tasks off the mesh, as the engine was last told.
+    missing: HashSet<String>,
     /// The mesh's enums code names, as the engine and the screens were last told.
     enums: Vec<EnumInfo>,
     status_at: Instant,
@@ -704,6 +706,7 @@ impl App {
             epoch: None,
             started_at: Timestamp::now(),
             forms: HashMap::new(),
+            missing: HashSet::new(),
             enums: Vec::new(),
             status_at: Instant::now(),
             edited: None,
@@ -2033,8 +2036,12 @@ impl App {
     /// A mesh import is known while its entity is live and, for one with a value, once that
     /// value arrived. The last value stays when it goes unknown.
     fn refresh_known(&mut self) {
+        let mut missing = HashSet::new();
         for import in &self.project.flat().imports {
             let live = self.mesh.live(import);
+            if !live && matches!(import.kind, Kind::Function | Kind::Task) {
+                missing.insert(import.alias.clone());
+            }
             let slot = self.values.entry(import.alias.clone()).or_default();
             let watched = matches!(import.kind, Kind::Topic | Kind::Variable);
             let known = live && (!watched || slot.value.is_some());
@@ -2042,6 +2049,10 @@ impl App {
                 slot.known = known;
                 self.changed.insert(import.alias.clone());
             }
+        }
+        if missing != self.missing {
+            self.missing = missing.clone();
+            self.script.send(ToScript::Missing(missing));
         }
     }
 

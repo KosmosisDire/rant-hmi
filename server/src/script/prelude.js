@@ -2,17 +2,9 @@
 // object with its members, an object's own code its members as plain names too, the mesh's
 // enums, `Pages`, open and close, notify, log, sleep and the screen's `theme`.
 (imports, objects, pages, enums) => {
-  class Unknown extends Error {
-    constructor(alias) {
-      super(`${alias} is unknown`);
-      this.name = "Unknown";
-      this.alias = alias;
-    }
-  }
-
   const fresh = (alias) => {
     const value = __read(alias);
-    if (value === undefined) throw new Unknown(alias);
+    if (value === undefined) throw new __Unknown(alias);
     return value;
   };
 
@@ -103,7 +95,13 @@
         return __call(alias, args.length === 0 ? {} : shape(alias, alias, args), progress);
       };
       if (kind === "task") call.cancel = () => __cancel(alias);
-      define(at, name, { value: call });
+      // one whose node is off the mesh is unknown, so `?.()` skips it
+      define(at, name, {
+        get: () => {
+          if (__missing(alias)) throw new __Unknown(alias);
+          return call;
+        },
+      });
     } else if (kind === "fn") {
       define(at, name, { value: (...args) => __run(alias, args) });
     } else {
@@ -140,7 +138,7 @@
     const message = e.message.replace(/^'?([\w$]+)'? is not defined$/, "$1 names no object, member or state");
     return line ? `${message} (line ${Number(line[1]) - 1})` : message;
   };
-  globalThis.__finish = (e) => (e instanceof Unknown ? __end("unknown", e.alias) : __end("fault", describe(e)));
+  globalThis.__finish = (e) => (e instanceof __Unknown ? __end("unknown", e.alias) : __end("fault", describe(e)));
   // each progress update runs as a job of its own, so one that throws is told and the call goes on
   const watched = (f) => (v) => void Promise.resolve(v).then(f).catch((e) => __fault(describe(e)));
   globalThis.__describe = describe;

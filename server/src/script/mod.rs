@@ -39,6 +39,8 @@ pub enum ToScript {
     Forms(HashMap<String, Form>),
     /// The mesh's enums code names, whole, after any change.
     Enums(Vec<EnumInfo>),
+    /// The functions and tasks whose node is off the mesh now, by alias, whole, after any change.
+    Missing(HashSet<String>),
     /// Mesh imports and shared variables whose value changed, None while unknown, each shared
     /// by the handlers and the readers rather than copied.
     Values(Vec<(String, Option<Arc<Value>>)>),
@@ -351,6 +353,8 @@ struct Shared {
     /// The objects' members by key.
     imports: HashMap<String, Import>,
     forms: HashMap<String, Form>,
+    /// The functions and tasks whose node is off the mesh, which code reads as unknown.
+    missing: HashSet<String>,
     enums: Vec<EnumInfo>,
     variables: HashMap<String, Variable>,
     computed: HashMap<String, Computed>,
@@ -390,6 +394,7 @@ impl Shared {
             objects: Vec::new(),
             imports: HashMap::new(),
             forms: HashMap::new(),
+            missing: HashSet::new(),
             enums: Vec::new(),
             variables: HashMap::new(),
             computed: HashMap::new(),
@@ -740,6 +745,7 @@ fn read_as(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, sources: &
 fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Shared>>, msg: ToScript) {
     match msg {
         ToScript::Forms(forms) => shared.borrow_mut().forms = forms,
+        ToScript::Missing(missing) => shared.borrow_mut().missing = missing,
         ToScript::Enums(enums) => shared.borrow_mut().enums = enums,
         // the loop takes these itself, since they need the readers it keeps
         ToScript::Objects(_) | ToScript::Invert { .. } | ToScript::Try { .. } => {}
@@ -1006,6 +1012,8 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         to_js(&ctx, &Value::map([("name", f.name.into()), ("fields", Value::List(f.fields.into_iter().map(Value::from).collect()))]))
     };
     g.set("__form", Function::new(ctx.clone(), form)?)?;
+    let s = shared.clone();
+    g.set("__missing", Function::new(ctx.clone(), move |alias: String| s.borrow().missing.contains(&alias))?)?;
 
     let s = shared.clone();
     let sleep = move |ctx: Ctx<'js>, ms: f64| -> rquickjs::Result<Promise<'js>> {

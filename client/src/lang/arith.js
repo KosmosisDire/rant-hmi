@@ -2,7 +2,9 @@
 // code becomes a call into math.js, and so does a call by one of its method names, so vectors,
 // quaternions and poses take arithmetic and methods while numbers and text behave as JS has them.
 // A call by a library function's name always reaches it, so `max(a, b)` works where `max` alone
-// is a component's input. What an await waits on goes through `__yield` first.
+// is a component's input. What an await waits on goes through `__yield` first, and the left of
+// a `??` and the callee of a `?.()` through `__maybe`, so an unknown value there gives way to
+// the right or skips the call.
 
 import { parse } from "./acorn/acorn.mjs";
 import { FUNCTION_NAMES, METHOD_NAMES } from "./math.js";
@@ -53,6 +55,13 @@ function optional(n) {
   return false;
 }
 
+/** Whether the node awaits, outside any function of its own. */
+function awaits(n) {
+  if (n.type === "AwaitExpression") return true;
+  if (/Function/.test(n.type)) return false;
+  return children(n).some(awaits);
+}
+
 /** `node` rewritten. */
 function emit(src, node) {
   const at = (n) => emit(src, n);
@@ -74,10 +83,27 @@ function emit(src, node) {
       }
       break;
     }
+    case "LogicalExpression":
+      if (node.operator === "??") {
+        const left = awaits(node.left) ? `(await __yield(__maybeAsync(async () => (${at(node.left)}))))` : `__maybe(() => (${at(node.left)}))`;
+        return `${src.slice(node.start, node.left.start)}${left}${src.slice(node.left.end, node.right.start)}${at(node.right)}${src.slice(node.right.end, node.end)}`;
+      }
+      break;
     case "AwaitExpression":
       return `${src.slice(node.start, node.argument.start)}__yield(${at(node.argument)})`;
     case "CallExpression": {
       const c = node.callee;
+      if (node.optional && !optional(c) && c.object?.type !== "Super" && c.property?.type !== "PrivateIdentifier") {
+        // a method is read with what holds it, so it is called on it as before
+        const read = c.type !== "MemberExpression" ? at(c) : `__callee(${at(c.object)},${gap(src, c.object.end, c.property.start)}${c.computed ? at(c.property) : JSON.stringify(c.property.name)})`;
+        let out = `${src.slice(node.start, c.start)}__maybe(() => ${read})`;
+        let from = c.end;
+        for (const a of node.arguments) {
+          out += src.slice(from, a.start) + at(a);
+          from = a.end;
+        }
+        return out + src.slice(from, node.end);
+      }
       if (!node.optional && c.type === "MemberExpression" && !c.computed && !optional(c) && c.object.type !== "Super" && METHODS.has(c.property.name)) {
         return `__method(${at(c.object)}, "${c.property.name}"${rest(c, node.arguments)})`;
       }

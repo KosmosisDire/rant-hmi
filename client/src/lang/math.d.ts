@@ -8,3 +8,7 @@ export declare const FUNCTION_NAMES: string[];
 export declare const METHODS_OF: Record<MathKind, string[]>;
 export declare const LIBRARY: Record<string, unknown>;
 export declare function setClock(read: () => number): void;
+export declare class Unknown extends Error {
+  constructor(alias: string);
+  readonly alias: string;
+}

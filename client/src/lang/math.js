@@ -301,6 +301,15 @@ const time = Object.freeze({
   },
 });
 
+/** What reading a member throws while its value is unknown, as its node is off the mesh. */
+export class Unknown extends Error {
+  constructor(alias) {
+    super(`${alias} is unknown`);
+    this.name = "Unknown";
+    this.alias = alias;
+  }
+}
+
 /** Every name pages and code read besides their own. `log` stays a handler's logging, so the
  *  natural log is `ln`. */
 export const LIBRARY = {
@@ -343,6 +352,10 @@ export const LIBRARY = {
   __method,
   __fn,
   __yield,
+  __Unknown: Unknown,
+  __maybe,
+  __maybeAsync,
+  __callee,
 };
 
 /** The library's functions, which a call by name reaches though a name of the page's own,
@@ -357,4 +370,32 @@ function __fn(name, ...args) {
  *  sends what the run wrote, so another run going on meanwhile reads it. */
 function __yield(v) {
   return v;
+}
+
+/** What `read` gives, or undefined where it reads a value that is unknown, so `a ?? b` gives b
+ *  for an unknown a. */
+function __maybe(read) {
+  try {
+    return read();
+  } catch (e) {
+    if (e instanceof Unknown) return undefined;
+    throw e;
+  }
+}
+
+/** `holder[key]`, a function bound to its holder, so `holder.key?.()` reads it in __maybe and
+ *  still calls it on its holder. */
+function __callee(holder, key) {
+  const f = holder[key];
+  return typeof f === "function" ? f.bind(holder) : f;
+}
+
+/** As __maybe, for a `??` whose left side awaits. */
+async function __maybeAsync(read) {
+  try {
+    return await read();
+  } catch (e) {
+    if (e instanceof Unknown) return undefined;
+    throw e;
+  }
 }
