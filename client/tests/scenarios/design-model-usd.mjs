@@ -7,7 +7,8 @@ import { dirname, join } from "node:path";
 // match, a file that is no USD and a layer it cannot find each say why. A joint that mimics
 // another moves with it. A file y up in centimetres stands z up in metres, as every RANT frame
 // does, and copies of one prop each show where they stand. A file of two robots takes each one's
-// joints under its name, and the inspector lists the robots a file holds.
+// joints under its name, and the inspector lists the robots a file holds. Joints not known draw
+// it as a ghost.
 
 // a base and one link holding a red block at x 1, joined by joint1 turning about z, the
 // geometry a sublayer and the physics a reference
@@ -206,6 +207,19 @@ export default async function ({ page, hmi, sys, d, eventually }) {
   await left("the block left of the middle with joint1 turned half round");
   hmi.set("Line.Speed", 0);
   await right("the block back at rest with joint1 at 0");
+
+  // joints that read a node off the mesh draw the arm as a grey ghost at rest, and in its own
+  // colours once they read
+  if (!hmi.object("Sensor")) await hmi.addObject("Sensor", "Nowhere");
+  if (!hmi.state.imports.some((i) => i.alias === "Sensor.Present")) {
+    hmi.send({ type: "import", object: "Sensor", import: { alias: "Present", entity: "Present", kind: "variable", intent: "read" } });
+    await hmi.next((m) => m.type === "objects" && hmi.state.imports.some((i) => i.alias === "Sensor.Present"));
+  }
+  await d.setField("Joints", "{ joint1: Sensor.Present ? PI : 0 }");
+  const grey = ([r, g, b]) => r > 30 && Math.abs(r - g) < 12 && Math.abs(g - b) < 12;
+  await d.shows(d.el(scene), 0.65, 0.5, grey, "the ghost of the block at rest right of the middle");
+  await d.setField("Joints", "{ joint1: Line.Speed * PI }");
+  await right("the block in its own colour once its joints read");
 
   // a JointState's positions follow the robot's moving joints in its order
   await d.setField("Joints", "{ position: [Line.Speed * PI], velocity: [], effort: [] }");

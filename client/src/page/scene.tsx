@@ -43,6 +43,8 @@ interface Read {
   text(key: string): string | undefined;
   joints(key: string): Shown["joints"];
   names(key: string): Shown["names"];
+  /** The keys that read a value unknown now. */
+  readonly unknowns: ReadonlySet<string>;
   readonly drawn: Drawn;
 }
 
@@ -255,11 +257,12 @@ const isKeptGrid = (v: unknown) => {
   return Array.isArray(fields) && fields.some((f) => refOf((f as { data?: unknown } | null)?.data) !== undefined);
 };
 
-/** What `props` read as, each timed by `time`, which the part or scene keeps between reads. */
-function reader(props: Element["props"], defaults: Record<string, string>, scope: Scope, time: ReturnType<typeof timer>): Read {
+/** What `props` read as, each timed by `time`, which the part or scene keeps between reads. One
+ *  unknown now is undefined, or its default where `ghost`, as a ghost shows it. */
+function reader(props: Element["props"], defaults: Record<string, string>, scope: Scope, time: ReturnType<typeof timer>, ghost = false): Read {
   const faults: string[] = [];
   const slow = new Set<string>();
-  let unknown = false;
+  const unknowns = new Set<string>();
   // a value that will not read gives way to the default, as CSS drops one it cannot take
   const as = <T,>(key: string, what: string, read: (v: unknown) => T | undefined, far?: (v: unknown) => boolean): T | undefined =>
     time(
@@ -269,7 +272,8 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
         for (const code of props[key] === undefined ? [defaults[key]] : [props[key], defaults[key]]) {
           const r = far ? farResolve(code, scope, far) : resolve(code, scope);
           if (!r.ok && r.unknown) {
-            unknown = true;
+            unknowns.add(key);
+            if (ghost) continue;
             return undefined;
           }
           const v = r.ok ? read(r.value) : undefined;
@@ -341,8 +345,9 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
         return joints;
       }),
     names: (key) => as(key, "a list of names or a JointNames, or these by robot name", (v) => byRobot(v, nameList)),
+    unknowns,
     get drawn() {
-      return { faults, unknown, warnings: slowOf(slow) };
+      return { faults, unknown: unknowns.size > 0, warnings: slowOf(slow) };
     },
   };
 }
@@ -378,6 +383,21 @@ function colourOf(v: unknown): Rgba | undefined {
     inks.set(v, c);
   }
   return c;
+}
+
+/** The keys of a part that only change its look, so it still shows where it is and what it is
+ *  as a ghost while one is unknown. */
+const LOOKS = new Set(["color", "opacity", "joints", "names", "field", "range", "joined"]);
+
+const GHOST: Rgba = [0.55, 0.55, 0.55, 0.35];
+
+/** `shown` made a ghost: faint grey whole, its own colours and field let go. */
+function ghostly(shown: Shown) {
+  shown.ghost = true;
+  if ("field" in shown) shown.field = "";
+  // a colour's alpha and the opacity multiply, so a part without a colour takes it as opacity
+  if ("color" in shown) Object.assign(shown, { color: GHOST, own: false });
+  else if ("opacity" in shown) shown.opacity = (shown.opacity ?? 1) * GHOST[3];
 }
 
 /** What each kind of part shows, read in the order the page reads them. */
@@ -448,12 +468,14 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
   let said = "";
   const time = timer();
   createEffect(() => {
-    const read = reader(p.element.props, PARTS[tag], p.scope, time);
+    const read = reader(p.element.props, PARTS[tag], p.scope, time, true);
     const pose = read.pose(POSE);
-    const shown: Shown = { ...SHOWS[tag](read), pose, visible: false };
+    const shown: Shown = { ...SHOWS[tag](read), pose, visible: false, ghost: false };
     const d = read.drawn;
-    // a value not known yet draws nothing rather than something untrue
-    shown.visible = !d.unknown;
+    // one whose place or shape is unknown draws nothing rather than something untrue, and one
+    // only whose look is unknown draws as a ghost
+    shown.visible = [...read.unknowns].every((k) => LOOKS.has(k));
+    if (shown.visible && read.unknowns.size > 0) ghostly(shown);
     setMine(d);
     // lists laid out here go to the worker whole, and are always new
     const mesh = shown.mesh && "data" in shown.mesh ? [shown.mesh.data, shown.mesh.triangles] : [];
@@ -496,7 +518,8 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
   createEffect(() => {
     const all = [camera().drawn, ...found().values(), ...(blind() ? [{ ...CLEAN, faults: ["this screen has no WebGL to draw a scene with"] }] : [])];
     const each = (pick: (d: Drawn) => string[]) => [...new Set(all.flatMap(pick))];
-    p.report(all.length === 1 ? all[0] : { faults: each((d) => d.faults), unknown: all.some((d) => d.unknown), warnings: each((d) => d.warnings) });
+    // only the camera's own unknown values mark the whole scene, as each part shows its own
+    p.report({ faults: each((d) => d.faults), unknown: camera().drawn.unknown, warnings: each((d) => d.warnings) });
   });
   // the canvas's size in screen pixels, checked as it changes and as a part shows something new,
   // since a zoom changes it without a resize

@@ -89,6 +89,8 @@ export type Rgba = [number, number, number, number];
  *  the part keeps what it showed. */
 export interface Shown {
   visible: boolean;
+  /** Drawn faint grey, as some of its look is unknown. */
+  ghost?: boolean;
   pose?: Pose;
   /** One colour, or for points a byte each of red, green, blue and alpha per point, or the big
    *  value of Colors they follow. */
@@ -204,6 +206,9 @@ function fade(m: Material, opacity: number) {
   const see = opacity < 1;
   if (m.transparent !== see) Object.assign(m, { transparent: see, depthWrite: !see, needsUpdate: true });
 }
+
+/** What a model that is a ghost draws each of its meshes with, shared by all and never freed. */
+const GHOST = new MeshLambertMaterial({ color: new Color().setRGB(0.55, 0.55, 0.55, SRGBColorSpace), transparent: true, opacity: 0.35, depthWrite: false });
 
 // shapes of one unit each solid scales, shared by all and never freed
 const BLOCK = new BoxGeometry(1, 1, 1);
@@ -1532,6 +1537,15 @@ const KINDS: Record<Part, Kind> = {
       }
       const model = o.children[0];
       if (!got || !model) return;
+      // its copy shares the file's materials, so a ghost swaps its own meshes' and back
+      if (model.userData.ghost !== !!s.ghost) {
+        model.userData.ghost = !!s.ghost;
+        model.traverse((m) => {
+          if (!(m instanceof Mesh)) return;
+          if (s.ghost) [m.userData.material, m.material] = [m.material, GHOST];
+          else if (m.userData.material) [m.material, m.userData.material] = [m.userData.material, undefined];
+        });
+      }
       if (got.robot) {
         found.warnings.push(...(model.userData.problems as string[]).map((p) => `src: ${p}`));
         found.robots = listedOf(model);

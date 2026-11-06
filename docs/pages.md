@@ -180,6 +180,9 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
   its standard.
 - The camera moves only by its properties. A scene added in the editor comes with a `<var>`
   its camera reads and handlers that move it.
+- A part whose `color`, `opacity`, `joints`, `names`, `field`, `range` or `joined` is unknown
+  draws as a grey ghost, those at their defaults. One whose pose or other property is unknown
+  draws nothing, nor what it holds. Only the camera's unknown values mark the whole scene.
 
 ## Style
 
