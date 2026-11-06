@@ -20,7 +20,8 @@ import type { ServerMsg } from "../protocol/ServerMsg";
 import { faultOf } from "../state/caught";
 import { mode, operator } from "../state/mode";
 import { problems, report } from "../state/problems";
-import { cameBack, notify, onReading, receive, setState, state, type WebrtcProblem } from "../state/store";
+import type { WebrtcProblem } from "../protocol/WebrtcProblem";
+import { cameBack, conditions, notify, onReading, receive, setState, state } from "../state/store";
 import { countRead, previewing, watched, watchedNames, wholeNames } from "../state/watch";
 import type { FromData, Second, ToData } from "./data.worker";
 import type { Drawing, Drew } from "./draw";
@@ -97,14 +98,6 @@ function diagnose(c: Rtc | null): WebrtcProblem {
   return "no_path";
 }
 
-/** Says why this screen has no WebRTC, or with null that it has, once that changed, and to a
- *  new session whatever it is. */
-function problem(p: WebrtcProblem | null, again = false) {
-  if (p === state.webrtcProblem && !again) return;
-  setState("webrtcProblem", p);
-  send(p === null ? { type: "webrtc_problem" } : { type: "webrtc_problem", problem: p });
-}
-
 /** A video as an element shows it: the stream WebRTC brings, and the frames from the link
  *  decoded here while WebRTC brings none. */
 export interface Playing {
@@ -143,6 +136,8 @@ let toldWatch: string | undefined;
 let toldData: string | undefined;
 /** This screen's problems as the backend was last told them, and the telling that waits. */
 let toldProblems: string | undefined;
+/** What this screen finds wrong with its connection and device, as the backend was last told. */
+let toldConditions: string | undefined;
 let problemsDue: number | undefined;
 /** WebRTC did not open, or broke, and has not opened again since. */
 const [stuck, setStuck] = createSignal(false);
@@ -222,7 +217,8 @@ function heard(bytes: Uint8Array, lane: number) {
       tellProblems();
       secondTries = 0;
       session = msg.session;
-      if (state.webrtcProblem) problem(state.webrtcProblem, true);
+      toldConditions = undefined;
+      tellConditions();
       const [secure, path] = [location.protocol === "https:", `/bulk?session=${msg.session}&key=${msg.key}`];
       const wt = secure && msg.wt ? { url: `https://${location.host}${path}`, hash: msg.wt } : undefined;
       // for comparing: a screen told hmi.noSecond = 1 takes its big values on the link
@@ -308,6 +304,18 @@ function tellProblems() {
   }, PROBLEMS_EVERY_MS);
 }
 createRoot(() => createEffect(on(() => JSON.stringify(problems), tellProblems)));
+
+/** Tells the backend what this screen finds wrong with its connection and its device, once
+ *  that changed. */
+function tellConditions() {
+  if (state.link !== "open") return;
+  const now = unwrap(conditions());
+  const key = JSON.stringify(now);
+  if (key === toldConditions) return;
+  toldConditions = key;
+  send({ type: "conditions", conditions: now });
+}
+createRoot(() => createEffect(on(() => JSON.stringify(conditions()), tellConditions)));
 // the mode it draws in, which code on the system reads as theme.mode
 createRoot(() => createEffect(on(mode, (m) => state.link === "open" && send({ type: "mode", mode: m }), { defer: true })));
 
@@ -383,7 +391,7 @@ function openRtc(): Rtc | null {
   if (state.link !== "open" || !link?.network) return null;
   if (typeof RTCPeerConnection === "undefined") {
     setStuck(true);
-    problem("no_webrtc");
+    setState("webrtcProblem", "no_webrtc");
     return null;
   }
   // the null the backend sends for no username would reach the browser as the word null
@@ -440,7 +448,7 @@ function openRtc(): Rtc | null {
       rtcTries = 0;
       setStuck(false);
       setState("webrtc", true);
-      problem(null);
+      setState("webrtcProblem", null);
     }
     if (pc.connectionState === "failed") rtcFailed();
   };
@@ -533,6 +541,9 @@ export function stopPlaying(alias: string) {
   });
 }
 
+/** The receivers of the videos WebRTC brings now. */
+export const videoReceivers = () => [...videos.values()].flatMap((v) => (v.live && v.transceiver ? [v.transceiver.receiver] : []));
+
 /** Asks the link for the frames of each video WebRTC does not bring, where this page can
  *  decode them, and decodes them. */
 function askFrames() {
@@ -594,7 +605,7 @@ function rtcFailed() {
   closeRtc();
   setStuck(true);
   if (state.link !== "open") return;
-  problem(diagnose(failed));
+  setState("webrtcProblem", diagnose(failed));
   rtcRetry = window.setTimeout(() => void offerVideos(), Math.min(RETRY_LATER_MAX_MS, RETRY_LATER_MS * 2 ** rtcTries++));
 }
 

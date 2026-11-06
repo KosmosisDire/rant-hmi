@@ -58,3 +58,17 @@ What is wrong now, as the editor's list shows them:
 `GET /problems` on the HMI's port gives every problem as JSON with the same fields, but
 `screen` null for the HMI itself, `detail` holding the stack where there is one, and `at` in
 ms since 1970.
+
+## Rant status
+
+The HMI raises one warning on its node's Rant status for each kind of problem its screens find,
+naming each screen that has it:
+
+| Key | Holds while a screen |
+| --- | --- |
+| `webrtc` | has no WebRTC connection, so its latency is increased |
+| `software_decode` | decodes video without its graphics card |
+| `software_drawing` | draws without its graphics card, as with hardware acceleration off |
+| `slow_drawing` | draws under 24 frames a second |
+
+An operator's screen shows its own in a banner across the top until dismissed.

@@ -16,8 +16,10 @@ import type { Value } from "../protocol/Value";
 import type { ProjectInfo } from "../protocol/ProjectInfo";
 import type { Reported } from "../protocol/Reported";
 import type { Sample } from "../protocol/Sample";
+import type { ScreenCondition } from "../protocol/ScreenCondition";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import type { Token } from "../protocol/Token";
+import type { WebrtcProblem } from "../protocol/WebrtcProblem";
 import { closeWith, follow, push } from "./stack";
 import { setMode } from "./mode";
 
@@ -46,9 +48,6 @@ const batches = new Map<string, number>();
 /** How long a notice stays, by how much it matters. */
 const STAYS: Record<Level, number> = { info: 4000, warn: 7000, fault: 10000 };
 
-/** Why a WebRTC connection did not open, as the backend names it (status.rs WEBRTC_PROBLEMS). */
-export type WebrtcProblem = "no_webrtc" | "browser_blocks" | "network_blocks_udp" | "no_path";
-
 export interface State {
   link: "connecting" | "open" | "closed";
   /** The smoothed round trip to the backend. */
@@ -61,6 +60,8 @@ export interface State {
   path: "socket" | "channel";
   /** Why the WebRTC connection did not open, null while it did or has not failed. */
   webrtcProblem: WebrtcProblem | null;
+  /** What this screen finds wrong with its device now (device.ts). */
+  device: ScreenCondition[];
   project: ProjectInfo | null;
   node: string;
   version: string;
@@ -93,6 +94,7 @@ export const [state, setState] = createStore<State>({
   second: null,
   path: "socket",
   webrtcProblem: null,
+  device: [],
   project: null,
   node: "",
   version: "",
@@ -108,6 +110,10 @@ export const [state, setState] = createStore<State>({
   problems: null,
   brings: [],
 });
+
+/** What this screen finds wrong with its connection and its device now, as the backend hears
+ *  it and the operator's banner shows it. */
+export const conditions = (): ScreenCondition[] => [...(state.webrtcProblem ? [{ kind: "webrtc" as const, problem: state.webrtcProblem }] : []), ...state.device];
 
 /** Loads the client the backend serves when this screen runs another, as after an update.
  *  Only once per build, so a screen that still differs never reloads for ever. */

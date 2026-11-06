@@ -1,7 +1,9 @@
 import { createEffect, createSignal, Show } from "solid-js";
 import { RunView } from "../page/RunView";
 import { stack, startStack } from "../state/stack";
-import { startPage, state, type WebrtcProblem } from "../state/store";
+import type { ScreenCondition } from "../protocol/ScreenCondition";
+import type { WebrtcProblem } from "../protocol/WebrtcProblem";
+import { conditions, startPage, state } from "../state/store";
 import { Guard } from "../ui/Guard";
 import { MenuHost } from "../ui/Menu";
 import { Notices } from "../ui/Notices";
@@ -14,19 +16,38 @@ const WEBRTC_CHECK: Record<WebrtcProblem, string> = {
   no_path: "No direct route was found between this network and the HMI.",
 };
 
+/** What the banner says of each condition this screen holds. */
+function told(c: ScreenCondition): string {
+  switch (c.kind) {
+    case "webrtc":
+      return `A WebRTC connection could not be made, so latency is increased. ${c.problem ? WEBRTC_CHECK[c.problem] : ""}`;
+    case "software_decode":
+      return `This device decodes video without its graphics card (${c.video}), so video may stutter. Please check that hardware acceleration is on in the browser's settings.`;
+    case "software_drawing":
+      return `This browser draws without the graphics card (${c.renderer}), so pages may stutter. Please turn on hardware acceleration in the browser's settings.`;
+    case "slow_drawing":
+      return `This screen draws ${c.fps} frames a second on ${c.renderer}, so pages stutter. Please check the browser uses the device's fastest graphics card.`;
+  }
+}
+
+/** A dismissed condition stays dismissed until its kind, or why WebRTC did not open, changes. */
+const dismissal = (c: ScreenCondition) => (c.kind === "webrtc" ? `webrtc ${c.problem}` : c.kind);
+
 /** The banner across the top for what is wrong: the HMI out of reach, which stays until it is
- *  back, or no WebRTC, which the person may dismiss until its reason changes. */
+ *  back, or the first condition this screen holds that the person did not dismiss. */
 function Banner() {
-  const [dismissed, setDismissed] = createSignal<WebrtcProblem | null>(null);
-  const webrtc = () => (state.link === "open" && state.path === "socket" && state.webrtcProblem !== dismissed() ? state.webrtcProblem : null);
+  const [dismissed, setDismissed] = createSignal<string[]>([]);
+  const shown = () => (state.link === "open" ? conditions().find((c) => !dismissed().includes(dismissal(c))) : undefined);
   return (
-    <Show when={state.link !== "open" ? "lost" : webrtc()}>
+    <Show when={state.link !== "open" ? "lost" : shown()}>
       <div class="banner" role="alert">
-        <span>{state.link !== "open" ? "The HMI is out of reach. Reconnecting." : `A WebRTC connection could not be made, so latency is increased. ${WEBRTC_CHECK[webrtc()!]}`}</span>
-        <Show when={state.link === "open"}>
-          <button class="banner-close" title="Dismiss" aria-label="Dismiss" onClick={() => setDismissed(state.webrtcProblem)}>
-            ×
-          </button>
+        <span>{state.link !== "open" ? "The HMI is out of reach. Reconnecting." : told(shown()!)}</span>
+        <Show when={shown()}>
+          {(c) => (
+            <button class="banner-close" title="Dismiss" aria-label="Dismiss" onClick={() => setDismissed([...dismissed(), dismissal(c())])}>
+              ×
+            </button>
+          )}
         </Show>
       </div>
     </Show>

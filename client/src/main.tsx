@@ -13,6 +13,7 @@ import "./ui/touch";
 
 import { render } from "solid-js/web";
 import { connect, send } from "./net/connection";
+import { checkDevice } from "./net/device";
 import "./net/probe";
 import { App } from "./shell/App";
 import { Operator } from "./shell/Operator";
@@ -23,5 +24,6 @@ import { onAnswer } from "./state/stack";
 
 catchFaults(report);
 connect();
+checkDevice();
 onAnswer((ask, value) => send({ type: "answer", ask, value }));
 render(() => (operator ? <Operator /> : <App />), document.getElementById("root")!);

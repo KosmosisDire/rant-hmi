@@ -1,8 +1,12 @@
 //! What the HMI publishes about itself, read only: the screens connected to it and its own
 //! state. Pages import them as they import any entity.
 
+use std::collections::BTreeMap;
+use std::net::IpAddr;
+
 use rant::types::Timestamp;
 
+use crate::protocol::{ScreenCondition, WebrtcProblem};
 use crate::value::Value;
 
 pub const CLIENTS: &str = "Hmi/Clients";
@@ -99,17 +103,55 @@ pub struct HmiStatus {
     pub missing: Vec<rant::String<64>>,
 }
 
-/// Why a screen's WebRTC connection did not open, as the screen tells it, and what each means.
-pub const WEBRTC_PROBLEMS: [(&str, &str); 4] = [
-    ("no_webrtc", "its browser does not support WebRTC"),
-    ("browser_blocks", "check it for a VPN, a privacy extension or a policy preventing WebRTC"),
-    ("network_blocks_udp", "check its network for a firewall or policy blocking UDP"),
-    ("no_path", "no direct route was found between its network and the HMI"),
-];
+impl WebrtcProblem {
+    /// What it means, as the end of a sentence about the screen.
+    pub fn words(self) -> &'static str {
+        match self {
+            WebrtcProblem::NoWebrtc => "its browser does not support WebRTC",
+            WebrtcProblem::BrowserBlocks => "check it for a VPN, a privacy extension or a policy preventing WebRTC",
+            WebrtcProblem::NetworkBlocksUdp => "check its network for a firewall or policy blocking UDP",
+            WebrtcProblem::NoPath => "no direct route was found between its network and the HMI",
+        }
+    }
+}
 
-/// What a problem the screen named means, or the name itself for one this backend does not know.
-pub fn webrtc_problem_words(problem: &str) -> &str {
-    WEBRTC_PROBLEMS.iter().find(|(name, _)| *name == problem).map_or(problem, |(_, words)| words)
+impl ScreenCondition {
+    /// Its key on the node's status: its kind, as the wire names it.
+    pub fn key(&self) -> String {
+        serde_json::to_value(self).ok().and_then(|v| v["kind"].as_str().map(str::to_owned)).unwrap_or_default()
+    }
+
+    /// Its sentence: the verb for one screen and for several, the rest, and what this screen found.
+    fn words(&self) -> (&'static str, &'static str, &'static str, String) {
+        match self {
+            ScreenCondition::Webrtc { problem } => ("has", "have", "no WebRTC connection, so latency is increased", problem.map_or("it has not said why", |p| p.words()).into()),
+            ScreenCondition::SoftwareDecode { video } => ("decodes", "decode", "video without the graphics card, so video may stutter", video.clone()),
+            ScreenCondition::SoftwareDrawing { renderer } => ("draws", "draw", "without the graphics card, so pages may stutter", renderer.clone()),
+            ScreenCondition::SlowDrawing { fps, renderer } => ("draws", "draw", "too slowly, so pages stutter", format!("{fps:.0} frames a second on {renderer}")),
+        }
+    }
+}
+
+/// Each kind's condition text by its key, for the screens holding one, as a node holds few
+/// conditions: one screen's says what it found, several's name each and what the first found.
+pub fn screen_conditions(held: &[(u32, IpAddr, ScreenCondition)]) -> BTreeMap<String, String> {
+    let mut kinds: BTreeMap<String, Vec<&(u32, IpAddr, ScreenCondition)>> = BTreeMap::new();
+    for h in held {
+        kinds.entry(h.2.key()).or_default().push(h);
+    }
+    let named = |(id, at, _): &&(u32, IpAddr, ScreenCondition)| format!("{id} ({at})");
+    kinds
+        .into_iter()
+        .map(|(key, screens)| {
+            let (one, many, rest, found) = screens[0].2.words();
+            let text = match &screens[..] {
+                [s] => format!("Screen {} {one} {rest}: {found}", named(s)),
+                [all @ .., last] => format!("Screens {} and {} {many} {rest}. Screen {}: {found}", all.iter().map(named).collect::<Vec<_>>().join(", "), named(last), screens[0].0),
+                [] => unreachable!("a kind is listed for a screen that holds it"),
+            };
+            (key, text)
+        })
+        .collect()
 }
 
 /// The screens as a value, as the mesh decodes them.
@@ -146,4 +188,25 @@ pub fn status_value(s: &HmiStatus) -> Value {
         ("clients", Value::Int(s.clients.into())),
         ("missing", Value::List(s.missing.iter().map(|m| (**m).into()).collect())),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_kind_is_one_condition_however_many_screens_hold_it() {
+        let at: IpAddr = "10.0.0.5".parse().unwrap();
+        let slow = |fps| ScreenCondition::SlowDrawing { fps, renderer: "Intel UHD".into() };
+        let held = [
+            (3, at, ScreenCondition::Webrtc { problem: Some(WebrtcProblem::BrowserBlocks) }),
+            (3, at, slow(18.4)),
+            (5, at, slow(22.0)),
+            (7, at, slow(25.0)),
+        ];
+        let texts = screen_conditions(&held);
+        assert_eq!(texts.keys().collect::<Vec<_>>(), ["slow_drawing", "webrtc"]);
+        assert_eq!(texts["webrtc"], "Screen 3 (10.0.0.5) has no WebRTC connection, so latency is increased: check it for a VPN, a privacy extension or a policy preventing WebRTC");
+        assert_eq!(texts["slow_drawing"], "Screens 3 (10.0.0.5), 5 (10.0.0.5) and 7 (10.0.0.5) draw too slowly, so pages stutter. Screen 3: 18 frames a second on Intel UHD");
+    }
 }

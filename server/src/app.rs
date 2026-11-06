@@ -28,8 +28,8 @@ use crate::pages::{Edit, Element, Pages};
 use crate::project::{Import, Intent, Kind, Per, Project, Target, Token, Variable};
 use crate::reads::Reads;
 use crate::rules;
-use crate::problems::Problems;
-use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Reader, Reported, Sample, ServerMsg, ValueUpdate, encode, encode_plain};
+use crate::problems::{Problems, word};
+use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Reader, Reported, Sample, ScreenCondition, ServerMsg, ValueUpdate, WebrtcProblem, encode, encode_plain};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::pages::js;
 use crate::status::{self, Client, HmiStatus};
@@ -58,9 +58,19 @@ const UNDO_DEPTH: usize = 200;
 const STATUS_EVERY: Duration = Duration::from_secs(1);
 /// How often every screen's problems may go out, so a fault that comes each frame is one send.
 const PROBLEMS_EVERY: Duration = Duration::from_millis(250);
-/// How long a screen may take to open its WebRTC link channel before `Hmi/Status` warns that it
-/// has none.
+/// How long a screen may take to open its WebRTC link channel before the node's status warns
+/// that it has none.
 const WEBRTC_GRACE: Duration = Duration::from_secs(15);
+/// How many conditions a screen may hold here, so one that sends more is cut short.
+const SCREEN_CONDITIONS: usize = 8;
+
+/// Why a screen's WebRTC did not open, where `c` says it.
+fn webrtc_problem(c: &ScreenCondition) -> Option<WebrtcProblem> {
+    match c {
+        ScreenCondition::Webrtc { problem } => *problem,
+        _ => None,
+    }
+}
 
 /// What a screen's connection hands the loop.
 pub enum Inbound {
@@ -178,11 +188,10 @@ struct Session {
     /// The last while of round trips and of big values' trips, for `Hmi/Clients`.
     trips: Trips,
     clock: Clock,
-    /// When it connected, and why its WebRTC connection did not open, as it said.
+    /// When it connected.
     opened: Instant,
-    webrtc_problem: Option<String>,
-    /// The warning on the node's status that it has no WebRTC, as last raised.
-    warned: Option<String>,
+    /// What it finds wrong with its connection or its device, as it last said.
+    conditions: Vec<ScreenCondition>,
     /// Whether it shows every screen's problems, as the editor does.
     shows_problems: bool,
     /// Its page shows, so values go to it. A hidden one gets none until it shows again.
@@ -664,6 +673,8 @@ pub struct App {
     /// Every screen's problems and those of runs here, and when they last went out.
     problems: Problems,
     problems_at: Instant,
+    /// The text of each kind of screen condition on the node's status, by its key, as raised.
+    raised: BTreeMap<String, String>,
     /// What the HMI's own code reads, so the mesh decodes those fields.
     reads: Reads,
     /// What the HMI brings of each import, as screens that preview were last told.
@@ -712,6 +723,7 @@ impl App {
             edited: None,
             problems: Problems::default(),
             problems_at: Instant::now(),
+            raised: BTreeMap::new(),
             reads: Reads::new(),
             brings: Vec::new(),
         }
@@ -888,7 +900,7 @@ impl App {
                 let vars: HashMap<String, Value> = self.project.flat().variables.iter().filter(|v| v.per == Per::Screen).map(|v| (v.name.clone(), v.start.clone())).collect();
                 self.script.send(ToScript::Screen { session, values: vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect() });
                 let key = new_key();
-                self.sessions.insert(session, Session { out, channel: None, held: None, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), clock: Clock::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), answered: Instant::now(), shown: true, undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
+                self.sessions.insert(session, Session { out, channel: None, held: None, bulk: None, key, local, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), clock: Clock::default(), opened: Instant::now(), conditions: Vec::new(), shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), answered: Instant::now(), shown: true, undo: Vec::new(), redo: Vec::new(), vars, plays: HashSet::new(), decodes: HashSet::new() });
                 info!("screen {session} connected");
                 // it reads all of every value until it says what it reads
                 self.fields_changed();
@@ -1008,12 +1020,19 @@ impl App {
                     self.again(session);
                 }
             }
-            ClientMsg::WebrtcProblem { problem } => {
+            ClientMsg::Conditions { mut conditions } => {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
-                if let Some(p) = &problem {
-                    warn!("screen {session} has no WebRTC: {}", status::webrtc_problem_words(p));
+                conditions.truncate(SCREEN_CONDITIONS);
+                for c in &mut conditions {
+                    if let ScreenCondition::SoftwareDecode { video: words } | ScreenCondition::SoftwareDrawing { renderer: words } | ScreenCondition::SlowDrawing { renderer: words, .. } = c {
+                        *words = words.chars().take(64).collect();
+                    }
                 }
-                s.webrtc_problem = problem.map(|p| p.chars().take(24).collect());
+                let said = conditions.iter().find_map(webrtc_problem);
+                if said.is_some() && said != s.conditions.iter().find_map(webrtc_problem) {
+                    warn!("screen {session} has no WebRTC: {}", said.map_or("", |p| p.words()));
+                }
+                s.conditions = conditions;
             }
             ClientMsg::Problems { problems, every } => {
                 self.problems.screen(session, problems);
@@ -2074,7 +2093,7 @@ impl App {
                 big_spread_ms: s.trips.shown.bigs,
                 bigs_per_s: s.trips.shown.rate,
                 lapsed: s.trips.lapsed,
-                webrtc_problem: s.webrtc_problem.as_deref().unwrap_or("").try_into().unwrap_or_default(),
+                webrtc_problem: s.conditions.iter().find_map(webrtc_problem).map(|p| word(&p)).unwrap_or_default().as_str().try_into().unwrap_or_default(),
             })
             .collect();
         clients.sort_by_key(|c| c.id);
@@ -2102,23 +2121,29 @@ impl App {
         let missing = self.project.flat().imports.iter().filter(|i| !self.mesh.live(i)).filter_map(|i| i.entity.as_str().try_into().ok()).collect();
         let status = HmiStatus { version: env!("CARGO_PKG_VERSION").into(), project: self.project.info.name.clone(), started_at: self.started_at, clients: self.sessions.len() as u32, missing };
         self.mesh.publish_status(status);
-        self.warn_webrtc();
+        self.raise_conditions();
     }
 
-    /// Keeps a warning on the node's Rant status for each screen with no WebRTC link channel,
-    /// past the while it may take to open, and why, as the screen found. A screen on this host
-    /// keeps to its socket, as near, so it is never warned of.
-    fn warn_webrtc(&mut self) {
-        for (id, s) in &mut self.sessions {
-            let text = (!s.here() && s.channel.is_none() && s.opened.elapsed() >= WEBRTC_GRACE).then(|| {
-                let why = s.webrtc_problem.as_deref().map_or("it has not said why", status::webrtc_problem_words);
-                format!("Screen {id} ({}) has no WebRTC connection, so its latency is increased: {why}", s.remote)
-            });
-            if text != s.warned {
-                self.mesh.screen_warning(*id, text.as_deref());
-                s.warned = text;
+    /// Keeps one warning on the node's Rant status per kind the screens hold. A screen has no
+    /// WebRTC once its link channel stays shut past WEBRTC_GRACE, unless on this host, as near.
+    fn raise_conditions(&mut self) {
+        let mut held = Vec::new();
+        for (id, s) in &self.sessions {
+            if !s.here() && s.channel.is_none() && s.opened.elapsed() >= WEBRTC_GRACE {
+                held.push((*id, s.remote, ScreenCondition::Webrtc { problem: s.conditions.iter().find_map(webrtc_problem) }));
+            }
+            held.extend(s.conditions.iter().filter(|c| !matches!(c, ScreenCondition::Webrtc { .. })).map(|c| (*id, s.remote, c.clone())));
+        }
+        let texts = status::screen_conditions(&held);
+        for key in self.raised.keys().filter(|k| !texts.contains_key(*k)) {
+            self.mesh.condition(key, None);
+        }
+        for (key, text) in &texts {
+            if self.raised.get(key) != Some(text) {
+                self.mesh.condition(key, Some(text));
             }
         }
+        self.raised = texts;
     }
 
     /// Tells the engine what each import's message is made of, and it and every screen the
@@ -2152,13 +2177,11 @@ impl App {
     /// Ends a screen's session, which closes its socket. Its pages answer nothing, what it held
     /// pressed is let go, and the rules for a lost screen run.
     fn end(&mut self, session: u32, why: &str) {
-        if let Some(s) = self.sessions.remove(&session) {
+        if self.sessions.remove(&session).is_some() {
             info!("screen {session} {why}");
             self.fields_changed();
-            if s.warned.is_some() {
-                self.mesh.screen_warning(session, None);
-            }
             self.problems.gone(session);
+            self.raise_conditions();
             self.leaving.insert(session);
             self.watch(session);
             self.rtc.send(ToRtc::Unlink { session });
@@ -2494,7 +2517,7 @@ mod tests {
 
     fn session(remote: IpAddr) -> Session {
         let out = Outbox::new(Arc::new(Lanes::default()));
-        Session { out, channel: None, held: None, bulk: None, key: new_key(), local: remote, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), clock: Clock::default(), opened: Instant::now(), webrtc_problem: None, warned: None, shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), answered: Instant::now(), shown: true, undo: Vec::new(), redo: Vec::new(), vars: HashMap::new(), plays: HashSet::new(), decodes: HashSet::new() }
+        Session { out, channel: None, held: None, bulk: None, key: new_key(), local: remote, remote, since: Timestamp::now(), ping: None, jitter: 0.0, webrtc: false, trips: Trips::default(), clock: Clock::default(), opened: Instant::now(), conditions: Vec::new(), shows_problems: false, watch: None, previews: None, gates: HashMap::new(), heard: Instant::now(), answered: Instant::now(), shown: true, undo: Vec::new(), redo: Vec::new(), vars: HashMap::new(), plays: HashSet::new(), decodes: HashSet::new() }
     }
 
     /// The messages waiting in `lanes`, each joined from its pieces.

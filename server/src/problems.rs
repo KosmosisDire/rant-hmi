@@ -118,7 +118,7 @@ fn row(r: &Reported) -> ProblemRow {
 }
 
 /// A unit variant's word, as the wire spells it.
-fn word(v: &impl Serialize) -> String {
+pub fn word(v: &impl Serialize) -> String {
     serde_json::to_value(v).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
 }
 

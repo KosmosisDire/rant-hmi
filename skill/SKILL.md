@@ -19,7 +19,7 @@ for anything it leaves out:
 | https://docs.rantlib.dev/hmi-events.md | every event, its settings and what its `p` holds |
 | https://docs.rantlib.dev/hmi-code.md | every name and function code reads, tasks, vectors, poses, colours |
 | https://docs.rantlib.dev/hmi-deploy.md | https, firewalls and WebRTC, apps for a device |
-| https://docs.rantlib.dev/hmi-status.md | `Hmi/Status`, `Hmi/Clients`, `Hmi/Problems` |
+| https://docs.rantlib.dev/hmi-status.md | `Hmi/Status`, `Hmi/Clients`, `Hmi/Problems`, the warnings on the HMI node's Rant status |
 
 ## Set up
 

@@ -196,16 +196,14 @@ impl Mesh {
         }
     }
 
-    /// Raises or updates the warning on this node's Rant status that screen `id` has no WebRTC,
-    /// or with None clears it. Each screen's is its own condition.
-    pub fn screen_warning(&self, id: u32, text: Option<&str>) {
-        let key = format!("screen-{id}-webrtc");
+    /// Raises or updates the warning `key` on this node's Rant status, or with None clears it.
+    pub fn condition(&self, key: &str, text: Option<&str>) {
         let done = match text {
-            Some(text) => self.node.set_status(&key, rant::Level::Warn, text, rant::StatusOptions::new()),
-            None => self.node.clear_status(&key),
+            Some(text) => self.node.set_status(key, rant::Level::Warn, text, rant::StatusOptions::new()),
+            None => self.node.clear_status(key),
         };
         if let Err(e) = done {
-            debug!("the status of screen {id}'s WebRTC did not go out: {e}");
+            debug!("the status condition {key} did not go out: {e}");
         }
     }
 

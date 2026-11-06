@@ -161,6 +161,42 @@ pub enum Mode {
     Device,
 }
 
+/// Why a screen's WebRTC connection did not open, as the screen finds.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum WebrtcProblem {
+    /// Its browser does not support WebRTC.
+    NoWebrtc,
+    /// It gathered no address at all, as a VPN, a privacy extension or a policy makes.
+    BrowserBlocks,
+    /// It gathered no public address, though the project names STUN or TURN servers.
+    NetworkBlocksUdp,
+    /// No direct route was found between its network and the HMI.
+    NoPath,
+}
+
+/// Something wrong a screen finds that holds until its cause goes. Each kind is one condition
+/// on the node's Rant status, however many screens hold it.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum ScreenCondition {
+    /// Its WebRTC connection did not open. The backend judges that a screen has none, so a
+    /// screen that has not said why holds it with None.
+    Webrtc {
+        #[serde(default)]
+        #[ts(optional)]
+        problem: Option<WebrtcProblem>,
+    },
+    /// A video it plays decodes without the graphics card, named as `H264 1920x1080`.
+    SoftwareDecode { video: String },
+    /// Its browser draws without the graphics card, with `renderer`.
+    SoftwareDrawing { renderer: String },
+    /// It draws only `fps` frames a second, on `renderer`.
+    SlowDrawing { fps: f64, renderer: String },
+}
+
 /// From a screen to the backend.
 #[derive(Deserialize, TS, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -190,13 +226,8 @@ pub enum ClientMsg {
     Switch,
     /// The screen lost its link channel, so the socket carries all again from now.
     Unswitch,
-    /// Why the screen's WebRTC connection did not open, as one of WEBRTC_PROBLEMS, None once it
-    /// did.
-    WebrtcProblem {
-        #[serde(default)]
-        #[ts(optional)]
-        problem: Option<String>,
-    },
+    /// What the screen finds wrong with its connection or its device now, whole, after a change.
+    Conditions { conditions: Vec<ScreenCondition> },
     /// The screen's problems, whole, after a change. `every` asks for every screen's, as the
     /// editor shows them.
     Problems { problems: Vec<Problem>, every: bool },
