@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "rant-hmi"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "anyhow",
  "axum",
