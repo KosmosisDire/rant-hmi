@@ -62,7 +62,7 @@ function renderer(): string {
 /** The card's own name in ANGLE's, as a page cannot learn which card it should use: `ANGLE (Intel, Intel(R) UHD Graphics (0x0000A7A0) Direct3D11
  *  vs_5_0 ps_5_0, D3D11)` gives `Intel(R) UHD Graphics`. */
 function cardOf(renderer: string): string {
-  return /^ANGLE \([^,]*, (.+?)(?: \(0x[0-9a-f]+\))?(?: Direct3D| OpenGL| Vulkan| Metal|,|\))/i.exec(renderer)?.[1] ?? (renderer || "an unknown graphics card");
+  return /^ANGLE \([^,]*, (?:ANGLE Metal Renderer: |Vulkan [\d.]+ \(\S+ )?(.+?)(?= \(0x[0-9a-f]+\)| Direct3D| OpenGL| Vulkan| Metal|,)/i.exec(renderer)?.[1] ?? (renderer || "an unknown graphics card");
 }
 
 /** How many frames a second the page draws over SAMPLE_MS, or null where it hid meanwhile, as a
