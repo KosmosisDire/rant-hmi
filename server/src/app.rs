@@ -29,7 +29,7 @@ use crate::project::{Import, Intent, Kind, Per, Project, Target, Token, Variable
 use crate::reads::Reads;
 use crate::rules;
 use crate::problems::{Problems, word};
-use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Reader, Reported, Sample, ScreenCondition, ServerMsg, ValueUpdate, WebrtcProblem, encode, encode_plain};
+use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Problem, Reader, Reported, Sample, ScreenCondition, ServerMsg, ValueUpdate, WebrtcProblem, encode, encode_plain};
 use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
 use crate::pages::js;
 use crate::status::{self, Client, HmiStatus};
@@ -673,8 +673,8 @@ pub struct App {
     /// Every screen's problems and those of runs here, and when they last went out.
     problems: Problems,
     problems_at: Instant,
-    /// The text of each kind of screen condition on the node's status, by its key, as raised.
-    raised: BTreeMap<String, String>,
+    /// Each condition on the node's status, by its key, as raised.
+    raised: BTreeMap<String, (Level, String)>,
     /// What the HMI's own code reads, so the mesh decodes those fields.
     reads: Reads,
     /// What the HMI brings of each import, as screens that preview were last told.
@@ -2118,15 +2118,23 @@ impl App {
 
     /// Publishes the HMI's own state on the mesh, once that changed.
     fn publish_status(&mut self) {
-        let missing = self.project.flat().imports.iter().filter(|i| !self.mesh.live(i)).filter_map(|i| i.entity.as_str().try_into().ok()).collect();
-        let status = HmiStatus { version: env!("CARGO_PKG_VERSION").into(), project: self.project.info.name.clone(), started_at: self.started_at, clients: self.sessions.len() as u32, missing };
+        let missing: Vec<String> = self.project.flat().imports.iter().filter(|i| !self.mesh.live(i)).map(|i| i.entity.clone()).collect();
+        let status = HmiStatus { version: env!("CARGO_PKG_VERSION").into(), project: self.project.info.name.clone(), started_at: self.started_at, clients: self.sessions.len() as u32, missing: missing.iter().filter_map(|m| m.as_str().try_into().ok()).collect() };
         self.mesh.publish_status(status);
-        self.raise_conditions();
+        self.raise_conditions(&missing);
     }
 
-    /// Keeps one warning on the node's Rant status per kind the screens hold. A screen has no
-    /// WebRTC once its link channel stays shut past WEBRTC_GRACE, unless on this host, as near.
-    fn raise_conditions(&mut self) {
+    /// Where a page's problem is, as the editor names it: its page or component and element.
+    fn place(&self, p: &Problem) -> String {
+        let page = p.page.as_deref().unwrap_or_default();
+        let element = p.element.as_deref().map(|id| self.pages.element(page, id).and_then(|e| e.props.get("name")).map_or(id, String::as_str));
+        let page = self.pages.get(page).map_or(page, |d| d.name.as_str());
+        element.map_or(page.to_owned(), |e| format!("{page} / {e}"))
+    }
+
+    /// Keeps the node's Rant status to what is wrong now, one condition per kind: what the
+    /// screens hold, the page problems they show, and the imports `missing` from the mesh.
+    fn raise_conditions(&mut self, missing: &[String]) {
         let mut held = Vec::new();
         for (id, s) in &self.sessions {
             if !s.here() && s.channel.is_none() && s.opened.elapsed() >= WEBRTC_GRACE {
@@ -2134,13 +2142,16 @@ impl App {
             }
             held.extend(s.conditions.iter().filter(|c| !matches!(c, ScreenCondition::Webrtc { .. })).map(|c| (*id, s.remote, c.clone())));
         }
-        let texts = status::screen_conditions(&held);
+        let mut texts = status::screen_conditions(&held);
+        let shown: Vec<(String, &Problem)> = self.problems.page_problems().into_iter().map(|p| (self.place(p), p)).collect();
+        texts.extend(status::page_problems(&shown).map(|t| ("page_problems".to_owned(), t)));
+        texts.extend(status::missing(missing).map(|t| ("missing".to_owned(), t)));
         for key in self.raised.keys().filter(|k| !texts.contains_key(*k)) {
             self.mesh.condition(key, None);
         }
-        for (key, text) in &texts {
-            if self.raised.get(key) != Some(text) {
-                self.mesh.condition(key, Some(text));
+        for (key, raised) in &texts {
+            if self.raised.get(key) != Some(raised) {
+                self.mesh.condition(key, Some((raised.0, &raised.1)));
             }
         }
         self.raised = texts;
@@ -2181,7 +2192,7 @@ impl App {
             info!("screen {session} {why}");
             self.fields_changed();
             self.problems.gone(session);
-            self.raise_conditions();
+            self.publish_status();
             self.leaving.insert(session);
             self.watch(session);
             self.rtc.send(ToRtc::Unlink { session });

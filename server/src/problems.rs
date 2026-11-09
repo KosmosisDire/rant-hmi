@@ -78,6 +78,18 @@ impl Problems {
         }
     }
 
+    /// Each page problem a screen shows now, once however many show it, faults first.
+    pub fn page_problems(&self) -> Vec<&Problem> {
+        let mut shown: Vec<&Problem> = Vec::new();
+        for p in self.screens.values().flatten().filter(|p| p.source == Source::Page) {
+            if !shown.iter().any(|s| same(s, p)) {
+                shown.push(p);
+            }
+        }
+        shown.sort_by_key(|p| p.level != Level::Fault);
+        shown
+    }
+
     /// A screen went, and its problems with it.
     pub fn gone(&mut self, session: u32) {
         self.changed |= self.screens.remove(&session).is_some();

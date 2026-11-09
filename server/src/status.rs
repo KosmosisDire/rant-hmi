@@ -6,7 +6,7 @@ use std::net::IpAddr;
 
 use rant::types::Timestamp;
 
-use crate::protocol::{ScreenCondition, WebrtcProblem};
+use crate::protocol::{Level, Problem, ScreenCondition, WebrtcProblem};
 use crate::value::Value;
 
 pub const CLIENTS: &str = "Hmi/Clients";
@@ -134,7 +134,7 @@ impl ScreenCondition {
 
 /// Each kind's condition text by its key, for the screens holding one, as a node holds few
 /// conditions: one screen's says what it found, several's name each and what the first found.
-pub fn screen_conditions(held: &[(u32, IpAddr, ScreenCondition)]) -> BTreeMap<String, String> {
+pub fn screen_conditions(held: &[(u32, IpAddr, ScreenCondition)]) -> BTreeMap<String, (Level, String)> {
     let mut kinds: BTreeMap<String, Vec<&(u32, IpAddr, ScreenCondition)>> = BTreeMap::new();
     for h in held {
         kinds.entry(h.2.key()).or_default().push(h);
@@ -149,9 +149,29 @@ pub fn screen_conditions(held: &[(u32, IpAddr, ScreenCondition)]) -> BTreeMap<St
                 [all @ .., last] => format!("Screens {} and {} {many} {rest}. Screen {}: {found}", all.iter().map(named).collect::<Vec<_>>().join(", "), named(last), screens[0].0),
                 [] => unreachable!("a kind is listed for a screen that holds it"),
             };
-            (key, text)
+            (key, (Level::Warn, text))
         })
         .collect()
+}
+
+/// The condition for the page problems screens show, each once with its place, faults first.
+pub fn page_problems(shown: &[(String, &Problem)]) -> Option<(Level, String)> {
+    let (place, first) = shown.first()?;
+    let text = match shown.len() {
+        1 => format!("{place}: {}", first.text),
+        n => format!("{n} page problems. First, {place}: {}", first.text),
+    };
+    Some((first.level, text))
+}
+
+/// The condition for the imports whose entities are not on the mesh now.
+pub fn missing(entities: &[String]) -> Option<(Level, String)> {
+    let text = match entities {
+        [] => return None,
+        [one] => format!("{one} is not on the mesh, so what reads it shows it unknown"),
+        all => format!("{} imports are not on the mesh, so what reads them shows them unknown: {}", all.len(), all.join(", ")),
+    };
+    Some((Level::Warn, text))
 }
 
 /// The screens as a value, as the mesh decodes them.
@@ -206,7 +226,18 @@ mod tests {
         ];
         let texts = screen_conditions(&held);
         assert_eq!(texts.keys().collect::<Vec<_>>(), ["slow_drawing", "webrtc"]);
-        assert_eq!(texts["webrtc"], "Screen 3 (10.0.0.5) has no WebRTC connection, so latency is increased: check it for a VPN, a privacy extension or a policy preventing WebRTC");
-        assert_eq!(texts["slow_drawing"], "Screens 3 (10.0.0.5), 5 (10.0.0.5) and 7 (10.0.0.5) draw too slowly, so pages stutter. Screen 3: 18 frames a second on Intel UHD");
+        assert_eq!(texts["webrtc"].1, "Screen 3 (10.0.0.5) has no WebRTC connection, so latency is increased: check it for a VPN, a privacy extension or a policy preventing WebRTC");
+        assert_eq!(texts["slow_drawing"].1, "Screens 3 (10.0.0.5), 5 (10.0.0.5) and 7 (10.0.0.5) draw too slowly, so pages stutter. Screen 3: 18 frames a second on Intel UHD");
+    }
+
+    #[test]
+    fn page_problems_name_the_first_and_count_the_rest() {
+        let found = |level, text: &str| Problem { source: crate::protocol::Source::Page, level, text: text.into(), detail: None, page: None, element: None, count: 1, at: 0.0 };
+        let (bad, slow) = (found(Level::Fault, "draw: x is unknown"), found(Level::Warn, "it ran over half a frame"));
+        assert_eq!(page_problems(&[]), None);
+        assert_eq!(page_problems(&[("Drive / Speed".into(), &bad)]), Some((Level::Fault, "Drive / Speed: draw: x is unknown".into())));
+        let two = page_problems(&[("Drive / Speed".into(), &bad), ("Drive / Plot".into(), &slow)]);
+        assert_eq!(two, Some((Level::Fault, "2 page problems. First, Drive / Speed: draw: x is unknown".into())));
+        assert_eq!(missing(&["Robot/Pose".into()]).unwrap().1, "Robot/Pose is not on the mesh, so what reads it shows it unknown");
     }
 }

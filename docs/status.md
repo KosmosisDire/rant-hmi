@@ -61,14 +61,16 @@ ms since 1970.
 
 ## Rant status
 
-The HMI raises one warning on its node's Rant status for each kind of problem its screens find,
-naming each screen that has it:
+The HMI raises one condition on its node's Rant status for each kind of problem, naming each
+screen that has it:
 
-| Key | Holds while a screen |
+| Key | Holds while |
 | --- | --- |
-| `webrtc` | has no WebRTC connection, so its latency is increased |
-| `software_decode` | decodes video without its graphics card |
-| `software_drawing` | draws without its graphics card, as with hardware acceleration off |
-| `slow_drawing` | draws under 24 frames a second |
+| `webrtc` | a screen has no WebRTC connection, so its latency is increased |
+| `software_decode` | a screen decodes video without its graphics card |
+| `software_drawing` | a screen draws without its graphics card, as with hardware acceleration off |
+| `slow_drawing` | a screen draws under 24 frames a second |
+| `page_problems` | a screen shows a page problem, counted once however many show it, an error for a fault |
+| `missing` | an import's entity is not on the mesh |
 
-An operator's screen shows its own in a banner across the top until dismissed.
+An operator's screen shows its own screen problems in a banner across the top until dismissed.

@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 
 use crate::fields::Keep;
 use crate::project::{Import, Intent, Kind};
-use crate::protocol::{EntityInfo, EnumInfo};
+use crate::protocol::{EntityInfo, EnumInfo, Level};
 use crate::script::{CallFailure, Form};
 use crate::status::{self, Client, HmiStatus, ProblemRow};
 use codec::Shape;
@@ -196,10 +196,17 @@ impl Mesh {
         }
     }
 
-    /// Raises or updates the warning `key` on this node's Rant status, or with None clears it.
-    pub fn condition(&self, key: &str, text: Option<&str>) {
-        let done = match text {
-            Some(text) => self.node.set_status(key, rant::Level::Warn, text, rant::StatusOptions::new()),
+    /// Raises or updates the condition `key` on this node's Rant status, or with None clears it.
+    pub fn condition(&self, key: &str, raised: Option<(Level, &str)>) {
+        let done = match raised {
+            Some((level, text)) => {
+                let level = match level {
+                    Level::Info => rant::Level::Info,
+                    Level::Warn => rant::Level::Warn,
+                    Level::Fault => rant::Level::Error,
+                };
+                self.node.set_status(key, level, text, rant::StatusOptions::new())
+            }
             None => self.node.clear_status(key),
         };
         if let Err(e) = done {
