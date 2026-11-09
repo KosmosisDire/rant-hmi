@@ -387,7 +387,7 @@ function colourOf(v: unknown): Rgba | undefined {
 
 /** The keys of a part that only change its look, so it still shows where it is and what it is
  *  as a ghost while one is unknown. */
-const LOOKS = new Set(["color", "opacity", "joints", "names", "field", "range", "joined"]);
+const LOOKS = new Set(["color", "opacity", "joints", "names", "field", "range", "joined", "shape"]);
 
 const GHOST: Rgba = [0.55, 0.55, 0.55, 0.35];
 
@@ -413,6 +413,7 @@ const SHOWS: Record<Part, (read: Read) => Omit<Shown, "visible">> = {
     const laid = r.points("points", field || undefined);
     return {
       joined: r.flag("joined"),
+      shape: r.text("shape"),
       points: laid?.points,
       values: laid?.values,
       size: r.sizes("size"),

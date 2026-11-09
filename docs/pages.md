@@ -159,6 +159,7 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 | `length` | `cylinder` | along its z, `1` |
 | `points` | `points` | a list of points with `x`, `y` and maybe `z`, as a Double3 list from the mesh, or a PointCloud, a LaserScan, a Path or a Polyline. A cloud's points sit at its `origin` |
 | `joined` | `points` | `true` to draw one line through them instead of dots, broken where a point is not drawn |
+| `shape` | `points` | what each dot is: `"dot"`, round and flat, `"square"`, or `"sphere"` or `"box"`, lit. Spheres and boxes cost the GPU more |
 | `mesh` | `mesh` | a Mesh, as `Cell.Part`, `null` for none. Its vertices sit at their cloud's `origin`, and their `normal_x`, `normal_y` and `normal_z` light it when it has them |
 | `grid` | `grid` | a Grid, as `Cell.Map`, `null` for none. Its first cell's outer corner sits at its `origin`. A flat one draws as a picture, a square a cell, a deep one as a cube a cell |
 | `field` | `points`, `mesh`, `grid` | a number each point or vertex has, or a grid's field, which colours it from blue to red, as `"intensity"`, or `"z"` for height. A scan's points have `range` and `intensity`. A grid takes its first field when left out |

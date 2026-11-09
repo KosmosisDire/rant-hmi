@@ -102,6 +102,8 @@ export interface Shown {
   length?: number;
   vector?: Vec3;
   joined?: boolean;
+  /** What each dot is drawn as: "dot", "square", "sphere" or "box". */
+  shape?: string;
   /** Each point's x, y and z after the one before, a small cloud or scan as it came, or the big
    *  value it follows: a list, a PointCloud's bytes or a LaserScan's ranges. */
   points?: Float32Array | { follow: string; as?: "cloud" | "scan" } | { cloud: unknown; data: Uint8Array } | { scan: unknown; ranges: Float32Array; intensities?: Float32Array };
@@ -186,8 +188,11 @@ const isVec3 = (v: unknown): v is Vec3 => typeof v === "object" && v !== null &&
 
 const isList = (c: unknown): c is Numbers => ArrayBuffer.isView(c) && !(c instanceof DataView);
 
-/** A part's dots or line. */
-type Dotted = LineSegments<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial>;
+/** A part's dots, as points or squares, or line. */
+type Dotted = LineSegments<BufferGeometry, ShaderMaterial> | Points<BufferGeometry, ShaderMaterial> | Mesh<BufferGeometry, ShaderMaterial>;
+
+/** The shapes a dot takes, as the dots shader numbers them. */
+const SHAPES = ["dot", "square", "sphere", "box"];
 
 type Painted = Material & { color: Color };
 
@@ -452,6 +457,9 @@ bool finiteOf(uvec4 lo, uvec4 hi, int kind) {
   return true;
 }`;
 
+// an sRGB colour as linear light, which three.js lights in
+const LINEAR = "vec3 linearOf(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }";
+
 /** Each ScalarKind as the shader numbers it. */
 const CODES: Record<string, number> = { I8: 0, U8: 1, I16: 2, U16: 3, I32: 4, U32: 5, F32: 6, F64: 7, I64: 8, U64: 9 };
 
@@ -483,15 +491,14 @@ function readers(r: Reads) {
   return { decls, pick, attribute, read };
 }
 
-// Points as round dots as wide as their size in metres, never under a pixel nor over 64, as dots
-// near the eye would each fill the scene, or a line through them. Colours are sRGB and go out as
-// they are, as nothing lights them.
+// Points as dots of SHAPE their size in metres wide, 1 to 64 px as a near one would fill the scene,
+// or a line through them. With QUADS a dot is an instance of a square's corners. sRGB unless lit.
 function dotsVertex(r: Reads): string {
   const { decls, pick, attribute, read } = readers(r);
   const body: string[] = [];
   if (r.scan) {
     const range = read("X");
-    const beam = r.joined ? "gl_InstanceID + int(next)" : "gl_VertexID";
+    const beam = r.joined ? "gl_InstanceID + int(next)" : "POINT";
     body.push(
       `float r = ${range.value};`,
       `ok = ${range.ok} && r >= uBeams.z && (uBeams.w <= 0.0 || r <= uBeams.w);`,
@@ -527,6 +534,12 @@ uniform vec4 uBeams;
 uniform float uEchoes;
 ${decls.join("\n")}
 varying vec4 vColor;
+${DOT_VARYINGS}
+#ifdef QUADS
+#define POINT gl_InstanceID
+#else
+#define POINT gl_VertexID
+#endif
 ${NUMBERS}
 bool pointAt(bool next, out vec3 p, out vec4 colour, out float size) {
   bool ok;
@@ -543,20 +556,92 @@ void main() {
   if (!ok) {
     // past the far plane, so never drawn
     gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+    #if defined(DOTS) && !defined(QUADS)
     gl_PointSize = 1.0;
+    #endif
     return;
   }
   vec4 at = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * at;
-  gl_PointSize = clamp(size * projectionMatrix[1][1] * uHeight * 0.5 / -at.z, 1.0, 64.0);
+  #ifdef DOTS
+  // metres a pixel spans at the dot's distance
+  float pixel = 2.0 * max(-at.z, 1e-6) / (projectionMatrix[1][1] * uHeight);
+  // how far the shape reaches from its middle, a cube to its corners
+  float reach = clamp(size * (SHAPE == 3 ? 0.8660254 : 0.5), 0.5 * pixel, 32.0 * pixel);
+  vCentre = at.xyz;
+  vRadius = SHAPE == 3 ? reach * 0.5773503 : reach;
+  // a solid seen near is wider than it reaches, as its outline is where the eye's rays graze it
+  float far = length(at.xyz);
+  vHalf = SHAPE >= 2 ? reach * far / sqrt(max(far * far - reach * reach, 1e-12)) : reach;
+  #ifdef QUADS
+  vCorner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1)) * 2.0 - 1.0;
+  gl_Position.xy += vCorner * vec2(projectionMatrix[0][0], projectionMatrix[1][1]) * vHalf;
+  #else
+  gl_PointSize = 2.0 * vHalf / pixel;
+  #endif
+  #endif
 }`;
 }
+
+// where a dot's middle is from the eye, how far its shape reaches and half the square it is drawn
+// in there, and with QUADS where in that square a corner is, from -1 to 1
+const DOT_VARYINGS = `
+#ifdef DOTS
+varying vec3 vCentre;
+varying float vRadius;
+varying float vHalf;
+#ifdef QUADS
+varying vec2 vCorner;
+#endif
+#endif`;
+
+// Dots one colour to their edge, as an eased edge let what is behind the canvas through. A sphere
+// or a box is lit where the eye's ray meets it, at its middle's depth so the GPU skips what is hidden.
 const DOTS_FRAGMENT = `
 varying vec4 vColor;
+${DOT_VARYINGS}
+#ifdef DOTS
+uniform mat4 modelViewMatrix;
+${LINEAR}
+#endif
 void main() {
   #ifdef DOTS
-  // round and one colour to its edge, as an eased edge let what is behind the canvas through
-  if (length(gl_PointCoord * 2.0 - 1.0) > 1.0) discard;
+  #ifdef QUADS
+  vec2 c = vCorner;
+  #else
+  vec2 c = vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y) * 2.0 - 1.0;
+  #endif
+  #if SHAPE == 0
+  if (dot(c, c) > 1.0) discard;
+  #elif SHAPE >= 2
+  vec3 ray = normalize(vCentre + vec3(c * vHalf, 0.0));
+  #if SHAPE == 2
+  float b = dot(ray, vCentre);
+  float h = b * b - dot(vCentre, vCentre) + vRadius * vRadius;
+  if (h < 0.0) discard;
+  vec3 hit = ray * (b - sqrt(h));
+  vec3 normal = (hit - vCentre) / vRadius;
+  #else
+  // the box square to its cloud's axes
+  mat3 turn = mat3(normalize(modelViewMatrix[0].xyz), normalize(modelViewMatrix[1].xyz), normalize(modelViewMatrix[2].xyz));
+  vec3 from = -vCentre * turn;
+  vec3 dir = ray * turn;
+  // a ray square to an axis, which would divide by 0
+  dir += vec3(equal(dir, vec3(0.0))) * 1e-6;
+  vec3 t0 = (-vRadius - from) / dir;
+  vec3 t1 = (vRadius - from) / dir;
+  vec3 lo = min(t0, t1);
+  vec3 hi = max(t0, t1);
+  float into = max(max(lo.x, lo.y), lo.z);
+  if (into > min(min(hi.x, hi.y), hi.z)) discard;
+  vec3 normal = turn * (-sign(dir) * vec3(greaterThanEqual(lo, vec3(into))));
+  #endif
+  // the scene's sky and ground light, 2, and the light from the eye, 1.5, on a Lambert surface
+  float up = dot(normal, normalize(viewMatrix[2].xyz));
+  vec3 light = 2.0 * mix(vec3(0.0513), vec3(1.0), 0.5 + 0.5 * up) + 1.5 * max(normal.z, 0.0);
+  gl_FragColor = linearToOutputTexel(vec4(linearOf(vColor.rgb) * light * 0.3183099, vColor.a));
+  return;
+  #endif
   #endif
   gl_FragColor = vColor;
 }`;
@@ -698,18 +783,25 @@ function retire(g: BufferGeometry | undefined) {
   g.dispose();
 }
 
+/** How a part draws its points: each a vertex, each an instance of a square's corners, or each
+ *  with the next an instance of a line's segment. */
+type Form = "vertices" | "quads" | "segments";
+
+// a square's two triangles over its corners, as the dots shader numbers them
+const SQUARE = [0, 1, 2, 2, 1, 3];
+
 /** Lays out the bytes `inputs` sit in for the GPU of `h`'s scene, a buffer each, read four bytes at
  *  a time as `a` and the input's name, and a mesh's first `index[1]` vertex numbers, and its
  *  triangles too when `sums` its normals. The part goes on drawing what it drew until they are all
  *  on the GPU, then shows them as `then` says. Bytes the part drew last go there again only if
  *  their layout changed. */
-function stage(drawn: Object3D & { geometry: BufferGeometry }, h: Held, inputs: [string, Input][], n: number, joined: boolean, then: () => void, index?: [Uint32Array, number], sums = false) {
+function stage(drawn: Object3D & { geometry: BufferGeometry }, h: Held, inputs: [string, Input][], n: number, form: Form, then: () => void, index?: [Uint32Array, number], sums = false) {
   const d = scenes.get(h.scene);
   if (!d?.renderer) return;
   const renderer = d.renderer;
   const gl = renderer.getContext() as WebGL2RenderingContext;
   const held: Input[] = [];
-  const shape: unknown[] = [joined, !!index, sums];
+  const shape: unknown[] = [form, !!index, sums];
   for (const [name, input] of inputs) {
     let k = held.findIndex((b) => b.bytes === input.bytes && b.stride === input.stride);
     if (k < 0) k = held.push(input) - 1;
@@ -733,11 +825,13 @@ function stage(drawn: Object3D & { geometry: BufferGeometry }, h: Held, inputs: 
   // an element buffer is bound to the vertex array three.js has bound, so to none here
   gl.bindVertexArray(null);
   if (!g) {
-    g = joined ? new InstancedBufferGeometry() : new BufferGeometry();
+    const instanced = form !== "vertices";
+    g = instanced ? new InstancedBufferGeometry() : new BufferGeometry();
+    if (form === "quads") g.setIndex(SQUARE);
     const buffers = held.map((b) => {
       const capacity = room(b.bytes.length);
       const buffer = emptyBuffer(gl, gl.ARRAY_BUFFER, capacity);
-      const on = joined ? new InstancedInterleavedBuffer(new Uint8Array(0), b.stride, 1) : new InterleavedBuffer(new Uint8Array(0), b.stride);
+      const on = instanced ? new InstancedInterleavedBuffer(new Uint8Array(0), b.stride, 1) : new InterleavedBuffer(new Uint8Array(0), b.stride);
       // as many points as fit, which three.js limits a line's segments to
       return Object.assign(on, { isGLBufferAttribute: true as const, buffer, type: gl.UNSIGNED_BYTE, elementSize: 1, capacity, count: Math.floor(capacity / b.stride) });
     });
@@ -747,7 +841,7 @@ function stage(drawn: Object3D & { geometry: BufferGeometry }, h: Held, inputs: 
       const words = WIDTH[input.kind] === 8 ? ["", "2"] : [""];
       words.forEach((w, i) => {
         g!.setAttribute(`a${name}${w}`, word(k, input.offset + 4 * i));
-        if (joined) g!.setAttribute(`a${name}${w}n`, word(k, input.offset + 4 * i + input.stride));
+        if (form === "segments") g!.setAttribute(`a${name}${w}n`, word(k, input.offset + 4 * i + input.stride));
       });
     }
     const laid: Laid = { key, gl, buffers, bytes: [] };
@@ -768,9 +862,12 @@ function stage(drawn: Object3D & { geometry: BufferGeometry }, h: Held, inputs: 
   const laid = g.userData.laid as Laid;
   laid.bytes = held.map((b) => b.bytes);
   const writes: Staged["writes"] = held.map((b, i) => ({ target: gl.ARRAY_BUFFER, buffer: laid.buffers[i].buffer, bytes: b.bytes, at: 0 }));
-  if (g instanceof InstancedBufferGeometry) {
-    g.instanceCount = Math.max(n - 1, 0);
+  if (form === "segments") {
+    (g as InstancedBufferGeometry).instanceCount = Math.max(n - 1, 0);
     g.setDrawRange(0, 2);
+  } else if (form === "quads") {
+    (g as InstancedBufferGeometry).instanceCount = n;
+    g.setDrawRange(0, SQUARE.length);
   } else if (index) {
     laid.index!.of = index[0];
     writes.push({ target: gl.ELEMENT_ARRAY_BUFFER, buffer: laid.index!.buffer, bytes: bytesOfIndex(index), at: 0 });
@@ -842,13 +939,11 @@ function lay(drawn: Dotted, h: Held, faults: string[]) {
       // a line has no sizes
       const joined = drawn instanceof LineSegments;
       const inputs = Object.entries({ X: src.x, Y: src.y, Z: src.z, V: src.value, S: joined ? undefined : size, C: colour }).filter((e): e is [string, Input] => e[1] !== undefined);
-      stage(drawn, h, inputs, src.n, joined, () => {
+      stage(drawn, h, inputs, src.n, joined ? "segments" : drawn instanceof Mesh ? "quads" : "vertices", () => {
         const kinds = Object.fromEntries(inputs.filter(([k]) => k !== "C").map(([k, input]) => [k, input.kind]));
         const m = drawn.material;
         const vertexShader = dotsVertex({ kinds, colour: colour?.kind, axis: src.axis, scan: !!src.beams, joined });
         if (m.vertexShader !== vertexShader) Object.assign(m, { vertexShader, needsUpdate: true });
-        const defines = joined ? {} : { DOTS: "" };
-        if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
         const b = src.beams;
         if (b) {
           m.uniforms.uBeams.value.set(b.start, b.turn, b.low, b.high);
@@ -1034,7 +1129,6 @@ function meshShaders(r: Reads, vertex: string, fragment: string): [string, strin
     attribute("aC");
     body.push(`colour = linearOf(vec3(aC${r.colour === "RGBA" ? ".xyz" : ".zyx"}) / 255.0);`);
   } else body.push("colour = vec3(1.0);");
-  const linear = "vec3 linearOf(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }";
   const ramped = !!r.kinds.V || r.axis !== undefined;
   const v = vertex
     .replace(
@@ -1046,7 +1140,7 @@ ${decls.join("\n")}
 // where the pixel's samples lie in the triangle, so its edges keep within the values' ends
 centroid varying float vValue;
 ${NUMBERS}
-${linear}
+${LINEAR}
 bool vertexAt(out vec3 p, out vec3 n, out float v, out vec3 colour) {
   ${body.join("\n  ")}
   return ok;
@@ -1059,7 +1153,7 @@ bool vertexAt(out vec3 p, out vec3 n, out float v, out vec3 colour) {
     // a triangle on a vertex not drawn is dropped whole
     .replace("#include <project_vertex>", "#include <project_vertex>\n  if (!rok) gl_Position = vec4(uintBitsToFloat(0x7fc00000u));");
   const f = fragment
-    .replace("#include <common>", `#include <common>\nuniform float uLow;\nuniform float uHigh;\nuniform float uScale;\nuniform sampler2D uRamp;\ncentroid varying float vValue;\n${linear}`)
+    .replace("#include <common>", `#include <common>\nuniform float uLow;\nuniform float uHigh;\nuniform float uScale;\nuniform sampler2D uRamp;\ncentroid varying float vValue;\n${LINEAR}`)
     .replace(
       "#include <color_fragment>",
       ramped
@@ -1127,7 +1221,7 @@ function layMesh(drawn: Meshy, h: Held, faults: string[]) {
         h,
         inputs,
         src.n,
-        false,
+        "vertices",
         () => {
           const kinds = Object.fromEntries(inputs.filter(([k]) => k !== "C").map(([k, input]) => [k, input.kind]));
           const m = drawn.material;
@@ -1252,7 +1346,7 @@ varying vec3 vCell;
 varying vec3 vEye;
 ${NUMBERS}
 ${CELL}
-vec3 linearOf(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }`;
+${LINEAR}`;
 const RAYS_FRAGMENT = `
 vec3 dir = vCell - vEye;
 // a ray square to an axis, which would divide by 0
@@ -1454,9 +1548,10 @@ const KINDS: Record<Part, Kind> = {
     make: () => new Group(),
     show: (o, s, found, h) => {
       const was = o.children[0];
-      const px = scenes.get(h.scene)?.px ?? { value: 1 };
+      const d = scenes.get(h.scene);
+      const px = d?.px ?? { value: 1 };
       if (s.joined !== undefined && (!was || was instanceof LineSegments !== s.joined)) {
-        const made = s.joined ? new LineSegments(new BufferGeometry(), dots(px)) : new Points(new BufferGeometry(), dots(px));
+        const made = s.joined ? new LineSegments(new BufferGeometry(), dots(px)) : d?.quads ? new Mesh(new BufferGeometry(), dots(px)) : new Points(new BufferGeometry(), dots(px));
         // the GPU alone knows where its points are
         made.frustumCulled = false;
         swap(o, made);
@@ -1465,6 +1560,13 @@ const KINDS: Record<Part, Kind> = {
       if (!drawn) return;
       lay(drawn, h, found.faults);
       const m = drawn.material;
+      let shape = SHAPES.indexOf(s.shape ?? "dot");
+      if (shape < 0) {
+        found.faults.push(`shape: "${s.shape}" is not one of ${SHAPES.slice(0, -1).join(", ")} or ${SHAPES.at(-1)}`);
+        shape = 0;
+      }
+      const defines = drawn instanceof LineSegments ? {} : { DOTS: "", SHAPE: shape, ...(drawn instanceof Mesh && { QUADS: "" }) };
+      if (JSON.stringify(defines) !== JSON.stringify(m.defines)) Object.assign(m, { defines, needsUpdate: true });
       if (Array.isArray(s.color)) m.uniforms.uColor.value.set(...s.color);
       if (typeof s.size === "number") m.uniforms.uSize.value = s.size;
       const see = drawn.userData.seeThrough || (Array.isArray(s.color) && s.color[3] < 1);
@@ -1591,6 +1693,8 @@ interface Drawn {
   base: string;
   /** Each signalled once the GPU has drawn the frame it follows, the newest last. */
   fences: WebGLSync[];
+  /** Whether its dots are drawn as squares, not points. */
+  quads: boolean;
 }
 
 // frames the GPU may have yet to draw, so the worker works on the next while it draws one
@@ -1700,6 +1804,14 @@ modelCame = (url) => {
   for (const [id, h] of parts) if (h.kind === "model" && h.o.userData.url === url) show(id, h);
 };
 
+/** Whether a scene draws dots as squares: where Chrome draws through D3D11, whose points some GPUs
+ *  run far slower as a geometry shader makes each a square. Elsewhere points cost a third. */
+function squares(renderer: WebGLRenderer): boolean {
+  const gl = renderer.getContext();
+  const named = gl.getExtension("WEBGL_debug_renderer_info");
+  return !!named && /Direct3D11|D3D11/.test(String(gl.getParameter(named.UNMASKED_RENDERER_WEBGL)));
+}
+
 /** Starts the scenes, which tell the page and the worker through `h`. */
 export function start(h: Host) {
   host = h;
@@ -1725,7 +1837,7 @@ export function hear(m: Drawing) {
       scene.add(sky, head, head.target, group);
       // where the camera last could be worked out, kept while a value cannot be read
       const aim = { target: new Vector3(), yaw: Number(CAMERA.yaw), pitch: Number(CAMERA.pitch), distance: Number(CAMERA.distance) };
-      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base, fences: [] };
+      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base, fences: [], quads: renderer ? squares(renderer) : false };
       scenes.set(m.scene, d);
       // three.js makes its own buffers again, and the parts with buffers of their own lay theirs out again
       m.canvas.addEventListener("webglcontextrestored", () => {

@@ -169,7 +169,8 @@ choices below.
   plot's history, an `<on>` with `every`, `when` or `change` for what must happen with no
   screen open. Page handlers are for what an operator does.
 - To show a PointCloud, LaserScan, Path or Polyline, give it whole to a `points` part in a
-  `<scene>`, as `points="Cell.Cloud"`, with `joined="true"` for a line. A Mesh goes to a `mesh`
+  `<scene>`, as `points="Cell.Cloud"`, with `joined="true"` for a line, or `shape='"sphere"'`
+  (`"dot"`, `"square"`, `"sphere"`, `"box"`) for lit dots. A Mesh goes to a `mesh`
   part and a Grid to a `grid` part. The GPU reads their bytes, so never unpack them in a
   computed value or a canvas. `field='"intensity"'` colours them from blue to red, and
   `range="[0, 255]"` sets its ends and hides what falls outside. A `floor` draws ground lines.

@@ -18,12 +18,17 @@ const STEPS: Record<string, number> = { size: 0.05, radius: 0.05, length: 0.05, 
 
 const LABELS: Record<string, string> = { color: "Colour", src: "Source" };
 
+/** The properties that take one of a few words, offered as a choice. */
+const CHOICES: Record<string, string[]> = { shape: ['"dot"', '"square"', '"sphere"', '"box"'] };
+
 /** A field for each of `defaults`, its kind and its placeholder the code it takes when left out. */
 const fields = (defaults: Record<string, string>): Spec[] =>
   Object.entries(defaults).map(([key, code]) => [
     LABELS[key] ?? key[0].toUpperCase() + key.slice(1),
     key,
-    { kind: kindOf(code), placeholder: code, step: STEPS[key], ...(key === "opacity" ? { min: 0, max: 1 } : {}) },
+    CHOICES[key]
+      ? { kind: "choice", options: CHOICES[key], placeholder: code }
+      : { kind: kindOf(code), placeholder: code, step: STEPS[key], ...(key === "opacity" ? { min: 0, max: 1 } : {}) },
   ]);
 
 /** The camera's fields on a scene. */

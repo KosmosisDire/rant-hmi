@@ -14,7 +14,7 @@ export const PARTS = {
   box: { size: "vec(1, 1, 1)", color: "$accent", opacity: "1" },
   sphere: { radius: "0.5", color: "$accent", opacity: "1" },
   cylinder: { radius: "0.5", length: "1", color: "$accent", opacity: "1" },
-  points: { points: "[]", size: "0.05", joined: "false", color: "$accent", field: '""', range: "[]" },
+  points: { points: "[]", size: "0.05", shape: '"dot"', joined: "false", color: "$accent", field: '""', range: "[]" },
   mesh: { mesh: "null", color: "$accent", opacity: "1", field: '""', range: "[]" },
   grid: { grid: "null", field: '""', range: "[]", opacity: "1" },
   floor: { size: "10", step: "1", color: "$border" },
