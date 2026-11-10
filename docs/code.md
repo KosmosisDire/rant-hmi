@@ -155,9 +155,7 @@ Line.Speed = Panel.Target ?? 0.5;                 // the tap works without the p
 await Arm.Stop?.();                               // stops the arm if it is there
 ```
 
-A skipped call gives `undefined`. A call that reaches its node and fails still throws.
-`??=` reads first, so it stops on an unknown member and never writes over a value that has not
-arrived yet.
+A skipped call gives `undefined`.
 
 ## Keys, gamepads and the link
 
@@ -186,12 +184,12 @@ A value is one by its fields, so values from the mesh need nothing done to them:
 `+ - * /` work on them as on numbers, through Rant Math:
 
 ```js
-(Goal.position - Robot.Pose.position).length()
+(Goal.position - Robot.EndPose.position).length()
 Ft.force * 2
-Robot.Pose.orientation * vec(1, 0, 0)    // a quaternion turns a 3D vector
-Robot.Pose * vec(0, 0, 0.1)              // a pose moves a point
-Robot.Pose * Tool                        // poses combine
-"at " + vec(1, 2)                        // "at (1, 2)"
+Robot.EndPose.orientation * vec(1, 0, 0)    // a quaternion turns a 3D vector
+Robot.EndPose * vec(0, 0, 0.1)              // a pose moves a point
+Robot.EndPose * Tool                        // poses combine
+"at " + vec(1, 2)                           // "at (1, 2)"
 ```
 
 Vectors multiply and divide by a number. `a.multiply(b)` multiplies two part by part.
@@ -202,8 +200,8 @@ Vectors multiply and divide by a number. `a.multiply(b)` multiplies two part by 
 shapes, fits, cameras, images and point clouds. Each takes and gives plain values as the mesh sends them.
 
 ```js
-math.poseInverse(Robot.Pose)
-math.axesPointTo(math.axesOf("Unity"), Robot.Pose.position)
+math.poseInverse(Robot.EndPose)
+math.axesPointTo(math.axesOf("Unity"), Robot.EndPose.position)
 math.pointsFitPlane(Scan.points, { tolerance: 0.01 }).normal
 math.shapeDistance(math.shapeFromSphere({ center: vec(0, 0, 0), radius: 1 }), Tool.position)
 ```
@@ -221,8 +219,11 @@ Cylinder({ axis: { a: vec(0, 0, 0), b: vec(0, 0, 1) }, radius: 0.1 })
 ```
 
 A value from the mesh, from Rant Math, from a component input of a standard type or made this way
-names its type: `Robot.Pose[Symbol.for("rant.type")]` is `"Pose"`. A Capsule and a Cylinder have the
+names its type: `Robot.EndPose[Symbol.for("rant.type")]` is `"Pose"`. A Capsule and a Cylinder have the
 same fields, so a literal of one needs the name.
+
+A type's name wins over any other, the browser's `Image` too, so no object, import or enum may take
+one as its name.
 
 ## Colours
 
@@ -245,14 +246,14 @@ method that takes only the value shows its answer there, and inside the brackets
 the method takes:
 
 ```js
-Robot.Pose.position.length()
-Robot.Pose.inverse()
-Robot.Pose.orientation.toEuler("FixedXyz")              // roll, pitch and yaw in radians
-math.quaternionFromEuler(0, 0, PI / 2, "FixedXyz")      // and back
-Goal.position.isNear(Robot.Pose.position, 0.001)
+Robot.EndPose.position.length()
+Robot.EndPose.inverse()
+Robot.EndPose.orientation.toEuler("FixedXyz")        // roll, pitch and yaw in radians
+math.quaternionFromEuler(0, 0, PI / 2, "FixedXyz")   // and back
+Goal.position.isNear(Robot.EndPose.position, 0.001)
 Cylinder({ axis: { a: vec(0, 0, 0), b: vec(0, 0, 1) }, radius: 0.1 }).volume()
 ```
 
-- A Float or Int vector takes a Double one's methods.
+- A Float or Int vector takes its own type's methods first, then its Double one's.
 - A 2D `cross` is a number: how far the second turns from the first.
 - A colour has `lighten(t)` `darken(t)` `alpha(a)` `fade(k)` `mix(c, t)`.

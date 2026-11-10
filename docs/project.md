@@ -43,14 +43,14 @@ reads its members bare, as `Speed`.
 
 | Attribute | Is |
 | --- | --- |
-| `name` | its name, in PascalCase |
+| `name` | its name, in PascalCase and not a [standard type's](code.md#standard-types) |
 | `mesh` | the mesh path its members' entities count from, as `Line1`. Left out, they count from the mesh's root |
 | `note` | what it is, for the editor |
 
 ### Members
 
-Each member has a `name` of its own in the object. Mesh members are named in PascalCase, the
-rest in camelCase.
+Each member has a `name` of its own in the object. Mesh members are named in PascalCase, not
+a standard type's, and the rest in camelCase.
 
 | Member | Attributes | Is |
 | --- | --- | --- |

@@ -33,8 +33,6 @@ for anything it leaves out:
 | stop it | `rant stop Hmi` |
 | at every boot | `rant enable Hmi project=...`, `rant disable Hmi` |
 
-- Work against a simulator on its own domain (`--domain N`), never on the domain of a
-  machine in use.
 - There are no logins yet: whoever reaches the port can change the project and press its
   buttons. Use `bind=127.0.0.1` on a shared network, or put access control in front.
 
@@ -80,6 +78,7 @@ for anything it leaves out:
 - Pages and other objects read `Line.Speed` and call `await Line.Start()`. The object's own
   code reads its members bare.
 - Mesh members are PascalCase and the HMI's own state camelCase, so the two never look alike.
+  No object, import or enum takes a standard type's name, as `Pose`.
 
 ## What the HMI does, what you write
 
@@ -92,8 +91,6 @@ The HMI does these by itself. Never build them:
   lists the mesh members not on the mesh.
   `a ?? b` gives b while a is unknown, and `await Arm.Stop?.()` skips the call while Arm's
   node is off the mesh, so code that can go on without a member says so with `??` or `?.()`.
-  Give a fallback only where it is what a missing node means, never to hide one:
-  `Line.Speed ?? 0` shows a made up value as real.
 - Where code runs: write no client and server split.
 - Connections: a screen reconnects by itself. Video plays as H264 when rant-transcoder runs
   on the camera's host, else as the pictures come. Write no player or reconnect code.
@@ -113,8 +110,8 @@ The HMI does these by itself. Never build them:
   fits, cameras, images and point clouds, as `math.poseInverse(p)`. A value of a standard type
   takes its calls as methods and operators, as `p.inverse()` and `p * v`. Write none of that by hand.
 - Standard types: each one's name makes a value of it from all its fields, as
-  `Cylinder({ axis, radius })`. Use it where two types share their fields, as a Capsule and a
-  Cylinder do.
+  `Cylinder({ axis, radius })`, needed where two types share their fields, as a Capsule and a
+  Cylinder do. A Float or Int vector takes its own type's methods, then its Double one's.
 
 You write the rest: objects, pages, components, tokens, handlers, logic, and the safety
 choices below.
