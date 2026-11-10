@@ -33,10 +33,6 @@ export function bare(fields: FieldInfo[]): boolean {
   return fields.length === 1 && fields[0].name === "";
 }
 
-/** A whole value's type as one field: a bare type's own, else a struct of its fields. */
-export function wholeType(t: TypeInfo): FieldInfo {
-  return bare(t.fields) ? t.fields[0] : { name: "", kind: "struct", type_name: t.name || null, elem: null, count: 0, options: [], members: t.fields };
-}
 
 /** The names a value of this type answers to: its type's name, its kind, number for any
  *  number, and for a list each of its items' names with []. */

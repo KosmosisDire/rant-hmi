@@ -18,7 +18,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::object::{self, Flat, owner};
 use crate::project::{self, Computed, Found, Import, Intent, Kind, Per, Variable};
-use crate::protocol::{EnumInfo, Level, Mode};
+use crate::protocol::{EnumInfo, FieldInfo, Level, Mode, TypeInfo};
 
 mod readers;
 
@@ -37,8 +37,12 @@ pub enum ToScript {
     /// What each topic's message and function's request on the mesh is made of, by alias,
     /// whole, after any change.
     Forms(HashMap<String, Form>),
+    /// What each import's values are, by alias, whole, after any change.
+    Types(Types),
     /// The mesh's enums code names, whole, after any change.
     Enums(Vec<EnumInfo>),
+    /// Rant's standard types, once.
+    Standard(Arc<Vec<TypeInfo>>),
     /// The functions and tasks whose node is off the mesh now, by alias, whole, after any change.
     Missing(HashSet<String>),
     /// Mesh imports and shared variables whose value changed, None while unknown, each shared
@@ -73,6 +77,10 @@ pub enum ToScript {
 }
 
 impl ToScript {
+    pub fn types(list: HashMap<String, Typed>) -> ToScript {
+        ToScript::Types(Arc::new(list.into_iter().map(|(alias, t)| (alias, Arc::new(t))).collect()))
+    }
+
     pub fn values(list: impl IntoIterator<Item = (String, Option<Value>)>) -> ToScript {
         ToScript::Values(list.into_iter().map(|(key, value)| (key, value.map(Arc::new))).collect())
     }
@@ -85,6 +93,18 @@ pub struct Form {
     pub name: String,
     pub fields: Vec<String>,
 }
+
+/// What an import's values are, each a whole value's type: its value or message, a function's
+/// or task's answer, and a task's progress. Code reads each struct of them tagged with its type.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Typed {
+    pub value: Option<FieldInfo>,
+    pub answer: Option<FieldInfo>,
+    pub progress: Option<FieldInfo>,
+}
+
+/// Every import's `Typed` by alias, shared by the handlers and the readers rather than copied.
+pub type Types = Arc<HashMap<String, Arc<Typed>>>;
 
 pub struct CallFailure {
     /// Rant's status in snake case, such as `timeout` or `app_error`.
@@ -143,7 +163,10 @@ pub(crate) const ARITH: (&str, &str) = ("arith.js", include_str!("../../../clien
 /// Every name code reads besides the project's own, as completion lists them.
 const API: (&str, &str) = ("api.js", include_str!("../../../client/src/lang/api.js"));
 /// Rant Math's names, which api.js lists under `math`.
-const MATH_NAMES: (&str, &str) = ("rant-math/names", rant_math::quickjs::NAMES);
+fn math_names() -> (&'static str, &'static str) {
+    static NAMES: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ("rant-math/names", NAMES.get_or_init(rant_math::quickjs::names))
+}
 
 /// Runs a module in `ctx` and gives its exports. One it imports must have run there first.
 pub(crate) fn module<'js>(ctx: &Ctx<'js>, (name, source): (&str, &str)) -> rquickjs::Result<Object<'js>> {
@@ -154,7 +177,7 @@ pub(crate) fn module<'js>(ctx: &Ctx<'js>, (name, source): (&str, &str)) -> rquic
 
 /// What api.js exports, with what it imports run first.
 fn api_module<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
-    module(ctx, MATH_NAMES)?;
+    module(ctx, math_names())?;
     module(ctx, API)
 }
 
@@ -274,6 +297,8 @@ impl Script {
         match &msg {
             ToScript::Objects(list) => self.readers.objects(list),
             ToScript::Enums(list) => self.readers.enums(list),
+            ToScript::Types(types) => self.readers.types(types),
+            ToScript::Standard(list) => self.readers.standard(list),
             ToScript::Pages(list) => self.readers.pages(list),
             ToScript::Values(list) => self.readers.values(list),
             ToScript::Forget(keys) => self.readers.forget(keys),
@@ -298,6 +323,8 @@ struct Waiter {
     reject: Persistent<Function<'static>>,
     /// What takes a task call's progress.
     progress: Option<Persistent<Function<'static>>>,
+    /// What the call's answer and progress are.
+    typed: Option<Arc<Typed>>,
 }
 
 /// What an expression read when last worked out: the keys, and whether the clock.
@@ -353,6 +380,8 @@ struct Shared {
     /// The objects' members by key.
     imports: HashMap<String, Import>,
     forms: HashMap<String, Form>,
+    types: Types,
+    standard: Arc<Vec<TypeInfo>>,
     /// The functions and tasks whose node is off the mesh, which code reads as unknown.
     missing: HashSet<String>,
     enums: Vec<EnumInfo>,
@@ -394,6 +423,8 @@ impl Shared {
             objects: Vec::new(),
             imports: HashMap::new(),
             forms: HashMap::new(),
+            types: Types::default(),
+            standard: Arc::default(),
             missing: HashSet::new(),
             enums: Vec::new(),
             variables: HashMap::new(),
@@ -500,10 +531,13 @@ impl Shared {
         self.pending.retain(|run, _| live.contains(run));
     }
 
-    fn wait<'js>(&mut self, ctx: &Ctx<'js>, run: u64, resolve: Function<'js>, reject: Function<'js>, progress: Option<Function<'js>>) -> u64 {
+    /// Keeps what a promise waits on. `alias` is the import a call is to, whose types its answer
+    /// and progress are read by.
+    fn wait<'js>(&mut self, ctx: &Ctx<'js>, run: u64, resolve: Function<'js>, reject: Function<'js>, progress: Option<Function<'js>>, alias: Option<&str>) -> u64 {
         self.next += 1;
         let progress = progress.map(|f| Persistent::save(ctx, f));
-        self.waiters.insert(self.next, Waiter { run, resolve: Persistent::save(ctx, resolve), reject: Persistent::save(ctx, reject), progress });
+        let typed = alias.and_then(|a| self.types.get(a).cloned());
+        self.waiters.insert(self.next, Waiter { run, resolve: Persistent::save(ctx, resolve), reject: Persistent::save(ctx, reject), progress, typed });
         self.next
     }
 }
@@ -745,6 +779,8 @@ fn read_as(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, sources: &
 fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Shared>>, msg: ToScript) {
     match msg {
         ToScript::Forms(forms) => shared.borrow_mut().forms = forms,
+        ToScript::Types(types) => shared.borrow_mut().types = types,
+        ToScript::Standard(list) => shared.borrow_mut().standard = list,
         ToScript::Missing(missing) => shared.borrow_mut().missing = missing,
         ToScript::Enums(enums) => shared.borrow_mut().enums = enums,
         // the loop takes these itself, since they need the readers it keeps
@@ -826,11 +862,12 @@ fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Share
             }
         }
         ToScript::Progress { call, value } => {
-            let progress = shared.borrow().waiters.get(&call).and_then(|w| Some((w.run, w.progress.clone()?)));
-            if let Some((run, f)) = progress {
+            let progress = shared.borrow().waiters.get(&call).and_then(|w| Some((w.run, w.progress.clone()?, w.typed.clone())));
+            if let Some((run, f, typed)) = progress {
                 begin(shared, run);
                 home.with(|ctx| {
-                    if to_js(&ctx, &value).and_then(|v| f.restore(&ctx)?.call::<_, ()>((v,))).is_err() {
+                    let t = typed.as_ref().and_then(|t| t.progress.as_ref());
+                    if typed_js(&ctx, &value, t).and_then(|v| f.restore(&ctx)?.call::<_, ()>((v,))).is_err() {
                         ctx.catch();
                     }
                 });
@@ -861,7 +898,7 @@ fn finish(shared: &Rc<RefCell<Shared>>, run: u64, end: End) {
 fn settle(home: &Context, w: Waiter, outcome: Result<Value, CallFailure>) {
     home.with(|ctx| {
         let settled = match outcome {
-            Ok(value) => w.resolve.restore(&ctx).and_then(|f| f.call::<_, ()>((to_js(&ctx, &value)?,))),
+            Ok(value) => w.resolve.restore(&ctx).and_then(|f| f.call::<_, ()>((typed_js(&ctx, &value, w.typed.as_ref().and_then(|t| t.answer.as_ref()))?,))),
             Err(fail) => {
                 let failure: rquickjs::Result<Function> = ctx.globals().get("__failure");
                 let error = failure.and_then(|f| f.call::<_, rquickjs::Value>((fail.status, fail.message)));
@@ -910,8 +947,9 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         if let Some(r) = s.borrow_mut().reading.as_mut() {
             r.keys.insert(alias.clone());
         }
-        match s.borrow().read(run, &alias) {
-            Some(v) => to_js(&ctx, v),
+        let st = s.borrow();
+        match st.read(run, &alias) {
+            Some(v) => typed_js(&ctx, v, st.types.get(&alias).and_then(|t| t.value.as_ref())),
             None => Ok(rquickjs::Value::new_undefined(ctx)),
         }
     };
@@ -960,7 +998,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         let mut st = s.borrow_mut();
         // what the run wrote before the call goes out before it
         st.flush(run);
-        let call = st.wait(&ctx, run, resolve, reject, progress);
+        let call = st.wait(&ctx, run, resolve, reject, progress, Some(&alias));
         if kind == Kind::Task {
             let (s, alias) = (s.clone(), alias.clone());
             let cancel = move || s.borrow().send(FromScript::Cancel { run, alias: alias.clone(), call: Some(call) });
@@ -984,7 +1022,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         let mut st = s.borrow_mut();
         // what the run wrote before the call goes out before it
         st.flush(run);
-        let call = st.wait(&ctx, run, resolve, reject, None);
+        let call = st.wait(&ctx, run, resolve, reject, None, None);
         st.send(FromScript::Run { run, call, function, args });
         Ok(promise)
     };
@@ -1019,7 +1057,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let sleep = move |ctx: Ctx<'js>, ms: f64| -> rquickjs::Result<Promise<'js>> {
         let (promise, resolve, reject) = ctx.promise()?;
         let mut st = s.borrow_mut();
-        let id = st.wait(&ctx, run, resolve, reject, None);
+        let id = st.wait(&ctx, run, resolve, reject, None, None);
         st.timers.push(Reverse((Instant::now() + Duration::from_secs_f64(ms.max(0.0) / 1000.0), id)));
         Ok(promise)
     };
@@ -1035,7 +1073,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let open = move |ctx: Ctx<'js>, page: String, replace: bool| -> rquickjs::Result<Promise<'js>> {
         let (promise, resolve, reject) = ctx.promise()?;
         let mut st = s.borrow_mut();
-        let call = st.wait(&ctx, run, resolve, reject, None);
+        let call = st.wait(&ctx, run, resolve, reject, None, None);
         st.send(FromScript::Open { run, page, replace, call });
         Ok(promise)
     };
@@ -1121,13 +1159,30 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let pages: Vec<Value> = shared.borrow().pages.iter().map(|(key, id)| Value::map([("key", key.as_str().into()), ("id", id.as_str().into())])).collect();
     let options = |e: &EnumInfo| Value::List(e.options.iter().map(|o| o.as_str().into()).collect());
     let enums: Vec<Value> = shared.borrow().enums.iter().map(|e| Value::map([("name", e.name.as_str().into()), ("options", options(e))])).collect();
+    let standard = shared.borrow().standard.clone();
+    let makers: Vec<Value> = standard.iter().filter(|t| !(t.fields.len() == 1 && t.fields[0].name.is_empty())).map(|t| t.name.as_str().into()).collect();
+    // the standard types reach JS only once code makes a value of one or asks one's type
+    let types = move |ctx: Ctx<'js>| ctx.json_parse(serde_json::to_string(&*standard).unwrap_or_default());
+    math.get::<_, Function>("setTypes")?.call::<_, ()>((Function::new(ctx.clone(), types)?,))?;
+    g.set("__maker", math.get::<_, Function>("maker")?)?;
     let prelude: Function = ctx.eval(PRELUDE)?;
-    prelude.call::<_, ()>((to_js(ctx, &Value::List(imports))?, to_js(ctx, &objects)?, to_js(ctx, &Value::List(pages))?, to_js(ctx, &Value::List(enums))?))
+    prelude.call::<_, ()>((to_js(ctx, &Value::List(imports))?, to_js(ctx, &objects)?, to_js(ctx, &Value::List(pages))?, to_js(ctx, &Value::List(enums))?, to_js(ctx, &Value::List(makers))?))
 }
 
 /// A value as JS reads it: bytes as a Uint8Array, and a whole number past JS's safe ones as a
 /// BigInt, so none loses a digit.
 fn to_js<'js>(ctx: &Ctx<'js>, v: &Value) -> rquickjs::Result<rquickjs::Value<'js>> {
+    js(ctx, v, None, None)
+}
+
+/// A value of type `t` as JS reads it, each struct of a named type naming it under
+/// Symbol.for("rant.type"), as Rant Math's results and the screens' values do.
+fn typed_js<'js>(ctx: &Ctx<'js>, v: &Value, t: Option<&FieldInfo>) -> rquickjs::Result<rquickjs::Value<'js>> {
+    let tag = t.map(|_| rquickjs::Symbol::new_global(ctx.clone(), "rant.type")).transpose()?;
+    js(ctx, v, t, tag.as_ref())
+}
+
+fn js<'js>(ctx: &Ctx<'js>, v: &Value, t: Option<&FieldInfo>, tag: Option<&rquickjs::Symbol<'js>>) -> rquickjs::Result<rquickjs::Value<'js>> {
     use rquickjs::{Array, BigInt, Object, TypedArray};
     const SAFE: i128 = 1 << 53;
     let c = ctx.clone();
@@ -1145,15 +1200,20 @@ fn to_js<'js>(ctx: &Ctx<'js>, v: &Value) -> rquickjs::Result<rquickjs::Value<'js
         Value::Bytes(b) => TypedArray::<u8>::new_copy(c, b)?.into_value(),
         Value::List(_) | Value::Numbers(_) | Value::Records(_) => {
             let list = Array::new(c)?;
+            let elem = t.and_then(|t| t.elem.as_deref());
             for (i, item) in v.items().unwrap_or_default().iter().enumerate() {
-                list.set(i, to_js(ctx, item)?)?;
+                list.set(i, js(ctx, item, elem, tag)?)?;
             }
             list.into_value()
         }
         Value::Map(fields) => {
             let map = Object::new(c)?;
+            if let (Some(tag), Some(name)) = (tag, t.and_then(|t| t.type_name.as_deref())) {
+                map.set(tag.as_atom(), name)?;
+            }
             for (k, field) in fields {
-                map.set(k.as_str(), to_js(ctx, field)?)?;
+                let member = t.and_then(|t| t.members.iter().find(|m| m.name == *k));
+                map.set(k.as_str(), js(ctx, field, member, tag)?)?;
             }
             map.into_value()
         }

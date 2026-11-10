@@ -89,6 +89,12 @@ fn import_watch_and_set() {
         within("both entities to attach", start);
     }
     assert!(mesh.entities().iter().any(|e| e.name == "Line1/Conveyor" && e.kind == Kind::Topic));
+    // code reads each import's values typed, and Rant's standard types by name
+    let conveyor_type = mesh.types().remove("Conveyor").and_then(|t| t.value).unwrap();
+    assert_eq!((conveyor_type.type_name.as_deref(), conveyor_type.members.len()), (Some("Conveyor"), 3));
+    let standard = mesh.standard();
+    let pose = standard.iter().find(|t| t.name == "Pose").unwrap();
+    assert_eq!(pose.fields.iter().map(|f| (f.name.as_str(), f.type_name.as_deref())).collect::<Vec<_>>(), [("position", Some("Double3")), ("orientation", Some("Quaternion"))]);
     // what is read follows the attach, before any value came
     assert!(mesh.keep("Conveyor", Keep::All).is_none());
 

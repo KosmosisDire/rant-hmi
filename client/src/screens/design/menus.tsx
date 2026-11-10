@@ -2,6 +2,7 @@
 // on the canvas around them. Each row does what a key or a button does too.
 
 import type { JSX } from "solid-js";
+import { wholeType } from "../../lang/math.js";
 import { homeOf } from "../../page/PageView";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Page } from "../../protocol/Page";
@@ -9,7 +10,7 @@ import type { Tag } from "../../protocol/Tag";
 import { entityOf, key } from "../../state/names";
 import { entity, state } from "../../state/store";
 import { find } from "../../state/elements";
-import { viewsOf, wholeType } from "../../state/types";
+import { viewsOf } from "../../state/types";
 import { type MenuEntry, type MenuItem, openMenu } from "../../ui/Menu";
 import { KindIcon, ObjectIcon } from "../../ui/marks";
 import { ArrowDown, ArrowUp, BringToFront, ClipboardPaste, Component, Copy, CopyPlus, Dot, Download, Eye, Group, Plus, Rotate3d, Rows3, Scissors, SendToBack, Shapes, SquareDashedMousePointer, Trash, Ungroup } from "../../ui/icons";

@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 use rquickjs::{Context, Function, Persistent, Runtime};
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::{FromScript, MEMORY, Read, Reader, Rewriter, Shared, Source, Watchdog, from_js, make_reader};
+use super::{FromScript, MEMORY, Read, Reader, Rewriter, Shared, Source, Types, Watchdog, from_js, make_reader};
 use crate::logic::When;
 use crate::object::{self, Flat, owner};
-use crate::protocol::{EnumInfo, Level};
+use crate::protocol::{EnumInfo, Level, TypeInfo};
 use crate::rules::RATE;
 use crate::value::Value;
 
@@ -110,6 +110,7 @@ struct Board {
     epoch: u64,
     objects: Vec<object::Object>,
     enums: Vec<EnumInfo>,
+    standard: Arc<Vec<TypeInfo>>,
     pages: Vec<(String, String)>,
     /// What each sort works out, by its key or a rule's id, in the objects' order.
     sources: [Vec<Source>; 3],
@@ -117,6 +118,7 @@ struct Board {
     /// How long each may run at a time.
     limits: HashMap<String, Duration>,
     values: HashMap<String, Arc<Value>>,
+    types: Types,
     getters: Watched,
     conditions: Watched,
     /// The records due, in the order they fell due, and those sampled since the code changed.
@@ -326,6 +328,17 @@ impl Readers {
         });
     }
 
+    pub(super) fn standard(&self, list: &Arc<Vec<TypeInfo>>) {
+        self.change(|b| {
+            b.standard = list.clone();
+            b.reload();
+        });
+    }
+
+    pub(super) fn types(&self, types: &Types) {
+        self.change(|b| b.types = types.clone());
+    }
+
     /// The pages readers name, as made anew next.
     pub(super) fn pages(&self, list: &[(String, String)]) {
         self.change(|b| b.pages = list.to_vec());
@@ -398,6 +411,7 @@ fn worker(index: usize, board: &Shelf, out: UnboundedSender<FromScript>) {
             b.dirty[index].clear();
             st.take(b.objects.clone());
             st.enums = b.enums.clone();
+            st.standard = b.standard.clone();
             st.pages = b.pages.clone();
             st.values = b.values.clone();
             let sources = b.sources.clone();
@@ -411,6 +425,7 @@ fn worker(index: usize, board: &Shelf, out: UnboundedSender<FromScript>) {
                 None => st.values.remove(&key),
             };
         }
+        st.types = b.types.clone();
         drop((st, b));
         let reader = &readers[job.sort as usize];
         let found = reader.iter().find_map(|(ctx, fns)| fns.iter().find(|(k, _)| *k == job.key).map(|(_, f)| (ctx, f)));

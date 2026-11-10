@@ -7,6 +7,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 use super::*;
 use crate::logic::{Rule, When};
 use crate::object::ObjectInfo;
+use crate::protocol::FieldKind;
 
 fn import(alias: &str, kind: Kind, intent: Intent) -> Import {
     Import { alias: alias.into(), entity: alias.into(), kind, intent, rate: None }
@@ -83,6 +84,80 @@ fn writes(said: &[FromScript]) -> Vec<(String, Value)> {
 
 fn end(said: &[FromScript]) -> &End {
     said.iter().find_map(|m| if let FromScript::Done { end, .. } = m { Some(end) } else { None }).unwrap()
+}
+
+/// A field of the kind `kind`, of the named type `type_name` with `members` where it is a struct.
+fn field(name: &str, kind: FieldKind, type_name: Option<&str>, members: Vec<FieldInfo>) -> FieldInfo {
+    FieldInfo { name: name.into(), kind, type_name: type_name.map(String::from), elem: None, count: 0, options: Vec::new(), members }
+}
+
+fn vector(name: &str, type_name: &str, axes: &[&str]) -> FieldInfo {
+    field(name, FieldKind::Struct, Some(type_name), axes.iter().map(|a| field(a, FieldKind::F64, None, Vec::new())).collect())
+}
+
+/// A Pose, as one field of the name `name`.
+fn pose(name: &str) -> FieldInfo {
+    field(name, FieldKind::Struct, Some("Pose"), vec![vector("position", "Double3", &["x", "y", "z"]), vector("orientation", "Quaternion", &["x", "y", "z", "w"])])
+}
+
+/// Everything a run logged, in order.
+fn logged(said: &[FromScript]) -> Vec<String> {
+    said.iter().filter_map(|m| if let FromScript::Log { text, .. } = m { Some(text.clone()) } else { None }).collect()
+}
+
+#[test]
+fn values_answers_and_progress_name_their_type_and_go_out_without_it() {
+    let (script, mut rx) = engine();
+    let typed = |value, answer, progress| Typed { value, answer, progress };
+    script.send(ToScript::types(HashMap::from([
+        ("Line.Target".into(), typed(Some(pose("")), None, None)),
+        ("Line.Peek".into(), typed(None, Some(pose("")), None)),
+        ("Line.Fill".into(), typed(None, None, Some(vector("", "Double3", &["x", "y", "z"])))),
+    ])));
+    let at = value!({ "position": { "x": 1, "y": 2, "z": 3 }, "orientation": { "x": 0, "y": 0, "z": 0, "w": 1 } });
+    script.send(ToScript::values(vec![("Line.Target".into(), Some(at.clone()))]));
+    let code = r#"
+        const T = Symbol.for("rant.type");
+        log(Target[T], Target.position[T], Target.orientation[T]);
+        Settings = Target;
+        log((await Peek())[T]);
+        await Fill((p) => log(p[T]));
+    "#;
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let mut said = Vec::new();
+    let mut call = |said: &mut Vec<FromScript>| loop {
+        match rx.blocking_recv().unwrap() {
+            FromScript::Call { call, .. } => return call,
+            other => said.push(other),
+        }
+    };
+    let peek = call(&mut said);
+    script.send(ToScript::Answer { call: peek, outcome: Ok(at.clone()) });
+    let fill = call(&mut said);
+    script.send(ToScript::Progress { call: fill, value: value!({ "x": 1, "y": 0, "z": 0 }) });
+    script.send(ToScript::Answer { call: fill, outcome: Ok(Value::Null) });
+    said.extend(until_done(&mut rx, 1));
+    assert_eq!(end(&said), &End::Ok);
+    assert_eq!(logged(&said), ["Pose Double3 Quaternion", "Pose", "Double3"]);
+    assert_eq!(writes(&said), [("Line.Settings".to_string(), at)]);
+}
+
+#[test]
+fn a_standard_types_name_makes_a_value_of_it_from_all_its_fields() {
+    let (script, mut rx) = engine();
+    let standard = |f: FieldInfo| TypeInfo { name: f.type_name.clone().unwrap(), fields: f.members };
+    script.send(ToScript::Standard(Arc::new(vec![standard(pose("")), standard(vector("", "Double3", &["x", "y", "z"]))])));
+    let code = r#"
+        const T = Symbol.for("rant.type");
+        const p = Pose({ position: { x: 1, y: 2, z: 3 }, orientation: { x: 0, y: 0, z: 0, w: 1 } });
+        log(p[T], p.position[T], p.orientation[T], Object.keys(p));
+        try { Pose({ position: Double3({ x: 1, y: 2, z: 3 }) }); } catch (e) { log(e.message); }
+        try { Double3({ x: 1, y: 2, z: 3, w: 4 }); } catch (e) { log(e.message); }
+    "#;
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let said = until_done(&mut rx, 1);
+    assert_eq!(end(&said), &End::Ok);
+    assert_eq!(logged(&said), [r#"Pose Double3 Quaternion ["position","orientation"]"#, "Pose needs orientation", "Double3 has no w"]);
 }
 
 #[test]

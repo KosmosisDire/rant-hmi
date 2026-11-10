@@ -3,11 +3,13 @@
 
 import { batch, createSignal, type Signal, untrack } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
+import { setTypes, tag, TYPE } from "../lang/math.js";
 import type { Way } from "../net/data.worker";
 import { packed, samePacked } from "../net/packed";
 import type { Brought } from "../protocol/Brought";
 import type { EntityInfo } from "../protocol/EntityInfo";
 import type { EnumInfo } from "../protocol/EnumInfo";
+import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Import } from "../protocol/Import";
 import type { Object as Thing } from "../protocol/Object";
 import type { Page } from "../protocol/Page";
@@ -174,6 +176,9 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
     case "enums":
       setState("enums", reconcile(msg.enums, { key: "name" }));
       break;
+    case "types":
+      setTypes(() => msg.types);
+      break;
     case "samples": {
       // a record's value is its samples, appended and pruned here as the backend keeps them
       const [object, member] = split(msg.name);
@@ -278,12 +283,23 @@ function cell<T>(cells: Map<string, Signal<T | undefined>>, name: string): Signa
   return c;
 }
 
+/** What each import's values are, by its key, which the names give once they load. */
+let typeOf: (alias: string) => FieldInfo | undefined = () => undefined;
+
+export function setValueTypes(read: (alias: string) => FieldInfo | undefined) {
+  typeOf = read;
+}
+
+/** A part of a value given already, frozen, or a packed list, whose items are made as read. */
+const given = (part: object) => Object.isFrozen(part) || packed(part);
+
 /** Gives `alias` its value, holding on to every part of the one before that it equals, so what
- *  reads an unchanged part sees the very thing it saw and stays as it is. */
+ *  reads an unchanged part sees the very thing it saw and stays as it is. Each struct in it of a
+ *  named type names it, as on the system. */
 function give(alias: string, value: Value, known: boolean) {
   const [now, set] = cell(values, alias);
   const was = untrack(now);
-  const next = shared(was?.value, value) as Value;
+  const next = shared(was?.value, kept.has(alias) ? value : tag(value, typeOf(alias), given)) as Value;
   if (!was || was.value !== next || was.known !== known) set({ value: next, known });
 }
 
@@ -308,7 +324,7 @@ function shared(was: unknown, next: unknown): unknown {
     }
   } else {
     const keys = Object.keys(next);
-    same &&= Object.keys(old!).length === keys.length;
+    same &&= Object.keys(old!).length === keys.length && (old as { [TYPE]?: string })[TYPE] === (next as { [TYPE]?: string })[TYPE];
     for (const k of keys) {
       next[k] = shared(old?.[k], next[k]);
       same &&= next[k] === old![k];

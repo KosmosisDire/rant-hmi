@@ -6,7 +6,7 @@ import { unwrap } from "solid-js/store";
 import { arith } from "../lang/arith.js";
 import { isHex, tokens } from "../lang/lex";
 import * as rantMath from "rant-math";
-import { LIBRARY, setClock, Unknown } from "../lang/math.js";
+import { LIBRARY, maker, setClock, standardType, tag, Unknown } from "../lang/math.js";
 import { send } from "../net/connection";
 import { Far, packed } from "../net/packed";
 import type { Page } from "../protocol/Page";
@@ -211,14 +211,18 @@ const SCREEN: Record<string, unknown> = {
 };
 
 /** A scope as a screen works it out: it also reads the theme's tokens, in the screen's mode,
- *  and the screen's own names, under any of the scope's own. */
+ *  and the screen's own names, under any of the scope's own, and each standard struct type's
+ *  name makes a value of it under all of those and the browser's own, as Image and Path2D. */
 function onScreen(s: Scope): Scope {
   const screen = (name: string) => Object.hasOwn(SCREEN, name) && !s.has(name);
+  const made = (name: string) => standardType(name) !== undefined && !(name in globalThis);
   return {
-    has: (name) => token(name) !== undefined || s.has(name) || screen(name),
+    has: (name) => token(name) !== undefined || s.has(name) || screen(name) || made(name),
     get: (name) => {
       const t = token(name);
-      return t ? tokenValue(t) : screen(name) ? SCREEN[name] : s.get(name);
+      if (t) return tokenValue(t);
+      if (screen(name)) return SCREEN[name];
+      return s.has(name) ? s.get(name) : (maker(name) ?? s.get(name));
     },
     set: (name, path, value) => {
       if (token(name)) throw new TypeError(say(TOKEN_FIXED, name));
@@ -466,7 +470,9 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
       if (!input(name)) return instance?.kept?.part(name) ?? STILL;
       if (instance?.own?.has(name)) return instance.own.get(name);
       const given = instance?.props[name];
-      return read(given !== undefined ? resolve(given, instance!.outer) : resolve(input(name)!.default, constants), name);
+      const got = read(given !== undefined ? resolve(given, instance!.outer) : resolve(input(name)!.default, constants), name);
+      // a value that names no type of its own takes the first standard struct type the input names
+      return tag(got, input(name)!.type.split(" ").map(standardType).find(Boolean));
     },
     // a write goes through the instance's binding when that is a bare name, and is dropped
     // otherwise, so a control bound one way reads as a display

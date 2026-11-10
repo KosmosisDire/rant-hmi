@@ -1,7 +1,7 @@
 // What handler code sees, built in each run's context from the host's `__` functions: each
 // object with its members, an object's own code its members as plain names too, the mesh's
-// enums, `Pages`, open and close, notify, log, sleep and the screen's `theme`.
-(imports, objects, pages, enums) => {
+// enums, the standard types' makers, `Pages`, open and close, notify, log, sleep and `theme`.
+(imports, objects, pages, enums, makers) => {
   const fresh = (alias) => {
     const value = __read(alias);
     if (value === undefined) throw new __Unknown(alias);
@@ -72,6 +72,9 @@
 
   // a later name of a kind hides an earlier one, so the nearest is defined last
   const define = (at, name, how) => Object.defineProperty(at, name, { ...how, enumerable: true, configurable: true });
+
+  // each standard struct type's name makes a value of it, under any name of the mesh's or the project's
+  for (const name of makers) define(globalThis, name, { get: () => __maker(name) });
 
   // an enum by its type's name, its options a fresh list at each read as a value's are
   for (const { name, options } of enums) {

@@ -1,7 +1,7 @@
 // Math for pages and code, the same in the browser and on the system: the standard functions as
 // plain names, vec() and fromEuler(), and the arithmetic and methods that arith.js routes 2D and
-// 3D vectors, quaternions and poses through. Values stay plain objects, known by their own keys,
-// so one from the mesh needs no wrapping, and what the math makes goes back to the mesh as is.
+// 3D vectors, quaternions and poses through. Values stay plain objects that may name their standard
+// type under TYPE, so one from the mesh needs no wrapping, and what the math makes goes back as is.
 
 /** A colour is text such as "#2a6fd6" or "#2a6fd680", as a bare #hex in code reads. */
 const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -285,6 +285,91 @@ function vec(...parts) {
 /** From `a` toward `b` by `t`, numbers or vectors alike. */
 function lerp(a, b, t) {
   return __add(a, __mul(__sub(b, a), t));
+}
+
+// ---------------------------------------------------------------------- the types
+
+/** Where a value names its type, as Rant Math's results and values from the mesh do. */
+export const TYPE = Symbol.for("rant.type");
+
+let standardTypes = () => [];
+let byName = null;
+let byFields = null;
+
+/** Sets how the standard types are read, each a TypeInfo, asked once when first needed. */
+export function setTypes(read) {
+  standardTypes = read;
+  byName = byFields = null;
+}
+
+/** A whole value's type as one field: a bare type's own, else a struct of its fields. */
+export function wholeType(t) {
+  const bare = t.fields.length === 1 && t.fields[0].name === "";
+  return bare ? t.fields[0] : { name: "", kind: "struct", type_name: t.name || null, elem: null, count: 0, options: [], members: t.fields };
+}
+
+/** The standard struct type `name` as one field, else undefined. */
+export function standardType(name) {
+  byName ??= new Map(standardTypes().map((t) => [t.name, wholeType(t)]).filter(([, f]) => f.kind === "struct"));
+  return byName.get(name);
+}
+
+/** `v` as a value of type `f`, a FieldInfo: each object of a named type down its fields names
+ *  it under TYPE, and one that names its type already keeps it. What needs a tag is copied, or
+ *  given `leave`, tagged where it is, as a value just decoded, but for each part `leave` keeps. */
+export function tag(v, f, leave) {
+  if (v === null || typeof v !== "object" || ArrayBuffer.isView(v) || !f || leave?.(v)) return v;
+  if (Array.isArray(v)) {
+    if (!f.elem) return v;
+    if (!leave) return v.map((x) => tag(x, f.elem));
+    for (const x of v) tag(x, f.elem, leave);
+    return v;
+  }
+  if (v[TYPE] !== undefined || (!f.type_name && f.members.length === 0)) return v;
+  const out = leave ? v : { ...v };
+  if (f.type_name) out[TYPE] = f.type_name;
+  for (const m of f.members) if (m.name in out) out[m.name] = tag(out[m.name], m, leave);
+  return out;
+}
+
+/** A value's standard type: the name it carries, else the one its fields fit. Numbers by x and
+ *  y are a Double2, then a Double3 and a Quaternion. Types with the same fields need the name. */
+export function typeOf(v) {
+  if (v === null || typeof v !== "object" || Array.isArray(v) || ArrayBuffer.isView(v)) return null;
+  if (v[TYPE] !== undefined) return v[TYPE];
+  const keys = Object.keys(v).sort().join(",");
+  if (Object.values(v).every((x) => typeof x === "number")) {
+    const vector = { "x,y": "Double2", "x,y,z": "Double3", "w,x,y,z": "Quaternion" }[keys];
+    if (vector) return vector;
+  }
+  if (!byFields) {
+    byFields = new Map();
+    for (const t of standardTypes()) {
+      const f = wholeType(t);
+      if (f.kind !== "struct") continue;
+      const k = f.members.map((m) => m.name).sort().join(",");
+      byFields.set(k, byFields.has(k) ? null : t.name);
+    }
+  }
+  return byFields.get(keys) ?? null;
+}
+
+/** What makes a value of the standard struct type `name` from all its fields and no others,
+ *  as `Cylinder({ axis, radius })`, else undefined for a name that is no such type. */
+export function maker(name) {
+  const f = standardType(name);
+  if (!f) return undefined;
+  const fields = f.members.map((m) => m.name);
+  return (v) => {
+    if (v === null || typeof v !== "object" || Array.isArray(v) || ArrayBuffer.isView(v)) throw new TypeError(`${name} takes an object with ${fields.join(", ")}`);
+    const missing = fields.filter((n) => !(n in v));
+    if (missing.length > 0) throw new TypeError(`${name} needs ${missing.join(", ")}`);
+    const extra = Object.keys(v).filter((k) => !fields.includes(k));
+    if (extra.length > 0) throw new TypeError(`${name} has no ${extra.join(", ")}`);
+    const out = { [TYPE]: name };
+    for (const m of f.members) out[m.name] = tag(v[m.name], m);
+    return out;
+  };
 }
 
 let clock = () => Date.now();

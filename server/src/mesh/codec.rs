@@ -78,6 +78,17 @@ pub fn type_info(schema: &Schema) -> TypeInfo {
     TypeInfo { name: schema.name(), fields: info(&shapes(schema)) }
 }
 
+/// A whole value's type as one field: a bare type's own, else a struct of its fields, as
+/// state/types.ts `wholeType` reads a TypeInfo.
+pub fn whole_type(schema: &Schema) -> FieldInfo {
+    let mut t = type_info(schema);
+    if t.fields.len() == 1 && t.fields[0].name.is_empty() {
+        return t.fields.remove(0);
+    }
+    let type_name = Some(t.name).filter(|n| !n.is_empty());
+    FieldInfo { name: String::new(), kind: FieldKind::Struct, type_name, elem: None, count: 0, options: Vec::new(), members: t.fields }
+}
+
 fn info(shapes: &[Shape]) -> Vec<FieldInfo> {
     shapes.iter().map(info_of).collect()
 }

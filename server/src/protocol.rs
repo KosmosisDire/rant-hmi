@@ -65,6 +65,8 @@ pub enum ServerMsg {
     Moved { from: String, to: String },
     /// The mesh's enums code names, whole, after a change.
     Enums { enums: Vec<EnumInfo> },
+    /// Rant's standard types, once, before anything names one.
+    Types { types: Vec<TypeInfo> },
     /// An action that was not done, and why, for the screen that asked.
     Refused { text: String, alias: Option<String> },
     /// Something for the person at this screen: what a handler said, or why it stopped.
@@ -366,7 +368,7 @@ pub struct EnumInfo {
 }
 
 /// A message type, its fields in schema order.
-#[derive(Serialize, TS, Clone, Debug)]
+#[derive(Serialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct TypeInfo {
     /// The type's name, empty for an anonymous one.
@@ -375,7 +377,7 @@ pub struct TypeInfo {
     pub fields: Vec<FieldInfo>,
 }
 
-#[derive(Serialize, TS, Clone, Debug)]
+#[derive(Serialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
 pub struct FieldInfo {
     pub name: String,

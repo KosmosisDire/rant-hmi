@@ -29,8 +29,8 @@ use crate::project::{Import, Intent, Kind, Per, Project, Target, Token, Variable
 use crate::reads::Reads;
 use crate::rules;
 use crate::problems::{Problems, word};
-use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Problem, Reader, Reported, Sample, ScreenCondition, ServerMsg, ValueUpdate, WebrtcProblem, encode, encode_plain};
-use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript};
+use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Problem, Reader, Reported, Sample, ScreenCondition, ServerMsg, TypeInfo, ValueUpdate, WebrtcProblem, encode, encode_plain};
+use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript, Typed};
 use crate::pages::js;
 use crate::status::{self, Client, HmiStatus};
 use crate::value::Value;
@@ -616,6 +616,8 @@ struct Slot {
 pub struct App {
     project: Project,
     pages: Pages,
+    /// Rant's standard types, as every screen is told them.
+    standard: Vec<TypeInfo>,
     mesh: Mesh,
     script: Script,
     rtc: Connections,
@@ -663,6 +665,8 @@ pub struct App {
     started_at: Timestamp,
     /// What the engine was last told each import's message is made of.
     forms: HashMap<String, Form>,
+    /// What the engine was last told each import's values are.
+    types: HashMap<String, Typed>,
     /// The functions and tasks off the mesh, as the engine was last told.
     missing: HashSet<String>,
     /// The mesh's enums code names, as the engine and the screens were last told.
@@ -683,6 +687,8 @@ pub struct App {
 
 impl App {
     pub fn new(project: Project, pages: Pages, mesh: Mesh, script: Script, rtc: Connections, node: String, build: String) -> App {
+        let standard = mesh.standard();
+        script.send(ToScript::Standard(Arc::new(standard.clone())));
         script.send(ToScript::Objects(project.objects().to_vec()));
         script.send(ToScript::Pages(pages.keys()));
         let shared: HashMap<String, Value> = project.flat().variables.iter().filter(|v| v.per == Per::Hmi).map(|v| (v.name.clone(), v.start.clone())).collect();
@@ -690,6 +696,7 @@ impl App {
         App {
             project,
             pages,
+            standard,
             mesh,
             script,
             rtc,
@@ -717,6 +724,7 @@ impl App {
             epoch: None,
             started_at: Timestamp::now(),
             forms: HashMap::new(),
+            types: HashMap::new(),
             missing: HashSet::new(),
             enums: Vec::new(),
             status_at: Instant::now(),
@@ -968,6 +976,7 @@ impl App {
             wt: self.wt.clone(),
         };
         self.send(session, &hello);
+        self.send(session, &ServerMsg::Types { types: self.standard.clone() });
         // every name a page reads comes before the pages, so a screen never draws one, nor
         // works out where its handlers run, without them
         self.send(session, &self.whole(List::Objects));
@@ -2157,7 +2166,7 @@ impl App {
         self.raised = texts;
     }
 
-    /// Tells the engine what each import's message is made of, and it and every screen the
+    /// Tells the engine what each import's message and values are made of, and it and every screen the
     /// enums code names, once those changed. An object's name or one code already has hides an
     /// enum's.
     fn types_changed(&mut self) {
@@ -2165,6 +2174,11 @@ impl App {
         if forms != self.forms {
             self.forms = forms.clone();
             self.script.send(ToScript::Forms(forms));
+        }
+        let types = self.mesh.types();
+        if types != self.types {
+            self.types = types.clone();
+            self.script.send(ToScript::types(types));
         }
         let mut enums = self.mesh.enums();
         enums.retain(|e| self.project.object(&e.name).is_none() && !crate::script::reserved(&e.name));

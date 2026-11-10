@@ -213,6 +213,18 @@ A call that cannot answer throws a `math.MathError` whose `kind` says why, such 
 that can miss, such as a raycast, gives `null`. Names run as in JavaScript, so C's `rant_pose_inverse`
 is `math.poseInverse`, and completion lists them after `math.`.
 
+## Standard types
+
+Each of Rant's standard types makes a value of it by its name, from all its fields:
+
+```js
+Cylinder({ axis: { a: vec(0, 0, 0), b: vec(0, 0, 1) }, radius: 0.1 })
+```
+
+A value from the mesh, from Rant Math, from a component input of a standard type or made this way
+names its type: `Robot.Pose[Symbol.for("rant.type")]` is `"Pose"`. A Capsule and a Cylinder have the
+same fields, so a literal of one needs the name.
+
 ## Colours
 
 A colour is text such as `"#2a6fd6"`, or `"#2a6fd680"` with its alpha. A bare `#2a6fd6` reads

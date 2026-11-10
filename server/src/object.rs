@@ -229,6 +229,10 @@ impl Flat {
 pub fn check(o: &Object) -> Result<(), String> {
     rules::ALIAS.check(&o.name, "an object")?;
     project::unreserved(&o.name)?;
+    // code makes a value of a standard type by its name, which an object's would hide
+    if rant::types::names().contains(&o.name.as_str()) {
+        return Err(format!("{} is one of Rant's standard types, so pick another", o.name));
+    }
     for i in &o.imports {
         project::check_import(i)?;
     }
@@ -535,5 +539,9 @@ mod tests {
         check(&o).unwrap();
         o.local.push("nothing".into());
         assert_eq!(check(&o).unwrap_err(), "nothing is not a member of Hmi");
+        // a standard type's name makes a value of it in code, so no object takes one
+        let mut o = line();
+        o.name = "Pose".into();
+        assert_eq!(check(&o).unwrap_err(), "Pose is one of Rant's standard types, so pick another");
     }
 }

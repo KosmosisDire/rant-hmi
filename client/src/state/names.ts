@@ -2,11 +2,12 @@
 // uses list, a page's scope, and the names a new member may not take. A member goes by its key.
 
 import { createMemo, createRoot } from "solid-js";
+import { wholeType } from "../lang/math.js";
 import type { Import } from "../protocol/Import";
 import type { Kind } from "../protocol/Kind";
 import type { Object as Thing } from "../protocol/Object";
 import { ENUM_FIXED, NO_SETTER, NOT_VARIABLE, READ_ONLY, RECORD, type Shape, TOKEN_FIXED } from "../protocol/rules";
-import { state } from "./store";
+import { entity, setValueTypes, state } from "./store";
 
 /** The object every project has, which holds what the HMI as a whole keeps. */
 export const HMI = "Hmi";
@@ -69,8 +70,16 @@ export const entityOf = (o: Thing, path: string) => (path.startsWith("/") ? path
 /** Every object's mesh members, each by its key with its entity in full. */
 export const imports = createRoot(() => createMemo(() => state.objects.flatMap((o) => o.imports.map((i): Import => ({ ...i, alias: key(o.name, i.alias), entity: entityOf(o, i.entity) })))));
 
+const byKey = createRoot(() => createMemo(() => new Map(imports().map((i) => [i.alias, i]))));
+
 /** A mesh member by its key. */
-export const imported = (k: string): Import | undefined => imports().find((i) => i.alias === k);
+export const imported = (k: string): Import | undefined => byKey().get(k);
+
+// a value from the mesh names the type of each struct it holds, as code on the system reads it
+setValueTypes((k) => {
+  const t = entity(imported(k)?.entity ?? "")?.schema;
+  return t ? wholeType(t) : undefined;
+});
 
 /** The mesh member that brings an entity, by its path in full. */
 export const importOf = (entity: string): Import | undefined => imports().find((i) => i.entity === entity);

@@ -18,8 +18,8 @@ use tracing::{debug, warn};
 
 use crate::fields::Keep;
 use crate::project::{Import, Intent, Kind};
-use crate::protocol::{EntityInfo, EnumInfo, Level};
-use crate::script::{CallFailure, Form};
+use crate::protocol::{EntityInfo, EnumInfo, Level, TypeInfo};
+use crate::script::{CallFailure, Form, Typed};
 use crate::status::{self, Client, HmiStatus, ProblemRow};
 use codec::Shape;
 
@@ -144,6 +144,11 @@ impl Mesh {
         let mut out: Vec<EntityInfo> = self.node.reflection().mesh().iter().filter_map(entity_info).collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out
+    }
+
+    /// Rant's standard types, each as its schema shows it.
+    pub fn standard(&self) -> Vec<TypeInfo> {
+        rant::types::names().into_iter().filter_map(|name| self.node.schema(name).ok()).map(|s| codec::type_info(&s)).collect()
     }
 
     fn find(&self, import: &Import) -> Option<Entity> {
@@ -274,6 +279,22 @@ impl Mesh {
             .iter()
             .filter(|(_, a)| matches!(a.handle, Handle::Topic { .. } | Handle::Function { .. } | Handle::Task { .. }))
             .filter_map(|(alias, a)| Some((alias.clone(), Form { name: a.schema.as_ref()?.name(), fields: codec::top_fields(&a.shapes) })))
+            .collect()
+    }
+
+    /// What each attached import's values, answers and progress are, so code reads them typed.
+    pub fn types(&self) -> HashMap<String, Typed> {
+        let whole = |r: Option<&Reading>| r.map(|(s, _)| codec::whole_type(s));
+        self.attached
+            .iter()
+            .map(|(alias, a)| {
+                let (answer, progress) = match &a.handle {
+                    Handle::Function { answer, .. } => (whole(answer.as_ref()), None),
+                    Handle::Task { progress, answer, .. } => (whole(answer.as_ref()), whole(progress.as_ref())),
+                    _ => (None, None),
+                };
+                (alias.clone(), Typed { value: a.schema.as_ref().map(codec::whole_type), answer, progress })
+            })
             .collect()
     }
 
