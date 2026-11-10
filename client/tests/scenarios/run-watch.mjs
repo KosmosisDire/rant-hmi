@@ -21,7 +21,8 @@ export default async function ({ page, hmi, sys, check, eventually }) {
 
   const context = await page.context().browser().newContext();
   await context.addInitScript(countBig);
-  const big = (p) => p.evaluate(() => window.__big ?? 0);
+  // the camera's alone, as a page another scenario left may read a big value of its own
+  const big = (p) => p.evaluate(() => window.__bigOf?.["Line.WatchCam"] ?? 0);
   /** The pictures `p` gets in 1.5 s. */
   const comes = async (p) => {
     const before = await big(p);
@@ -56,7 +57,8 @@ export default async function ({ page, hmi, sys, check, eventually }) {
     const editor = await context.newPage();
     await editor.goto(sys.url);
     await editor.locator(".tab", { hasText: "Objects" }).click();
-    await eventually(async () => (await comes(editor)) >= 3, "the editor's Objects tab to get the camera's pictures", 8000);
+    // its previews share their bytes with any other big value, as a scan another scenario left
+    await eventually(async () => (await comes(editor)) >= 1, "the editor's Objects tab to get the camera's pictures", 8000);
     const run = async (name) => {
       await editor.locator(".tab", { hasText: "Design" }).click();
       await editor.locator(".screen:not([hidden]) .page-row", { hasText: new RegExp(`^${name}`) }).click();

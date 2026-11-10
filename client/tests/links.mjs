@@ -7,7 +7,7 @@ import net from "node:net";
 import { Decoder } from "cbor-x";
 
 /** An init script that counts in `window.__big` the big values the data worker hands the page,
- *  and keeps when each came in `window.__bigAt`. */
+ *  keeps when each came in `window.__bigAt`, and counts them by import in `window.__bigOf`. */
 export function countBig() {
   const own = Object.getOwnPropertyDescriptor(Worker.prototype, "onmessage");
   Object.defineProperty(Worker.prototype, "onmessage", {
@@ -17,6 +17,8 @@ export function countBig() {
         if (e.data && typeof e.data === "object" && "msg" in e.data) {
           window.__big = (window.__big ?? 0) + 1;
           (window.__bigAt ??= []).push(Date.now());
+          const of = (window.__bigOf ??= {});
+          for (const v of e.data.msg.values ?? []) of[v.alias] = (of[v.alias] ?? 0) + 1;
         }
         f(e);
       });

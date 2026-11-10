@@ -311,15 +311,18 @@ impl Session {
         out < IN_FLIGHT && (out == 0 || !self.big_way().holds(alias))
     }
 
-    /// Sends an import's big value, or keeps it as the newest until one may go.
+    /// Keeps an import's big value as its newest and sends what may go, so one that changes
+    /// often never goes ahead of another that waited.
     fn big(&mut self, value: Rc<Big>) {
         let alias = value.update.alias.clone();
-        let may = self.big_may_go(&alias);
+        self.gates.entry(alias).or_default().parked = Some(value);
+        self.send_parked();
+    }
+
+    /// Sends a big value that may go now.
+    fn send_big(&mut self, value: Rc<Big>) {
+        let alias = value.update.alias.clone();
         let gate = self.gates.entry(alias.clone()).or_default();
-        if !may {
-            gate.parked = Some(value);
-            return;
-        }
         // the change from what the screen holds as it reads this: the last on its way, else
         // the one it took
         let last = gate.out.back().and_then(|(_, b)| b.update.value.clone().map(|value| Base { seq: b.seq, value }));
@@ -349,7 +352,7 @@ impl Session {
         loop {
             let next = self.gates.iter().filter(|(a, g)| g.parked.is_some() && self.big_may_go(a)).min_by_key(|(_, g)| g.went).map(|(a, _)| a.clone());
             let Some(value) = next.and_then(|a| self.gates.get_mut(&a)?.parked.take()) else { return };
-            self.big(value);
+            self.send_big(value);
         }
     }
 
@@ -2634,6 +2637,21 @@ mod tests {
         s.previews = None;
         s.send_parked();
         assert_eq!(waiting(&s.out), vec![2]);
+    }
+
+    #[test]
+    fn a_big_value_that_comes_often_waits_behind_one_that_waited_longer() {
+        let mut s = session(IpAddr::from([10, 0, 0, 2]));
+        s.previews = Some(Instant::now());
+        let second = PREVIEW_BYTES as usize;
+        s.big(sized("Scan", 1, second, true));
+        s.took("Scan", 1, Fate::Took);
+        s.big(sized("Cam", 9, second, true));
+        assert_eq!(waiting(&s.out), vec![1]);
+        // the bytes allow again just as the next scan comes
+        s.previews = Some(Instant::now());
+        s.big(sized("Scan", 2, second, true));
+        assert_eq!(waiting(&s.out), vec![9]);
     }
 
     #[test]
