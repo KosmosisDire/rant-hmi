@@ -117,10 +117,10 @@
       <circle id="e65" name="reach" cx="0" cy="0" fill='"none"' r="40" stroke="$border2" stroke-dasharray='"3 3"' stroke-width="1"/>
       <line id="e66" name="x axis" stroke="$border" stroke-width="0.6" x1="-55" x2="55" y1="0" y2="0"/>
       <line id="e67" name="y axis" stroke="$border" stroke-width="0.6" x1="0" x2="0" y1="-55" y2="55"/>
-      <circle id="e68" name="tool" cx="Robot.Pose.position.x * 100" cy="-Robot.Pose.position.y * 100" fill="$accent" r="5"/>
+      <circle id="e68" name="tool" cx="Robot.EndPose.position.x * 100" cy="-Robot.EndPose.position.y * 100" fill="$accent" r="5"/>
     </svg>
     <div id="e69" name="Pose" x="0" y="0" w="16" h="fill" style='gap: $space; layout: "down"'>
-      <Readout id="e70" name="From centre" x="0" y="0" w="fill" h="8" digits="2" fill="$panel2" label='"From centre"' unit='"m"' value="vec(Robot.Pose.position.x, Robot.Pose.position.y).length()"/>
+      <Readout id="e70" name="From centre" x="0" y="0" w="fill" h="8" digits="2" fill="$panel2" label='"From centre"' unit='"m"' value="vec(Robot.EndPose.position.x, Robot.EndPose.position.y).length()"/>
       <span id="e71" name="Zoom label" x="0" y="0" w="hug" h="hug" style="color: $dim; font-size: $textSmall">"Zoom " + zoom.toFixed(1) + "x"</span>
       <Knob id="e72" name="Zoom" x="0" y="0" w="12" h="12" max="3" min="1" value="zoom"/>
     </div>

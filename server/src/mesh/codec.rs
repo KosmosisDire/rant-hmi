@@ -79,9 +79,12 @@ pub fn type_info(schema: &Schema) -> TypeInfo {
 }
 
 /// A whole value's type as one field: a bare type's own, else a struct of its fields, as
-/// state/types.ts `wholeType` reads a TypeInfo.
+/// math.js `wholeType` does.
 pub fn whole_type(schema: &Schema) -> FieldInfo {
-    let mut t = type_info(schema);
+    whole_of(type_info(schema))
+}
+
+pub fn whole_of(mut t: TypeInfo) -> FieldInfo {
     if t.fields.len() == 1 && t.fields[0].name.is_empty() {
         return t.fields.remove(0);
     }

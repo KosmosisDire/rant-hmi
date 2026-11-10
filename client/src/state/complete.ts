@@ -24,6 +24,8 @@ export interface Suggestion {
   type?: string;
   value?: Value | null;
   known?: boolean;
+  /** What a method gives now, worked out only once its row is the chosen one. */
+  preview?: () => { value: Value | null; known: boolean };
   /** What a dot after it offers, for a name completion knows no schema for. */
   members?: Suggestion[];
 }
@@ -88,19 +90,22 @@ function methodsWith(value: unknown): { name: string; takes: string[]; words: st
  *  at once. A point cloud or an image could take long. */
 const fixed = (v: unknown): boolean => !Array.isArray(v) && !ArrayBuffer.isView(v) && (typeof v !== "object" || v === null || Object.values(v).every(fixed));
 
-/** What a value of a standard type or a colour offers of the math library after a dot. One
- *  taking nothing shows what it gives now, where the value is small. */
+/** What a standard type's value or a colour offers of the math library after a dot. One taking
+ *  nothing can preview what it gives, where the value is small. */
 function mathMethods(value: Value | null, known: boolean): Suggestion[] {
   const call = LIBRARY.__method as (target: unknown, name: string) => Value;
   const small = fixed(value);
   return methodsWith(value).map((m): Suggestion => {
-    let now: Value | null = null;
-    try {
-      if (m.takes.length === 0 && small) now = call(value, m.name);
-    } catch {
-      // one that cannot answer for this value, as a singular matrix's inverse, shows none
-    }
-    return { label: m.name, insert: m.takes.length === 0 ? `${m.name}()` : `${m.name}(`, icon: "member", type: m.words, value: now, known: known && now !== null };
+    const preview = () => {
+      try {
+        const now = call(value, m.name);
+        return { value: now, known: known && now !== null };
+      } catch {
+        // one that cannot answer for this value, as a singular matrix's inverse, shows none
+        return { value: null, known: false };
+      }
+    };
+    return { label: m.name, insert: m.takes.length === 0 ? `${m.name}()` : `${m.name}(`, icon: "member", type: m.words, preview: m.takes.length === 0 && small ? preview : undefined };
   });
 }
 

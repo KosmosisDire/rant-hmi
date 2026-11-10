@@ -169,6 +169,7 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
       break;
     case "objects":
       setState("objects", reconcile(msg.objects, { key: "name" }));
+      retag();
       break;
     case "theme":
       setState("tokens", reconcile(msg.tokens, { key: "name" }));
@@ -197,6 +198,7 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
     }
     case "mesh":
       setState("entities", reconcile(msg.entities, { key: "name" }));
+      retag();
       break;
     case "values":
       batch(() => {
@@ -284,22 +286,40 @@ function cell<T>(cells: Map<string, Signal<T | undefined>>, name: string): Signa
 }
 
 /** What each import's values are, by its key, which the names give once they load. */
-let typeOf: (alias: string) => FieldInfo | undefined = () => undefined;
+let importType: (alias: string) => FieldInfo | undefined = () => undefined;
 
-export function setValueTypes(read: (alias: string) => FieldInfo | undefined) {
-  typeOf = read;
+export function setImportTypes(read: (alias: string) => FieldInfo | undefined) {
+  importType = read;
+}
+
+/** The imports whose value came before its type, which `retag` tags once the type comes. */
+const untyped = new Set<string>();
+
+/** Tags each value that came before its type, now that the objects or the mesh may give it. */
+function retag() {
+  for (const alias of [...untyped]) {
+    const t = importType(alias);
+    const [now, set] = cell(values, alias);
+    const was = untrack(now);
+    if (!t || !was || kept.has(alias)) continue;
+    untyped.delete(alias);
+    const next = tag(was.value, t, { skip: packed });
+    if (next !== was.value) set({ value: shared(undefined, next) as Value, known: was.known });
+  }
 }
 
 /** A part of a value given already, frozen, or a packed list, whose items are made as read. */
 const given = (part: object) => Object.isFrozen(part) || packed(part);
 
-/** Gives `alias` its value, holding on to every part of the one before that it equals, so what
- *  reads an unchanged part sees the very thing it saw and stays as it is. Each struct in it of a
- *  named type names it, as on the system. */
+/** Gives `alias` its value, holding on to each part of the one before that it equals, so what
+ *  reads an unchanged part stays as it is. Each struct of a named type names it. */
 function give(alias: string, value: Value, known: boolean) {
   const [now, set] = cell(values, alias);
   const was = untrack(now);
-  const next = shared(was?.value, kept.has(alias) ? value : tag(value, typeOf(alias), given)) as Value;
+  const t = importType(alias);
+  if (t) untyped.delete(alias);
+  else untyped.add(alias);
+  const next = shared(was?.value, kept.has(alias) ? value : tag(value, t, { skip: given, place: true })) as Value;
   if (!was || was.value !== next || was.known !== known) set({ value: next, known });
 }
 

@@ -273,16 +273,7 @@ impl Mesh {
         Some(Delivery { alias: alias.to_owned(), value, seq: r.seq })
     }
 
-    /// What each attached topic's message and function's or task's request is made of.
-    pub fn forms(&self) -> HashMap<String, Form> {
-        self.attached
-            .iter()
-            .filter(|(_, a)| matches!(a.handle, Handle::Topic { .. } | Handle::Function { .. } | Handle::Task { .. }))
-            .filter_map(|(alias, a)| Some((alias.clone(), Form { name: a.schema.as_ref()?.name(), fields: codec::top_fields(&a.shapes) })))
-            .collect()
-    }
-
-    /// What each attached import's values, answers and progress are, so code reads them typed.
+    /// What each attached import's values, answers, progress and requests are, so code reads them typed.
     pub fn types(&self) -> HashMap<String, Typed> {
         let whole = |r: Option<&Reading>| r.map(|(s, _)| codec::whole_type(s));
         self.attached
@@ -293,7 +284,9 @@ impl Mesh {
                     Handle::Task { progress, answer, .. } => (whole(answer.as_ref()), whole(progress.as_ref())),
                     _ => (None, None),
                 };
-                (alias.clone(), Typed { value: a.schema.as_ref().map(codec::whole_type), answer, progress })
+                let sent = matches!(a.handle, Handle::Topic { .. } | Handle::Function { .. } | Handle::Task { .. });
+                let form = a.schema.as_ref().filter(|_| sent).map(|s| Form { name: s.name(), fields: codec::top_fields(&a.shapes) });
+                (alias.clone(), Typed { form, value: a.schema.as_ref().map(codec::whole_type), answer, progress })
             })
             .collect()
     }

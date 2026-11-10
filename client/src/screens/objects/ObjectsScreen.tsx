@@ -2,9 +2,10 @@
 // the middle, and on the right what is picked of it.
 
 import { batch, createEffect, createSignal, For, type JSX, on, onMount, Show } from "solid-js";
+import { standardType } from "../../lang/math.js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
-import { freeMember, freeName, HMI, importOf, key, named, object } from "../../state/names";
+import { freeName, HMI, importOf, key, named, object } from "../../state/names";
 import { notify, setState, split, state } from "../../state/store";
 import { usedBy } from "../../state/usage";
 import { Copy, Monitor, Palette, Plus, Trash } from "../../ui/icons";
@@ -45,12 +46,12 @@ const pascal = (s: string) => {
 };
 
 /** The name an entity gets as a member of `object`: its last step in PascalCase, with the one
- *  before it when that is taken. */
+ *  before it when that is taken or is a standard type's name. */
 function suggest(object: string, entity: string): string {
   const parts = entity.split("/").filter(Boolean);
   const last = pascal(parts.at(-1) ?? "Member");
-  const taken = !!named(key(object, last));
-  return freeMember(object, taken && parts.length > 1 ? pascal(parts.at(-2)!) + last : last);
+  const clash = (n: string) => !!named(key(object, n)) || standardType(n) !== undefined;
+  return freeName(clash(last) && parts.length > 1 ? pascal(parts.at(-2)!) + last : last, clash);
 }
 
 /** An entity's path as a member of `object` writes it: from the object's mesh root, else from

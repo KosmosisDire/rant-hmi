@@ -34,9 +34,6 @@ const PRELUDE: &str = include_str!("prelude.js");
 pub enum ToScript {
     /// Every object, whole, after any change.
     Objects(Vec<object::Object>),
-    /// What each topic's message and function's request on the mesh is made of, by alias,
-    /// whole, after any change.
-    Forms(HashMap<String, Form>),
     /// What each import's values are, by alias, whole, after any change.
     Types(Types),
     /// The mesh's enums code names, whole, after any change.
@@ -94,10 +91,12 @@ pub struct Form {
     pub fields: Vec<String>,
 }
 
-/// What an import's values are, each a whole value's type: its value or message, a function's
-/// or task's answer, and a task's progress. Code reads each struct of them tagged with its type.
+/// What an import's values are, each a whole value's type: its value or message, a function's or
+/// task's answer, and a task's progress. Code reads each struct tagged with its type.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Typed {
+    /// What a topic's message or a function's or task's request is made of.
+    pub form: Option<Form>,
     pub value: Option<FieldInfo>,
     pub answer: Option<FieldInfo>,
     pub progress: Option<FieldInfo>,
@@ -182,7 +181,7 @@ fn api_module<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
 }
 
 /// Whether code already has `name` or cannot bind it: JavaScript's words and globals, the math
-/// library's names and every name api.js lists. No import, variable or enum may take one.
+/// library's, api.js's and each standard type's. No object, import, variable or enum takes one.
 pub fn reserved(name: &str) -> bool {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let names = NAMES.get_or_init(|| {
@@ -194,6 +193,7 @@ pub fn reserved(name: &str) -> bool {
             names.extend(library.keys::<String>().collect::<rquickjs::Result<Vec<_>>>()?);
             let api: Vec<Object> = api_module(&ctx)?.get("API")?;
             names.extend(api.iter().map(|a| a.get::<_, String>("name")).collect::<rquickjs::Result<Vec<_>>>()?);
+            names.extend(rant::types::names().into_iter().map(str::to_owned));
             Ok::<_, rquickjs::Error>(names)
         })
         .expect("the math library and the API load")
@@ -225,6 +225,18 @@ fn binds(name: &str) -> bool {
     ctx.with(|ctx| ctx.eval::<(), _>(format!("(async function () {{ \"use strict\"; let {name}; }});")).is_ok())
 }
 
+/// Every method name of Rant Math's types as JavaScript spells it, which the rewrite reads.
+fn method_names() -> &'static [String] {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let camel = |name: &str| name.split('_').filter(|p| !p.is_empty()).enumerate().map(|(i, p)| if i == 0 { p.to_owned() } else { p[..1].to_uppercase() + &p[1..] }).collect::<String>();
+        let mut names: Vec<String> = rant_math::table::methods().iter().filter(|m| m.self_index.is_some()).map(|m| camel(m.name)).collect();
+        names.sort();
+        names.dedup();
+        names
+    })
+}
+
 /// Rant Math in `ctx`, which math.js makes when code first needs it.
 fn make_math<'js>(ctx: Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     rant_math::quickjs::install(&ctx)
@@ -244,9 +256,9 @@ impl Rewriter {
         let arith = ctx
             .with(|ctx| {
                 module(&ctx, ACORN)?;
-                // the rewrite reads Rant Math's method names
+                // the rewrite reads only Rant Math's method names, so it makes none
                 let math = module(&ctx, MATH)?;
-                math.get::<_, Function>("setMath")?.call::<_, ()>((Function::new(ctx.clone(), make_math)?,))?;
+                math.get::<_, Function>("setMethodNames")?.call::<_, ()>((method_names().to_vec(),))?;
                 let arith: Function = module(&ctx, ARITH)?.get("arith")?;
                 Ok::<_, rquickjs::Error>(Persistent::save(&ctx, arith))
             })
@@ -386,7 +398,6 @@ struct Shared {
     objects: Vec<object::Object>,
     /// The objects' members by key.
     imports: HashMap<String, Import>,
-    forms: HashMap<String, Form>,
     types: Types,
     standard: Arc<Vec<TypeInfo>>,
     /// The functions and tasks whose node is off the mesh, which code reads as unknown.
@@ -429,7 +440,6 @@ impl Shared {
             out,
             objects: Vec::new(),
             imports: HashMap::new(),
-            forms: HashMap::new(),
             types: Types::default(),
             standard: Arc::default(),
             missing: HashSet::new(),
@@ -785,7 +795,6 @@ fn read_as(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, sources: &
 
 fn handle(rt: &Runtime, rw: &Rewriter, home: &Context, shared: &Rc<RefCell<Shared>>, msg: ToScript) {
     match msg {
-        ToScript::Forms(forms) => shared.borrow_mut().forms = forms,
         ToScript::Types(types) => shared.borrow_mut().types = types,
         ToScript::Standard(list) => shared.borrow_mut().standard = list,
         ToScript::Missing(missing) => shared.borrow_mut().missing = missing,
@@ -1055,7 +1064,7 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
 
     let s = shared.clone();
     let form = move |ctx: Ctx<'js>, alias: String| -> rquickjs::Result<rquickjs::Value<'js>> {
-        let Some(f) = s.borrow().forms.get(&alias).cloned() else { return Ok(rquickjs::Value::new_undefined(ctx)) };
+        let Some(f) = s.borrow().types.get(&alias).and_then(|t| t.form.clone()) else { return Ok(rquickjs::Value::new_undefined(ctx)) };
         to_js(&ctx, &Value::map([("name", f.name.into()), ("fields", Value::List(f.fields.into_iter().map(Value::from).collect()))]))
     };
     g.set("__form", Function::new(ctx.clone(), form)?)?;
@@ -1185,7 +1194,7 @@ fn to_js<'js>(ctx: &Ctx<'js>, v: &Value) -> rquickjs::Result<rquickjs::Value<'js
 }
 
 /// A value of type `t` as JS reads it, each struct of a named type naming it under
-/// Symbol.for("rant.type"), as Rant Math's results and the screens' values do.
+/// Symbol.for("rant.type"), as math.js `tag` does for the screens.
 fn typed_js<'js>(ctx: &Ctx<'js>, v: &Value, t: Option<&FieldInfo>) -> rquickjs::Result<rquickjs::Value<'js>> {
     let tag = t.map(|_| rquickjs::Symbol::new_global(ctx.clone(), "rant.type")).transpose()?;
     js(ctx, v, t, tag.as_ref())
@@ -1217,7 +1226,7 @@ fn js<'js>(ctx: &Ctx<'js>, v: &Value, t: Option<&FieldInfo>, tag: Option<&rquick
         }
         Value::Map(fields) => {
             let map = Object::new(c)?;
-            if let (Some(tag), Some(name)) = (tag, t.and_then(|t| t.type_name.as_deref())) {
+            if let (Some(tag), Some(name)) = (tag, t.and_then(|t| t.type_name.as_deref()).filter(|n| !n.is_empty())) {
                 map.set(tag.as_atom(), name)?;
             }
             for (k, field) in fields {

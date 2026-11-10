@@ -13,15 +13,15 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check((await left.locator(".list-row[title]").count()) === 0, "the mesh tree started open");
   const row = await d.meshRow("Robot/Pose");
   await row.locator('.row-add[title="Add to Robot"]').click();
-  await eventually(() => hmi.state.imports.some((i) => i.alias === "Robot.Pose" && i.entity === "Robot/Pose" && i.intent === "read"), "the one click member");
-  await right.locator(".head-title", { hasText: /^Robot\.Pose$/ }).waitFor();
-  await d.member("Pose").waitFor();
+  await eventually(() => hmi.state.imports.some((i) => i.alias === "Robot.RobotPose" && i.entity === "Robot/Pose" && i.intent === "read"), "the one click member");
+  await right.locator(".head-title", { hasText: /^Robot\.RobotPose$/ }).waitFor();
+  await d.member("RobotPose").waitFor();
   await eventually(async () => (await row.locator(".row-add").count()) === 0, "the added row to stop offering +");
-  check((await row.locator(".list-trail").textContent()) === "Robot.Pose", "the row does not name its member");
+  check((await row.locator(".list-trail").textContent()) === "Robot.RobotPose", "the row does not name its member");
 
   const pageId = await hmi.addPage("Pose page");
-  const text = await hmi.addElement(pageId, "span", { name: "Pose", x: "44", y: "44", w: "264", h: "44", text: "Robot.Pose.position.x.toFixed(2)" });
-  await hmi.setHandler(pageId, text, "tap", 'log(Robot.Pose.position.x, "Pose");');
+  const text = await hmi.addElement(pageId, "span", { name: "Pose", x: "44", y: "44", w: "264", h: "44", text: "Robot.RobotPose.position.x.toFixed(2)" });
+  await hmi.setHandler(pageId, text, "tap", 'log(Robot.RobotPose.position.x, "Pose");');
 
   await d.setField("Name", "Place");
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Robot.Place"), "the rename");

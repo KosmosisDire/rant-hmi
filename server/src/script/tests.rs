@@ -108,7 +108,7 @@ fn logged(said: &[FromScript]) -> Vec<String> {
 #[test]
 fn values_answers_and_progress_name_their_type_and_go_out_without_it() {
     let (script, mut rx) = engine();
-    let typed = |value, answer, progress| Typed { value, answer, progress };
+    let typed = |value, answer, progress| Typed { form: None, value, answer, progress };
     script.send(ToScript::types(HashMap::from([
         ("Line.Target".into(), typed(Some(pose("")), None, None)),
         ("Line.Peek".into(), typed(None, Some(pose("")), None)),
@@ -140,6 +140,18 @@ fn values_answers_and_progress_name_their_type_and_go_out_without_it() {
     assert_eq!(end(&said), &End::Ok);
     assert_eq!(logged(&said), ["Pose Double3 Quaternion", "Pose", "Double3"]);
     assert_eq!(writes(&said), [("Line.Settings".to_string(), at)]);
+}
+
+#[test]
+fn a_struct_with_no_type_name_is_not_tagged() {
+    let (script, mut rx) = engine();
+    let plain = field("", FieldKind::Struct, Some(""), vec![field("a", FieldKind::F64, None, Vec::new())]);
+    script.send(ToScript::types(HashMap::from([("Line.Target".into(), Typed { form: None, value: Some(plain), answer: None, progress: None })])));
+    script.send(ToScript::values(vec![("Line.Target".into(), Some(value!({ "a": 1 })))]));
+    let code = r#"log(Target[Symbol.for("rant.type")], Object.getOwnPropertySymbols(Target).length);"#;
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let said = until_done(&mut rx, 1);
+    assert_eq!(logged(&said), ["undefined 0"]);
 }
 
 #[test]
@@ -524,7 +536,8 @@ fn a_topic_sends_after_the_writes_before_it_and_reads_its_latest() {
 fn a_message_is_passed_whole_or_by_its_fields() {
     let (script, mut rx) = engine();
     let form = |name: &str, fields: &[&str]| Form { name: name.into(), fields: fields.iter().map(|f| f.to_string()).collect() };
-    script.send(ToScript::Forms(HashMap::from([("Line.Jog".into(), form("Vector3", &["x", "y", "z"])), ("Line.Reset".into(), form("ResetRequest", &["line"]))])));
+    let typed = |f| Typed { form: Some(f), value: None, answer: None, progress: None };
+    script.send(ToScript::types(HashMap::from([("Line.Jog".into(), typed(form("Vector3", &["x", "y", "z"]))), ("Line.Reset".into(), typed(form("ResetRequest", &["line"])))])));
     let mut sends = |code: &str, run: u64| {
         script.send(ToScript::Run { run, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
         until_done(&mut rx, run)
@@ -552,6 +565,7 @@ fn an_enum_reads_by_its_type_name_as_a_fresh_list_of_its_options() {
     assert!(said.iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == r#"["None","Pick","Place"] 2 true"#)), "the log was not the options");
     assert!(reserved("Math") && reserved("Pages") && reserved("sqrt") && reserved("emit") && reserved("link") && reserved("keys") && reserved("gamepads") && !reserved("Job"));
     assert!(reserved("class") && reserved("await") && reserved("let") && reserved("undefined") && !reserved("speed"));
+    assert!(reserved("Image") && reserved("Pose") && reserved("Double3"), "a standard type's name makes a value of it");
 }
 
 #[test]
@@ -869,6 +883,17 @@ fn an_imports_own_objects_and_lists_are_values_whole_filtered_or_picked() {
 }
 
 #[test]
+fn a_computed_value_reads_a_value_tagged_once_its_type_arrives() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::Objects(vec![line(vec![computed("kind", r#"String(Target[Symbol.for("rant.type")])"#, None)], Vec::new())]));
+    script.send(ToScript::values(vec![("Line.Target".into(), Some(value!({ "x": 1, "y": 2, "z": 3 })))]));
+    assert_eq!(think(&script, &mut rx, &[]).computed, values(&[("kind", Some(value!("undefined")))]));
+    let typed = Typed { form: None, value: Some(vector("", "Double3", &["x", "y", "z"])), answer: None, progress: None };
+    script.send(ToScript::types(HashMap::from([("Line.Target".into(), typed)])));
+    assert_eq!(think(&script, &mut rx, &[]).computed, values(&[("kind", Some(value!("Double3")))]));
+}
+
+#[test]
 fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
     let (script, mut rx) = engine();
     script.send(ToScript::Objects(vec![line(vec![computed("sneaky", "(Speed = 5, 1)", None), computed("plain", "Speed + 1", None)], Vec::new())]));
@@ -957,4 +982,42 @@ fn code_outside_reads_an_objects_global_members_and_its_functions_run_on_their_o
     // and only code outside the object is kept from its Local members
     script.send(ToScript::Run { run: 3, session: Some(7), code: "log(Target, Line.Target);".into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     assert!(until_done(&mut rx, 3).iter().any(|m| matches!(m, FromScript::Log { text, .. } if text == "3 3")));
+}
+
+/// math.js `wholeType` and `tag` serve screens and these serve the system, so both give one answer.
+#[test]
+fn the_system_and_the_screens_make_a_type_and_tag_a_value_alike() {
+    let list = |name: &str, kind: FieldKind, members: Vec<FieldInfo>| FieldInfo { elem: None, ..field(name, kind, Some("Group"), members) };
+    let points = FieldInfo { elem: Some(Box::new(vector("", "Double3", &["x", "y", "z"]))), ..field("points", FieldKind::Array, None, Vec::new()) };
+    let types = [
+        TypeInfo { name: "Speed".into(), fields: vec![field("", FieldKind::F64, None, Vec::new())] },
+        TypeInfo { name: "Pose".into(), fields: pose("").members },
+        TypeInfo { name: String::new(), fields: vec![field("a", FieldKind::F64, None, Vec::new()), vector("b", "Double3", &["x", "y", "z"])] },
+        TypeInfo { name: "Holder".into(), fields: vec![pose("")] },
+        TypeInfo { name: "Cloud".into(), fields: vec![points, list("group", FieldKind::Struct, vec![pose("home")])] },
+    ];
+    let values = [
+        value!(1.5),
+        value!({ "position": { "x": 1, "y": 2, "z": 3 }, "orientation": { "x": 0, "y": 0, "z": 0, "w": 1 } }),
+        value!({ "a": 1, "b": { "x": 1, "y": 2, "z": 3 } }),
+        value!({ "position": { "x": 1, "y": 2, "z": 3 }, "orientation": { "x": 0, "y": 0, "z": 0, "w": 1 } }),
+        value!({ "points": [{ "x": 1, "y": 2, "z": 3 }, { "x": 4, "y": 5, "z": 6 }], "group": { "home": { "position": { "x": 1, "y": 2, "z": 3 }, "orientation": { "x": 0, "y": 0, "z": 0, "w": 1 } } } }),
+    ];
+    let rt = Runtime::new().unwrap();
+    let ctx = Context::full(&rt).unwrap();
+    ctx.with(|ctx| {
+        let math = module(&ctx, MATH).unwrap();
+        let (whole, tag): (Function, Function) = (math.get("wholeType").unwrap(), math.get("tag").unwrap());
+        let dump: Function = ctx
+            .eval(r#"(() => { const T = Symbol.for("rant.type"); const dump = (v) => v === null || typeof v !== "object" ? JSON.stringify(v) : Array.isArray(v) ? `[${v.map(dump)}]` : `${v[T] ?? ""}{${Object.keys(v).sort().map((k) => k + ":" + dump(v[k]))}}`; return dump; })()"#)
+            .unwrap();
+        for (t, v) in types.iter().zip(&values) {
+            let own = crate::mesh::codec::whole_of(t.clone());
+            let theirs: String = ctx.json_stringify(whole.call::<_, rquickjs::Value>((to_js(&ctx, &Value::Null).and_then(|_| ctx.json_parse(serde_json::to_string(t).unwrap())).unwrap(),)).unwrap()).unwrap().unwrap().to_string().unwrap();
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&theirs).unwrap(), serde_json::to_value(&own).unwrap(), "the whole type of {}", t.name);
+            let screen = tag.call::<_, rquickjs::Value>((to_js(&ctx, v).unwrap(), ctx.json_parse(serde_json::to_string(&own).unwrap()).unwrap())).unwrap();
+            let system = typed_js(&ctx, v, Some(&own)).unwrap();
+            assert_eq!(dump.call::<_, String>((screen,)).unwrap(), dump.call::<_, String>((system,)).unwrap(), "the tags of {}", t.name);
+        }
+    });
 }

@@ -212,10 +212,10 @@ const SCREEN: Record<string, unknown> = {
 
 /** A scope as a screen works it out: it also reads the theme's tokens, in the screen's mode,
  *  and the screen's own names, under any of the scope's own, and each standard struct type's
- *  name makes a value of it under all of those and the browser's own, as Image and Path2D. */
+ *  name makes a value of it, over the browser's own names too, as Image and Path2D. */
 function onScreen(s: Scope): Scope {
   const screen = (name: string) => Object.hasOwn(SCREEN, name) && !s.has(name);
-  const made = (name: string) => standardType(name) !== undefined && !(name in globalThis);
+  const made = (name: string) => standardType(name) !== undefined;
   return {
     has: (name) => token(name) !== undefined || s.has(name) || screen(name) || made(name),
     get: (name) => {

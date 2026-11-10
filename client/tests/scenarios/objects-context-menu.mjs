@@ -11,8 +11,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // the mesh tree: an entity no member offers to join the object open, a member to go
   const pose = await d.meshRow("Robot/Pose");
   await pick(pose, "Add to Robot");
-  await eventually(() => hmi.state.imports.some((i) => i.alias === "Robot.Pose"), "Robot/Pose added");
-  await pick(pose, "Remove Robot.Pose");
+  await eventually(() => hmi.state.imports.some((i) => i.alias === "Robot.RobotPose"), "Robot/Pose added");
+  await pick(pose, "Remove Robot.RobotPose");
   await eventually(() => !hmi.state.imports.some((i) => i.entity === "Robot/Pose"), "Robot/Pose removed");
 
   // a member's intent, either way, and its name to the clipboard

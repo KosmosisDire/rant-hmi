@@ -229,10 +229,6 @@ impl Flat {
 pub fn check(o: &Object) -> Result<(), String> {
     rules::ALIAS.check(&o.name, "an object")?;
     project::unreserved(&o.name)?;
-    // code makes a value of a standard type by its name, which an object's would hide
-    if rant::types::names().contains(&o.name.as_str()) {
-        return Err(format!("{} is one of Rant's standard types, so pick another", o.name));
-    }
     for i in &o.imports {
         project::check_import(i)?;
     }
@@ -522,7 +518,7 @@ mod tests {
         assert_eq!(flat.imports.iter().map(|i| (i.alias.as_str(), i.entity.as_str())).collect::<Vec<_>>(), [("Line.Speed", "Line1/Speed"), ("Line.Conveyor", "Line1/Conveyor"), ("Line.Reset", "Line1/Reset"), ("Line.Joints", "Robot/Joints")]);
         assert_eq!(flat.computed[0].set.as_ref().unwrap().target, "Line.Speed");
         assert_eq!(flat.rules[0].0, "Line");
-        assert_eq!(line().reads("Speed / Robot.Pose.x + Line.mode + speed"), ["Line.Speed", "Robot.Pose", "Line.mode"]);
+        assert_eq!(line().reads("Speed / Robot.EndPose.x + Line.mode + speed"), ["Line.Speed", "Robot.EndPose", "Line.mode"]);
     }
 
     #[test]
@@ -543,5 +539,11 @@ mod tests {
         let mut o = line();
         o.name = "Pose".into();
         assert_eq!(check(&o).unwrap_err(), "Pose is one of Rant's standard types, so pick another");
+        // nor an import or an enum, which are named as capitals are
+        let said = "Pose is one of Rant's standard types, so pick another";
+        let mut i = line().imports[0].clone();
+        i.alias = "Pose".into();
+        assert_eq!(project::check_import(&i).unwrap_err(), said);
+        assert!(crate::script::reserved("Pose"));
     }
 }

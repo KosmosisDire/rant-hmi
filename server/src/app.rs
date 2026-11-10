@@ -30,7 +30,7 @@ use crate::reads::Reads;
 use crate::rules;
 use crate::problems::{Problems, word};
 use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Problem, Reader, Reported, Sample, ScreenCondition, ServerMsg, TypeInfo, ValueUpdate, WebrtcProblem, encode, encode_plain};
-use crate::script::{CallFailure, End, Form, FromScript, Script, ToScript, Typed};
+use crate::script::{CallFailure, End, FromScript, Script, ToScript, Typed};
 use crate::pages::js;
 use crate::status::{self, Client, HmiStatus};
 use crate::value::Value;
@@ -666,8 +666,6 @@ pub struct App {
     epoch: Option<u32>,
     /// When the HMI started.
     started_at: Timestamp,
-    /// What the engine was last told each import's message is made of.
-    forms: HashMap<String, Form>,
     /// What the engine was last told each import's values are.
     types: HashMap<String, Typed>,
     /// The functions and tasks off the mesh, as the engine was last told.
@@ -726,7 +724,6 @@ impl App {
             sample_at: HashMap::new(),
             epoch: None,
             started_at: Timestamp::now(),
-            forms: HashMap::new(),
             types: HashMap::new(),
             missing: HashSet::new(),
             enums: Vec::new(),
@@ -2173,11 +2170,6 @@ impl App {
     /// enums code names, once those changed. An object's name or one code already has hides an
     /// enum's.
     fn types_changed(&mut self) {
-        let forms = self.mesh.forms();
-        if forms != self.forms {
-            self.forms = forms.clone();
-            self.script.send(ToScript::Forms(forms));
-        }
         let types = self.mesh.types();
         if types != self.types {
             self.types = types.clone();

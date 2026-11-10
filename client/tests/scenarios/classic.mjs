@@ -25,7 +25,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
     ["Cage.SafetyCmd", "Cage/Plc/gSafetyCmd", "write"],
     ["Cage.SafetyStatus", "Cage/Plc/gSafetyStatus", "read"],
     ["Cage.Robot", "Cage/Gp12/RobotState", "read"],
-    ["Cage.JointState", "Cage/Gp12/JointState", "read"],
+    ["Cage.Joints", "Cage/Gp12/JointState", "read"],
     ["Cage.JogJoint", "Cage/Gp12/Jog/Joint", "write"],
     ["Cage.JogCartesian", "Cage/Gp12/Jog/Cartesian", "write"],
     ["Cage.SetServo", "Cage/Gp12/SetServo", "write"],
@@ -112,7 +112,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const row = "1 + (index % 3) * 8";
   const minus = await inside("Jog pad", "Button", { Name: "Minus", Repeat: "6", x: column(1), y: row, w: "6", h: "6", text: '"-"', textSize: "3" });
   await handlers([["press", "Cage.jogVel[index] = -1;"], ["release", "Cage.jogVel[index] = 0;"]]);
-  await inside("Jog pad", "text", { Name: "Joint angle", Repeat: "6", x: column(7), y: row, w: "8", h: "6", Text: "degrees(Cage.JointState.position[index]).toFixed(1)", Size: "1.9", Align: '"center"' });
+  await inside("Jog pad", "text", { Name: "Joint angle", Repeat: "6", x: column(7), y: row, w: "8", h: "6", Text: "degrees(Cage.Joints.position[index]).toFixed(1)", Size: "1.9", Align: '"center"' });
   const plus = await inside("Jog pad", "Button", { Name: "Plus", Repeat: "6", x: column(15), y: row, w: "6", h: "6", text: '"+"', textSize: "3" });
   await handlers([["press", "Cage.jogVel[index] = 1;"], ["release", "Cage.jogVel[index] = 0;"]]);
   await inside("Robot panel", "frame", { Name: "Divider", x: "1", y: "32", w: "45", h: "0.2", Fill: "$border", Radius: "" });
@@ -315,11 +315,11 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const [j, p0] = [await middle(at(jog)), await middle(at(plus, 0))];
   const cdp = await touch.context().newCDPSession(touch);
   const fingers = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map((p, i) => ({ x: p.x, y: p.y, id: i + 1 })) });
-  const start = value("Cage.JointState")?.position?.[0] ?? 0;
+  const start = value("Cage.Joints")?.position?.[0] ?? 0;
   await fingers("touchStart", [j]);
   await eventually(() => value("Cage.Robot")?.cur_job_name === "JOG" && value("Cage.Robot")?.start === true, "the Jog job after JOG is held");
   await fingers("touchStart", [j, p0]);
-  await eventually(() => (value("Cage.JointState")?.position?.[0] ?? 0) > start + 0.02, () => `the first joint to turn, it is at ${value("Cage.JointState")?.position?.[0]}`);
+  await eventually(() => (value("Cage.Joints")?.position?.[0] ?? 0) > start + 0.02, () => `the first joint to turn, it is at ${value("Cage.Joints")?.position?.[0]}`);
   await fingers("touchEnd", [j]);
   await fingers("touchEnd", []);
   await eventually(() => value("Cage.Robot")?.servo_power === false && value("Cage.Robot")?.start === false, "the servos off once JOG is let go");

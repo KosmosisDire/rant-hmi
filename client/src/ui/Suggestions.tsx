@@ -54,6 +54,8 @@ export function Suggestions(p: { items: Suggestion[]; chosen: number; onTake: (s
   createEffect(() => {
     if (p.chosen >= 0) el.querySelector(".suggest-row.chosen")?.scrollIntoView({ block: "nearest" });
   });
+  // a method's answer is worked out only for the chosen row
+  const shown = (s: Suggestion, n: number) => (s.preview ? (n === p.chosen ? s.preview() : undefined) : s.known === undefined ? undefined : { value: s.value ?? null, known: s.known });
   return (
     <Portal>
       <div ref={el} class="suggest" role="listbox" style={style()}>
@@ -98,9 +100,7 @@ export function Suggestions(p: { items: Suggestion[]; chosen: number; onTake: (s
               <span class="suggest-name mono">{s.label}</span>
               <span class="suggest-type">{s.type}</span>
               <span class="suggest-value">
-                <Show when={s.known !== undefined}>
-                  <Preview value={s.value ?? null} known={s.known ?? false} depth={1} />
-                </Show>
+                <Show when={shown(s, n())}>{(v) => <Preview value={v().value} known={v().known} depth={1} />}</Show>
               </span>
             </div>
           )}

@@ -7,7 +7,7 @@ import type { Import } from "../protocol/Import";
 import type { Kind } from "../protocol/Kind";
 import type { Object as Thing } from "../protocol/Object";
 import { ENUM_FIXED, NO_SETTER, NOT_VARIABLE, READ_ONLY, RECORD, type Shape, TOKEN_FIXED } from "../protocol/rules";
-import { entity, setValueTypes, state } from "./store";
+import { entity, setImportTypes, state } from "./store";
 
 /** The object every project has, which holds what the HMI as a whole keeps. */
 export const HMI = "Hmi";
@@ -76,7 +76,7 @@ const byKey = createRoot(() => createMemo(() => new Map(imports().map((i) => [i.
 export const imported = (k: string): Import | undefined => byKey().get(k);
 
 // a value from the mesh names the type of each struct it holds, as code on the system reads it
-setValueTypes((k) => {
+setImportTypes((k) => {
   const t = entity(imported(k)?.entity ?? "")?.schema;
   return t ? wholeType(t) : undefined;
 });

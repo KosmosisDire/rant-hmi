@@ -336,7 +336,13 @@ impl Readers {
     }
 
     pub(super) fn types(&self, types: &Types) {
-        self.change(|b| b.types = types.clone());
+        // a value read before its type arrived reads untagged, so what read it is worked out again
+        self.change(|b| {
+            let old = std::mem::replace(&mut b.types, types.clone());
+            for key in old.keys().chain(types.keys()).filter(|k| old.get(*k) != types.get(*k)) {
+                b.changed(key);
+            }
+        });
     }
 
     /// The pages readers name, as made anew next.

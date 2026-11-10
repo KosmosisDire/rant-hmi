@@ -697,6 +697,9 @@ pub(crate) fn check_local(name: &str, what: &str) -> Result<(), String> {
 }
 
 pub(crate) fn unreserved(name: &str) -> Result<(), String> {
+    if rant::types::names().contains(&name) {
+        return Err(format!("{name} is one of Rant's standard types, so pick another"));
+    }
     match crate::script::reserved(name) {
         true => Err(format!("{name} is a name code already uses, so pick another")),
         false => Ok(()),

@@ -1,7 +1,5 @@
-// Math for pages and code, the same in the browser and on the system: the standard functions as
-// plain names, vec() and colours, and the arithmetic and methods that arith.js routes through Rant
-// Math's table by each value's standard type. Values stay plain objects that may name their standard
-// type under TYPE, so one from the mesh needs no wrapping, and what the math makes goes back as is.
+// Math for pages and code, the same in the browser and on the system: standard functions, vec(),
+// colours, and the operators and methods arith.js routes through Rant Math's table by type.
 
 /** A colour is text such as "#2a6fd6" or "#2a6fd680", as a bare #hex in code reads. */
 const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -94,8 +92,7 @@ let makeMath = () => LIBRARY.math;
 let made = null;
 let calls = null;
 
-/** Sets what makes Rant Math, asked once when first needed, as the system makes it only for a
- *  run that reads it. A page's is LIBRARY.math. */
+/** Sets what makes Rant Math, asked once when first needed. A page's is LIBRARY.math. */
 export function setMath(make) {
   makeMath = make;
   made = calls = null;
@@ -109,9 +106,7 @@ export function rantMath() {
 /** quaternion_to_euler as JavaScript spells it, quaternionToEuler. */
 const camel = (name) => name.split("_").filter(Boolean).map((p, i) => (i ? p[0].toUpperCase() + p.slice(1) : p)).join("");
 
-/** Each standard type's methods by name and each operator by "left op right", read from the
- *  table when first needed. A method holds the call, where the value goes in it and which of
- *  its fields goes, if not all of it. */
+/** Each type's methods by name and each operator by "left op right", read when first needed. */
 function table() {
   if (calls) return calls;
   const m = rantMath();
@@ -125,33 +120,52 @@ function table() {
   const operators = new Map();
   for (const o of m.operators()) {
     const f = fns[o.function];
-    const how = { call: f, scale: f, scale_left: (a, b) => f(b, a), divide: (a, b) => f(a, 1 / b), negate: (a) => f(a, -1) }[o.how];
+    const how = { call: f, scale: f, scale_left: (a, b) => f(b, a) }[o.how];
     if (how) operators.set(`${o.left} ${o.op} ${o.right}`, how);
   }
-  return (calls = { methods, operators });
+  return (calls = { methods, operators, byValue: new Map() });
 }
 
-/** The type whose methods and operators `v` takes: its standard type, a Float or Int vector
- *  taking its Double one's, "double" for a number, else null. */
+/** The type whose operators `v` takes: its standard type, a Float or Int vector taking its
+ *  Double one's, "double" for a number, else null. */
 export function mathType(v) {
   if (typeof v === "number") return "double";
   const t = typeOf(v);
   return t !== null && /^(Float|Int)[234]$/.test(t) ? `Double${t.slice(-1)}` : t;
 }
 
-/** The methods after a dot on `v`: a colour's by name, a standard type's from the table with the
- *  index of its call there and of the input the value fills. */
+/** The methods of `v` by name: its type's own, over its Double type's for a Float or Int vector. */
+function methodsFor(v) {
+  const t = typeOf(v);
+  if (t === null) return undefined;
+  const { methods, byValue } = table();
+  if (!byValue.has(t)) {
+    const own = methods.get(t);
+    const base = /^(Float|Int)[234]$/.test(t) ? methods.get(`Double${t.slice(-1)}`) : undefined;
+    byValue.set(t, own && base ? new Map([...base, ...own]) : (own ?? base));
+  }
+  return byValue.get(t);
+}
+
+/** The methods after a dot on `v`: a colour's, or a standard type's with its call's index in the
+ *  table and the input the value fills. */
 export function methodsOf(v) {
   if (isColour(v)) return Object.keys(COLOUR).map((name) => ({ name }));
-  const t = mathType(v);
-  const own = typed(t) ? table().methods.get(t) : undefined;
-  return [...(own ?? [])].map(([name, m]) => ({ name, function: m.function, self: m.self }));
+  return [...(methodsFor(v) ?? [])].map(([name, m]) => ({ name, function: m.function, self: m.self }));
+}
+
+let fixedNames = null;
+
+/** Sets every type's method names where only the rewrite reads them, so it makes no Rant Math. */
+export function setMethodNames(list) {
+  fixedNames = list;
 }
 
 /** Every method name, which arith.js routes through `__method`: each type's and a colour's. */
 export function methodNames() {
   const names = new Set(Object.keys(COLOUR));
-  for (const own of table().methods.values()) for (const name of own.keys()) names.add(name);
+  if (fixedNames) for (const name of fixedNames) names.add(name);
+  else for (const own of table().methods.values()) for (const name of own.keys()) names.add(name);
   return [...names];
 }
 
@@ -211,15 +225,14 @@ function __neg(a) {
  *  other its own. */
 function __method(target, name, ...args) {
   if (isColour(target) && COLOUR[name]) return COLOUR[name](target, ...args);
-  const t = mathType(target);
-  const m = typed(t) ? table().methods.get(t)?.get(name) : undefined;
+  const m = methodsFor(target)?.get(name);
   if (m) {
     args.splice(m.self, 0, m.field ? target[m.field] : target);
     return m.call(...args);
   }
   if (target === null || target === undefined) throw new TypeError(`${name} cannot be called on ${target}`);
   const f = target[name];
-  if (typeof f !== "function") throw new TypeError(typed(t) ? `${named(target)} has no ${name}` : `${name} is not a function`);
+  if (typeof f !== "function") throw new TypeError(typed(mathType(target)) ? `${named(target)} has no ${name}` : `${name} is not a function`);
   return Reflect.apply(f, target, args);
 }
 
@@ -233,7 +246,9 @@ function vec(...parts) {
 
 /** From `a` toward `b` by `t`, numbers or vectors alike. */
 function lerp(a, b, t) {
-  return __add(a, __mul(__sub(b, a), t));
+  if (typeof a === "number" && typeof b === "number") return a + (b - a) * t;
+  if (!methodsFor(a)?.has("lerp")) throw new TypeError(`lerp takes numbers or vectors, not ${named(a)}`);
+  return __method(a, "lerp", b, t);
 }
 
 // ---------------------------------------------------------------------- the types
@@ -251,7 +266,8 @@ export function setTypes(read) {
   byName = byFields = null;
 }
 
-/** A whole value's type as one field: a bare type's own, else a struct of its fields. */
+/** A whole value's type as one field: a bare type's own, else a struct of its fields. The
+ *  server's `whole_type` is the same. */
 export function wholeType(t) {
   const bare = t.fields.length === 1 && t.fields[0].name === "";
   return bare ? t.fields[0] : { name: "", kind: "struct", type_name: t.name || null, elem: null, count: 0, options: [], members: t.fields };
@@ -263,21 +279,35 @@ export function standardType(name) {
   return byName.get(name);
 }
 
-/** `v` as a value of type `f`, a FieldInfo: each object of a named type down its fields names
- *  it under TYPE, and one that names its type already keeps it. What needs a tag is copied, or
- *  given `leave`, tagged where it is, as a value just decoded, but for each part `leave` keeps. */
-export function tag(v, f, leave) {
-  if (v === null || typeof v !== "object" || ArrayBuffer.isView(v) || !f || leave?.(v)) return v;
+const tags = (f) => f.kind === "struct" || (f.kind === "array" && !!f.elem && tags(f.elem));
+
+/** `v` as a value of type `f`, a FieldInfo: each struct of a named type down its fields names it
+ *  under TYPE. A copy where one needs a tag, or with `place` the value itself, minus parts `skip` keeps. */
+export function tag(v, f, { skip, place } = {}) {
+  if (v === null || typeof v !== "object" || ArrayBuffer.isView(v) || !f || skip?.(v)) return v;
   if (Array.isArray(v)) {
-    if (!f.elem) return v;
-    if (!leave) return v.map((x) => tag(x, f.elem));
-    for (const x of v) tag(x, f.elem, leave);
-    return v;
+    if (!f.elem || !tags(f.elem)) return v;
+    let out = v;
+    v.forEach((x, i) => {
+      const t = tag(x, f.elem, { skip, place });
+      if (t === x) return;
+      if (out === v) out = v.slice();
+      out[i] = t;
+    });
+    return out;
   }
   if (v[TYPE] !== undefined || (!f.type_name && f.members.length === 0)) return v;
-  const out = leave ? v : { ...v };
-  if (f.type_name) out[TYPE] = f.type_name;
-  for (const m of f.members) if (m.name in out) out[m.name] = tag(out[m.name], m, leave);
+  let out = v;
+  const put = (k, x) => {
+    if (!place && out === v) out = { ...v };
+    out[k] = x;
+  };
+  if (f.type_name) put(TYPE, f.type_name);
+  for (const m of f.members) {
+    if (!(m.name in v)) continue;
+    const t = tag(v[m.name], m, { skip, place });
+    if (t !== v[m.name]) put(m.name, t);
+  }
   return out;
 }
 
