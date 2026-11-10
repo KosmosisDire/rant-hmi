@@ -110,7 +110,8 @@ The HMI does these by itself. Never build them:
   good one stays.
 - Records sample and logic runs on the backend, whether a screen is open or not.
 - Geometry: `math` holds Rant Math in all code, a page's and the system's: poses, axes, shapes,
-  fits, cameras, images and point clouds, as `math.poseInverse(p)`. Write none of that by hand.
+  fits, cameras, images and point clouds, as `math.poseInverse(p)`. A value of a standard type
+  takes its calls as methods and operators, as `p.inverse()` and `p * v`. Write none of that by hand.
 - Standard types: each one's name makes a value of it from all its fields, as
   `Cylinder({ axis, radius })`. Use it where two types share their fields, as a Capsule and a
   Cylinder do.

@@ -57,7 +57,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // a Pose's position in metres and its orientation as roll, pitch and yaw in degrees
   await d.addComponent("Pose", 48, 18);
   await d.sizing("Fill");
-  await d.addInput("value", "{ position: vec(0.4, 0, 0.3), orientation: fromEuler(0, 0, 0.5) }", { type: "Pose" });
+  await d.addInput("value", '{ position: vec(0.4, 0, 0.3), orientation: math.quaternionFromEuler(0, 0, 0.5, "FixedXyz") }', { type: "Pose" });
   await d.addInput("digits", "2");
   await d.addInput("angleDigits", "1");
   await d.addInput("fill", "$panel");
@@ -69,7 +69,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.select("rows");
   await d.add("frame", { Name: "orientation", w: "fill", h: "fill", Fill: "", Radius: "" });
   await d.layOut("right", undefined, "1");
-  await d.place("Readout", { w: "fill", h: "fill", Repeat: "Object.values(value.orientation.euler()).map(degrees)", label: '["Roll", "Pitch", "Yaw"][index]', value: "item", unit: '"°"', digits: "angleDigits", fill: "fill" });
+  await d.place("Readout", { w: "fill", h: "fill", Repeat: '[...value.orientation.toEuler("FixedXyz")].map(degrees)', label: '["Roll", "Pitch", "Yaw"][index]', value: "item", unit: '"°"', digits: "angleDigits", fill: "fill" });
 
   await d.addPage("Readings");
   const readout = await d.place("Readout", { x: "4", y: "4", w: "20", h: "8", value: "Line.Speed", unit: '"m/s"', digits: "2" });
@@ -77,7 +77,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const mode = await d.place("Readout", { x: "72", y: "4", w: "20", h: "8", label: '"Mode"', value: "Line.Settings.mode" });
   const lamp = await d.place("Lamp", { x: "4", y: "16", w: "12", h: "3", value: "Line.Running", label: '"Running"' });
   const swatch = await d.place("Swatch", { x: "4", y: "22", w: "20", h: "8", value: "{ r: 255, g: 0, b: 0, a: 255 }" });
-  const pose = await d.place("Pose", { x: "28", y: "22", w: "48", h: "18", value: "{ position: vec(Line.Speed, 0.5, 0.25), orientation: fromEuler(0, 0, PI / 2) }" });
+  const pose = await d.place("Pose", { x: "28", y: "22", w: "48", h: "18", value: '{ position: vec(Line.Speed, 0.5, 0.25), orientation: math.quaternionFromEuler(0, 0, PI / 2, "FixedXyz") }' });
 
   await hmi.set("Line.Speed", 1);
   await hmi.set("Line.Running", true);

@@ -322,7 +322,7 @@ fn mistakes_say_what_and_where() {
         ("Speed = ;", "Unexpected token (line 1)"),
         ("Speed = 1;
 if (", "Unexpected token (line 2)"),
-        ("Speed = vec(1, 2) + vec(1, 2, 3);", "a 2D vector and a 3D vector cannot be added (line 1)"),
+        ("Speed = vec(1, 2) + vec(1, 2, 3);", "a Double2 and a Double3 cannot be added (line 1)"),
         ("while (true) {}", "it ran 50 ms without waiting, so it was stopped"),
         ("null.x;", "cannot read property 'x' of null (line 1)"),
     ];
@@ -567,10 +567,12 @@ fn runs_do_not_share_names() {
 #[test]
 fn code_does_math_on_numbers_vectors_turns_and_poses() {
     let (script, mut rx) = engine();
+    // a pose written out names no type, so its fields find it among the standard types
+    script.send(ToScript::Standard(Arc::new(vec![TypeInfo { name: "Pose".into(), fields: pose("").members }])));
     let code = "count = sqrt(16) + clamp(5, 0, 3) + (vec(3, 4) * 2 - vec(0, 0)).length() / 2;
-                const turned = fromEuler(0, 0, PI / 2) * vec(1, 0, 0);
-                const pose = { position: vec(1, 2, 3), orientation: fromEuler(0, 0, PI / 2) };
-                Settings = { mode: \"x\" + vec(1, 2), target: round(turned.y) + (pose * pose.inverse()).position.length() };";
+                const turned = math.quaternionFromEuler(0, 0, PI / 2, \"FixedXyz\") * vec(1, 0, 0);
+                const pose = { position: vec(1, 2, 3), orientation: math.quaternionFromEuler(0, 0, PI / 2, \"FixedXyz\") };
+                Settings = { mode: \"x\" + vec(1, 2), target: round(turned.y + (pose * pose.inverse()).position.length()) };";
     script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
     let said = until_done(&mut rx, 1);
     assert_eq!(end(&said), &End::Ok);

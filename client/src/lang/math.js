@@ -1,123 +1,26 @@
 // Math for pages and code, the same in the browser and on the system: the standard functions as
-// plain names, vec() and fromEuler(), and the arithmetic and methods that arith.js routes 2D and
-// 3D vectors, quaternions and poses through. Values stay plain objects that may name their standard
+// plain names, vec() and colours, and the arithmetic and methods that arith.js routes through Rant
+// Math's table by each value's standard type. Values stay plain objects that may name their standard
 // type under TYPE, so one from the mesh needs no wrapping, and what the math makes goes back as is.
 
 /** A colour is text such as "#2a6fd6" or "#2a6fd680", as a bare #hex in code reads. */
 const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
-/** What a value is: a colour by its text, else by its own keys "vec2", "vec3", "quat" or
- *  "pose", or null for anything else. */
-export function kind(v) {
-  if (typeof v === "string") return HEX.test(v) ? "colour" : null;
-  if (v === null || typeof v !== "object" || Array.isArray(v) || ArrayBuffer.isView(v)) return null;
-  const keys = Object.keys(v);
-  if (keys.length < 2 || keys.length > 4) return null;
-  const numbers = (...names) => keys.length === names.length && names.every((n) => typeof v[n] === "number");
-  if (numbers("x", "y")) return "vec2";
-  if (numbers("x", "y", "z")) return "vec3";
-  if (numbers("x", "y", "z", "w")) return "quat";
-  if (keys.length === 2 && kind(v.position) === "vec3" && kind(v.orientation) === "quat") return "pose";
-  return null;
+const isColour = (v) => typeof v === "string" && HEX.test(v);
+
+/** A value as an error names it, as "a Double3" or "an Inertia". */
+function named(v) {
+  if (isColour(v)) return "a colour";
+  const t = typeOf(v);
+  if (t) return /^[AEIOU]/.test(t) ? `an ${t}` : `a ${t}`;
+  return typeof v === "string" ? "text" : v === null || v === undefined ? String(v) : `a ${typeof v}`;
 }
 
-const NAMES = { vec2: "a 2D vector", vec3: "a 3D vector", quat: "a quaternion", pose: "a pose", colour: "a colour" };
-
-/** A value as an error names it. */
-const named = (v) => NAMES[kind(v)] ?? (typeof v === "string" ? "text" : v === null || v === undefined ? String(v) : `a ${typeof v}`);
-
-/** A value as text joins it: a vector or quaternion as its numbers. */
+/** A value as text joins it: one of a standard type as its numbers, a pose as "(1, 2, 3) (0, 0, 0, 1)". */
 function words(v) {
-  const k = kind(v);
-  if (k === "vec2") return `(${v.x}, ${v.y})`;
-  if (k === "vec3") return `(${v.x}, ${v.y}, ${v.z})`;
-  if (k === "quat") return `(${v.x}, ${v.y}, ${v.z}, ${v.w})`;
-  if (k === "pose") return `${words(v.position)} ${words(v.orientation)}`;
-  return String(v);
-}
-
-const isVec = (k) => k === "vec2" || k === "vec3";
-
-/** Each component of one vector or two of the same kind through `f`. */
-function zip(k, a, b, f) {
-  if (k === "vec2") return { x: f(a.x, b?.x), y: f(a.y, b?.y) };
-  return { x: f(a.x, b?.x), y: f(a.y, b?.y), z: f(a.z, b?.z) };
-}
-
-const need = (what, v, k) => {
-  if (kind(v) !== k) throw new TypeError(`${what} takes ${NAMES[k]}, not ${named(v)}`);
-};
-
-// ------------------------------------------------------------------------- vectors
-
-const dot = (a, b) => a.x * b.x + a.y * b.y + (a.z ?? 0) * (b.z ?? 0);
-const length = (a) => Math.sqrt(dot(a, a));
-const cross3 = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
-
-const VECTOR = {
-  length,
-  normalized: (a) => {
-    const n = length(a);
-    return zip(kind(a), a, null, (x) => (n === 0 ? 0 : x / n));
-  },
-  dot: (a, b) => (need("dot", b, kind(a)), dot(a, b)),
-  // a 2D cross is the z of the 3D one, how far b turns from a
-  cross: (a, b) => (need("cross", b, kind(a)), kind(a) === "vec2" ? a.x * b.y - a.y * b.x : cross3(a, b)),
-  distance: (a, b) => (need("distance", b, kind(a)), length(__sub(a, b))),
-  lerp: (a, b, t) => (need("lerp", b, kind(a)), lerp(a, b, t)),
-  equals: (a, b, within = 1e-9) => kind(b) === kind(a) && length(__sub(a, b)) <= within,
-};
-
-// --------------------------------------------------------------------- quaternions
-
-const qmul = (a, b) => ({
-  x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
-  y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-  z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
-  w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
-});
-
-const qinverse = (q) => {
-  const n = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
-  return { x: -q.x / n, y: -q.y / n, z: -q.z / n, w: q.w / n };
-};
-
-/** `v` turned by `q`, which need not be of unit length. */
-const qrotate = (q, v) => {
-  const turned = qmul(qmul(q, { x: v.x, y: v.y, z: v.z, w: 0 }), qinverse(q));
-  return { x: turned.x, y: turned.y, z: turned.z };
-};
-
-const QUATERNION = {
-  rotate: (q, v) => (need("rotate", v, "vec3"), qrotate(q, v)),
-  inverse: qinverse,
-  normalized: (q) => {
-    const n = Math.hypot(q.x, q.y, q.z, q.w);
-    return { x: q.x / n, y: q.y / n, z: q.z / n, w: q.w / n };
-  },
-  // roll about x, then pitch about y, then yaw about z, in radians
-  euler: (q) => {
-    const sinp = 2 * (q.w * q.y - q.z * q.x);
-    return {
-      roll: Math.atan2(2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x * q.x + q.y * q.y)),
-      pitch: Math.abs(sinp) >= 1 ? Math.sign(sinp) * (Math.PI / 2) : Math.asin(sinp),
-      yaw: Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)),
-    };
-  },
-  equals: (a, b, within = 1e-9) => kind(b) === "quat" && Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w) <= within,
-};
-
-/** The rotation that rolls about x, then pitches about y, then yaws about z, in radians. */
-function fromEuler(roll, pitch, yaw) {
-  const [cr, sr] = [Math.cos(roll / 2), Math.sin(roll / 2)];
-  const [cp, sp] = [Math.cos(pitch / 2), Math.sin(pitch / 2)];
-  const [cy, sy] = [Math.cos(yaw / 2), Math.sin(yaw / 2)];
-  return {
-    x: sr * cp * cy - cr * sp * sy,
-    y: cr * sp * cy + sr * cp * sy,
-    z: cr * cp * sy - sr * sp * cy,
-    w: cr * cp * cy + sr * sp * sy,
-  };
+  if (typeOf(v) === null) return String(v);
+  const parts = Object.values(v);
+  return parts.every((p) => typeof p === "number") ? `(${parts.join(", ")})` : parts.map(words).join(" ");
 }
 
 // --------------------------------------------------------------------------- colours
@@ -162,8 +65,7 @@ function srgb({ L, A, B, a }) {
 
 /** From colour `a` toward colour `b` by `t`, 0 to 1, through OKLab. */
 function mix(a, b, t) {
-  need("mix", a, "colour");
-  need("mix", b, "colour");
+  for (const c of [a, b]) if (!isColour(c)) throw new TypeError(`mix takes a colour, not ${named(c)}`);
   const [p, q] = [lab(rgba(a)), lab(rgba(b))];
   const at = (x, y) => x + (y - x) * t;
   return hex(srgb({ L: at(p.L, q.L), A: at(p.A, q.A), B: at(p.B, q.B), a: at(p.a, q.a) }));
@@ -186,92 +88,136 @@ const COLOUR = {
   mix: (c, other, t = 0.5) => mix(c, other, t),
 };
 
-// --------------------------------------------------------------------------- poses
+// ------------------------------------------------------------------ Rant Math's table
 
-const papply = (p, v) => __add(qrotate(p.orientation, v), p.position);
+let makeMath = () => LIBRARY.math;
+let made = null;
+let calls = null;
 
-const POSE = {
-  apply: (p, v) => (need("apply", v, "vec3"), papply(p, v)),
-  inverse: (p) => {
-    const turn = qinverse(p.orientation);
-    return { position: __neg(qrotate(turn, p.position)), orientation: turn };
-  },
-};
+/** Sets what makes Rant Math, asked once when first needed, as the system makes it only for a
+ *  run that reads it. A page's is LIBRARY.math. */
+export function setMath(make) {
+  makeMath = make;
+  made = calls = null;
+}
 
-const METHODS = { vec2: VECTOR, vec3: VECTOR, quat: QUATERNION, pose: POSE, colour: COLOUR };
+/** Rant Math, made when first asked for. */
+export function rantMath() {
+  return (made ??= makeMath());
+}
 
-/** Every method name, which arith.js routes through `__method`. */
-export const METHOD_NAMES = [...new Set(Object.values(METHODS).flatMap((m) => Object.keys(m)))];
+/** quaternion_to_euler as JavaScript spells it, quaternionToEuler. */
+const camel = (name) => name.split("_").filter(Boolean).map((p, i) => (i ? p[0].toUpperCase() + p.slice(1) : p)).join("");
 
-/** Each kind's method names, which completion offers after a dot. */
-export const METHODS_OF = Object.fromEntries(Object.entries(METHODS).map(([k, m]) => [k, Object.keys(m)]));
+/** Each standard type's methods by name and each operator by "left op right", read from the
+ *  table when first needed. A method holds the call, where the value goes in it and which of
+ *  its fields goes, if not all of it. */
+function table() {
+  if (calls) return calls;
+  const m = rantMath();
+  const fns = m.functions().map((f) => m[camel(f.name)]);
+  const methods = new Map();
+  for (const r of m.methods()) {
+    if (r.selfIndex === null) continue;
+    if (!methods.has(r.type)) methods.set(r.type, new Map());
+    methods.get(r.type).set(camel(r.name), { call: fns[r.function], self: r.selfIndex, field: r.field });
+  }
+  const operators = new Map();
+  for (const o of m.operators()) {
+    const f = fns[o.function];
+    const how = { call: f, scale: f, scale_left: (a, b) => f(b, a), divide: (a, b) => f(a, 1 / b), negate: (a) => f(a, -1) }[o.how];
+    if (how) operators.set(`${o.left} ${o.op} ${o.right}`, how);
+  }
+  return (calls = { methods, operators });
+}
+
+/** The type whose methods and operators `v` takes: its standard type, a Float or Int vector
+ *  taking its Double one's, "double" for a number, else null. */
+export function mathType(v) {
+  if (typeof v === "number") return "double";
+  const t = typeOf(v);
+  return t !== null && /^(Float|Int)[234]$/.test(t) ? `Double${t.slice(-1)}` : t;
+}
+
+/** The method names after a dot on `v`: its standard type's from the table, or a colour's. */
+export function methodsOf(v) {
+  if (isColour(v)) return Object.keys(COLOUR);
+  const t = mathType(v);
+  return t === null || t === "double" ? [] : [...(table().methods.get(t)?.keys() ?? [])];
+}
+
+/** Every method name, which arith.js routes through `__method`: each type's and a colour's. */
+export function methodNames() {
+  const names = new Set(Object.keys(COLOUR));
+  for (const own of table().methods.values()) for (const name of own.keys()) names.add(name);
+  return [...names];
+}
 
 // ------------------------------------------------------------------ the operators
 
-const refuse = (a, b, verb) => {
+const typed = (t) => t !== null && t !== "double";
+
+/** `a op b` by Rant Math's operator for their types, `plain()` where neither has a standard
+ *  type, else an error that says so. */
+function operate(op, verb, a, b, plain) {
+  const [ta, tb] = [mathType(a), mathType(b)];
+  if (!typed(ta) && !typed(tb)) return plain();
+  const f = table().operators.get(`${ta} ${op} ${tb}`);
+  if (f) return f(a, b);
   throw new TypeError(`${named(a)} and ${named(b)} cannot be ${verb}`);
-};
+}
 
 function __add(a, b) {
-  const [ka, kb] = [kind(a), kind(b)];
-  if (!ka && !kb) return a + b;
-  if (ka === kb && isVec(ka)) return zip(ka, a, b, (x, y) => x + y);
+  if (typeof a === "number" && typeof b === "number") return a + b;
   if (typeof a === "string" || typeof b === "string") return words(a) + words(b);
-  return refuse(a, b, "added");
+  return operate("+", "added", a, b, () => a + b);
 }
 
 function __sub(a, b) {
-  const [ka, kb] = [kind(a), kind(b)];
-  if (!ka && !kb) return a - b;
-  if (ka === kb && isVec(ka)) return zip(ka, a, b, (x, y) => x - y);
-  return refuse(a, b, "subtracted");
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return operate("-", "subtracted", a, b, () => a - b);
 }
 
-/** A vector by a number or a vector of its kind, a quaternion by a quaternion or a 3D vector,
- *  which it turns, a pose by a pose or a 3D vector, which it moves, and a colour by a number,
- *  which brightens or darkens it, or by a colour, each channel by the other's. */
+/** Rant Math's products, and a colour by a number, which brightens or darkens it, or by a
+ *  colour, each channel by the other's. */
 function __mul(a, b) {
-  const [ka, kb] = [kind(a), kind(b)];
-  if (!ka && !kb) return a * b;
-  if (ka === "colour" && typeof b === "number") return scale(a, b);
-  if (kb === "colour" && typeof a === "number") return scale(b, a);
-  if (ka === "colour" && kb === "colour") {
+  if (typeof a === "number" && typeof b === "number") return a * b;
+  if (isColour(a) && typeof b === "number") return scale(a, b);
+  if (isColour(b) && typeof a === "number") return scale(b, a);
+  if (isColour(a) && isColour(b)) {
     const [p, q] = [rgba(a), rgba(b)];
     return hex({ r: p.r * q.r, g: p.g * q.g, b: p.b * q.b, a: p.a * q.a });
   }
-  if (isVec(ka) && typeof b === "number") return zip(ka, a, null, (x) => x * b);
-  if (isVec(kb) && typeof a === "number") return zip(kb, b, null, (x) => a * x);
-  if (ka === kb && isVec(ka)) return zip(ka, a, b, (x, y) => x * y);
-  if (ka === "quat" && kb === "quat") return qmul(a, b);
-  if (ka === "quat" && kb === "vec3") return qrotate(a, b);
-  if (ka === "pose" && kb === "pose") return { position: papply(a, b.position), orientation: qmul(a.orientation, b.orientation) };
-  if (ka === "pose" && kb === "vec3") return papply(a, b);
-  return refuse(a, b, "multiplied");
+  return operate("*", "multiplied", a, b, () => a * b);
 }
 
 function __div(a, b) {
-  const [ka, kb] = [kind(a), kind(b)];
-  if (!ka && !kb) return a / b;
-  if (ka === "colour" && typeof b === "number") return scale(a, 1 / b);
-  if (isVec(ka) && typeof b === "number") return zip(ka, a, null, (x) => x / b);
-  if (ka === kb && isVec(ka)) return zip(ka, a, b, (x, y) => x / y);
-  return refuse(a, b, "divided");
+  if (typeof a === "number" && typeof b === "number") return a / b;
+  if (isColour(a) && typeof b === "number") return scale(a, 1 / b);
+  return operate("/", "divided", a, b, () => a / b);
 }
 
 function __neg(a) {
-  const k = kind(a);
-  if (!k) return -a;
-  if (isVec(k)) return zip(k, a, null, (x) => -x);
+  const t = mathType(a);
+  if (!typed(t)) return -a;
+  const f = table().operators.get(`${t} neg `);
+  if (f) return f(a);
   throw new TypeError(`${named(a)} cannot be negated`);
 }
 
-/** A method call on `target`: a vector's, quaternion's or pose's from here, any other its own. */
+/** A method call on `target`: its standard type's from Rant Math, a colour's from here, any
+ *  other its own. */
 function __method(target, name, ...args) {
-  const own = METHODS[kind(target)]?.[name];
-  if (own) return own(target, ...args);
+  if (isColour(target) && COLOUR[name]) return COLOUR[name](target, ...args);
+  const t = mathType(target);
+  const m = typed(t) ? table().methods.get(t)?.get(name) : undefined;
+  if (m) {
+    args.splice(m.self, 0, m.field ? target[m.field] : target);
+    return m.call(...args);
+  }
   if (target === null || target === undefined) throw new TypeError(`${name} cannot be called on ${target}`);
   const f = target[name];
-  if (typeof f !== "function") throw new TypeError(`${name} is not a function`);
+  if (typeof f !== "function") throw new TypeError(typed(t) ? `${named(target)} has no ${name}` : `${name} is not a function`);
   return Reflect.apply(f, target, args);
 }
 
@@ -279,7 +225,8 @@ function __method(target, name, ...args) {
 
 function vec(...parts) {
   if ((parts.length !== 2 && parts.length !== 3) || parts.some((p) => typeof p !== "number")) throw new TypeError("vec takes two or three numbers");
-  return parts.length === 2 ? { x: parts[0], y: parts[1] } : { x: parts[0], y: parts[1], z: parts[2] };
+  const [x, y, z] = parts;
+  return parts.length === 2 ? { [TYPE]: "Double2", x, y } : { [TYPE]: "Double3", x, y, z };
 }
 
 /** From `a` toward `b` by `t`, numbers or vectors alike. */
@@ -424,7 +371,6 @@ export const LIBRARY = {
   radians: (degrees) => (degrees * Math.PI) / 180,
   PI: Math.PI,
   vec,
-  fromEuler,
   mix,
   time,
   // Rant Math, which each place fills: the wasm binding in a page, the Rust crate on the system.

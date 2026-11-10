@@ -3,12 +3,12 @@
 import type { FieldInfo } from "../protocol/FieldInfo";
 import type { TypeInfo } from "../protocol/TypeInfo";
 
-export type MathKind = "vec2" | "vec3" | "quat" | "pose" | "colour";
-
-export declare function kind(v: unknown): MathKind | null;
-export declare const METHOD_NAMES: string[];
 export declare const FUNCTION_NAMES: string[];
-export declare const METHODS_OF: Record<MathKind, string[]>;
+export declare function setMath(make: () => unknown): void;
+export declare function rantMath(): unknown;
+export declare function mathType(v: unknown): string | null;
+export declare function methodsOf(v: unknown): string[];
+export declare function methodNames(): string[];
 export declare const LIBRARY: Record<string, unknown>;
 export declare function setClock(read: () => number): void;
 export declare const TYPE: unique symbol;

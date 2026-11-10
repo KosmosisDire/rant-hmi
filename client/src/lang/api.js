@@ -44,7 +44,6 @@ export const API = [
   { name: "radians", takes: ["degrees"], words: "degrees as radians" },
   { name: "PI", words: "half a turn, in radians" },
   { name: "vec", takes: ["x", "y", "z?"], words: "a 2D or 3D vector" },
-  { name: "fromEuler", takes: ["roll", "pitch", "yaw"], words: "a quaternion from roll, pitch and yaw in radians" },
   { name: "mix", takes: ["a", "b", "t"], words: "a colour from a toward b by t" },
   { name: "time", words: "the clock", fields: [{ name: "now", words: "ms since 1970, moving where it shows" }] },
   { name: "math", words: "Rant Math: poses, shapes, fits, cameras, images and point clouds", fields: NAMES },

@@ -13,7 +13,7 @@ import { resolve, type Resolved, type Scope } from "../state/bind";
 import { short } from "../state/format";
 import { readFar, readWhole } from "../state/store";
 import { onResize } from "../ui/size";
-import { kind } from "../lang/math.js";
+import { mathType, typeOf } from "../lang/math.js";
 import { CLEAN, type Drawn, holds, oncePerFrame, pixelsOf } from "./drawing";
 import { slowOf, timer } from "./slow";
 import { CAMERA, isPart, type Part, PARTS, POSE, rgbaOf } from "./parts";
@@ -284,7 +284,7 @@ function reader(props: Element["props"], defaults: Record<string, string>, scope
       },
       slow,
     );
-  const vector = (v: unknown) => (kind(v) === "vec3" ? vec3(v as Vec3) : undefined);
+  const vector = (v: unknown) => (mathType(v) === "Double3" ? vec3(v as Vec3) : undefined);
   return {
     number: (key) => as(key, "a number", (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)),
     flag: (key) => as(key, "true or false", (v) => (typeof v === "boolean" ? v : undefined)),
@@ -361,8 +361,8 @@ function poseOf(v: unknown): Pose | undefined {
   if (v === undefined || v === null) return {};
   if (typeof v !== "object" || Array.isArray(v)) return undefined;
   const { position, orientation } = v as Record<string, unknown>;
-  if (position !== undefined && kind(position) !== "vec3") return undefined;
-  if (orientation !== undefined && kind(orientation) !== "quat") return undefined;
+  if (position !== undefined && mathType(position) !== "Double3") return undefined;
+  if (orientation !== undefined && typeOf(orientation) !== "Quaternion") return undefined;
   const turn = orientation as Pose["orientation"];
   return { position: position === undefined ? undefined : vec3(position as Vec3), orientation: turn && { ...vec3(turn), w: turn.w } };
 }

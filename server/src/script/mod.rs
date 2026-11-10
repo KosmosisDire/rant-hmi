@@ -225,6 +225,11 @@ fn binds(name: &str) -> bool {
     ctx.with(|ctx| ctx.eval::<(), _>(format!("(async function () {{ \"use strict\"; let {name}; }});")).is_ok())
 }
 
+/// Rant Math in `ctx`, which math.js makes when code first needs it.
+fn make_math<'js>(ctx: Ctx<'js>) -> rquickjs::Result<Object<'js>> {
+    rant_math::quickjs::install(&ctx)
+}
+
 /// The operator rewrite, in a context of its own, the only one that holds acorn. Each text is
 /// rewritten once.
 struct Rewriter {
@@ -239,7 +244,9 @@ impl Rewriter {
         let arith = ctx
             .with(|ctx| {
                 module(&ctx, ACORN)?;
-                module(&ctx, MATH)?;
+                // the rewrite reads Rant Math's method names
+                let math = module(&ctx, MATH)?;
+                math.get::<_, Function>("setMath")?.call::<_, ()>((Function::new(ctx.clone(), make_math)?,))?;
                 let arith: Function = module(&ctx, ARITH)?.get("arith")?;
                 Ok::<_, rquickjs::Error>(Persistent::save(&ctx, arith))
             })
@@ -924,9 +931,11 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
             g.set(name.as_str(), library.get::<_, rquickjs::Value>(name.as_str())?)?;
         }
     }
-    // Rant Math is made only for code that reads it, since every run has a context of its own
-    let lazily: Function = ctx.eval("(make) => { let made; Object.defineProperty(globalThis, 'math', { get: () => (made ??= make()), set: (v) => { made = v; }, enumerable: true, configurable: true }); }")?;
-    lazily.call::<_, ()>((Function::new(ctx.clone(), |ctx: Ctx<'js>| rant_math::quickjs::install(&ctx))?,))?;
+    // Rant Math is made only for code that reads it or does math on a standard type, since every
+    // run has a context of its own
+    math.get::<_, Function>("setMath")?.call::<_, ()>((Function::new(ctx.clone(), make_math)?,))?;
+    let global: Function = ctx.eval("(read) => Object.defineProperty(globalThis, 'math', { get: read, enumerable: true, configurable: true })")?;
+    global.call::<_, ()>((math.get::<_, Function>("rantMath")?,))?;
     // what reads the clock is worked out again each time it is asked
     let s = shared.clone();
     let clock = move || {

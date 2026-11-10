@@ -67,7 +67,6 @@ A stopped task call fails with `e.status` `"cancelled"`.
 | `radians(degrees)` | degrees as radians |
 | `PI` | half a turn, in radians |
 | `vec(x, y, z?)` | a 2D or 3D vector |
-| `fromEuler(roll, pitch, yaw)` | a quaternion from roll, pitch and yaw in radians |
 | `mix(a, b, t)` | a colour from a toward b by t |
 | `time` | the clock |
 | `time.now` | ms since 1970, moving where it shows |
@@ -184,7 +183,7 @@ A value is one by its fields, so values from the mesh need nothing done to them:
 | quaternion | `{ x, y, z, w }` |
 | pose | `{ position, orientation }` |
 
-`+ - * /` work on them as on numbers:
+`+ - * /` work on them as on numbers, through Rant Math:
 
 ```js
 (Goal.position - Robot.Pose.position).length()
@@ -195,7 +194,7 @@ Robot.Pose * Tool                        // poses combine
 "at " + vec(1, 2)                        // "at (1, 2)"
 ```
 
-Vectors multiply and divide by a number, or part by part by a vector of their size.
+Vectors multiply and divide by a number. `a.multiply(b)` multiplies two part by part.
 
 ## Rant Math
 
@@ -241,13 +240,17 @@ $accent.mix($red, 0.5)         // halfway to another colour
 
 ## Methods
 
-| Value | Methods |
-| --- | --- |
-| vector | `length()` `normalized()` `dot(v)` `cross(v)` `distance(v)` `lerp(v, t)` `equals(v)` |
-| quaternion | `rotate(v)` `inverse()` `normalized()` `euler()` `equals(q)` |
-| pose | `apply(v)` `inverse()` |
-| colour | `lighten(t)` `darken(t)` `alpha(a)` `fade(k)` `mix(c, t)` |
+Each standard type takes Rant Math's calls on it as methods, which completion lists after a dot:
 
-- `euler()` gives `{ roll, pitch, yaw }` in radians.
+```js
+Robot.Pose.position.length()
+Robot.Pose.inverse()
+Robot.Pose.orientation.toEuler("FixedXyz")              // roll, pitch and yaw in radians
+math.quaternionFromEuler(0, 0, PI / 2, "FixedXyz")      // and back
+Goal.position.isNear(Robot.Pose.position, 0.001)
+Cylinder({ axis: { a: vec(0, 0, 0), b: vec(0, 0, 1) }, radius: 0.1 }).volume()
+```
+
+- A Float or Int vector takes a Double one's methods.
 - A 2D `cross` is a number: how far the second turns from the first.
-- `a.equals(b)` compares two vectors or quaternions.
+- A colour has `lighten(t)` `darken(t)` `alpha(a)` `fade(k)` `mix(c, t)`.

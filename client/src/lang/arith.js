@@ -1,16 +1,17 @@
 // The operator rewrite, as PaperScript does it on acorn's parse: each + - * / and unary minus in
-// code becomes a call into math.js, and so does a call by one of its method names, so vectors,
-// quaternions and poses take arithmetic and methods while numbers and text behave as JS has them.
+// code becomes a call into math.js, and so does a call by one of Rant Math's method names, so values
+// of the standard types take arithmetic and methods while numbers and text behave as JS has them.
 // A call by a library function's name always reaches it, so `max(a, b)` works where `max` alone
 // is a component's input. What an await waits on goes through `__yield` first, and the left of
 // a `??` and the callee of a `?.()` through `__maybe`, so an unknown value there gives way to
 // the right or skips the call.
 
 import { parse } from "./acorn/acorn.mjs";
-import { FUNCTION_NAMES, METHOD_NAMES } from "./math.js";
+import { FUNCTION_NAMES, methodNames } from "./math.js";
 
 const OPS = { "+": "__add", "-": "__sub", "*": "__mul", "/": "__div" };
-const METHODS = new Set(METHOD_NAMES);
+// read from Rant Math's table when code is first rewritten
+let methods = null;
 const FUNCTIONS = new Set(FUNCTION_NAMES);
 
 /** The script `src` with its arithmetic and math method calls routed through math.js, line for
@@ -104,7 +105,7 @@ function emit(src, node) {
         }
         return out + src.slice(from, node.end);
       }
-      if (!node.optional && c.type === "MemberExpression" && !c.computed && !optional(c) && c.object.type !== "Super" && METHODS.has(c.property.name)) {
+      if (!node.optional && c.type === "MemberExpression" && !c.computed && !optional(c) && c.object.type !== "Super" && (methods ??= new Set(methodNames())).has(c.property.name)) {
         return `__method(${at(c.object)}, "${c.property.name}"${rest(c, node.arguments)})`;
       }
       if (!node.optional && c.type === "Identifier" && FUNCTIONS.has(c.name)) return `__fn("${c.name}"${rest(c, node.arguments)})`;

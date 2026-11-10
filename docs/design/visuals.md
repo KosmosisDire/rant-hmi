@@ -50,8 +50,8 @@ The HMI's settled rules:
   JointState or a list of points.
 - A screen knows each import's type, but a component's inputs have none.
 - Code is shared through the math library, the same on screens and the system: `vec`,
-  `fromEuler`, `lerp`, `mix`, and methods and operators on vectors, quaternions and poses
-  (`q.euler()`, `pose * pose`). And by nesting components. A project cannot write a function
+  `lerp`, `mix`, and Rant Math's methods and operators on the standard types
+  (`q.toEuler("FixedXyz")`, `pose * pose`). And by nesting components. A project cannot write a function
   once and call it from many places.
 
 ## Part 1: a canvas
@@ -210,7 +210,7 @@ digits, a bar between two limits, a point placed in a plane.
 
 1. **Nesting.** A view holds instances of smaller ones: Joints a bar per joint, Pose its
    readings. Works today.
-2. **The math library.** What every view computes the same way, as `q.euler()`. Works today,
+2. **The math library.** What every view computes the same way, as `q.toEuler("FixedXyz")`. Works today,
    for math general enough to be the HMI's own.
 3. **Project functions.** Functions a project writes once, as a file every expression reads.
    This is the infrastructure the user sensed is missing: a file, its editor, completion,
@@ -375,7 +375,7 @@ Choices worth a second look:
   Readout for its words. A view is built in the same scenario as the views it holds, since
   each worker of the suite keeps a project of its own. So Readout moved from `build-dials` to
   `build-readings`.
-- **Shared through the math library.** Pose reads roll, pitch and yaw with `q.euler()`, and
+- **Shared through the math library.** Pose reads roll, pitch and yaw with `q.toEuler("FixedXyz")`, and
   Joints and Pose turn radians with `degrees`. Nothing new was needed.
 - **Readout reads text too**, so it shows an enum's option or a time through `Date`, and
   leaves out the space when it has no unit.

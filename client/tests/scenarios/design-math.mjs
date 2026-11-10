@@ -1,7 +1,6 @@
 // A designer does math on the robot's pose in a page, the list offering it: the standard functions
-// by their plain names, arithmetic between vectors and with numbers, vector, quaternion and pose
-// methods, text joined with a vector, a clear word on a 2D plus a 3D vector, and code that does
-// not parse.
+// by their plain names, Rant Math's operators and the methods of each standard type, text joined
+// with a vector, a clear word on a 2D plus a 3D vector, and code that does not parse.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   if (!hmi.state.imports.some((i) => i.alias === "Robot.Pose")) await hmi.import("Robot.Pose", "Robot/Pose");
@@ -11,9 +10,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
     reach: "Robot.Pose.position.length().toFixed(2)",
     doubled: "(Robot.Pose.position * 2).length().toFixed(2)",
     apart: "(Robot.Pose.position - vec(0, 0, 0.3)).length().toFixed(2)",
-    turned: "(Robot.Pose.orientation * vec(1, 0, 0)).equals(vec(1, 0, 0))",
+    turned: "(Robot.Pose.orientation * vec(1, 0, 0)).isNear(vec(1, 0, 0), 1e-9)",
     placed: "(Robot.Pose * vec(0, 0, 1)).z.toFixed(2)",
-    yaw: "degrees(fromEuler(0, 0, PI / 2).euler().yaw).toFixed(0)",
+    yaw: 'degrees(math.quaternionFromEuler(0, 0, PI / 2, "FixedXyz").toEuler("FixedXyz")[2]).toFixed(0)',
+    fitted: "Cylinder({ axis: { a: vec(0, 0, 0), b: vec(0, 0, 2) }, radius: 1 }).volume().toFixed(2)",
+    made: 'Double3({ x: 3, y: 4, z: 0 }).length() + ({ x: 1, y: 0 }).dot(vec(2, 5))',
     plain: "sqrt(16) + clamp(5, 0, 3) + lerp(0, 10, 0.25) + floor(2.7) + max(1, 4)",
     words: '"at " + vec(1, 2)',
     crossed: "vec(1, 0, 0).cross(vec(0, 1, 0)).z",
@@ -26,7 +27,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   }
   const wrong = await hmi.addElement(pageId, "span", { name: "wrong", x: "11", y: String(y), w: "440", h: "33", text: "vec(1, 2) + vec(1, 2, 3)" });
   await d.openPage("Pose math");
-  const want = { reach: "0.50", doubled: "1.00", apart: "0.40", turned: "true", placed: "1.30", yaw: "90", plain: "15.5", words: "at (1, 2)", crossed: "1" };
+  const want = { reach: "0.50", doubled: "1.00", apart: "0.40", turned: "true", placed: "1.30", yaw: "90", fitted: "6.28", made: "7", plain: "15.5", words: "at (1, 2)", crossed: "1" };
   for (const [name, text] of Object.entries(want)) {
     let seen = "";
     await eventually(async () => (seen = await d.el(ids[name]).textContent()) === text, () => `${name} to show ${text}, not ${seen}`);
@@ -42,10 +43,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await names()).includes("sqrt"), "sqrt in the list");
   await text.fill("");
   await page.keyboard.type("Robot.Pose.position.");
-  await eventually(async () => (await names()).join().startsWith("x,y,z,length,normalized"), "a vector's fields and then its methods");
+  await eventually(async () => (await names()).join().startsWith("x,y,z,add,subtract"), "a vector's fields and then its methods");
   await page.keyboard.press("Escape");
   const note = page.locator(".screen:not([hidden]) .sidebar.right .field-note");
-  await eventually(async () => (await note.textContent())?.includes("a 2D vector and a 3D vector cannot be added"), "the sum of a 2D and a 3D vector to say why it fails");
+  await eventually(async () => (await note.textContent())?.includes("a Double2 and a Double3 cannot be added"), "the sum of a 2D and a 3D vector to say why it fails");
   await d.setField("Text", "Line.Speed +");
   let said = "";
   await eventually(async () => (said = (await note.allTextContents()).join(" | ")).startsWith("Unexpected token"), () => `code that does not parse to say so, not ${said}`);

@@ -3,7 +3,7 @@
 
 import { apiIn, type Place } from "../lang/api.js";
 import { tokens as lex } from "../lang/lex";
-import { kind, LIBRARY, METHODS_OF } from "../lang/math.js";
+import { LIBRARY, methodsOf } from "../lang/math.js";
 import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Kind } from "../protocol/Kind";
 import type { Page } from "../protocol/Page";
@@ -61,15 +61,15 @@ const api = (place: Place): Suggestion[] => apiIn(place).map((a) => ({ label: a.
 /** How each math method is typed in, and what it gives. */
 const METHOD_WORDS: Record<string, [string, string]> = {
   length: ["length()", "its length"],
-  normalized: ["normalized()", "the same way, of length 1"],
+  normalize: ["normalize()", "the same way, of length 1"],
   dot: ["dot(", "the dot product with another"],
   cross: ["cross(", "the cross product with another"],
   distance: ["distance(", "how far to another"],
   lerp: ["lerp(", "toward another by t"],
-  equals: ["equals(", "the same, within a hair"],
+  isNear: ["isNear(", "the same, within a tolerance"],
   rotate: ["rotate(", "a 3D vector turned by it"],
   inverse: ["inverse()", "the way back"],
-  euler: ["euler()", "roll, pitch and yaw, in radians"],
+  toEuler: ["toEuler(", "three angles in radians, in an order such as \"FixedXyz\""],
   apply: ["apply(", "a point moved by it"],
   lighten: ["lighten(", "toward white by t, 0 to 1"],
   darken: ["darken(", "toward black by t, 0 to 1"],
@@ -78,13 +78,11 @@ const METHOD_WORDS: Record<string, [string, string]> = {
   mix: ["mix(", "toward another colour by t"],
 };
 
-/** What a vector, quaternion or pose offers of the math library after a dot. One taking
- *  nothing shows what it gives now. */
+/** What a value of a standard type or a colour offers of the math library after a dot. One
+ *  taking nothing shows what it gives now. */
 function mathMethods(value: Value | null, known: boolean): Suggestion[] {
-  const k = kind(value);
-  if (!k) return [];
   const call = LIBRARY.__method as (target: unknown, name: string) => unknown;
-  return METHODS_OF[k].map((m): Suggestion => {
+  return methodsOf(value).map((m): Suggestion => {
     const [insert, type] = METHOD_WORDS[m] ?? [`${m}(`, ""];
     const now = insert.endsWith("()") ? (call(value, m) as Value) : null;
     return { label: m, insert, icon: "member", type, value: now, known: known && now !== null };
