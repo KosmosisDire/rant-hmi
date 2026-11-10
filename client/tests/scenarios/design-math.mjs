@@ -1,6 +1,6 @@
 // A designer does math on the robot's pose in a page, the list offering it: the standard functions
-// by their plain names, Rant Math's operators and the methods of each standard type, text joined
-// with a vector, a clear word on a 2D plus a 3D vector, and code that does not parse.
+// by their plain names, Rant Math's operators and the methods of each standard type with what they
+// take, text joined with a vector, a clear word on a 2D plus a 3D vector, and code that does not parse.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   if (!hmi.state.imports.some((i) => i.alias === "Robot.Pose")) await hmi.import("Robot.Pose", "Robot/Pose");
@@ -44,6 +44,24 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await text.fill("");
   await page.keyboard.type("Robot.Pose.position.");
   await eventually(async () => (await names()).join().startsWith("x,y,z,add,subtract"), "a vector's fields and then its methods");
+  // a method says what it does in Rant Math's words, and one taking only the value shows its answer
+  await page.keyboard.type("lengt");
+  const row = page.locator(".suggest .suggest-row").filter({ has: page.locator(".suggest-name", { hasText: /^length$/ }) });
+  let seen = "";
+  await eventually(async () => Math.abs(Number((seen = await row.locator(".suggest-value").textContent())) - 0.5) < 0.01, () => `length to show 0.5, not ${seen}`);
+  check((await row.locator(".suggest-type").textContent()).length > 0, "length has no words");
+  // inside a method's or a math call's brackets the hint names what it takes, the value left out
+  const hint = page.locator(".signature");
+  const hints = async (code, want) => {
+    await text.fill("");
+    await page.keyboard.type(code);
+    let head = "";
+    await eventually(async () => (await hint.count()) === 1 && (head = (await hint.locator("div").first().textContent()).replace(/: [^,)]+/g, "")) === want, () => `${code} to hint ${want}, not ${head}`);
+  };
+  await hints("Robot.Pose.position.distance(", "Robot.Pose.position.distance(b)");
+  await hints("Robot.Pose.orientation.toEuler(", "Robot.Pose.orientation.toEuler(order)");
+  await hints("math.poseInverse(", "math.poseInverse(p)");
+  await hints("$accent.mix(", "$accent.mix(other, t?)");
   await page.keyboard.press("Escape");
   const note = page.locator(".screen:not([hidden]) .sidebar.right .field-note");
   await eventually(async () => (await note.textContent())?.includes("a Double2 and a Double3 cannot be added"), "the sum of a 2D and a 3D vector to say why it fails");

@@ -1,7 +1,7 @@
 // What may be typed next at the caret: names, then after a dot the fields with their type and
 // live value. It reads only the text before the caret, so the code need not parse.
 
-import { apiIn, type Place } from "../lang/api.js";
+import { API, apiIn, type Place } from "../lang/api.js";
 import { tokens as lex } from "../lang/lex";
 import { LIBRARY, methodsOf } from "../lang/math.js";
 import type { FieldInfo } from "../protocol/FieldInfo";
@@ -44,48 +44,63 @@ const THEMED: Place[] = ["expression", "theme", "component"];
  *  colour's methods. */
 function tokens(): Suggestion[] {
   return state.tokens.map((t) => {
-    let value: Value | null = null;
-    try {
-      value = tokenValue(t) as Value;
-    } catch {
-      // one that cannot be worked out still completes, without a value
-    }
+    const value = tokenNow(t);
     return { label: `$${t.name}`, insert: `$${t.name}`, icon: "token", type: "token", value, known: value !== null, members: mathMethods(value, value !== null) };
   });
+}
+
+/** A token's value in the editor's mode, null where it cannot be worked out. */
+function tokenNow(t: (typeof state.tokens)[number]): Value | null {
+  try {
+    return tokenValue(t) as Value;
+  } catch {
+    return null;
+  }
 }
 
 /** The language's own names in `place`, from the one list of them, a function's typed with
  *  its bracket. */
 const api = (place: Place): Suggestion[] => apiIn(place).map((a) => ({ label: a.name, insert: a.insert ?? (a.takes ? `${a.name}(` : a.name), icon: "api", type: a.words }));
 
-/** How each math method is typed in, and what it gives. */
-const METHOD_WORDS: Record<string, [string, string]> = {
-  length: ["length()", "its length"],
-  normalize: ["normalize()", "the same way, of length 1"],
-  dot: ["dot(", "the dot product with another"],
-  cross: ["cross(", "the cross product with another"],
-  distance: ["distance(", "how far to another"],
-  lerp: ["lerp(", "toward another by t"],
-  isNear: ["isNear(", "the same, within a tolerance"],
-  rotate: ["rotate(", "a 3D vector turned by it"],
-  inverse: ["inverse()", "the way back"],
-  toEuler: ["toEuler(", "three angles in radians, in an order such as \"FixedXyz\""],
-  apply: ["apply(", "a point moved by it"],
-  lighten: ["lighten(", "toward white by t, 0 to 1"],
-  darken: ["darken(", "toward black by t, 0 to 1"],
-  alpha: ["alpha(", "with this alpha, 0 to 1"],
-  fade: ["fade(", "its alpha times k"],
-  mix: ["mix(", "toward another colour by t"],
+/** Rant Math's calls in the order of its table, so a method finds its call by index. */
+const MATH_CALLS = API.find((a) => a.name === "math")?.fields ?? [];
+
+/** What a colour's methods take, and what they give. */
+const COLOUR_WORDS: Record<string, [string[], string]> = {
+  lighten: [["t"], "toward white by t, 0 to 1"],
+  darken: [["t"], "toward black by t, 0 to 1"],
+  alpha: [["a"], "with this alpha, 0 to 1"],
+  fade: [["k"], "its alpha times k"],
+  mix: [["other", "t?"], "toward another colour by t"],
 };
 
+/** The methods `value` takes after a dot, each with what it takes besides the value and what it
+ *  gives: a standard type's from Rant Math's call, a colour's from here. */
+function methodsWith(value: unknown): { name: string; takes: string[]; words: string }[] {
+  return methodsOf(value).map(({ name, function: f, self }) => {
+    if (f === undefined) return { name, takes: COLOUR_WORDS[name][0], words: COLOUR_WORDS[name][1] };
+    const c = MATH_CALLS[f];
+    return { name, takes: (c.takes ?? []).filter((_, i) => i !== self), words: c.words };
+  });
+}
+
+/** True for a value of fixed size, with no list in it, which a method taking only it works out
+ *  at once. A point cloud or an image could take long. */
+const fixed = (v: unknown): boolean => !Array.isArray(v) && !ArrayBuffer.isView(v) && (typeof v !== "object" || v === null || Object.values(v).every(fixed));
+
 /** What a value of a standard type or a colour offers of the math library after a dot. One
- *  taking nothing shows what it gives now. */
+ *  taking nothing shows what it gives now, where the value is small. */
 function mathMethods(value: Value | null, known: boolean): Suggestion[] {
-  const call = LIBRARY.__method as (target: unknown, name: string) => unknown;
-  return methodsOf(value).map((m): Suggestion => {
-    const [insert, type] = METHOD_WORDS[m] ?? [`${m}(`, ""];
-    const now = insert.endsWith("()") ? (call(value, m) as Value) : null;
-    return { label: m, insert, icon: "member", type, value: now, known: known && now !== null };
+  const call = LIBRARY.__method as (target: unknown, name: string) => Value;
+  const small = fixed(value);
+  return methodsWith(value).map((m): Suggestion => {
+    let now: Value | null = null;
+    try {
+      if (m.takes.length === 0 && small) now = call(value, m.name);
+    } catch {
+      // one that cannot answer for this value, as a singular matrix's inverse, shows none
+    }
+    return { label: m.name, insert: m.takes.length === 0 ? `${m.name}()` : `${m.name}(`, icon: "member", type: m.words, value: now, known: known && now !== null };
   });
 }
 
@@ -234,6 +249,11 @@ export function signature(text: string, caret: number, place: Place, own?: strin
     const rest = fn.takes.at(-1)?.startsWith("...") ? fn.takes.length - 1 : Infinity;
     return { from, call, params: fn.takes.map((name) => ({ name, type: "" })), at: Math.min(open.commas, rest) };
   }
+  // a call one of the language's names holds, as math.poseInverse, or a method of a value
+  const held = path.length === 2 ? apiIn(place).find((a) => a.name === path[0])?.fields?.find((f) => f.name === path[1]) : undefined;
+  const method = path.length > 1 && !held ? methodsWith(valueAt(path.slice(0, -1), place, own)).find((m) => m.name === path.at(-1)) : undefined;
+  const values = held?.takes ?? method?.takes;
+  if (values) return { from, call, params: values.map((name) => ({ name, type: "" })), at: open.commas };
   if (place !== "handler") return null;
   const to = keyOf(path, own);
   if (to && to.rest.length === 0 && named(to.key)?.of === "function") {
@@ -409,9 +429,8 @@ function after(path: string[], place: Place, own?: string): Suggestion[] {
   const imp = imported(root);
   if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && rest.length === 0) return [SEND, ...after(path, "expression", own)];
   if (imp?.kind === "task") return place === "handler" && rest.length === 0 ? [CANCEL] : [];
-  let value: Value | null = live(root).value;
+  const value = rest.reduce(at, live(root).value);
   const known = live(root).known;
-  for (const step of rest) value = at(value, step);
   if (imp) {
     let fields: FieldInfo[] | undefined = entity(imp.entity)?.schema?.fields;
     let field: FieldInfo | undefined = fields && bareType(fields) ? fields[0] : undefined;
@@ -457,6 +476,15 @@ function held(o: unknown): Suggestion[] {
     ...calls.map((n): Suggestion => ({ label: n, insert: `${n}(`, icon: "member", type: "" })),
     ...values.map((n): Suggestion => ({ label: n, insert: n, icon: "member", type: typeof value(n), value: value(n) as Value, known: true })),
   ];
+}
+
+/** The value now at a path: a theme token's where code reads those, else a member's or a field
+ *  of one. Null where none is known. */
+function valueAt(path: string[], place: Place, own?: string): Value | null {
+  const token = path.length === 1 && THEMED.includes(place) ? state.tokens.find((t) => `$${t.name}` === path[0]) : undefined;
+  if (token) return tokenNow(token);
+  const to = keyOf(path, own);
+  return to ? to.rest.reduce(at, live(to.key).value) : null;
 }
 
 function at(v: Value | null, step: string): Value | null {

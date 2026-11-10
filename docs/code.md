@@ -240,7 +240,9 @@ $accent.mix($red, 0.5)         // halfway to another colour
 
 ## Methods
 
-Each standard type takes Rant Math's calls on it as methods, which completion lists after a dot:
+Each standard type takes Rant Math's calls on it as methods. Completion lists them after a dot, a
+method that takes only the value shows its answer there, and inside the brackets the hint names what
+the method takes:
 
 ```js
 Robot.Pose.position.length()

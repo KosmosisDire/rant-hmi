@@ -120,7 +120,7 @@ function table() {
   for (const r of m.methods()) {
     if (r.selfIndex === null) continue;
     if (!methods.has(r.type)) methods.set(r.type, new Map());
-    methods.get(r.type).set(camel(r.name), { call: fns[r.function], self: r.selfIndex, field: r.field });
+    methods.get(r.type).set(camel(r.name), { call: fns[r.function], function: r.function, self: r.selfIndex, field: r.field });
   }
   const operators = new Map();
   for (const o of m.operators()) {
@@ -139,11 +139,13 @@ export function mathType(v) {
   return t !== null && /^(Float|Int)[234]$/.test(t) ? `Double${t.slice(-1)}` : t;
 }
 
-/** The method names after a dot on `v`: its standard type's from the table, or a colour's. */
+/** The methods after a dot on `v`: a colour's by name, a standard type's from the table with the
+ *  index of its call there and of the input the value fills. */
 export function methodsOf(v) {
-  if (isColour(v)) return Object.keys(COLOUR);
+  if (isColour(v)) return Object.keys(COLOUR).map((name) => ({ name }));
   const t = mathType(v);
-  return t === null || t === "double" ? [] : [...(table().methods.get(t)?.keys() ?? [])];
+  const own = typed(t) ? table().methods.get(t) : undefined;
+  return [...(own ?? [])].map(([name, m]) => ({ name, function: m.function, self: m.self }));
 }
 
 /** Every method name, which arith.js routes through `__method`: each type's and a colour's. */
