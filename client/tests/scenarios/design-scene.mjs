@@ -9,6 +9,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // over, and the hidden run the start page as the editor opens, any of which may hold a scene
   // of its own, as one an earlier scenario left
   const holds = (els) => els.some((e) => e.tag === "scene" || holds(e.children));
+  // a fresh editor may not have drawn its board yet
+  await page.locator(".artboard").waitFor({ state: "attached" });
   await page.evaluate(() => {
     const drawn = (window.drawnPages = new Set());
     const note = () => document.querySelectorAll(".artboard .page-layer").forEach((l) => drawn.add(l.dataset.page));
