@@ -28,6 +28,8 @@ export function DesignScreen(p: { shown: boolean }) {
     else setSelection((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   };
   const [keys, setKeys] = createSignal(false);
+  /** Whether the board runs its pages, which then take its presses and keys. */
+  const [running, setRunning] = createSignal(false);
   const [typing, setTyping] = createSignal<Typing | null>(null);
   let typed = 0;
   /** Picks an element alone and puts the caret in its field, as a double click does. */
@@ -92,7 +94,7 @@ export function DesignScreen(p: { shown: boolean }) {
     openOn(page, id);
     if (id) reveal();
   };
-  const tapped = (e: MouseEvent) => document.elementFromPoint(e.clientX, e.clientY)?.closest(".page-layer .el[data-id]") && reveal();
+  const tapped = (e: MouseEvent) => !running() && document.elementFromPoint(e.clientX, e.clientY)?.closest(".page-layer .el[data-id]") && reveal();
 
   // an element that went away leaves the selection
   createEffect(() => {
@@ -105,7 +107,8 @@ export function DesignScreen(p: { shown: boolean }) {
   // Escape closes the list first, then lets go.
   onMount(() => {
     const key = (e: KeyboardEvent) => {
-      if (!p.shown || (e.target as HTMLElement).closest("input, textarea, select")) return;
+      // a key a running page's handler took is the page's
+      if (!p.shown || e.defaultPrevented || (e.target as HTMLElement).closest("input, textarea, select")) return;
       const mod = e.ctrlKey || e.metaKey;
       const letter = e.key.toLowerCase();
       if (e.key === "?") {
@@ -121,7 +124,7 @@ export function DesignScreen(p: { shown: boolean }) {
         return;
       }
       const page = currentPage();
-      if (!page) return;
+      if (!page || running()) return;
       if (mod && letter === "a") {
         e.preventDefault();
         setSelection(page.children.map((c) => c.id));
@@ -164,7 +167,7 @@ export function DesignScreen(p: { shown: boolean }) {
     // text has the clipboard
     const clip = (e: ClipboardEvent) => {
       const page = currentPage();
-      if (!p.shown || !page || (e.target as HTMLElement).closest?.("input, textarea, select")) return;
+      if (!p.shown || !page || running() || (e.target as HTMLElement).closest?.("input, textarea, select")) return;
       if (e.type === "paste") return paste(e, page, selection().at(-1) ?? null);
       const picked = tops(page, selection());
       if (picked.length === 0 || !window.getSelection()?.isCollapsed) return;
@@ -193,7 +196,7 @@ export function DesignScreen(p: { shown: boolean }) {
       <Edge side="left" />
       <section class="detail" onClick={tapped}>
         <Show when={currentPage()} fallback={<div class="later">No page yet.</div>}>
-          {(page) => <Artboard pages={onBoard()} page={page()} selected={selection()} onPick={pick} onOpen={openOn} onEdit={edit} keys={keys()} onKeys={setKeys} />}
+          {(page) => <Artboard pages={onBoard()} page={page()} selected={selection()} onPick={pick} onOpen={openOn} onEdit={edit} keys={keys()} onKeys={setKeys} running={running()} onRunning={setRunning} />}
         </Show>
       </section>
       <Edge side="right" />

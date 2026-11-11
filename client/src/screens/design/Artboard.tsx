@@ -1,16 +1,17 @@
 // Every page side by side on one board, the open one editable, or as an upright phone lays it
 // out: the wheel or a pinch zooms, a drag on empty space, with Space or the middle button, or
 // with two fingers pans, elements move and resize on the grid (Alt slips it), and a drag
-// writes when it ends.
+// writes when it ends. While the board runs, its pages take their own presses and keys.
 
 import { createEffect, createMemo, createSignal, For, type JSX, on, onCleanup, onMount, Show, untrack } from "solid-js";
+import { pageAct } from "../../page/act";
 import { type Aim, type Box, fitIn, FRONT, leaves, PageView, pageGround, union } from "../../page/PageView";
 import { createPhonePage, reflows } from "../../page/phone";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Pick } from "./DesignScreen";
-import { Component, File, Keyboard, Smartphone } from "../../ui/icons";
+import { Component, File, Keyboard, Play, Smartphone } from "../../ui/icons";
 import { fingers } from "../../ui/fingers";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
@@ -18,6 +19,7 @@ import { createSize, onResize } from "../../ui/size";
 import { wheelPx, zoomBy } from "../../ui/wheel";
 import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
 import { find, homeOf, SHAPES, spaceHome } from "../../state/elements";
+import { stack } from "../../state/stack";
 import { flight, flyTo, setBoardPages } from "../../state/view";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
@@ -209,10 +211,15 @@ export function Artboard(p: {
   /** Whether the keys list shows. */
   keys: boolean;
   onKeys: (shown: boolean) => void;
+  /** Whether its pages run, as the Run tab runs them, instead of being edited. */
+  running: boolean;
+  onRunning: (on: boolean) => void;
 }) {
   let host!: HTMLDivElement;
   let grid!: HTMLCanvasElement;
   const [cam, setCam] = createSignal<Cam>({ k: UNIT / 2, x: 0, y: 0 });
+  // a component runs only inside a page, so its board never does
+  const live = () => p.running && p.page.interface === null;
   const room = createSize();
   /** Where each page's corner sits on the board, in units, left to right in their order. */
   const slots = createMemo(() => {
@@ -400,6 +407,8 @@ export function Artboard(p: {
       keep();
     });
     const wheel = (e: WheelEvent) => {
+      // a running page's element took it to scroll or zoom itself
+      if (e.defaultPrevented) return;
       e.preventDefault();
       land();
       const c = cam();
@@ -412,7 +421,7 @@ export function Artboard(p: {
     host.addEventListener("wheel", wheel, { passive: false });
     // Space held anywhere but in a field, while the board shows
     const key = (e: KeyboardEvent) => {
-      if (e.code !== "Space" || host.offsetParent === null || (e.target as HTMLElement).closest?.("input, textarea, select, [contenteditable]")) return;
+      if (e.code !== "Space" || e.defaultPrevented || host.offsetParent === null || (e.target as HTMLElement).closest?.("input, textarea, select, [contenteditable]")) return;
       e.preventDefault();
       setSpace(e.type === "keydown");
     };
@@ -476,6 +485,14 @@ export function Artboard(p: {
       { defer: true },
     ),
   );
+  // a page a running handler opens flies into sight, as the Run tab would show it
+  createEffect(
+    on(
+      () => stack().at(-1)?.id,
+      (id) => id && live() && id !== p.page.id && byId(id) && !seen(id) && fitPage(id),
+      { defer: true },
+    ),
+  );
   /** Opens a page the board was pressed on, which so needs no flight. */
   const openHere = (id: string) => {
     if (id !== p.page.id) opened = id;
@@ -536,8 +553,6 @@ export function Artboard(p: {
     land();
     if (e.pointerType === "touch" && finger.down(e) > 1) return;
     const target = e.target as HTMLElement;
-    // a field being typed in commits before the canvas takes over
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     const panFrom = () => {
       setPanning(true);
       return { kind: "pan" as const, sx: e.clientX, sy: e.clientY, vx: cam().x, vy: cam().y };
@@ -546,7 +561,13 @@ export function Artboard(p: {
       // the middle button's own scroll never starts
       e.preventDefault();
       drag = panFrom();
+    } else if (live()) {
+      // a running page takes its own presses, and empty space pans
+      if (e.button !== 0 || pageAt(e.clientX, e.clientY)) return;
+      drag = panFrom();
     } else if (e.button === 0) {
+      // a field being typed in commits before the canvas takes over
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       // a press on another page opens it, then goes on as a press there
       const at = pageAt(e.clientX, e.clientY);
       if (at && at !== p.page.id) openHere(at);
@@ -975,7 +996,7 @@ export function Artboard(p: {
     if (all.length === 0 || all.some((e) => homeOf(e) !== "page")) return undefined;
     if (all.some((e) => laidOut(p.page, e.id))) measured();
     const b = onScreen(union(all.flatMap((e) => boxAt(e.id) ?? [])));
-    const handles = preview() ? [] : HANDLES.filter((g) => !short(g, b.width, b.height) && scalable(all, g));
+    const handles = preview() || live() ? [] : HANDLES.filter((g) => !short(g, b.width, b.height) && scalable(all, g));
     return { style: { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` }, handles };
   };
 
@@ -1014,6 +1035,7 @@ export function Artboard(p: {
       onPointerDown={down}
       onContextMenu={(e) => {
         cancel();
+        if (live()) return;
         const on = pageAt(e.clientX, e.clientY);
         if (on && on !== p.page.id) openHere(on);
         const stack = stackAt(p.page, hitsAt(e.clientX, e.clientY));
@@ -1026,6 +1048,7 @@ export function Artboard(p: {
         else canvasMenu(e, p.page, at, p.onPick, () => p.page.children.forEach((c) => p.onPick(c.id, true)));
       }}
       onDblClick={(e) => {
+        if (live()) return;
         // the press captured the pointer, so the target is the artboard: look beneath it
         const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest(".el[data-id]")?.getAttribute("data-id");
         if (hit) p.onEdit(hit);
@@ -1038,9 +1061,10 @@ export function Artboard(p: {
             {(pg) => {
               const open = () => id === p.page.id;
               const at = () => screenOf(boxOn(pg()));
+              const act = pageAct(id);
               return (
                 <div class="page-layer" classList={{ open: open() }} data-page={id} style={{ transform: `translate(${at().left}px, ${at().top}px) scale(${cam().k / UNIT})` }}>
-                  <PageView page={open() ? (preview() ?? pg()) : pg()} overrides={open() ? overrides : undefined} grows={open() && !!preview()} view={aimOf(id)} design />
+                  <PageView page={open() ? (preview() ?? pg()) : pg()} overrides={open() && !live() ? overrides : undefined} grows={open() && !!preview()} view={aimOf(id)} design={!live()} act={live() ? act : undefined} />
                 </div>
               );
             }}
@@ -1088,7 +1112,7 @@ export function Artboard(p: {
           <Show when={ring(id)}>
             {(r) => (
               <div class="ring" style={r()}>
-                <Show when={!preview() && p.selected.length === 1 && !part(id) && (!shape(id) || scales(id))}>
+                <Show when={!preview() && !live() && p.selected.length === 1 && !part(id) && (!shape(id) || scales(id))}>
                   <For each={grips(id)}>{(h) => <span class={`handle ${h}`} data-handle={h} style={{ cursor: cursorOf(h, turn()?.id === id ? turn()!.angle + turn()!.room : 0) }} />}</For>
                 </Show>
               </div>
@@ -1105,6 +1129,16 @@ export function Artboard(p: {
       </Show>
       <Show when={turn() && turns(turn()!.id) && turn()}>{(t) => <div class="origin" style={{ left: `${t().at.x}px`, top: `${t().at.y}px` }} />}</Show>
       <div class="zoom">
+        <button
+          class="icon-btn"
+          classList={{ on: live() }}
+          disabled={p.page.interface !== null}
+          title={p.page.interface !== null ? "A component runs only inside a page" : live() ? "Back to editing" : "Run the pages here"}
+          onClick={() => p.onRunning(!live())}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <Play size={14} />
+        </button>
         <button class="icon-btn mono" title="Show at 100%" onClick={actual} onPointerDown={(e) => e.stopPropagation()}>
           {Math.round((view().k / UNIT) * 100)}%
         </button>
