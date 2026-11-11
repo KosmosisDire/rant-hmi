@@ -113,3 +113,7 @@ B. Both hear it, as on a page, and the scene's handlers skip a press on a part t
 
 - Parts kept one size on the screen, as a gizmo's handles are.
 - Parts drawn over all others.
+- A scene follows one pointer: a second finger's pick takes the place of the first's.
+- `inside` on a release reads the last pick, so a flick off a part and straight up may still tap.
+- Whether a scene's own drag keeps a finger from scrolling is settled before the pick says a part
+  takes the drag.
