@@ -108,6 +108,13 @@ B. Both hear it, as on a page, and the scene's handlers skip a press on a part t
    Found on the way: the scene drew a part as the kind it began as, so an instance that took the
    id of the box it replaced drew as a box with the instance's props. A part is now made again
    when its tag or component changes.
+6. **Docs and proof.** `components.md` has 3D components, `events.md` 3D parts with the 3D
+   fields in its generated pointer table, `pages.md` the instance in a scene, and the skill both.
+   `build-gizmo` builds a Gizmo in the editor alone, three box handles whose drag moves its
+   `value` along an axis by `p.ray.closestRay`, and drags a box a metre with it.
+   `design-scene-select` makes boxes picked by a tap in the editor, and a drag from one still
+   turns the scene. With `--library` the Gizmo would join the standard components, which waits
+   on the user.
 
 ## Open
 
