@@ -557,11 +557,11 @@ function Held(p: PartProps) {
  *  component's parts. */
 function PartView(p: PartProps) {
   const instance = p.element.tag === "use";
-  const tag = instance ? "anchor" : p.element.tag;
-  if (!isPart(tag)) return null;
+  const kind = instance ? "anchor" : p.element.tag;
+  if (!isPart(kind)) return null;
   const of = () => (instance ? component(p.element.component ?? "") : undefined);
   const [id, key] = [++made, Symbol()];
-  drawing({ to: "part", part: id, scene: p.scene, parent: p.parent, kind: tag, frame: instance });
+  drawing({ to: "part", part: id, scene: p.scene, parent: p.parent, kind, frame: instance });
   createEffect(() => named.set(id, p.element.props.name ?? ""));
   owners.set(id, p.owner);
   onCleanup(() => [named, owners].forEach((m) => m.delete(id)));
@@ -594,9 +594,9 @@ function PartView(p: PartProps) {
   let said = "";
   const time = timer();
   createEffect(() => {
-    const read = reader(p.element.props, PARTS[tag], p.scope, time, true);
+    const read = reader(p.element.props, PARTS[kind], p.scope, time, true);
     const pose = read.pose(POSE);
-    const shown: Shown = { ...SHOWS[tag](read), pose, visible: false, ghost: false };
+    const shown: Shown = { ...SHOWS[kind](read), pose, visible: false, ghost: false };
     const d = read.drawn;
     const fault = instance && misplaced(p.element.component ?? "", of());
     if (fault) d.faults.push(fault);
@@ -623,10 +623,10 @@ function PartView(p: PartProps) {
     onCleanup(() => holds(p.element.id, undefined));
   }
   createEffect(() => {
-    const name = p.element.props.name ?? (p.element.component || tag);
+    const name = p.element.props.name ?? (p.element.component || kind);
     const d = mine();
-    const named = (list: string[]) => list.map((f) => `${name}: ${f}`);
-    p.view.found(key, { faults: named([...d.faults, ...theirs().faults]), unknown: d.unknown, warnings: named([...d.warnings, ...theirs().warnings]) });
+    const prefixed = (list: string[]) => list.map((f) => `${name}: ${f}`);
+    p.view.found(key, { faults: prefixed([...d.faults, ...theirs().faults]), unknown: d.unknown, warnings: prefixed([...d.warnings, ...theirs().warnings]) });
   });
   const inner = (c: Element, scope: Scope, act: () => Act | undefined, owner: number | null, inside?: boolean) => (
     <Held element={c} scope={scope} scene={p.scene} parent={id} view={p.view} act={act} owner={owner} design={p.design} inside={inside} />
@@ -732,9 +732,15 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
     ...chain.filter((c) => owners.get(c) === n && named.get(c)).map((c): [string, number] => [named.get(c)!, c]),
     ...(chain.includes(n) ? [["root", n] as [string, number]] : []),
   ];
-  /** Tells each instance which of its parts the pointer is over. */
+  /** Tells each instance which of its parts the pointer is over, when that changes. */
+  const overs = new Map<number, string>();
   const hover = () => {
-    for (const [n, h] of holders) h.kept.over(new Set(ownParts(n, under?.chain ?? []).map(([name]) => name)));
+    for (const [n, h] of holders) {
+      const names = ownParts(n, under?.chain ?? []).map(([name]) => name);
+      if (overs.get(n) === names.join()) continue;
+      overs.set(n, names.join());
+      h.kept.over(new Set(names));
+    }
   };
   /** What shows at `e` on the canvas, from the worker. */
   const ask = (e: Spot) =>
@@ -763,8 +769,9 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
       if (wanted) track(wanted);
     });
   };
+  // a part that takes the pointer, or an instance whose parts show it, is worth a pick
   const press = (e: PointerEvent) => {
-    if (!p.act || ![...acting.values()].some((a) => a.live())) return;
+    if (!p.act || (holders.size === 0 && ![...acting.values()].some((a) => a.live()))) return;
     let ended: { u?: PointerEvent } | undefined;
     away = false;
     held++;
@@ -772,7 +779,7 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
       move: track,
       end: (u) => {
         ended = { u };
-        held--;
+        if (--held === 0 && away) leave();
       },
     });
     const record = { chain: [] as number[], known: Promise.resolve() };
@@ -780,11 +787,11 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
       under = found;
       hover();
       record.chain = found.chain;
-      // each instance the press is on holds what it writes and marks its parts pressed, each
+      // each instance a press still on holds what it writes and marks its parts pressed, each
       // until a pick no longer meets it
       for (const n of found.chain) {
         const h = holders.get(n);
-        if (!h) continue;
+        if (!h || ended) continue;
         h.hold(e);
         h.kept.press(e, ownParts(n, found.chain).map(([name, c]) => [name, () => !!under?.chain.includes(c)]));
       }
@@ -801,24 +808,32 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
     landing: (e) => presses.get(e)?.known,
     takes: (e, event, payload) => !!presses.get(e)?.chain.some((n) => acting.get(n)?.takes(event, payload)),
   });
+  const leave = () => {
+    away = true;
+    if (held > 0) return;
+    under = null;
+    hover();
+  };
+  const move = (m: PointerEvent) => {
+    away = false;
+    if (p.act && holders.size > 0 && m.buttons === 0) track(m);
+  };
   onMount(() => {
     if (!("transferControlToOffscreen" in canvas)) return setBlind(true);
     const off = canvas.transferControlToOffscreen();
     blinds.set(id, () => setBlind(true));
     // a model file is named from the page, not from where the worker's script is
     drawing({ to: "scene", scene: id, canvas: off, base: document.baseURI }, [off]);
-    // as it goes down, before the scene's own press, which waits for what this finds
-    canvas.parentElement?.addEventListener("pointerdown", press, true);
-    // an instance's parts may show the pointer over them, so a scene holding one follows it
-    canvas.parentElement?.addEventListener("pointermove", (m) => {
-      away = false;
-      if (p.act && holders.size > 0 && m.buttons === 0) track(m);
-    });
-    canvas.parentElement?.addEventListener("pointerleave", () => {
-      away = true;
-      if (held > 0) return;
-      under = null;
-      hover();
+    // as it goes down, before the scene's own press, which waits for what this finds, and over
+    // it for the parts of an instance, which may show the pointer over them
+    const box = canvas.parentElement!;
+    box.addEventListener("pointerdown", press, true);
+    box.addEventListener("pointermove", move);
+    box.addEventListener("pointerleave", leave);
+    onCleanup(() => {
+      box.removeEventListener("pointerdown", press, true);
+      box.removeEventListener("pointermove", move);
+      box.removeEventListener("pointerleave", leave);
     });
     sized();
     onResize(canvas, sized);
