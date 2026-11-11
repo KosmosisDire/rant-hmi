@@ -58,6 +58,8 @@ export default async function ({ page, hmi, sys, check, eventually }) {
 
   // the left toggle slides the drawer out over the page, and a tap beside it puts it away
   await toggle.first().tap();
+  // two reads before the slide begins would look settled where it starts
+  await eventually(async () => ((await drawer.boundingBox())?.x ?? -1) > -300, "the drawer to start sliding out");
   const out = await settled(drawer, "the drawer to slide out");
   check(out.x === 0 && out.width <= 340 && out.width > 300, `the drawer is ${JSON.stringify(out)}`);
   await on(".drawer-scrim").tap({ position: { x: 370, y: 300 } });
