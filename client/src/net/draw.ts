@@ -2036,7 +2036,10 @@ export function hear(m: Drawing) {
       const o = KINDS[m.kind].make();
       Object.assign(o.userData, { part: true, id: m.part });
       parent?.add(o);
-      parts.set(m.part, { id: m.part, o, kind: m.kind, scene: m.scene, shown: { visible: false }, follows: {}, said: "", base: d?.base ?? "", frame: !!m.frame });
+      const h: Held = { id: m.part, o, kind: m.kind, scene: m.scene, shown: { visible: false }, follows: {}, said: "", base: d?.base ?? "", frame: !!m.frame };
+      parts.set(m.part, h);
+      // a scene may draw it before it shows anything, and its shaders read what picking adds
+      pickables(h);
       return;
     }
     case "pick": {
