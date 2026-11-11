@@ -143,6 +143,10 @@ choices below.
   response through the part's `pressed`.
 - Made for touch: targets at least 4 units high, nothing shown only on hover, `outside`
   closes what a press opened.
+- A part of a 3D scene placed many times, as a cell or a gizmo, is a component with
+  `space="3d"` holding parts. Its instance goes in a `<scene>` with a `pose` and its inputs.
+  Its parts' handlers read `p.ray`, a Ray in the instance's own frame, and `p.point`, so a drag
+  along an axis is `p.ray.closestRay({ origin, direction }).b`.
 
 ## Designing pages
 
@@ -175,5 +179,7 @@ choices below.
   part and a Grid to a `grid` part. The GPU reads their bytes, so never unpack them in a
   computed value or a canvas. `field='"intensity"'` colours them from blue to red, and
   `range="[0, 255]"` sets its ends and hides what falls outside. A `floor` draws ground lines.
+- A scene's parts take taps and drags as any element does, as a box picked by a tap. The scene
+  hears only what its parts do not take, so a part with only a `tap` leaves drags to the camera.
 - A choice for the machine is a `<var>` with `per="hmi"`. An operator's own, as a jog mode or
   a picked tab, is a `<var>` each screen keeps.
