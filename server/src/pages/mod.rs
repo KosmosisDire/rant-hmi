@@ -915,8 +915,12 @@ impl Pages {
                         return Err(e.home(&homes).misplaced().into());
                     }
                 }
-                if page.interface.is_some() {
+                if let Some(i) = &page.interface {
                     self.component_name(&page.name, None)?;
+                    // as its file could not say both
+                    if i.space == Space::Scene && i.sizing != Sizing::Scale {
+                        return Err(format!("{} is placed by its pose, so it takes no sizing", page.name));
+                    }
                 }
                 let id = page.id.clone();
                 self.insert_page(page);
