@@ -1283,6 +1283,21 @@ export const SENT: readonly SettingInfo[] = [
   }
 ];
 
+export const IN_SCENE: readonly (readonly [string, string])[] = [
+  [
+    "ray",
+    "a Ray from the camera through the pointer"
+  ],
+  [
+    "point",
+    "where the ray meets it, null once it is off it"
+  ],
+  [
+    "index",
+    "the point of a points part it meets"
+  ]
+];
+
 export const SENDERS: Readonly<Record<Sender, string>> = {
   "pointer": "Pointer",
   "wheel": "Wheel and pinch",

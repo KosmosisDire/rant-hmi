@@ -55,6 +55,29 @@ pub struct Interface {
     pub variables: Vec<Local>,
     #[serde(default)]
     pub sizing: Sizing,
+    #[serde(default)]
+    pub space: Space,
+}
+
+/// What a component is made of and where its instances go: page elements on a page, or 3D parts
+/// in a scene, where an instance is a part placed by its pose.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[ts(export)]
+pub enum Space {
+    #[default]
+    #[serde(rename = "2d")]
+    Page,
+    #[serde(rename = "3d")]
+    Scene,
+}
+
+impl Space {
+    pub fn home(self) -> Home {
+        match self {
+            Space::Page => Home::Page,
+            Space::Scene => Home::Scene,
+        }
+    }
 }
 
 /// How an instance draws its component in the box it is placed at: scaled whole to fit,
@@ -316,12 +339,12 @@ impl Tag {
         }
     }
 
-    /// Whether this may hold a `child`.
-    fn holds(self, child: Tag) -> Result<(), String> {
+    /// Whether this may hold a child that goes in `child`.
+    fn holds(self, child: Home) -> Result<(), String> {
         match self.inside() {
-            Some(home) if home == child.home() => Ok(()),
+            Some(home) if home == child => Ok(()),
             // a page's holder says where the child goes, any other what it takes
-            Some(Home::Page) => Err(child.home().misplaced().into()),
+            Some(Home::Page) => Err(child.misplaced().into()),
             Some(Home::Diagram) => Err("a diagram holds only shapes".into()),
             Some(Home::Scene) => Err("a scene holds only 3D parts".into()),
             None => Err("only a frame, a group, a diagram or a scene holds other elements".into()),
@@ -358,12 +381,35 @@ impl Home {
     }
 }
 
+/// Where each component's instances go, by the component's name.
+pub(crate) type Homes = std::collections::HashMap<String, Home>;
+
+/// Where the instances of each of `pages` that is a component go.
+pub(crate) fn homes(pages: &[Page]) -> Homes {
+    pages.iter().filter_map(|p| Some((p.name.clone(), p.interface.as_ref()?.space.home()))).collect()
+}
+
+impl Page {
+    /// Where what it holds goes: a 3D component holds 3D parts, any other page elements.
+    pub fn home(&self) -> Home {
+        self.interface.as_ref().map_or(Home::Page, |i| i.space.home())
+    }
+}
+
 impl Element {
     /// The tag the file writes: an instance takes its component's name.
     pub fn word(&self) -> &str {
         match self.tag {
             Tag::Use => self.component.as_deref().unwrap_or("Missing"),
             tag => WORDS.iter().find(|(t, _)| *t == tag).map(|(_, w)| *w).expect("every tag but use has a word"),
+        }
+    }
+
+    /// Where it goes: an instance where its component's go, on a page while that is missing.
+    pub(crate) fn home(&self, homes: &Homes) -> Home {
+        match &self.component {
+            Some(c) => homes.get(c).copied().unwrap_or(Home::Page),
+            None => self.tag.home(),
         }
     }
 }
@@ -375,7 +421,12 @@ impl Element {
 #[ts(export)]
 pub enum Edit {
     AddPage { name: String },
-    AddComponent { name: String },
+    AddComponent {
+        name: String,
+        #[serde(default)]
+        #[ts(optional)]
+        space: Option<Space>,
+    },
     /// A page or component made as a copy of another, under a name of its own.
     CopyPage { page: String, name: String },
     /// Renames a page or component, whose id and file follow the name. `id` is the id it takes
@@ -529,6 +580,9 @@ const WIDTH: u32 = 128;
 const HEIGHT: u32 = 72;
 const COMPONENT_WIDTH: u32 = 24;
 const COMPONENT_HEIGHT: u32 = 16;
+/// A 3D component's board, the view of it the Design tab shows.
+const SCENE_WIDTH: u32 = 40;
+const SCENE_HEIGHT: u32 = 30;
 /// The largest side a page may have, in units of 10 px.
 const LARGEST: u32 = 1600;
 
@@ -566,6 +620,10 @@ impl Pages {
 
     pub fn component(&self, name: &str) -> Option<&Page> {
         self.list.iter().find(|p| p.interface.is_some() && p.name == name)
+    }
+
+    fn homes(&self) -> Homes {
+        homes(&self.list)
     }
 
     /// True when `component`, or a component it holds at any depth, has an instance of the
@@ -754,11 +812,13 @@ impl Pages {
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
             }
-            Edit::AddComponent { name } => {
+            Edit::AddComponent { name, space } => {
                 let name = self.component_name(&name, None)?;
                 let id = self.free_id(&slug(&name), None);
-                let interface = Some(Interface::default());
-                self.insert_page(Page { id: id.clone(), name, width: COMPONENT_WIDTH, height: COMPONENT_HEIGHT, shows: Shows::Full, fill: String::new(), interface, state: Vec::new(), children: Vec::new() });
+                let space = space.unwrap_or_default();
+                let (width, height) = if space == Space::Scene { (SCENE_WIDTH, SCENE_HEIGHT) } else { (COMPONENT_WIDTH, COMPONENT_HEIGHT) };
+                let interface = Some(Interface { space, ..Interface::default() });
+                self.insert_page(Page { id: id.clone(), name, width, height, shows: Shows::Full, fill: String::new(), interface, state: Vec::new(), children: Vec::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
@@ -816,7 +876,7 @@ impl Pages {
             Edit::SetSizing { page, sizing } => {
                 let p = self.page_mut(&page)?;
                 let name = p.name.clone();
-                let i = p.interface.as_mut().ok_or_else(|| format!("{name} is a page, and only a component is placed at a size"))?;
+                let i = p.interface.as_mut().filter(|i| i.space == Space::Page).ok_or_else(|| format!("{name} is no 2D component, and only one is placed at a size"))?;
                 let old = std::mem::replace(&mut i.sizing, sizing);
                 Edit::SetSizing { page: page.clone(), sizing: old }
             }
@@ -848,8 +908,12 @@ impl Pages {
                     return Err(format!("{} cannot be a new page's id", page.id));
                 }
                 let mut ids = HashSet::new();
+                let homes = self.homes();
                 for e in &page.children {
-                    check_tree(e, &mut ids)?;
+                    check_tree(e, &mut ids, &homes)?;
+                    if e.home(&homes) != page.home() {
+                        return Err(e.home(&homes).misplaced().into());
+                    }
                 }
                 if page.interface.is_some() {
                     self.component_name(&page.name, None)?;
@@ -862,6 +926,7 @@ impl Pages {
             }
             Edit::AddElement { page, parent, index, mut element } => {
                 self.check_uses(&page, &element)?;
+                let homes = self.homes();
                 let p = self.page_mut(&page)?;
                 let mut next = highest(&p.children) + 1;
                 each_mut(std::slice::from_mut(&mut element), &mut |e| {
@@ -869,60 +934,65 @@ impl Pages {
                     next += 1;
                     false
                 });
-                check_tree(&element, &mut HashSet::new())?;
+                check_tree(&element, &mut HashSet::new(), &homes)?;
                 let id = element.id.clone();
-                let list = holder(p, &parent, element.tag)?;
+                let list = holder(p, &parent, element.home(&homes))?;
                 list.insert(index.unwrap_or(list.len()).min(list.len()), element);
                 *made = Some((page.clone(), id.clone()));
                 Edit::RemoveElement { page: page.clone(), id }
             }
             Edit::RemoveElement { page, id } => {
+                let homes = self.homes();
                 let p = self.page_mut(&page)?;
                 let (parent, index) = locate(&p.children, &id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
-                let tag = find(&p.children, &id).expect("located above").tag;
-                let element = holder(p, &parent, tag)?.remove(index);
+                let home = find(&p.children, &id).expect("located above").home(&homes);
+                let element = holder(p, &parent, home)?.remove(index);
                 Edit::PutElement { page: page.clone(), parent, index, element }
             }
             Edit::PutElement { page, parent, index, element } => {
                 self.check_uses(&page, &element)?;
+                let homes = self.homes();
                 let p = self.page_mut(&page)?;
                 let mut ids = all(&p.children).map(|e| e.id.clone()).collect();
-                check_tree(&element, &mut ids)?;
+                check_tree(&element, &mut ids, &homes)?;
                 let id = element.id.clone();
-                let list = holder(p, &parent, element.tag)?;
+                let list = holder(p, &parent, element.home(&homes))?;
                 list.insert(index.min(list.len()), element);
                 *made = Some((page.clone(), id.clone()));
                 Edit::RemoveElement { page: page.clone(), id }
             }
             Edit::MoveElement { page, id, parent, index } => {
+                let homes = self.homes();
                 let p = self.page_mut(&page)?;
                 let (from, at) = locate(&p.children, &id, None).ok_or_else(|| format!("{id} is not on {page}"))?;
                 let moved = find(&p.children, &id).expect("located above");
-                let tag = moved.tag;
+                let home = moved.home(&homes);
                 if let Some(target) = &parent
                     && (target == &id || find(&moved.children, target).is_some())
                 {
                     return Err("a frame cannot go inside itself".into());
                 }
-                holder(p, &parent, tag)?;
-                let element = holder(p, &from, tag)?.remove(at);
-                let list = holder(p, &parent, tag)?;
+                holder(p, &parent, home)?;
+                let element = holder(p, &from, home)?.remove(at);
+                let list = holder(p, &parent, home)?;
                 list.insert(index.min(list.len()), element);
                 Edit::MoveElement { page: page.clone(), id, parent: from, index: at }
             }
             Edit::Group { page, ids } => {
+                let homes = self.homes();
                 let p = self.page_mut(&page)?;
                 let (holder, mut order) = sharing(&p.children, &page, &ids, "group")?;
                 order.sort();
-                let tag = find(&p.children, &order[0].1).expect("located above").tag.home().group();
+                let tag = find(&p.children, &order[0].1).expect("located above").home(&homes).group();
                 let element = Element { id: String::new(), tag, component: None, props: BTreeMap::new(), handlers: Vec::new(), state: Vec::new(), children: Vec::new() };
                 let edits = into_new(&page, &p.children, holder, &order, element);
                 return self.change(edits, touched, made);
             }
             Edit::Wrap { page, ids, props } => {
+                let homes = self.homes();
                 let p = self.page_mut(&page)?;
                 let (holder, order) = sharing(&p.children, &page, &ids, "wrap")?;
-                if let Some(other) = order.iter().map(|(_, id)| find(&p.children, id).expect("located above").tag.home()).find(|h| *h != Home::Page) {
+                if let Some(other) = order.iter().map(|(_, id)| find(&p.children, id).expect("located above").home(&homes)).find(|h| *h != Home::Page) {
                     return Err(format!("a frame holds elements, and {}", other.misplaced()));
                 }
                 let element = Element { id: String::new(), tag: Tag::Div, component: None, props, handlers: Vec::new(), state: Vec::new(), children: Vec::new() };
@@ -1413,11 +1483,11 @@ fn highest(elements: &[Element]) -> u32 {
 
 /// An element's tree from a screen: property names, no text holding elements, and ids new
 /// to `ids`, which gains them.
-fn check_tree(e: &Element, ids: &mut HashSet<String>) -> Result<(), String> {
+fn check_tree(e: &Element, ids: &mut HashSet<String>, homes: &Homes) -> Result<(), String> {
     for e in all(std::slice::from_ref(e)) {
         check_props(e.props.keys())?;
         e.handlers.iter().enumerate().try_for_each(|(n, h)| check_handler(&e.handlers[..n], h))?;
-        e.children.iter().try_for_each(|c| e.tag.holds(c.tag))?;
+        e.children.iter().try_for_each(|c| e.tag.holds(c.home(homes)))?;
         if (e.tag == Tag::Use) != e.component.is_some() {
             return Err("an instance, and only an instance, names a component".into());
         }
@@ -1428,13 +1498,14 @@ fn check_tree(e: &Element, ids: &mut HashSet<String>) -> Result<(), String> {
     Ok(())
 }
 
-/// The list an element with `tag` goes into: the page's own, a frame's or a diagram's.
-fn holder<'a>(page: &'a mut Page, parent: &Option<String>, tag: Tag) -> Result<&'a mut Vec<Element>, String> {
+/// The list an element that goes in `home` goes into: the page's own, a frame's, a diagram's
+/// or a scene's.
+fn holder<'a>(page: &'a mut Page, parent: &Option<String>, home: Home) -> Result<&'a mut Vec<Element>, String> {
     let Some(parent) = parent else {
-        return if tag.home() == Home::Page { Ok(&mut page.children) } else { Err(tag.home().misplaced().into()) };
+        return if home == page.home() { Ok(&mut page.children) } else { Err(home.misplaced().into()) };
     };
     let e = find_mut(&mut page.children, parent).ok_or_else(|| format!("{parent} is not on {}", page.id))?;
-    e.tag.holds(tag)?;
+    e.tag.holds(home)?;
     Ok(&mut e.children)
 }
 
@@ -1596,7 +1667,7 @@ mod tests {
         pages.apply(Edit::SetFill { page: "overview".into(), fill: "$ground".into() }).unwrap();
         assert_eq!(pages.rename("$ground", "$base", true).unwrap(), ["overview"]);
         assert_eq!(Pages::open(&dir).unwrap().get("overview").unwrap().fill, "$base");
-        let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into() }).unwrap().made.unwrap().1;
+        let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into(), space: None }).unwrap().made.unwrap().1;
         assert_eq!(pages.apply(Edit::SetFill { page: gauge.clone(), fill: "#000".into() }).err().unwrap(), "Gauge draws on what holds it, so it has no fill");
         // a default and a start read the theme too, so they follow its renames
         let input = Some(Input { name: "tone".into(), default: "$base".into(), bindable: false, r#type: String::new() });
@@ -1699,10 +1770,10 @@ mod tests {
         let dir = scratch("components");
         let mut pages = Pages::open(&dir).unwrap();
         let o = || "overview".to_string();
-        let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into() }).unwrap().made.unwrap().1;
-        let card = pages.apply(Edit::AddComponent { name: "Card".into() }).unwrap().made.unwrap().1;
-        assert_eq!(pages.apply(Edit::AddComponent { name: "gauge".into() }).err().unwrap(), "\"gauge\" cannot name a component: start with a capital letter, then use letters and digits");
-        assert_eq!(pages.apply(Edit::AddComponent { name: "Gauge".into() }).err().unwrap(), "Gauge is already a component");
+        let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into(), space: None }).unwrap().made.unwrap().1;
+        let card = pages.apply(Edit::AddComponent { name: "Card".into(), space: None }).unwrap().made.unwrap().1;
+        assert_eq!(pages.apply(Edit::AddComponent { name: "gauge".into(), space: None }).err().unwrap(), "\"gauge\" cannot name a component: start with a capital letter, then use letters and digits");
+        assert_eq!(pages.apply(Edit::AddComponent { name: "Gauge".into(), space: None }).err().unwrap(), "Gauge is already a component");
         pages.apply(Edit::AddElement { page: card.clone(), parent: None, index: None, element: instance("Gauge") }).unwrap();
         pages.apply(Edit::AddElement { page: o(), parent: None, index: None, element: instance("Card") }).unwrap();
         let add = |page: &str, c: &str| Edit::AddElement { page: page.into(), parent: None, index: None, element: instance(c) };
@@ -1732,7 +1803,7 @@ mod tests {
     fn inputs_rename_and_go_with_their_instances() {
         let dir = scratch("inputs");
         let mut pages = Pages::open(&dir).unwrap();
-        let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into() }).unwrap().made.unwrap().1;
+        let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into(), space: None }).unwrap().made.unwrap().1;
         let input = |name: &str| Some(Input { name: name.into(), default: "0".into(), bindable: false, r#type: String::new() });
         pages.apply(Edit::SetInput { page: gauge.clone(), name: "value".into(), input: input("value") }).unwrap();
         pages.apply(add(gauge.clone(), None, Tag::Span, props(&[("text", "value.toFixed(1)")]))).unwrap();
@@ -1819,7 +1890,7 @@ mod tests {
     fn a_components_variables_rename_in_its_code_and_undo() {
         let dir = scratch("locals");
         let mut pages = Pages::open(&dir).unwrap();
-        let menu = pages.apply(Edit::AddComponent { name: "Menu".into() }).unwrap().made.unwrap().1;
+        let menu = pages.apply(Edit::AddComponent { name: "Menu".into(), space: None }).unwrap().made.unwrap().1;
         let local = |name: &str| Some(Local { name: name.into(), start: "false".into() });
         pages.apply(Edit::SetLocal { page: menu.clone(), name: "open".into(), local: local("open") }).unwrap();
         pages.apply(add(menu.clone(), None, Tag::Div, props(&[("opacity", "open ? 1 : 0")]))).unwrap();
@@ -1880,6 +1951,40 @@ mod tests {
         pages.apply(Edit::Ungroup { page: o(), id: anchor }).unwrap();
         assert_eq!(find(&pages.get("overview").unwrap().children, &scene).unwrap().children.iter().map(|e| e.id.clone()).collect::<Vec<_>>(), parts);
         assert_eq!(pages.apply(Edit::Wrap { page: o(), ids: vec![parts[0].clone()], props: BTreeMap::new() }).unwrap_err(), "a frame holds elements, and a 3D part goes in a scene");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_3d_component_holds_parts_and_its_instances_go_in_scenes() {
+        let dir = scratch("deep");
+        let mut pages = Pages::open(&dir).unwrap();
+        let o = || "overview".to_string();
+        let instance = |parent: Option<String>, component: &str| Edit::AddElement { page: o(), parent, index: None, element: Element { id: String::new(), tag: Tag::Use, component: Some(component.into()), props: props(&[("pose", "{}"), ("level", "1")]), handlers: Vec::new(), state: Vec::new(), children: Vec::new() } };
+        let cell = pages.apply(Edit::AddComponent { name: "Cell".into(), space: Some(Space::Scene) }).unwrap().made.unwrap().1;
+        let meter = pages.apply(Edit::AddComponent { name: "Meter".into(), space: None }).unwrap().made.unwrap().1;
+        assert_eq!(pages.get(&cell).unwrap().home(), Home::Scene);
+        // its own parts sit at its top, and a page's elements never do
+        let parts: Vec<String> = [Tag::Box, Tag::Arrow].iter().map(|t| pages.apply(add(cell.clone(), None, *t, props(&[]))).unwrap().made.unwrap().1).collect();
+        assert_eq!(pages.apply(add(cell.clone(), None, Tag::Div, props(&[]))).unwrap_err(), "an element goes on a page or in a frame");
+        let anchor = pages.apply(Edit::Group { page: cell.clone(), ids: parts }).unwrap().made.unwrap().1;
+        assert_eq!(find(&pages.get(&cell).unwrap().children, &anchor).unwrap().tag, Tag::Anchor);
+        // its instances are parts, a 2D one's never are
+        let scene = pages.apply(add(o(), None, Tag::Scene, props(&[]))).unwrap().made.unwrap().1;
+        let placed = pages.apply(instance(Some(scene.clone()), "Cell")).unwrap().made.unwrap().1;
+        assert_eq!(pages.apply(instance(None, "Cell")).unwrap_err(), "a 3D part goes in a scene");
+        assert_eq!(pages.apply(instance(Some(scene.clone()), "Meter")).unwrap_err(), "a scene holds only 3D parts");
+        assert_eq!(pages.apply(Edit::MoveElement { page: o(), id: placed.clone(), parent: None, index: 0 }).unwrap_err(), "a 3D part goes in a scene");
+        let anchor = pages.apply(Edit::Group { page: o(), ids: vec![placed.clone()] }).unwrap().made.unwrap().1;
+        assert_eq!(find(&pages.get("overview").unwrap().children, &anchor).unwrap().children[0].id, placed);
+        // all it is set to is an attribute, and it reads back the same
+        let text = fs::read_to_string(dir.join("pages/overview.html")).unwrap();
+        assert!(text.contains(&format!("<Cell id=\"{placed}\" level=\"1\" pose=\"{{}}\"/>")), "{text}");
+        assert!(fs::read_to_string(dir.join("components/cell.html")).unwrap().starts_with("<component name=\"Cell\" space=\"3d\" size=\"40x30\">"));
+        let again = Pages::open(&dir).unwrap();
+        assert_eq!(again.list, pages.list);
+        // it has no box, so no sizing
+        assert_eq!(pages.apply(Edit::SetSizing { page: cell.clone(), sizing: Sizing::Fill }).unwrap_err(), "Cell is no 2D component, and only one is placed at a size");
+        pages.apply(Edit::SetSizing { page: meter, sizing: Sizing::Fill }).unwrap();
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -2010,7 +2115,7 @@ mod tests {
     fn events_a_component_sends_rename_with_their_handlers() {
         let dir = scratch("events");
         let mut pages = Pages::open(&dir).unwrap();
-        let toggle = pages.apply(Edit::AddComponent { name: "Toggle".into() }).unwrap().made.unwrap().1;
+        let toggle = pages.apply(Edit::AddComponent { name: "Toggle".into(), space: None }).unwrap().made.unwrap().1;
         let event = |name: &str, to: Option<&str>| Edit::SetEvent { page: toggle.clone(), name: name.into(), to: to.map(Into::into) };
         pages.apply(event("change", Some("change"))).unwrap();
         let id = pages.apply(Edit::AddElement { page: "overview".into(), parent: None, index: None, element: instance("Toggle") }).unwrap().made.unwrap().1;

@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Handler, Home, Input, Interface, Local, Page, Shows, Sizing, Tag, all, check_handler};
+use super::{Element, Handler, Home, Homes, Input, Interface, Local, Page, Shows, Sizing, Space, Tag, all, check_handler, homes};
 use crate::events::{self, rank};
 use crate::project::{Per, Variable};
 use crate::rules;
@@ -58,7 +58,8 @@ pub fn write(page: &Page, components: &[Page]) -> String {
     let shows = if page.shows == Shows::Over { " shows=\"over\"" } else { "" };
     let fill = if page.fill.is_empty() { String::new() } else { format!(" fill={}", quote(&page.fill)) };
     let sizing = if page.interface.as_ref().is_some_and(|i| i.sizing == Sizing::Fill) { " sizing=\"fill\"" } else { "" };
-    let mut out = format!("<{root} name={} size=\"{}x{}\"{shows}{sizing}{fill}>\n", quote(&page.name), page.width, page.height);
+    let space = if page.home() == Home::Scene { " space=\"3d\"" } else { "" };
+    let mut out = format!("<{root} name={}{space} size=\"{}x{}\"{shows}{sizing}{fill}>\n", quote(&page.name), page.width, page.height);
     for i in page.interface.iter().flat_map(|i| &i.inputs) {
         let bindable = if i.bindable { " bindable=\"true\"" } else { "" };
         let types = if i.r#type.is_empty() { String::new() } else { format!(" type={}", quote(&i.r#type)) };
@@ -73,19 +74,20 @@ pub fn write(page: &Page, components: &[Page]) -> String {
     for v in &page.state {
         var(&mut out, "  ", v, "");
     }
+    let homes = homes(components);
     for e in &page.children {
-        element(&mut out, e, 1, components);
+        element(&mut out, e, 1, components, &homes);
     }
     out.push_str(&format!("</{root}>\n"));
     out
 }
 
-fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
+fn element(out: &mut String, e: &Element, depth: usize, components: &[Page], homes: &Homes) {
     let tag = e.word();
     out.push_str(&"  ".repeat(depth));
     out.push_str(&format!("<{tag} id={}", quote(&e.id)));
     let body = matches!(e.tag, Tag::Span | Tag::SvgText);
-    if e.tag.home() != Home::Page {
+    if e.home(homes) != Home::Page {
         // a shape's or a part's every property is an attribute, its name first
         let attrs = e.props.iter().filter(|(k, _)| !(body && k.as_str() == TEXT));
         for (k, v) in attrs.clone().filter(|(k, _)| k.as_str() == "name").chain(attrs.filter(|(k, _)| k.as_str() != "name")) {
@@ -145,7 +147,7 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page]) {
                 lines(out, &inner, code);
             }
             for child in &e.children {
-                element(out, child, depth + 1, components);
+                element(out, child, depth + 1, components, homes);
             }
             out.push_str(&"  ".repeat(depth));
             out.push_str(&format!("</{tag}>\n"));
@@ -228,6 +230,13 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
                 };
                 page.interface.as_mut().expect("a component has an interface").sizing = sizing;
             }
+            "space" if root == "component" => {
+                page.interface.as_mut().expect("a component has an interface").space = match v.as_str() {
+                    "2d" => Space::Page,
+                    "3d" => Space::Scene,
+                    _ => return Err(r.error("space is 2d or 3d")),
+                }
+            }
             "shows" => {
                 page.shows = match v.as_str() {
                     "full" => Shows::Full,
@@ -237,6 +246,9 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
             }
             other => return Err(r.error(&format!("<{root}> takes no attribute {other}"))),
         }
+    }
+    if page.interface.as_ref().is_some_and(|i| i.space == Space::Scene && i.sizing != Sizing::Scale) {
+        return Err(r.error("a 3D component is placed by its pose, so it takes no sizing"));
     }
     match &mut page.interface {
         Some(interface) => {
@@ -930,7 +942,6 @@ mod tests {
         out
     }
 
-    /// Shapes for a diagram or parts for a scene, a group of them holding more.
     /// What an element or a page keeps, sometimes nothing, starts of every kind.
     fn some_state(rng: &mut Rng, keeps: bool) -> Vec<Variable> {
         const STARTS: [&str; 7] = ["false", "0", "-2.5", "\"Auto\"", "\"it's \\\"x\\\"\"", "[1, 2, 3]", "{\"a\": {\"b\": [true]}}"];
@@ -944,22 +955,28 @@ mod tests {
         out
     }
 
+    /// Shapes for a diagram, or parts and instances of the 3D component Cell for a scene, a
+    /// group of them holding more.
     fn random_held(rng: &mut Rng, ids: &mut usize, depth: usize, home: Home, keeps: bool) -> Vec<Element> {
-        let (tags, keys): ([Tag; 5], &[&str]) = match home {
-            Home::Diagram => ([Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G], &["name", "cx", "r", "fill", "stroke", "d", "transform"]),
-            _ => ([Tag::Box, Tag::Model, Tag::Points, Tag::Arrow, Tag::Anchor], &["name", "repeat", "pose", "size", "color", "points", "src", "joints"]),
+        let (tags, keys): ([Tag; 6], &[&str]) = match home {
+            Home::Diagram => ([Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G, Tag::G], &["name", "cx", "r", "fill", "stroke", "d", "transform"]),
+            _ => ([Tag::Box, Tag::Model, Tag::Points, Tag::Arrow, Tag::Anchor, Tag::Use], &["name", "repeat", "pose", "size", "color", "points", "src", "joints"]),
         };
         let mut out = Vec::new();
         for _ in 0..rng.below(3) {
             *ids += 1;
-            let tag = tags[rng.below(5)];
+            let tag = tags[rng.below(6)];
             let mut props = some_props(rng, keys);
             if tag == Tag::SvgText {
                 props.insert(TEXT.to_owned(), rng.pick(&VALUES));
             }
+            let component = (tag == Tag::Use).then(|| "Cell".to_owned());
+            if tag == Tag::Use {
+                props = some_props(rng, &["name", "repeat", "pose", "level", "opacity"]);
+            }
             let id = format!("e{ids}");
             let children = if tag.inside().is_some() && depth < 3 { random_held(rng, ids, depth + 1, home, keeps) } else { Vec::new() };
-            out.push(Element { id, tag, component: None, props, handlers: some_handlers(rng, tag), state: some_state(rng, keeps), children });
+            out.push(Element { id, tag, component, props, handlers: some_handlers(rng, tag), state: some_state(rng, keeps), children });
         }
         out
     }
@@ -1017,7 +1034,11 @@ mod tests {
             events: vec!["change".into()],
             variables: vec![Local { name: "state".into(), start: rng.pick(&VALUES) }],
             sizing: if rng.below(2) == 0 { Sizing::Fill } else { Sizing::Scale },
+            space: Space::Page,
         });
+        // a 3D component holds parts and is placed by its pose
+        let deep = interface.is_some() && rng.below(2) == 0;
+        let interface = interface.map(|i| if deep { Interface { space: Space::Scene, sizing: Sizing::Scale, ..i } } else { i });
         let shows = if rng.below(3) == 0 { Shows::Over } else { Shows::Full };
         // a component draws on what holds it, so only a page has a fill
         let fill = if interface.is_none() && rng.below(2) == 0 { rng.pick(&VALUES) } else { String::new() };
@@ -1026,7 +1047,10 @@ mod tests {
         let state = some_state(rng, keeps);
         let mut children = Vec::new();
         for _ in 0..1 + rng.below(4) {
-            children.push(random_element(rng, &mut ids, 0, keeps));
+            match deep {
+                true => children.extend(random_held(rng, &mut ids, 0, Home::Scene, keeps)),
+                false => children.push(random_element(rng, &mut ids, 0, keeps)),
+            }
         }
         Page { id: "p".into(), name: "Overview".into(), width: 1408, height: 792, shows, fill, interface, state, children }
     }
@@ -1034,9 +1058,15 @@ mod tests {
     #[test]
     fn random_pages_read_back_as_written() {
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        // an instance's inputs are attributes, the rest of a 2D one's CSS, and all of a 3D one's attributes
+        let level = Input { name: "level".into(), default: "0".into(), bindable: false, r#type: String::new() };
+        let component = |name: &str, space| Page { id: name.to_lowercase(), name: name.into(), interface: Some(Interface { inputs: vec![level.clone()], space, ..Interface::default() }), ..parse("<page name=\"x\">
+</page>
+", "x").unwrap() };
+        let components = [component("Meter", Space::Page), component("Cell", Space::Scene)];
         for _ in 0..10000 {
             let page = random_page(&mut rng);
-            let text = write(&page, &[]);
+            let text = write(&page, &components);
             let back = parse(&text, "p").unwrap_or_else(|e| panic!("{e} in\n{text}"));
             assert_eq!(back, page, "read back otherwise:\n{text}");
         }

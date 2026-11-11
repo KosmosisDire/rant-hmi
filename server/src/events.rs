@@ -158,6 +158,15 @@ const ZOOMED: &[(&str, &str)] = &[
     ("factor", "how much bigger, below 1 smaller"),
 ];
 
+/// What a pointer's, a scroll's or a zoom's event brings on a 3D part besides, where the rest
+/// measure its scene. They count in the frame of the file the handler is in: the scene's on a
+/// page, the instance's in a component.
+pub const IN_SCENE: &[(&str, &str)] = &[
+    ("ray", "a Ray from the camera through the pointer"),
+    ("point", "where the ray meets it, null once it is off it"),
+    ("index", "the point of a points part it meets"),
+];
+
 const MOVES: &[(&str, Gather)] = &[("dx", Gather::Sum), ("dy", Gather::Sum)];
 
 /// What a key's event brings.
@@ -379,6 +388,7 @@ mod tests {
         ts += &format!("export const ANY = {ANY:?};\n\n");
         ts += &format!("export const EVENTS: readonly EventInfo[] = {};\n\n", serde_json::to_string_pretty(EVENTS).unwrap());
         ts += &format!("export const SENT: readonly SettingInfo[] = {};\n\n", serde_json::to_string_pretty(SENT).unwrap());
+        ts += &format!("export const IN_SCENE: readonly (readonly [string, string])[] = {};\n\n", serde_json::to_string_pretty(IN_SCENE).unwrap());
         let senders: serde_json::Map<String, serde_json::Value> = EVENTS.iter().map(|e| (serde_json::to_value(e.from).unwrap().as_str().unwrap().to_owned(), e.from.label().into())).collect();
         ts += &format!("export const SENDERS: Readonly<Record<Sender, string>> = {};\n", serde_json::to_string_pretty(&senders).unwrap());
         let path = std::path::Path::new(&std::env::var("TS_RS_EXPORT_DIR").unwrap()).join("events.ts");

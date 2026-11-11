@@ -2,6 +2,7 @@
 import type { Input } from "./Input";
 import type { Local } from "./Local";
 import type { Sizing } from "./Sizing";
+import type { Space } from "./Space";
 
 /**
  * What an instance of a component fills in.
@@ -14,4 +15,4 @@ events: Array<string>,
 /**
  * Its own state, which each instance keeps on each screen.
  */
-variables: Array<Local>, sizing: Sizing, };
+variables: Array<Local>, sizing: Sizing, space: Space, };
