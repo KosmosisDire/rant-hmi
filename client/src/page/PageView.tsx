@@ -933,20 +933,7 @@ function InputBox(p: { element: Element; scope: Scope; value: unknown; act?: Act
  *  variables, and which of its parts the pointer presses or is over. */
 function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: Act; at?: At }) {
   const name = () => p.element.component ?? "";
-  const [held, setHeld] = createSignal<Map<string, unknown> | null>(null);
-  const hold = (e: PointerEvent) => {
-    if (e.button !== 0) return;
-    setHeld(new Map());
-    follow(e, { end: () => setHeld(null), yields: true });
-  };
-  const own = {
-    get: (input: string) => held()?.get(input),
-    has: (input: string) => held()?.has(input) ?? false,
-    set: (input: string, value: unknown) => {
-      const h = held();
-      if (h) setHeld(new Map(h).set(input, value));
-    },
-  };
+  const { own, hold } = holding();
   const kept = keep();
   // the box it is placed at, as the page lays it out, which a scaled component fits
   const placed = createSize();
@@ -976,8 +963,8 @@ function Instance(p: { element: Element; scope: Scope; design?: boolean; act?: A
               // its element holds it only once the tree is built
               queueMicrotask(() => el.parentElement && placed.track(el.parentElement));
             }}
-            onPointerDown={(e) => p.act && !display() && kept.press(e)}
-            onPointerOver={(e) => p.act && !display() && kept.over(e)}
+            onPointerDown={(e) => p.act && !display() && kept.press(e, partsAt(e.target, e.currentTarget).map(([n, el]) => [n, (m) => pointer(el, m, null).inside]))}
+            onPointerOver={(e) => p.act && !display() && kept.over(new Set(partsAt(e.target, e.currentTarget).map(([n]) => n)))}
             onPointerLeave={() => kept.leave()}
           >
             <Doc.Provider value={() => c().id}>
@@ -1000,10 +987,31 @@ function partsAt(target: EventTarget | null, box: HTMLElement): [string, globalT
   return out;
 }
 
+/** What an instance shows of its bindable inputs while a pointer is down on it: what its code
+ *  wrote, at once, and after release what its bindings say. */
+export function holding() {
+  const [held, setHeld] = createSignal<Map<string, unknown> | null>(null);
+  const hold = (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    setHeld(new Map());
+    follow(e, { end: () => setHeld(null), yields: true });
+  };
+  const own = {
+    get: (input: string) => held()?.get(input),
+    has: (input: string) => held()?.has(input) ?? false,
+    set: (input: string, value: unknown) => {
+      const h = held();
+      if (h) setHeld(new Map(h).set(input, value));
+    },
+  };
+  return { own, hold };
+}
+
 /** An instance's own variables and its parts' pointer state. `heldFor` ticks each frame while
  *  something is pressed, so an expression reading it fills as a hold goes on, and stays 0 once
- *  the press leaves the part, as a hold does. */
-function keep(): Kept & { press(e: PointerEvent): void; over(e: PointerEvent): void; leave(): void } {
+ *  the press leaves the part, as a hold does. A press names the parts it is on, each with
+ *  whether a pointer at a move is still over it, and a hover the parts it is over. */
+export function keep(): Kept & { press(e: PointerEvent, at: [string, (m: PointerEvent) => boolean][]): void; over(names: Set<string>): void; leave(): void } {
   const [vars, setVars] = createStore<Record<string, unknown>>({});
   const [parts, setParts] = createStore<Record<string, { pressed: boolean; hovered: boolean; since: number; away?: boolean }>>({});
   const [now, setNow] = createSignal(performance.now());
@@ -1039,9 +1047,8 @@ function keep(): Kept & { press(e: PointerEvent): void; over(e: PointerEvent): v
       const s = parts[name];
       return { pressed: !!s?.pressed, hovered: !!s?.hovered, heldFor: s?.pressed && !s.away ? Math.max(0, now() - s.since) : 0 };
     },
-    press: (e) => {
+    press: (e, at) => {
       if (e.button !== 0) return;
-      const at = partsAt(e.target, e.currentTarget as HTMLElement);
       const names = at.map(([n]) => n);
       mark(names, { pressed: true, since: performance.now(), away: false });
       if (!frame) frame = requestAnimationFrame(tick);
@@ -1049,7 +1056,7 @@ function keep(): Kept & { press(e: PointerEvent): void; over(e: PointerEvent): v
       let next: PointerEvent | null = null;
       const check = () => {
         if (!next) return;
-        const left = at.filter(([n, el]) => !parts[n]?.away && !pointer(el, next!, null).inside).map(([n]) => n);
+        const left = at.filter(([n, inside]) => !parts[n]?.away && !inside(next!)).map(([n]) => n);
         next = null;
         if (left.length > 0) mark(left, { away: true });
       };
@@ -1063,8 +1070,7 @@ function keep(): Kept & { press(e: PointerEvent): void; over(e: PointerEvent): v
       };
       follow(e, { move, end, yields: true });
     },
-    over: (e) => {
-      const names = new Set(partsAt(e.target, e.currentTarget as HTMLElement).map(([n]) => n));
+    over: (names) => {
       setParts(
         produce((all) => {
           for (const n of new Set([...Object.keys(all), ...names])) all[n] = { ...(all[n] ?? { pressed: false, since: 0 }), hovered: names.has(n) };

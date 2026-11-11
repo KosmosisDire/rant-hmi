@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use rquickjs::context::EvalOptions;
 use rquickjs::function::Opt;
 use rquickjs::{Context, Ctx, Exception, Function, Module, Object, Persistent, Promise, Runtime};
+use crate::events;
 use crate::value::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -1182,6 +1183,14 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     // the standard types reach JS only once code makes a value of one or asks one's type
     let types = move |ctx: Ctx<'js>| ctx.json_parse(serde_json::to_string(&*standard).unwrap_or_default());
     math.get::<_, Function>("setTypes")?.call::<_, ()>((Function::new(ctx.clone(), types)?,))?;
+    // what a 3D part's event brings of a standard type comes untagged from the screen
+    if let Some(fields) = p.as_map() {
+        let (tag, standard, given): (Function, Function, Object) = (math.get("tag")?, math.get("standardType")?, g.get("p")?);
+        for (name, ty, _) in events::IN_SCENE.iter().filter(|(name, ty, _)| !ty.is_empty() && fields.iter().any(|(k, _)| k == name)) {
+            let v: rquickjs::Value = given.get(*name)?;
+            given.set(*name, tag.call::<_, rquickjs::Value>((v, standard.call::<_, rquickjs::Value>((*ty,))?))?)?;
+        }
+    }
     g.set("__maker", math.get::<_, Function>("maker")?)?;
     let prelude: Function = ctx.eval(PRELUDE)?;
     prelude.call::<_, ()>((to_js(ctx, &Value::List(imports))?, to_js(ctx, &objects)?, to_js(ctx, &Value::List(pages))?, to_js(ctx, &Value::List(enums))?, to_js(ctx, &Value::List(makers))?))

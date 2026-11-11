@@ -11,15 +11,16 @@ import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { componentScope, resolve, type Resolved, type Scope } from "../state/bind";
+import { IN_SCENE } from "../protocol/events";
 import { takes } from "../state/events";
 import { short } from "../state/format";
 import { component, readFar, readWhole } from "../state/store";
 import { onResize } from "../ui/size";
-import { mathType, standardType, tag, typeOf } from "../lang/math.js";
+import { mathType, rantMath, standardType, tag, typeOf } from "../lang/math.js";
 import { follow } from "../ui/press";
-import type { Act } from "./act";
+import { type Act, componentAct } from "./act";
 import { CLEAN, type Drawn, holds, oncePerFrame, pixelsOf } from "./drawing";
-import { type Gate, type Place, usePress } from "./PageView";
+import { type Gate, holding, keep, type Place, usePress } from "./PageView";
 import { local, moved, pointer, type Spot } from "./pointer";
 import { slowOf, timer } from "./slow";
 import { CAMERA, isPart, type Part, PARTS, POSE, rgbaOf } from "./parts";
@@ -446,13 +447,18 @@ interface Acting {
   down(e: PointerEvent, ended?: { u?: PointerEvent }): void;
 }
 
+/** An instance as its scene presses it: its parts' pointer state, and what it shows while held. */
+interface Holding {
+  kept: ReturnType<typeof keep>;
+  hold(e: PointerEvent): void;
+}
+
 /** What a part reports to its scene, what it has of the scene, and how the scene presses it. */
 interface View {
   /** What it found, under a key of its own. */
   found(key: symbol, d: Drawn | null): void;
   /** It said something new, after which the scene checks its size. */
   told(): void;
-  act(): Act | undefined;
   /** The scene's element, which a press on a part measures across. */
   box(): HTMLElement | undefined;
   /** What was under the pointer last, while a part is pressed. */
@@ -461,6 +467,8 @@ interface View {
   ray(e: Spot): Ray | null;
   /** Lets the scene press part `id` until it goes. */
   join(id: number, part: Acting): void;
+  /** Lets the scene press the instance `id`'s parts and say which the pointer is over. */
+  hold(id: number, instance: Holding): void;
 }
 
 let made = 0;
@@ -480,11 +488,21 @@ onDrew((d) => {
   foundOf.get(d.part)?.(d);
 });
 
-const RAY = standardType("Ray");
+/** The standard type of each field a 3D part's event brings that has one. */
+const TYPED = Object.fromEntries(IN_SCENE.filter(([, t]) => t).map(([name, t]) => [name, standardType(t)]));
+
+/** `v` in the frame `pose` gives, a point moved and turned, a direction only turned. */
+function into(pose: Pose | undefined, v: Vec3, point: boolean): Vec3 {
+  if (!pose) return v;
+  const at = point ? (pose.position ?? { x: 0, y: 0, z: 0 }) : { x: 0, y: 0, z: 0 };
+  const math = rantMath() as { poseApplyInverse(p: Required<Pose>, v: Vec3): Vec3 };
+  return math.poseApplyInverse({ position: at, orientation: pose.orientation ?? { x: 0, y: 0, z: 0, w: 1 } }, v);
+}
 
 /** How a press on part `id` is measured: across its scene, with where the pick found the
- *  pointer last, the part inside while the pick meets it. */
-function partPlace(id: number, view: View): Place {
+ *  pointer last, the part inside while the pick meets it. Its ray and point count from `frame`,
+ *  the instance whose component it is in, or the scene. */
+function partPlace(id: number, view: View, frame: number | null): Place {
   // the scene's canvas, whose holder is the scene, so a move counts as the scene's x and y do
   const canvas = () => view.box()?.querySelector("canvas") ?? undefined;
   return {
@@ -496,24 +514,31 @@ function partPlace(id: number, view: View): Place {
     at: (e, on) => {
       const u = view.under();
       const inside = !!u?.chain.includes(id);
-      const ray = view.ray(e);
-      return { ...pointer(view.box()!, e, on), inside, ray: ray && tag(ray, RAY), point: (inside && u?.point) || null, index: inside ? (u?.index ?? null) : null };
+      const pose = frame === null ? undefined : u?.frames[frame];
+      const seen = view.ray(e);
+      const ray = seen && { origin: into(pose, seen.origin, true), direction: into(pose, seen.direction, false) };
+      const point = inside && u?.point ? into(pose, u.point, true) : null;
+      return { ...pointer(view.box()!, e, on), inside, ray: ray && tag(ray, TYPED.ray), point: point && tag(point, TYPED.point), index: inside ? (u?.index ?? null) : null };
     },
     moved: (sx, sy) => moved(canvas()!, sx, sy),
   };
 }
 
-/** Each part's name, by its number, which a press on what it holds names it by. */
+/** Each part's name, and the instance whose component it is in, by its number. */
 const named = new Map<number, string>();
+const owners = new Map<number, number | null>();
 
-/** Where a part sits: its scene, what holds it there, none for the scene itself, and whether it
- *  is drawn as part of an instance, so it is the component's and not the page's. */
+/** Where a part sits: its scene, what holds it there, none for the scene itself, whether it is
+ *  drawn as part of an instance, so it is the component's and not the page's, that instance as
+ *  `owner`, and what its events go to. */
 interface PartProps {
   element: Element;
   scope: Scope;
   scene: number;
   parent: number | null;
   view: View;
+  act: () => Act | undefined;
+  owner: number | null;
   design?: boolean;
   inside?: boolean;
 }
@@ -533,21 +558,24 @@ function PartView(p: PartProps) {
   const [id, key] = [++made, Symbol()];
   drawing({ to: "part", part: id, scene: p.scene, parent: p.parent, kind: tag, frame: instance });
   createEffect(() => named.set(id, p.element.props.name ?? ""));
-  onCleanup(() => named.delete(id));
-  // a page's part takes the pointer's events as its scene finds them, a component's are its own
-  if (!p.inside) {
-    const q = { element: p.element, scope: p.scope, get act() {
-      return p.view.act();
-    } };
-    const press = usePress(q, { place: partPlace(id, p.view) });
-    p.view.join(id, {
-      element: p.element,
-      live: press.live,
-      takes: (event, payload) => !!q.act && p.element.handlers.some((h) => takes(h, event, payload) && q.act!.hears(p.element, h, p.scope)),
-      read: press.read,
-      down: press.down,
-    });
-  }
+  owners.set(id, p.owner);
+  onCleanup(() => [named, owners].forEach((m) => m.delete(id)));
+  // it takes the pointer's events as its scene finds them
+  const q = {
+    element: p.element,
+    scope: p.scope,
+    get act() {
+      return p.act();
+    },
+  };
+  const press = usePress(q, { place: partPlace(id, p.view, p.owner) });
+  p.view.join(id, {
+    element: p.element,
+    live: press.live,
+    takes: (event, payload) => !!q.act && p.element.handlers.some((h) => takes(h, event, payload) && q.act!.hears(p.element, h, p.scope)),
+    read: press.read,
+    down: press.down,
+  });
   // what the page read, and what the worker found showing it
   const [mine, setMine] = createSignal<Drawn>(CLEAN);
   const [theirs, setTheirs] = createSignal<Found>({ faults: [], warnings: [] });
@@ -595,13 +623,24 @@ function PartView(p: PartProps) {
     const named = (list: string[]) => list.map((f) => `${name}: ${f}`);
     p.view.found(key, { faults: named([...d.faults, ...theirs().faults]), unknown: d.unknown, warnings: named([...d.warnings, ...theirs().warnings]) });
   });
-  const inner = (c: Element, scope: Scope, inside?: boolean) => <Held element={c} scope={scope} scene={p.scene} parent={id} view={p.view} design={p.design} inside={inside} />;
+  const inner = (c: Element, scope: Scope, act: () => Act | undefined, owner: number | null, inside?: boolean) => (
+    <Held element={c} scope={scope} scene={p.scene} parent={id} view={p.view} act={act} owner={owner} design={p.design} inside={inside} />
+  );
   return (
-    <Show when={instance} fallback={<For each={p.element.children}>{(c) => inner(c, p.scope, p.inside)}</For>}>
+    <Show when={instance} fallback={<For each={p.element.children}>{(c) => inner(c, p.scope, p.act, p.owner, p.inside)}</For>}>
       <Show when={!misplaced(p.element.component ?? "", of()) && of()}>
         {(c) => {
-          const scope = componentScope(c(), { props: p.element.props, outer: p.scope });
-          return <For each={c().children}>{(e) => inner(e, scope, true)}</For>;
+          // its parts are its component's, which keeps its own state and sends its events out as
+          // the instance's, and each counts from the instance
+          const { own, hold } = holding();
+          const kept = keep();
+          p.view.hold(id, { kept, hold });
+          const scope = componentScope(c(), { props: p.element.props, outer: p.scope, own, kept });
+          const act = createMemo(() => {
+            const outer = p.act();
+            return outer && componentAct(c(), p.element, outer, p.scope);
+          });
+          return <For each={c().children}>{(e) => inner(e, scope, act, id, true)}</For>;
         }}
       </Show>
     </Show>
@@ -647,6 +686,7 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
   });
   // the parts that may take a press, what the pointer was over last, and each press's parts
   const acting = new Map<number, Acting>();
+  const holders = new Map<number, Holding>();
   let under: Picked | null = null;
   const presses = new WeakMap<PointerEvent, { known: Promise<void>; chain: number[] }>();
   const view: View = {
@@ -657,7 +697,6 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
         return m;
       }),
     told: sized,
-    act: () => p.act,
     box: () => canvas?.parentElement ?? undefined,
     under: () => under,
     ray: (e) => {
@@ -677,6 +716,20 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
       acting.set(part, a);
       onCleanup(() => acting.delete(part));
     },
+    hold: (part, h) => {
+      holders.set(part, h);
+      onCleanup(() => holders.delete(part));
+    },
+  };
+  /** The named parts of instance `n` in `chain` with their numbers, its own and not those of an
+   *  instance it holds, then `root` for the whole while the chain meets it. */
+  const ownParts = (n: number, chain: number[]): [string, number][] => [
+    ...chain.filter((c) => owners.get(c) === n && named.get(c)).map((c): [string, number] => [named.get(c)!, c]),
+    ...(chain.includes(n) ? [["root", n] as [string, number]] : []),
+  ];
+  /** Tells each instance which of its parts the pointer is over. */
+  const hover = () => {
+    for (const [n, h] of holders) h.kept.over(new Set(ownParts(n, under?.chain ?? []).map(([name]) => name)));
   };
   /** What shows at `e` on the canvas, from the worker. */
   const ask = (e: Spot) =>
@@ -690,13 +743,17 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
   // while a press lasts what is under the pointer is found again as it moves, one pick at a time
   let asking = false;
   let wanted: Spot | null = null;
+  // a pick that comes once the pointer left finds nothing, unless a press still follows it
+  let away = true;
+  let held = 0;
   const track = (m: Spot) => {
     wanted = m;
     if (asking) return;
     asking = true;
     wanted = null;
     void ask(m).then((found) => {
-      under = found;
+      under = away && held === 0 ? null : found;
+      hover();
       asking = false;
       if (wanted) track(wanted);
     });
@@ -704,11 +761,28 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
   const press = (e: PointerEvent) => {
     if (!p.act || ![...acting.values()].some((a) => a.live())) return;
     let ended: { u?: PointerEvent } | undefined;
-    follow(e, { move: track, end: (u) => (ended = { u }) });
+    away = false;
+    held++;
+    follow(e, {
+      move: track,
+      end: (u) => {
+        ended = { u };
+        held--;
+      },
+    });
     const record = { chain: [] as number[], known: Promise.resolve() };
     record.known = ask(e).then((found) => {
       under = found;
+      hover();
       record.chain = found.chain;
+      // each instance the press is on holds what it writes and marks its parts pressed, each
+      // until a pick no longer meets it
+      for (const n of found.chain) {
+        const h = holders.get(n);
+        if (!h) continue;
+        h.hold(e);
+        h.kept.press(e, ownParts(n, found.chain).map(([name, c]) => [name, () => !!under?.chain.includes(c)]));
+      }
       for (const n of found.chain) {
         const a = acting.get(n);
         if (!a) continue;
@@ -730,6 +804,17 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
     drawing({ to: "scene", scene: id, canvas: off, base: document.baseURI }, [off]);
     // as it goes down, before the scene's own press, which waits for what this finds
     canvas.parentElement?.addEventListener("pointerdown", press, true);
+    // an instance's parts may show the pointer over them, so a scene holding one follows it
+    canvas.parentElement?.addEventListener("pointermove", (m) => {
+      away = false;
+      if (p.act && holders.size > 0 && m.buttons === 0) track(m);
+    });
+    canvas.parentElement?.addEventListener("pointerleave", () => {
+      away = true;
+      if (held > 0) return;
+      under = null;
+      hover();
+    });
     sized();
     onResize(canvas, sized);
     createEffect(() => {
@@ -748,7 +833,7 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
     <>
       <canvas ref={canvas} class="el-picture" />
       <Show when={ready()}>
-        <For each={p.element.children}>{(c) => <Held element={c} scope={p.scope} scene={id} parent={null} view={view} design={p.design} />}</For>
+        <For each={p.element.children}>{(c) => <Held element={c} scope={p.scope} scene={id} parent={null} view={view} act={() => p.act} owner={null} design={p.design} />}</For>
       </Show>
     </>
   );

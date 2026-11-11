@@ -85,6 +85,16 @@ B. Both hear it, as on a page, and the scene's handlers skip a press on a part t
 
    Left for later: a part's `outside` is a press outside its scene, a wheel and two fingers stay
    the scene's, and a mesh does not say which triangle a pick met.
+4. **Components.** A part inside an instance takes events through its component's act, which
+   sends `emit` out as the instance's, and reads the instance's own variables. `keep` in
+   `PageView.tsx`, which holds those and each part's `pressed`, `hovered` and `heldFor`, now
+   takes the named parts a press is on and how to tell the pointer is still over each, so a 2D
+   instance gives it parts from the page and a 3D one parts from the pick. A scene holding an
+   instance picks as the pointer moves over it, for `hovered`. Every pick brings the pose of
+   each instance, and a handler's `ray` and `point` are turned into its instance's frame by Rant
+   Math's `pose_apply_inverse`. `IN_SCENE` names each field's standard type, by which the
+   screen tags what it sends and the system tags `p` again, as a tag does not cross the wire.
+   Scenario `run-scene-component-events`, and a system handler in `run-scene-picking`.
 
 ## Open
 

@@ -1283,18 +1283,21 @@ export const SENT: readonly SettingInfo[] = [
   }
 ];
 
-export const IN_SCENE: readonly (readonly [string, string])[] = [
+export const IN_SCENE: readonly (readonly [string, string, string])[] = [
   [
     "ray",
+    "Ray",
     "a Ray from the camera through the pointer"
   ],
   [
     "point",
+    "Double3",
     "where the ray meets it, null once it is off it"
   ],
   [
     "index",
-    "the point of a points part it meets"
+    "",
+    "the point of a points part, or the cell of a grid, it meets"
   ]
 ];
 
