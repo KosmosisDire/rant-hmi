@@ -543,9 +543,14 @@ interface PartProps {
   inside?: boolean;
 }
 
-/** A part, or a copy of it per item when it repeats, in `parent`. */
+/** A part, or a copy of it per item when it repeats, in `parent`. Made again when it becomes
+ *  another kind, as an element keeps its id when an edit swaps a part for an instance. */
 function Held(p: PartProps) {
-  return <Repeated element={p.element} scope={p.scope} design={p.design}>{(scope) => <PartView {...p} scope={scope()} />}</Repeated>;
+  return (
+    <Show when={`${p.element.tag} ${p.element.component ?? ""}`} keyed>
+      {(kind) => kind && <Repeated element={p.element} scope={p.scope} design={p.design}>{(scope) => <PartView {...p} scope={scope()} />}</Repeated>}
+    </Show>
+  );
 }
 
 /** A part, or an instance of a 3D component, drawn as an anchor at its pose that holds the
