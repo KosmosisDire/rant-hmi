@@ -158,8 +158,7 @@ const ZOOMED: &[(&str, &str)] = &[
     ("factor", "how much bigger, below 1 smaller"),
 ];
 
-/// What a pointer's, a scroll's or a zoom's event brings on a 3D part besides, where the rest
-/// measure its scene. They count in the frame of the file the handler is in: the scene's on a
+/// What a pointer's event brings on a 3D part besides, where the rest measure its scene. They count in the frame of the file the handler is in: the scene's on a
 /// page, the instance's in a component.
 pub const IN_SCENE: &[(&str, &str)] = &[
     ("ray", "a Ray from the camera through the pointer"),

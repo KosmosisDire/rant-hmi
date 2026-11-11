@@ -68,6 +68,23 @@ B. Both hear it, as on a page, and the scene's handlers skip a press on a part t
    pose, holding its component's parts read in the component's scope. The worker needed
    nothing new. A part drawn inside an instance lists no robots in the editor, since its id
    is the component's. Scenario `design-scene-component`.
+3. **Picking.** Every material in a scene is wrapped once, in `pickable` in `net/draw.ts`: its own
+   main runs, and while `PICKING` is on a fragment it keeps writes its part's number, the point
+   or cell it shows and its depth into one float pixel. No two parts share a material, so the
+   part is the material's uniform: a model copies its file's materials and keeps a ghost of its
+   own. A pick draws the scene again through a view offset of one pixel, the dots sized for it.
+   The worker tells the page its camera as it moves, and the page works out the ray through any
+   pointer from it at once, while the point and the part come from the pick a frame late.
+   `usePress` takes a `Place`, which measures a 3D part's press across its scene, and a `Gate`,
+   with which a scene's press waits for the pick and skips what a part takes. A pick happens only
+   on a scene with a part that takes the pointer. Scenario `run-scene-picking`.
+
+   Found on the way: the canvas takes no pointer events, so the scene listens on its own
+   element as the press goes down. A press always begins with a drag of 0, so a click on a part
+   without a drag handler turns the scene's drag once, as on a page.
+
+   Left for later: a part's `outside` is a press outside its scene, a wheel and two fingers stay
+   the scene's, and a mesh does not say which triangle a pick met.
 
 ## Open
 

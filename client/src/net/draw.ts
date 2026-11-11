@@ -142,7 +142,8 @@ export type Drawing =
   | { to: "scene"; scene: number; canvas: OffscreenCanvas; base: string }
   | { to: "size"; scene: number; width: number; height: number }
   | { to: "aim"; scene: number; aim: Aim }
-  | { to: "part"; part: number; scene: number; parent: number | null; kind: Part }
+  | { to: "part"; part: number; scene: number; parent: number | null; kind: Part; frame?: boolean }
+  | { to: "pick"; scene: number; ask: number; x: number; y: number }
   | { to: "show"; part: number; shown: Shown }
   | { to: "drop"; part: number }
   | { to: "end"; scene: number };
@@ -161,8 +162,33 @@ export interface Listed {
   joints: string[];
 }
 
-/** What the scenes tell the page: what a part found here, or a scene that has no WebGL. */
-export type Drew = ({ part: number } & Found) | { blind: number };
+/** A ray as Rant's standard type has it. */
+export interface Ray {
+  origin: Vec3;
+  direction: Vec3;
+}
+
+/** What shows at a pixel of a scene, all in the scene's frame: the parts it meets from the one
+ *  hit out, the point of a points part or the cell of a grid hit, where it meets them, and the
+ *  pose of each part that is a frame, as an instance is. */
+export interface Picked {
+  chain: number[];
+  index: number | null;
+  point: Vec3 | null;
+  frames: Record<number, Pose>;
+}
+
+/** Where a scene's camera is, and what takes a point on its canvas, -1 to 1 across and up, to
+ *  the scene's frame, as three.js lays out a matrix. A ray through a pixel goes from the one
+ *  through the other. */
+export interface Eye {
+  origin: Vec3;
+  unproject: number[];
+}
+
+/** What the scenes tell the page: what a part found here, a scene that has no WebGL, what a pick
+ *  it asked for found, or where a scene's camera now is. */
+export type Drew = ({ part: number } & Found) | { blind: number } | ({ picked: number } & Picked) | { seen: number; eye: Eye };
 
 /** What the scenes need of the worker around them. */
 export interface Host {
@@ -212,8 +238,61 @@ function fade(m: Material, opacity: number) {
   if (m.transparent !== see) Object.assign(m, { transparent: see, depthWrite: !see, needsUpdate: true });
 }
 
-/** What a model that is a ghost draws each of its meshes with, shared by all and never freed. */
+/** What a model that is a ghost draws each of its meshes with, a copy of its own. */
 const GHOST = new MeshLambertMaterial({ color: new Color().setRGB(0.55, 0.55, 0.55, SRGBColorSpace), transparent: true, opacity: 0.35, depthWrite: false });
+
+/** Whether a scene draws the pixel under a pointer as numbers rather than colours, shared by
+ *  every material. */
+const PICKING = { value: false };
+
+/** Each material's part, which no other part's material shares, so a pick tells them apart. */
+const picks = new WeakMap<Material, { value: number }>();
+
+// Any fragment shader, its own main run as `drawn`. While picking, a fragment it keeps is the
+// number of its part, of the point or cell it shows or -1, and its depth, which a shader that
+// moves its depth sets.
+const PICK_PARS = `
+uniform bool uPicking;
+uniform float uPart;
+float pickIndex;
+float pickDepth;
+void drawn()`;
+const PICK_MAIN = `
+void main() {
+  pickIndex = -1.0;
+  pickDepth = gl_FragCoord.z;
+  drawn();
+  if (uPicking) gl_FragColor = vec4(uPart, pickIndex, pickDepth, 1.0);
+}`;
+
+/** Makes `m` draw as part `part` when picking. */
+function pickable(m: Material, part: number) {
+  const known = picks.get(m);
+  if (known) return void (known.value = part);
+  const uPart = { value: part };
+  picks.set(m, uPart);
+  const own = m.onBeforeCompile;
+  // the default key is the text of what it compiles with, which is now this
+  const key = Object.hasOwn(m, "customProgramCacheKey") ? m.customProgramCacheKey.bind(m) : () => own.toString();
+  m.onBeforeCompile = (shader, renderer) => {
+    own.call(m, shader, renderer);
+    Object.assign(shader.uniforms, { uPicking: PICKING, uPart });
+    shader.fragmentShader = shader.fragmentShader.replace(/void\s+main\s*\(\s*\)/, PICK_PARS) + PICK_MAIN;
+  };
+  m.customProgramCacheKey = () => `${key()} pick`;
+  m.needsUpdate = true;
+}
+
+/** Makes every material part `h` draws with its own pickable, but those of the parts it holds. */
+function pickables(h: Held) {
+  const each = (o: Object3D) => {
+    if (o !== h.o && o.userData.part) return;
+    const m = (o as Mesh).material as Material | Material[] | undefined;
+    if (m) for (const one of [m].flat()) pickable(one, h.id);
+    o.children.forEach(each);
+  };
+  each(h.o);
+}
 
 // shapes of one unit each solid scales, shared by all and never freed
 const BLOCK = new BoxGeometry(1, 1, 1);
@@ -240,6 +319,8 @@ interface Held {
   said: string;
   /** Where its page is, which a model file it names is read from. */
   base: string;
+  /** Whether it is a frame that handlers inside it count from, as an instance is. */
+  frame: boolean;
 }
 
 /** How a part is made, and how it shows what it was told, adding what it finds. */
@@ -534,6 +615,7 @@ uniform vec4 uBeams;
 uniform float uEchoes;
 ${decls.join("\n")}
 varying vec4 vColor;
+flat varying float vPoint;
 ${DOT_VARYINGS}
 #ifdef QUADS
 #define POINT gl_InstanceID
@@ -551,6 +633,7 @@ void main() {
   vec4 colour;
   float size;
   bool ok = pointAt(false, p, colour, size);
+  vPoint = float(${r.joined ? "gl_InstanceID" : "POINT"});
   ${other.join("\n  ")}
   vColor = colour;
   if (!ok) {
@@ -599,12 +682,14 @@ varying vec2 vCorner;
 // or a box is lit where the eye's ray meets it, at its middle's depth so the GPU skips what is hidden.
 const DOTS_FRAGMENT = `
 varying vec4 vColor;
+flat varying float vPoint;
 ${DOT_VARYINGS}
 #ifdef DOTS
 uniform mat4 modelViewMatrix;
 ${LINEAR}
 #endif
 void main() {
+  pickIndex = vPoint;
   #ifdef DOTS
   #ifdef QUADS
   vec2 c = vCorner;
@@ -1304,6 +1389,7 @@ void main() {
   ivec2 c = clamp(ivec2(vUv * vec2(uCells)), ivec2(0), uCells - 1);
   float v;
   if (!cellAt(c.y * uCells.x + c.x, v) || v < uLow || v > uHigh) discard;
+  pickIndex = float(c.y * uCells.x + c.x);
   gl_FragColor = vec4(texelFetch(uRamp, ivec2(clamp(int((v - uLow) * uScale + 0.5), 0, 255), 0), 0).rgb, uOpacity);
 }`;
 
@@ -1387,11 +1473,13 @@ for (int k = uCells.x + uCells.y + uCells.z; k > 0; k--) {
   if (t > end || any(lessThan(cell, ivec3(0))) || any(greaterThanEqual(cell, uCells))) break;
 }
 if (!hit) discard;
+pickIndex = float((cell.z * uCells.y + cell.y) * uCells.x + cell.x);
 vec3 face = vec3(0.0);
 face[axis] = dir[axis] > 0.0 ? -1.0 : 1.0;
 vec3 rayNormal = normalize(mat3(viewMatrix) * mat3(modelMatrix) * face);
 vec4 clip = projectionMatrix * viewMatrix * modelMatrix * vec4((vEye + dir * t) / vec3(uCells), 1.0);
-gl_FragDepth = clip.z / clip.w * 0.5 + 0.5;
+pickDepth = clip.z / clip.w * 0.5 + 0.5;
+gl_FragDepth = pickDepth;
 diffuseColor.rgb *= linearOf(texelFetch(uRamp, ivec2(clamp(int((v - uLow) * uScale + 0.5), 0, 255), 0), 0).rgb);`;
 
 /** A deep grid's material, drawn on its box's far side so a ray starts in every pixel it covers,
@@ -1633,18 +1721,23 @@ const KINDS: Record<Part, Kind> = {
       if (got && o.children.length === 0) {
         const copy = got.scene.clone();
         copy.userData.shared = true;
+        // the file's shapes, but materials of its own, which a pick tells from another part's
+        copy.traverse((m) => {
+          if (m instanceof Mesh) m.material = Array.isArray(m.material) ? m.material.map((x) => x.clone()) : m.material.clone();
+        });
         // a glTF file is y up by its standard, and a scene z up
         copy.quaternion.setFromAxisAngle(X, Math.PI / 2);
         o.add(copy);
       }
       const model = o.children[0];
       if (!got || !model) return;
-      // its copy shares the file's materials, so a ghost swaps its own meshes' and back
+      // a ghost swaps its meshes' materials for one ghost of its own and back
       if (model.userData.ghost !== !!s.ghost) {
         model.userData.ghost = !!s.ghost;
+        const ghost = (model.userData.ghostly ??= GHOST.clone());
         model.traverse((m) => {
           if (!(m instanceof Mesh)) return;
-          if (s.ghost) [m.userData.material, m.material] = [m.material, GHOST];
+          if (s.ghost) [m.userData.material, m.material] = [m.material, ghost];
           else if (m.userData.material) [m.material, m.userData.material] = [m.userData.material, undefined];
         });
       }
@@ -1662,7 +1755,13 @@ const KINDS: Record<Part, Kind> = {
 /** Frees what a part's own drawing holds on the GPU, never another part's, a shared shape or
  *  a model's file. */
 function free(o: Object3D, root = o) {
-  if (o.userData.shared || (o !== root && o.userData.part)) return;
+  if (o !== root && o.userData.part) return;
+  if (o.userData.shared) {
+    // a model's shapes are its file's and its materials its own
+    o.userData.ghostly?.dispose();
+    o.traverse((c) => (c as Mesh).isMesh && [(c as Mesh).material, c.userData.material].flat().forEach((m) => m?.dispose()));
+    return;
+  }
   if (o instanceof Mesh || o instanceof Line || o instanceof Points) {
     if (!SHARED.has(o.geometry)) retire(o.geometry);
     retire(o.userData.spare);
@@ -1695,6 +1794,10 @@ interface Drawn {
   fences: WebGLSync[];
   /** Whether its dots are drawn as squares, not points. */
   quads: boolean;
+  /** The pixel a pick draws into, made with its first pick. */
+  picked?: WebGLRenderTarget;
+  /** Where it told the page its camera was last. */
+  seen: string;
 }
 
 // frames the GPU may have yet to draw, so the worker works on the next while it draws one
@@ -1729,15 +1832,12 @@ function drawAll() {
     last = performance.now();
     d.renderer.setSize(d.width, d.height, false);
     d.px.value = d.height;
-    d.eye.aspect = d.width / d.height;
-    d.eye.updateProjectionMatrix();
-    const { target, yaw, pitch, distance } = d.aim;
-    const around = new Vector3(Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch));
-    d.eye.position.copy(target).addScaledVector(around, distance);
-    d.eye.lookAt(target);
-    d.head.position.copy(d.eye.position);
-    d.head.target.position.copy(target);
+    aimEye(d);
     d.renderer.render(d.scene, d.eye);
+    const eye: Eye = { origin: vec(d.eye.position), unproject: new Matrix4().multiplyMatrices(d.eye.matrixWorld, d.eye.projectionMatrixInverse).toArray() };
+    const seen = JSON.stringify(eye);
+    if (seen !== d.seen) host.post({ seen: sceneOf(d), eye });
+    d.seen = seen;
     const gl = d.renderer.getContext() as WebGL2RenderingContext;
     d.fences.push(gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)!);
   }
@@ -1755,6 +1855,54 @@ function drawAll() {
     owed.delete(alias);
   }
 }
+
+/** Puts `d`'s camera where its aim says, seeing its whole canvas. */
+function aimEye(d: Drawn) {
+  d.eye.aspect = d.width / d.height;
+  d.eye.updateProjectionMatrix();
+  const { target, yaw, pitch, distance } = d.aim;
+  const around = new Vector3(Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch));
+  d.eye.position.copy(target).addScaledVector(around, distance);
+  d.eye.lookAt(target);
+  d.head.position.copy(d.eye.position);
+  d.head.target.position.copy(target);
+}
+
+const vec = ({ x, y, z }: Vector3): Vec3 => ({ x, y, z });
+
+/** What shows at `x`, `y` px from `d`'s top left: that one pixel drawn again, each fragment as
+ *  its part's number, its point and its depth, and the ray through the pixel's middle. */
+function pick(d: Drawn, x: number, y: number): Picked {
+  const r = d.renderer!;
+  aimEye(d);
+  d.eye.setViewOffset(d.width, d.height, x, y, 1, 1);
+  d.picked ??= new WebGLRenderTarget(1, 1, { type: FloatType, minFilter: NearestFilter, magFilter: NearestFilter });
+  const px = new Float32Array(4);
+  // dots size themselves by the pixels the camera sees, now one
+  [PICKING.value, d.px.value] = [true, 1];
+  r.setRenderTarget(d.picked);
+  r.render(d.scene, d.eye);
+  r.readRenderTargetPixels(d.picked, 0, 0, 1, 1, px);
+  r.setRenderTarget(null);
+  [PICKING.value, d.px.value] = [false, d.height];
+  const hit = px[3] > 0 ? parts.get(Math.round(px[0])) : undefined;
+  // the pixel's middle is the middle of what the camera now sees
+  const point = hit ? vec(new Vector3(0, 0, px[2] * 2 - 1).unproject(d.eye)) : null;
+  d.eye.clearViewOffset();
+  const chain: number[] = [];
+  for (let o = hit?.o; o; o = o.parent ?? undefined) if (o.userData.part) chain.push(o.userData.id);
+  const frames: Record<number, Pose> = {};
+  for (const h of parts.values()) {
+    if (!h.frame || scenes.get(h.scene) !== d) continue;
+    const [at, turn] = [new Vector3(), new Quaternion()];
+    h.o.matrixWorld.decompose(at, turn, new Vector3());
+    frames[h.id] = { position: vec(at), orientation: { x: turn.x, y: turn.y, z: turn.z, w: turn.w } };
+  }
+  return { chain, index: hit && px[1] >= 0 ? Math.round(px[1]) : null, point, frames };
+}
+
+/** The number the page knows scene `d` by. */
+const sceneOf = (d: Drawn) => [...scenes].find(([, x]) => x === d)![0];
 
 /** Whether `d` may be drawn, the GPU having fewer than IN_FLIGHT of its frames to draw, so it
  *  never falls behind, as a GPU shared with the rest of the screen then would. */
@@ -1790,6 +1938,7 @@ function show(id: number, h: Held) {
     else h.o.quaternion.identity();
   }
   KINDS[h.kind].show(h.o, s, found, h);
+  pickables(h);
   // a value not known yet draws nothing rather than something untrue
   h.o.visible = s.visible;
   const said = JSON.stringify(found);
@@ -1824,6 +1973,8 @@ export function hear(m: Drawing) {
       try {
         renderer = new WebGLRenderer({ canvas: m.canvas, antialias: true, alpha: true });
         renderer.setClearColor(0x000000, 0);
+        // a pick draws into a float pixel, which blends only with this
+        renderer.getContext().getExtension("EXT_float_blend");
       } catch {
         host.post({ blind: m.scene });
       }
@@ -1837,7 +1988,7 @@ export function hear(m: Drawing) {
       scene.add(sky, head, head.target, group);
       // where the camera last could be worked out, kept while a value cannot be read
       const aim = { target: new Vector3(), yaw: Number(CAMERA.yaw), pitch: Number(CAMERA.pitch), distance: Number(CAMERA.distance) };
-      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base, fences: [], quads: renderer ? squares(renderer) : false };
+      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base, fences: [], quads: renderer ? squares(renderer) : false, seen: "" };
       scenes.set(m.scene, d);
       // three.js makes its own buffers again, and the parts with buffers of their own lay theirs out again
       m.canvas.addEventListener("webglcontextrestored", () => {
@@ -1874,6 +2025,7 @@ export function hear(m: Drawing) {
       scenes.delete(m.scene);
       dirty.delete(d!);
       for (const [o, s] of staging) if (s.scene === d) staging.delete(o);
+      d?.picked?.dispose();
       d?.renderer?.dispose();
       d?.renderer?.forceContextLoss();
       return;
@@ -1882,10 +2034,16 @@ export function hear(m: Drawing) {
       const d = scenes.get(m.scene);
       const parent = m.parent === null ? d?.group : parts.get(m.parent)?.o;
       const o = KINDS[m.kind].make();
-      o.userData.part = true;
+      Object.assign(o.userData, { part: true, id: m.part });
       parent?.add(o);
-      parts.set(m.part, { id: m.part, o, kind: m.kind, scene: m.scene, shown: { visible: false }, follows: {}, said: "", base: d?.base ?? "" });
+      parts.set(m.part, { id: m.part, o, kind: m.kind, scene: m.scene, shown: { visible: false }, follows: {}, said: "", base: d?.base ?? "", frame: !!m.frame });
       return;
+    }
+    case "pick": {
+      // a scene that cannot draw finds nothing, and still says so
+      const d = scenes.get(m.scene);
+      const none: Picked = { chain: [], index: null, point: null, frames: {} };
+      return host.post({ picked: m.ask, ...(d?.renderer ? pick(d, m.x, m.y) : none) });
     }
     case "show": {
       const h = parts.get(m.part);

@@ -5,17 +5,22 @@
 
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { drawing, onDrew } from "../net/connection";
-import type { Found, Pose, Rgba, Shown, Vec3 } from "../net/draw";
+import type { Eye, Found, Picked, Pose, Ray, Rgba, Shown, Vec3 } from "../net/draw";
 import { column, fieldsOf, numbers, refOf } from "../net/packed";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
 import { componentScope, resolve, type Resolved, type Scope } from "../state/bind";
+import { takes } from "../state/events";
 import { short } from "../state/format";
 import { component, readFar, readWhole } from "../state/store";
 import { onResize } from "../ui/size";
-import { mathType, typeOf } from "../lang/math.js";
+import { mathType, standardType, tag, typeOf } from "../lang/math.js";
+import { follow } from "../ui/press";
+import type { Act } from "./act";
 import { CLEAN, type Drawn, holds, oncePerFrame, pixelsOf } from "./drawing";
+import { type Gate, type Place, usePress } from "./PageView";
+import { local, moved, pointer, type Spot } from "./pointer";
 import { slowOf, timer } from "./slow";
 import { CAMERA, isPart, type Part, PARTS, POSE, rgbaOf } from "./parts";
 import { Repeated } from "./repeat";
@@ -430,18 +435,76 @@ const SHOWS: Record<Part, (read: Read) => Omit<Shown, "visible">> = {
   model: (r) => ({ src: r.text("src"), joints: r.joints("joints"), names: r.names("names") }),
 };
 
-/** What a part reports to its scene: what it found, under a key of its own, and that it said
- *  something new, after which the scene checks its size. */
+/** A part as its scene presses it. */
+interface Acting {
+  element: Element;
+  /** Whether it takes the pointer's events now. */
+  live(): boolean;
+  /** Whether it takes `event` bringing `payload` now. */
+  takes(event: string, payload: object): boolean;
+  read(e: PointerEvent): void;
+  down(e: PointerEvent, ended?: { u?: PointerEvent }): void;
+}
+
+/** What a part reports to its scene, what it has of the scene, and how the scene presses it. */
 interface View {
+  /** What it found, under a key of its own. */
   found(key: symbol, d: Drawn | null): void;
+  /** It said something new, after which the scene checks its size. */
   told(): void;
+  act(): Act | undefined;
+  /** The scene's element, which a press on a part measures across. */
+  box(): HTMLElement | undefined;
+  /** What was under the pointer last, while a part is pressed. */
+  under(): Picked | null;
+  /** The ray from the camera through `e`, in the scene's frame. */
+  ray(e: Spot): Ray | null;
+  /** Lets the scene press part `id` until it goes. */
+  join(id: number, part: Acting): void;
 }
 
 let made = 0;
-/** Where what the worker found goes: a part's faults and warnings, a scene without WebGL. */
+/** Where what the worker found goes: a part's faults and warnings, a scene without WebGL, and
+ *  what a pick found. */
 const foundOf = new Map<number, (found: Found) => void>();
 const blinds = new Map<number, () => void>();
-onDrew((d) => ("blind" in d ? blinds.get(d.blind)?.() : foundOf.get(d.part)?.(d)));
+const asks = new Map<number, (p: Picked) => void>();
+const eyes = new Map<number, Eye>();
+onDrew((d) => {
+  if ("blind" in d) return blinds.get(d.blind)?.();
+  if ("seen" in d) return eyes.set(d.seen, d.eye);
+  if ("picked" in d) {
+    asks.get(d.picked)?.(d);
+    return asks.delete(d.picked);
+  }
+  foundOf.get(d.part)?.(d);
+});
+
+const RAY = standardType("Ray");
+
+/** How a press on part `id` is measured: across its scene, with where the pick found the
+ *  pointer last, the part inside while the pick meets it. */
+function partPlace(id: number, view: View): Place {
+  // the scene's canvas, whose holder is the scene, so a move counts as the scene's x and y do
+  const canvas = () => view.box()?.querySelector("canvas") ?? undefined;
+  return {
+    self: view.box,
+    on: () => {
+      const names = view.under()?.chain.map((n) => named.get(n)).filter(Boolean);
+      return names?.[0] ?? null;
+    },
+    at: (e, on) => {
+      const u = view.under();
+      const inside = !!u?.chain.includes(id);
+      const ray = view.ray(e);
+      return { ...pointer(view.box()!, e, on), inside, ray: ray && tag(ray, RAY), point: (inside && u?.point) || null, index: inside ? (u?.index ?? null) : null };
+    },
+    moved: (sx, sy) => moved(canvas()!, sx, sy),
+  };
+}
+
+/** Each part's name, by its number, which a press on what it holds names it by. */
+const named = new Map<number, string>();
 
 /** Where a part sits: its scene, what holds it there, none for the scene itself, and whether it
  *  is drawn as part of an instance, so it is the component's and not the page's. */
@@ -468,7 +531,23 @@ function PartView(p: PartProps) {
   if (!isPart(tag)) return null;
   const of = () => (instance ? component(p.element.component ?? "") : undefined);
   const [id, key] = [++made, Symbol()];
-  drawing({ to: "part", part: id, scene: p.scene, parent: p.parent, kind: tag });
+  drawing({ to: "part", part: id, scene: p.scene, parent: p.parent, kind: tag, frame: instance });
+  createEffect(() => named.set(id, p.element.props.name ?? ""));
+  onCleanup(() => named.delete(id));
+  // a page's part takes the pointer's events as its scene finds them, a component's are its own
+  if (!p.inside) {
+    const q = { element: p.element, scope: p.scope, get act() {
+      return p.view.act();
+    } };
+    const press = usePress(q, { place: partPlace(id, p.view) });
+    p.view.join(id, {
+      element: p.element,
+      live: press.live,
+      takes: (event, payload) => !!q.act && p.element.handlers.some((h) => takes(h, event, payload) && q.act!.hears(p.element, h, p.scope)),
+      read: press.read,
+      down: press.down,
+    });
+  }
   // what the page read, and what the worker found showing it
   const [mine, setMine] = createSignal<Drawn>(CLEAN);
   const [theirs, setTheirs] = createSignal<Found>({ faults: [], warnings: [] });
@@ -537,8 +616,9 @@ function misplaced(name: string, c: Page | undefined): string | undefined {
 }
 
 /** A scene: its parts in metres with z up, seen from where its camera orbits to. Its CSS
- *  background shows behind them. */
-export default function SceneView(p: { element: Element; scope: Scope; design?: boolean; report: (d: Drawn) => void }) {
+ *  background shows behind them. A press on it finds the parts under it first, presses those that
+ *  take it, and lets the scene hear only what none of them take. */
+export default function SceneView(p: { element: Element; scope: Scope; design?: boolean; act?: Act; gate: (g: Gate) => void; report: (d: Drawn) => void }) {
   let canvas!: HTMLCanvasElement;
   const id = ++made;
   const [ready, setReady] = createSignal(false);
@@ -565,6 +645,10 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
     size = `${pw} ${ph}`;
     drawing({ to: "size", scene: id, width: pw, height: ph });
   });
+  // the parts that may take a press, what the pointer was over last, and each press's parts
+  const acting = new Map<number, Acting>();
+  let under: Picked | null = null;
+  const presses = new WeakMap<PointerEvent, { known: Promise<void>; chain: number[] }>();
   const view: View = {
     found: (key, d) =>
       setFound((m) => {
@@ -573,13 +657,79 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
         return m;
       }),
     told: sized,
+    act: () => p.act,
+    box: () => canvas?.parentElement ?? undefined,
+    under: () => under,
+    ray: (e) => {
+      const eye = eyes.get(id);
+      if (!eye) return null;
+      const at = local(canvas, e);
+      const m = eye.unproject;
+      // the point halfway into the view under `e`, which the ray from the camera goes through
+      const [x, y, z] = [(2 * at.x) / Math.max(at.w, 1) - 1, 1 - (2 * at.y) / Math.max(at.h, 1), 0];
+      const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+      const to = [0, 1, 2].map((i) => (m[i] * x + m[4 + i] * y + m[8 + i] * z + m[12 + i]) / w);
+      const d = [to[0] - eye.origin.x, to[1] - eye.origin.y, to[2] - eye.origin.z];
+      const n = Math.hypot(...d) || 1;
+      return { origin: { ...eye.origin }, direction: { x: d[0] / n, y: d[1] / n, z: d[2] / n } };
+    },
+    join: (part, a) => {
+      acting.set(part, a);
+      onCleanup(() => acting.delete(part));
+    },
   };
+  /** What shows at `e` on the canvas, from the worker. */
+  const ask = (e: Spot) =>
+    new Promise<Picked>((done) => {
+      const at = local(canvas, e);
+      const { pw, ph } = pixelsOf(canvas);
+      const n = ++made;
+      asks.set(n, done);
+      drawing({ to: "pick", scene: id, ask: n, x: (at.x * pw) / Math.max(at.w, 1), y: (at.y * ph) / Math.max(at.h, 1) });
+    });
+  // while a press lasts what is under the pointer is found again as it moves, one pick at a time
+  let asking = false;
+  let wanted: Spot | null = null;
+  const track = (m: Spot) => {
+    wanted = m;
+    if (asking) return;
+    asking = true;
+    wanted = null;
+    void ask(m).then((found) => {
+      under = found;
+      asking = false;
+      if (wanted) track(wanted);
+    });
+  };
+  const press = (e: PointerEvent) => {
+    if (!p.act || ![...acting.values()].some((a) => a.live())) return;
+    let ended: { u?: PointerEvent } | undefined;
+    follow(e, { move: track, end: (u) => (ended = { u }) });
+    const record = { chain: [] as number[], known: Promise.resolve() };
+    record.known = ask(e).then((found) => {
+      under = found;
+      record.chain = found.chain;
+      for (const n of found.chain) {
+        const a = acting.get(n);
+        if (!a) continue;
+        a.read(e);
+        a.down(e, ended);
+      }
+    });
+    presses.set(e, record);
+  };
+  p.gate({
+    landing: (e) => presses.get(e)?.known,
+    takes: (e, event, payload) => !!presses.get(e)?.chain.some((n) => acting.get(n)?.takes(event, payload)),
+  });
   onMount(() => {
     if (!("transferControlToOffscreen" in canvas)) return setBlind(true);
     const off = canvas.transferControlToOffscreen();
     blinds.set(id, () => setBlind(true));
     // a model file is named from the page, not from where the worker's script is
     drawing({ to: "scene", scene: id, canvas: off, base: document.baseURI }, [off]);
+    // as it goes down, before the scene's own press, which waits for what this finds
+    canvas.parentElement?.addEventListener("pointerdown", press, true);
     sized();
     onResize(canvas, sized);
     createEffect(() => {
@@ -589,6 +739,7 @@ export default function SceneView(p: { element: Element; scope: Scope; design?: 
     });
     onCleanup(() => {
       blinds.delete(id);
+      eyes.delete(id);
       drawing({ to: "end", scene: id });
     });
     setReady(true);

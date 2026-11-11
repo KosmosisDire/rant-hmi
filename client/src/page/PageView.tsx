@@ -248,7 +248,28 @@ function Placed(p: ElementProps) {
  *  a moment, so one that scrolls presses nothing. Where a press lands is read as it goes down
  *  the page, before any handler changes the page as it comes back up: Firefox before 125 drops
  *  the rest of a touch when its pressed shape restyles and is measured in pointerdown. */
-function usePress(p: ElementProps & { at?: At }) {
+/** Where a press on an element is measured: on its own box, or for a 3D part on its scene's
+ *  box with what the scene found under the pointer. */
+export interface Place {
+  /** What on the screen its keys and pads go by, and its outside is outside of. */
+  self(): globalThis.Element | undefined;
+  /** The named part an event happened on. */
+  on(e: PointerEvent): string | null;
+  /** What a pointer at `e` brings, for a press begun on the part `on`. */
+  at(e: Spot, on: string | null): Pointer;
+  /** A move of `sx` and `sy` px on the screen as `dx` and `dy` count it. */
+  moved(sx: number, sy: number): { dx: number; dy: number };
+}
+
+/** What a scene says of a press on it, which first finds the parts under it. */
+export interface Gate {
+  /** Done once the parts under the press `e` are known, or nothing when it looks for none. */
+  landing(e: PointerEvent): Promise<void> | undefined;
+  /** Whether a part under the press `e` takes `event` bringing `payload`, so the scene does not. */
+  takes(e: PointerEvent, event: string, payload: object): boolean;
+}
+
+export function usePress(p: { element: Element; scope: Scope; act?: Act }, how: { place?: Place; gate?: () => Gate | undefined } = {}) {
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));
   // whether a handler takes a press of the button `e` pressed
@@ -260,28 +281,41 @@ function usePress(p: ElementProps & { at?: At }) {
     return h && numberOf(h, setting, p.scope);
   };
   let self: globalThis.Element | undefined;
+  const place: Place = how.place ?? {
+    self: () => self,
+    on: (e) => partOf(e.target),
+    at: (e, on) => pointer(self!, e, on),
+    moved: (sx, sy) => moved(self!, sx, sy),
+  };
   let landed: { e: PointerEvent; at: Pointer } | undefined;
   let pressing = false;
   const read = (e: PointerEvent) => {
-    if (!self || !pressable(e)) return;
-    landed = { e, at: pointer(self, e, partOf(e.target)) };
+    if (!place.self() || !pressable(e)) return;
+    landed = { e, at: place.at(e, place.on(e)) };
   };
-  const down = (e: PointerEvent & { currentTarget: Element | globalThis.Element }) => {
+  // `ended` says the press is over already, as one a scene found the parts under only after, by
+  // its release, or none when that was missed
+  const down = (e: PointerEvent, ended?: { u?: PointerEvent }) => {
     if (!pressable(e) || pressing || landed?.e !== e || taken(e.pointerId)) return;
-    const el = e.currentTarget as globalThis.Element;
     const part = landed.at.on;
     const button = buttonOf(e)!;
     // what each event of the press brings: where, the button it began with and the keys held
-    const brings = (ev: PointerEvent) => ({ ...pointer(el, ev, part), button, ...keysHeld(ev) });
+    const brings = (ev: PointerEvent) => ({ ...place.at(ev, part), button, ...keysHeld(ev) });
     const at = { ...landed.at, button, ...keysHeld(e) };
     landed = undefined;
     pressing = true;
     // a press of the wheel scrolls the page by itself in some browsers
     if (button === "middle") e.preventDefault();
-    // its release goes where its press went, even once the element takes no more events
+    // its release goes where its press went, even once the element takes no more events, but a
+    // scene hears nothing a part under the press takes, so waits until it knows what is there
     const act = p.act;
-    const send = (event: string, payload: object) => act?.fire(p.element, event, payload, p.scope);
-    const drags = p.element.handlers.some((h) => takes(h, "drag", { button }) && act?.hears(p.element, h, p.scope));
+    const gate = how.gate?.();
+    const known = gate?.landing(e);
+    let landing = !known;
+    const yields = (event: string, payload: object) => !!gate?.takes(e, event, payload);
+    const send = (event: string, payload: object) => yields(event, payload) || act?.fire(p.element, event, payload, p.scope);
+    const hears = (event: string) => !yields(event, { button }) && p.element.handlers.some((h) => takes(h, event, { button }) && act?.hears(p.element, h, p.scope));
+    const drags = hears("drag");
     let last: PointerEvent = e;
     let held: ReturnType<typeof setTimeout> | undefined;
     let beat: ReturnType<typeof setInterval> | undefined;
@@ -291,7 +325,7 @@ function usePress(p: ElementProps & { at?: At }) {
     const hold = () => {
       const now = brings(last);
       if (!now.inside) return;
-      holding = p.element.handlers.some((h) => takes(h, "hold", { button }) && act?.hears(p.element, h, p.scope));
+      holding = hears("hold");
       send("hold", now);
     };
     const begin = () => {
@@ -312,8 +346,19 @@ function usePress(p: ElementProps & { at?: At }) {
     // a finger that landed on what may yet scroll, here or in a frame this holds, begins its
     // press once it stays a moment, so a scroll presses nothing
     const waits = e.pointerType === "touch" && !drags && !!(e.target as globalThis.Element).closest(".el.scroller, .el.scrolls");
-    const wait = waits ? setTimeout(begin, SCROLL_WAIT) : undefined;
-    if (!waits) begin();
+    let due = !waits;
+    const go = () => pressing && landing && due && !begun && begin();
+    const wait = waits
+      ? setTimeout(() => {
+          due = true;
+          go();
+        }, SCROLL_WAIT)
+      : undefined;
+    void known?.then(() => {
+      landing = true;
+      go();
+    });
+    go();
     // a drag goes out at most once a frame, with the latest place and the move since the last
     let sent: Spot = e;
     let next: PointerEvent | null = null;
@@ -322,7 +367,7 @@ function usePress(p: ElementProps & { at?: At }) {
       const now = brings(next);
       // a hold needs the pointer over it throughout, so one that leaves holds nothing this press
       if (!now.inside) clearTimeout(held);
-      send("drag", { ...now, ...moved(el, next.clientX - sent.clientX, next.clientY - sent.clientY) });
+      send("drag", { ...now, ...place.moved(next.clientX - sent.clientX, next.clientY - sent.clientY) });
       [sent, next] = [next, null];
     };
     const move = (m: PointerEvent) => {
@@ -340,16 +385,24 @@ function usePress(p: ElementProps & { at?: At }) {
       clearTimeout(wait);
       pressing = false;
       if (!begun && u?.type !== "pointerup") return;
-      if (!begun) begin();
-      flush();
-      clearTimeout(held);
-      clearInterval(beat);
-      setPressed(false);
-      const at = brings(u ?? last);
-      send("release", at);
-      if (u?.type === "pointerup" && at.inside && !holding) send("tap", at);
+      const finish = () => {
+        if (!begun) begin();
+        flush();
+        clearTimeout(held);
+        clearInterval(beat);
+        setPressed(false);
+        const at = brings(u ?? last);
+        send("release", at);
+        if (u?.type === "pointerup" && at.inside && !holding) send("tap", at);
+      };
+      if (landing) finish();
+      else void known?.then(finish);
     };
     const stop = follow(e, { move, end, yields: true, keeps: drags });
+    if (ended) {
+      stop();
+      return end(ended.u);
+    }
     // one that stops taking events while pressed, as when it is no longer enabled, ends its press
     // as if the release was missed
     if (pressing)
@@ -364,7 +417,8 @@ function usePress(p: ElementProps & { at?: At }) {
     if (!p.act || !p.element.handlers.some((h) => h.event === "outside")) return;
     let away: { e: PointerEvent; at: object } | undefined;
     const readAway = (e: PointerEvent) => {
-      if (self && !self.contains(e.target as Node) && !self.closest("[hidden]")) away = { e, at: { ...pointer(self, e, null), button: buttonOf(e), ...keysHeld(e) } };
+      const self = place.self();
+      if (self && !self.contains(e.target as Node) && !self.closest("[hidden]")) away = { e, at: { ...place.at(e, null), button: buttonOf(e), ...keysHeld(e) } };
     };
     const actAway = (e: PointerEvent) => {
       if (away?.e === e) fire("outside", away.at);
@@ -381,12 +435,13 @@ function usePress(p: ElementProps & { at?: At }) {
     self = el;
     el.addEventListener("pointerdown", read as EventListener, true);
   };
-  useKeys(p, () => self);
-  useGamepads(p, () => self);
-  const scrolls = useScroll(p, () => self);
+  useKeys(p, place.self);
+  useGamepads(p, place.self);
+  // a wheel and two fingers over a scene are the scene's
+  const scrolls = how.place ? () => false : useScroll(p, () => self);
   // what drags keeps its finger, even in what scrolls
   const drags = () => !!p.act && p.element.handlers.some((h) => h.event === "drag");
-  return { pressed, live, scrolls, drags, down, ref };
+  return { pressed, live, scrolls, drags, read, down, ref };
 }
 
 /** One element. `inside` marks one drawn as part of an instance: it is the component's, not
@@ -510,7 +565,9 @@ function ElementView(p: ElementProps & { at?: At }) {
   useFaults(() => p.element.id, faults);
   useFaults(() => p.element.id, () => [...look().slow, ...drawn().warnings], "warn");
   const q = actingWhile(p, () => look().enabled);
-  const press = usePress(q);
+  // a scene's press first finds the parts under it
+  const [gate, setGate] = createSignal<Gate>();
+  const press = usePress(q, { gate });
   const inner = (c: Element, i: () => number) => <Placed element={c} scope={p.scope} room={look().holder} order={i()} overrides={p.overrides} design={p.design} act={q.act} inside={p.inside} />;
   return (
     <div
@@ -555,7 +612,7 @@ function ElementView(p: ElementProps & { at?: At }) {
           {(context) => <CanvasView context={context} draw={p.element.props.draw} scope={p.scope} report={setDrawn} />}
         </Match>
         <Match when={p.element.tag === "scene"}>
-          <SceneView element={p.element} scope={p.scope} design={p.design} report={setDrawn} />
+          <SceneView element={p.element} scope={p.scope} design={p.design} act={q.act} gate={setGate} report={setDrawn} />
         </Match>
         <Match when={look().media}>{(m) => <MediaView src={m().src} fit={m().fit} element={p.element.id} />}</Match>
         <Match when={p.element.tag === "use"}>
