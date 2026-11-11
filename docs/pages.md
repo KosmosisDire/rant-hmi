@@ -59,6 +59,7 @@ A page is a file of the elements it draws. This page lists every element and pro
 | `w`, `h` | its size: units, a percent, `hug` to fit what it holds, or `fill` for the room its frame leaves it |
 | `origin` | the point of its own box that `x` and `y` place and it turns about, as `'"50% 50%"'`. Its top left corner when left out |
 | `repeat` | a number or a list, to draw a copy per item ([Repeat](#repeat)) |
+| `visible` | `false` to draw none of it, so it reads nothing and takes no room |
 | `enabled` | `false` to take no events, in it and all it holds, and to draw it dimmed |
 
 ## Layout
@@ -102,8 +103,8 @@ A frame with `layout` sets what it holds in a row or a column.
 
 ## Shapes
 
-Every property of a shape but `name`, `repeat` and `enabled` is an SVG attribute in small
-letters, each an expression: `cx`, `r`, `fill`, `stroke`, `d`, `points`, `pathlength`.
+Every property of a shape but `name`, `repeat`, `visible` and `enabled` is an SVG attribute in
+small letters, each an expression: `cx`, `r`, `fill`, `stroke`, `d`, `points`, `pathlength`.
 
 - `rotate` turns it by degrees about its `origin`, its centre when left out.
 - A `g` moves what it holds as one, by its `transform`.
