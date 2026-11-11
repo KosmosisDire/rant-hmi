@@ -42,13 +42,13 @@ A page is a file of the elements it draws. This page lists every element and pro
 | `canvas` | what its code draws, in 2D or with WebGL |
 | `scene` | a 3D view of parts |
 | `group` | parts picked and moved as one, with no box of its own |
-| a component's name, as `<Gauge>` | an instance of that component ([Components](components.md#placing-one)) |
+| a component's name, as `<Gauge>` | an instance of that component ([Components](components.md#placing-one)), a 3D one's in a scene only |
 | `path` `circle` `ellipse` `rect` `line` `polyline` `polygon` `text` `g` | shapes, in a diagram only |
 | `anchor` `axes` `box` `sphere` `cylinder` `points` `mesh` `grid` `floor` `arrow` `model` | 3D parts, in a scene only |
 
 - A frame, a group, a diagram, a `g`, a scene and an `anchor` hold parts.
-- Any element but a 3D part may hold handlers, each an `<on event="...">`
-  ([Events](events.md)), and [state](#state).
+- Any element may hold handlers, each an `<on event="...">` ([Events](events.md)), and any but
+  a 3D part [state](#state).
 
 ## Every element
 
@@ -170,6 +170,8 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 | `names` | `model` | the joint each of a JointState's positions is for, a list or a JointNames, as `Arm.JointNames`, or these under each robot's name. Left out, a robot takes its moving joints in the order Isaac Sim lists them |
 
 - An `anchor` draws nothing. It places what it holds by its pose, as a frame of a TF tree.
+- An instance of a [3D component](components.md#3d-components) places its parts by its pose, as
+  an anchor does.
 - A USD robot reads as Isaac Sim saves one: its layers, references and variants, meshes and
   shapes, colours and textures. Its collision shapes stay hidden. A layer or texture outside the
   project's files is left out with a warning. One on a web server, as NVIDIA's asset server, is

@@ -18,6 +18,7 @@ page with an interface first.
 | `name` | its name in PascalCase, the tag an instance is written with |
 | `size` | its size in units, as `24x16` |
 | `sizing` | `fill` to lay it out in each instance's box, or `scale`, the default, to draw it whole scaled to the box |
+| `space` | `3d` for a [3D component](#3d-components), `2d` when left out |
 | `<prop>` | an input an instance sets: `name`, `default`, `type` ([Input types](#input-types)), and `bindable="true"` to write back to what the instance binds it to |
 | `<event>` | an event its code sends with `emit(name, value)`: `name` |
 | `<var>` | each instance's own state on each screen: `name`, `start` as JSON |
@@ -41,6 +42,27 @@ Inside it, code reads its inputs and vars by name, and each part's `pressed`, `h
 - A bindable input given a name, as `value="target"`, writes to that name when the component
   sets it.
 - `<on event="change">` hears what the component sends, with the value in `p`.
+
+## 3D components
+
+A 3D component holds 3D parts and is placed in a scene, as a robot cell or a gizmo.
+
+```html
+<component name="Gizmo" space="3d" size="40x30">
+  <prop name="value" default="{ position: vec(0, 0, 0) }" type="Pose" bindable="true"/>
+  <event name="change"/>
+  <box id="e1" name="x" pose="{ position: value.position }" size="vec(0.6, 0.06, 0.06)"/>
+</component>
+```
+
+```html
+<Gizmo id="e5" name="Mover" pose="{ position: vec(1, 0, 0) }" value="target"/>
+```
+
+- Its instance is a part: a `pose`, its inputs and `repeat`, all attributes. Its parts count
+  from that pose.
+- Its `size` is its board's in the editor, which a drag on the board turns. It takes no `sizing`.
+- Make one with the 3D button beside Add a component, or Convert to component on parts.
 
 ## Input types
 

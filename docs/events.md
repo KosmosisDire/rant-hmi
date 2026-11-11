@@ -17,6 +17,27 @@ what the event brings as `p`.
 A drag's `p.dx` and `p.dy` count as the element's own `x` and `y` do, so
 `puckX = puckX + p.dx` makes an element at `x="puckX"` follow the pointer.
 
+## 3D parts
+
+A part in a scene hears the pointer's events too, as a box that is picked by a tap.
+
+```html
+<box id="e4" name="Crate" size="vec(0.5, 0.5, 0.5)" color='picked === "crate" ? $accent : $panel3'>
+  <on event="tap">
+    picked = "crate";
+  </on>
+</box>
+```
+
+- The part hit hears it, then what holds it. The scene hears only what none of them hear, so a
+  part with only a `tap` still lets a drag turn the scene.
+- `x`, `y`, `w`, `h`, `dx` and `dy` measure the scene. `ray`, `point` and `index` say where in
+  3D, in the scene's frame, or in a 3D component in its instance's.
+- A wheel and two fingers stay the scene's, and `outside` is a press outside the scene.
+
+A ray finds where a drag goes, as along x:
+`const at = p.ray.closestRay({ origin: vec(-100, 0, 0), direction: vec(1, 0, 0) }).b`.
+
 ## Settings
 
 A setting is an attribute of the `<on>`, an expression, as `after="800"` on a `hold`. The
@@ -61,6 +82,9 @@ Its `p` holds:
 | `h` | its height, as its own y counts |
 | `dx` | `drag` only: how far it moved across since the last, as its own x counts |
 | `dy` | `drag` only: how far it moved down since the last, as its own y counts |
+| `ray` | a 3D part only: a Ray from the camera through the pointer |
+| `point` | a 3D part only: where the ray meets it, null once it is off it |
+| `index` | a 3D part only: the point of a points part, or the cell of a grid, it meets |
 
 `button` is one of:
 

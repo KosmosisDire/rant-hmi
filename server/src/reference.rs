@@ -5,7 +5,7 @@ use std::fmt::Write;
 
 use serde_json::Value as Json;
 
-use crate::events::{ANY, EVENTS, EventInfo, SettingInfo, SettingKind, ended_by};
+use crate::events::{ANY, EVENTS, EventInfo, IN_SCENE, Sender, SettingInfo, SettingKind, ended_by};
 use crate::pages::format::{ATTRS, own_attrs};
 use crate::pages::WORDS;
 
@@ -36,6 +36,11 @@ fn events() -> String {
             let from: Vec<String> = events.iter().filter(|e| e.brings.contains(field)).map(|e| format!("`{}`", e.name)).collect();
             let only = if from.len() == events.len() { String::new() } else { format!("{} only: ", and(&from)) };
             writeln!(out, "| `{name}` | {only}{words} |").unwrap();
+        }
+        if sender == Sender::Pointer {
+            for (name, _, words) in IN_SCENE {
+                writeln!(out, "| `{name}` | a 3D part only: {words} |").unwrap();
+            }
         }
         let mut shown = Vec::new();
         for s in events.iter().flat_map(|e| e.settings).filter(|s| !s.options.is_empty()) {
