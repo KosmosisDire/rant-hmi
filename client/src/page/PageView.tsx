@@ -258,14 +258,6 @@ function Placed(p: ElementProps) {
   );
 }
 
-/** What pressing an element does, its keys, pads and scroll aside: it shows pressed and sends
- *  press, drag, hold, release and tap. The release is heard on the window, so letting go
- *  anywhere ends a press, and a tap needs the release over the element. A gesture taking its
- *  finger ends it as a missed release, with no tap: two fingers always, one finger that scrolls
- *  only when it drags nothing. A finger on what may scroll begins its press only once it stays
- *  a moment, so one that scrolls presses nothing. Where a press lands is read as it goes down
- *  the page, before any handler changes the page as it comes back up: Firefox before 125 drops
- *  the rest of a touch when its pressed shape restyles and is measured in pointerdown. */
 /** Where a press on an element is measured: on its own box, or for a 3D part on its scene's
  *  box with what the scene found under the pointer. */
 export interface Place {
@@ -287,6 +279,14 @@ export interface Gate {
   takes(e: PointerEvent, event: string, payload: object): boolean;
 }
 
+/** What pressing an element does, its keys, pads and scroll aside: it shows pressed and sends
+ *  press, drag, hold, release and tap. The release is heard on the window, so letting go
+ *  anywhere ends a press, and a tap needs the release over the element. A gesture taking its
+ *  finger ends it as a missed release, with no tap: two fingers always, one finger that scrolls
+ *  only when it drags nothing. A finger on what may scroll begins its press only once it stays
+ *  a moment, so one that scrolls presses nothing. Where a press lands is read as it goes down
+ *  the page, before any handler changes the page as it comes back up: Firefox before 125 drops
+ *  the rest of a touch when its pressed shape restyles and is measured in pointerdown. */
 export function usePress(p: { element: Element; scope: Scope; act?: Act }, how: { place?: Place; gate?: () => Gate | undefined } = {}) {
   const [pressed, setPressed] = createSignal(false);
   const live = () => !!p.act && p.element.handlers.some((h) => PRESSES.includes(h.event));

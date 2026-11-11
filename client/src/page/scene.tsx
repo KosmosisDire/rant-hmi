@@ -499,9 +499,8 @@ function into(pose: Pose | undefined, v: Vec3, point: boolean): Vec3 {
   return math.poseApplyInverse({ position: at, orientation: pose.orientation ?? { x: 0, y: 0, z: 0, w: 1 } }, v);
 }
 
-/** How a press on part `id` is measured: across its scene, with where the pick found the
- *  pointer last, the part inside while the pick meets it. Its ray and point count from `frame`,
- *  the instance whose component it is in, or the scene. */
+/** A press on part `id` measured across its scene, inside while the last pick meets it, its ray
+ *  and point counted from `frame`, the instance whose component it is in, or the scene. */
 function partPlace(id: number, view: View, frame: number | null): Place {
   // the scene's canvas, whose holder is the scene, so a move counts as the scene's x and y do
   const canvas = () => view.box()?.querySelector("canvas") ?? undefined;
@@ -528,9 +527,8 @@ function partPlace(id: number, view: View, frame: number | null): Place {
 const named = new Map<number, string>();
 const owners = new Map<number, number | null>();
 
-/** Where a part sits: its scene, what holds it there, none for the scene itself, whether it is
- *  drawn as part of an instance, so it is the component's and not the page's, that instance as
- *  `owner`, and what its events go to. */
+/** Where a part sits: its scene, its holder or none, whether it is a component's part, as
+ *  `inside`, and the instance that is its `owner`, and what its events go to. */
 interface PartProps {
   element: Element;
   scope: Scope;
@@ -659,9 +657,8 @@ function misplaced(name: string, c: Page | undefined): string | undefined {
   return undefined;
 }
 
-/** A scene: its parts in metres with z up, seen from where its camera orbits to. Its CSS
- *  background shows behind them. A press on it finds the parts under it first, presses those that
- *  take it, and lets the scene hear only what none of them take. */
+/** A scene: its parts in metres with z up, seen from its orbiting camera, its CSS background behind
+ *  them. A press finds the parts under it first, and the scene hears only what none of them take. */
 export default function SceneView(p: { element: Element; scope: Scope; design?: boolean; act?: Act; gate: (g: Gate) => void; report: (d: Drawn) => void }) {
   let canvas!: HTMLCanvasElement;
   const id = ++made;

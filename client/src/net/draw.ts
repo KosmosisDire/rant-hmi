@@ -168,9 +168,8 @@ export interface Ray {
   direction: Vec3;
 }
 
-/** What shows at a pixel of a scene, all in the scene's frame: the parts it meets from the one
- *  hit out, the point of a points part or the cell of a grid hit, where it meets them, and the
- *  pose of each part that is a frame, as an instance is. */
+/** What shows at a pixel of a scene, in its frame: the parts hit from the nearest out, the point
+ *  or cell hit, where, and the pose of each part that is a frame, as an instance is. */
 export interface Picked {
   chain: number[];
   index: number | null;
@@ -178,9 +177,8 @@ export interface Picked {
   frames: Record<number, Pose>;
 }
 
-/** Where a scene's camera is, and what takes a point on its canvas, -1 to 1 across and up, to
- *  the scene's frame, as three.js lays out a matrix. A ray through a pixel goes from the one
- *  through the other. */
+/** Where a scene's camera is, and the matrix, as three.js lays one out, that takes a point of its
+ *  canvas, -1 to 1 across and up, into the scene, which a ray from the camera goes through. */
 export interface Eye {
   origin: Vec3;
   unproject: number[];
@@ -248,9 +246,8 @@ const PICKING = { value: false };
 /** Each material's part, which no other part's material shares, so a pick tells them apart. */
 const picks = new WeakMap<Material, { value: number }>();
 
-// Any fragment shader, its own main run as `drawn`. While picking, a fragment it keeps is the
-// number of its part, of the point or cell it shows or -1, and its depth, which a shader that
-// moves its depth sets.
+// Any fragment shader, its main run as `drawn`. While picking, a fragment it keeps writes its
+// part, its point or cell or -1, and its depth, which a shader moving its depth sets.
 const PICK_PARS = `
 uniform bool uPicking;
 uniform float uPart;
