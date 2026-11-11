@@ -114,3 +114,9 @@ Controls take input:
 
 Each also takes look inputs, as `fill`, `colour`, `textColour`, `textSize` and `radius`, each a
 theme token when left out.
+
+One goes in a scene:
+
+| Component | Does | Inputs | Sends |
+| --- | --- | --- | --- |
+| `Gizmo` | moves a pose along x, y or z by a drag on its handles | `value` (Pose, bindable), `size` | `change` |

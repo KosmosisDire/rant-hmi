@@ -1,0 +1,38 @@
+<component name="Gizmo" space="3d" size="40x30">
+  <prop name="value" default="{ position: vec(0, 0, 0) }" type="Pose" bindable="true"/>
+  <prop name="size" default="0.6"/>
+  <event name="change"/>
+  <var name="grab" start="0"/>
+  <anchor id="e1" name="at" pose="{ position: value.position }">
+    <box id="e2" name="x" color='x.hovered || x.pressed ? "#ffffff" : "#e5484d"' pose="{ position: vec(size / 2, 0, 0) }" size="vec(size, 0.06, 0.06)">
+      <on event="press">
+        grab = p.ray.closestRay({ origin: value.position - vec(1, 0, 0) * 100, direction: vec(1, 0, 0) }).b.x - value.position.x;
+      </on>
+      <on event="drag">
+        const at = p.ray.closestRay({ origin: value.position - vec(1, 0, 0) * 100, direction: vec(1, 0, 0) }).b;
+        value = { ...value, position: { ...value.position, x: at.x - grab } };
+        emit("change", value);
+      </on>
+    </box>
+    <box id="e3" name="y" color='y.hovered || y.pressed ? "#ffffff" : "#46a758"' pose="{ position: vec(0, size / 2, 0) }" size="vec(0.06, size, 0.06)">
+      <on event="press">
+        grab = p.ray.closestRay({ origin: value.position - vec(0, 1, 0) * 100, direction: vec(0, 1, 0) }).b.y - value.position.y;
+      </on>
+      <on event="drag">
+        const at = p.ray.closestRay({ origin: value.position - vec(0, 1, 0) * 100, direction: vec(0, 1, 0) }).b;
+        value = { ...value, position: { ...value.position, y: at.y - grab } };
+        emit("change", value);
+      </on>
+    </box>
+    <box id="e4" name="z" color='z.hovered || z.pressed ? "#ffffff" : "#3e63dd"' pose="{ position: vec(0, 0, size / 2) }" size="vec(0.06, 0.06, size)">
+      <on event="press">
+        grab = p.ray.closestRay({ origin: value.position - vec(0, 0, 1) * 100, direction: vec(0, 0, 1) }).b.z - value.position.z;
+      </on>
+      <on event="drag">
+        const at = p.ray.closestRay({ origin: value.position - vec(0, 0, 1) * 100, direction: vec(0, 0, 1) }).b;
+        value = { ...value, position: { ...value.position, z: at.z - grab } };
+        emit("change", value);
+      </on>
+    </box>
+  </anchor>
+</component>

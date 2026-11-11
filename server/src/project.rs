@@ -781,7 +781,7 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            ["Bar", "Bars", "Button", "Dropdown", "Gauge", "Joints", "Joystick", "Joystick1D", "Knob", "Lamp", "ModeSwitch", "Plot", "Pose", "Position", "Readout", "Slider", "Swatch", "Table", "Toggle"]
+            ["Bar", "Bars", "Button", "Dropdown", "Gauge", "Gizmo", "Joints", "Joystick", "Joystick1D", "Knob", "Lamp", "ModeSwitch", "Plot", "Pose", "Position", "Readout", "Slider", "Swatch", "Table", "Toggle"]
         );
         // and Rant's palette, worked out as tokens
         let theme = Project::open(&dir).unwrap().tokens;
