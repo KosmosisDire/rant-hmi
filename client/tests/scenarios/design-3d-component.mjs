@@ -16,7 +16,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const lantern = () => hmi.state.pages.find((p) => p.name === "Lamp3D");
 
   // the layers' + offers parts, which take a pose and no place on the page
-  await d.addRow("box");
+  await d.addRow("Box");
   await eventually(() => lantern().children[0]?.tag === "box", "a box in Lamp3D");
   const box = lantern().children[0];
   check(box.props.pose && box.props.x === undefined, `the box went in as ${JSON.stringify(box.props)}`);

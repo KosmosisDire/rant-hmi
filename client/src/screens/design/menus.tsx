@@ -33,7 +33,7 @@ type Put = (tag: Tag, props: Record<string, string>, component?: string) => void
 /** A row for each kind a person adds where `home` says: elements on a page, parts in a scene. */
 const kindRows = (home: Home, put: Put): MenuItem[] =>
   home === "scene"
-    ? PART_KINDS.map((tag) => ({ label: TAG_WORDS[tag], icon: <TagIcon tag={tag} size={13} />, run: () => put(tag, PART_STARTS[tag]) }))
+    ? PART_KINDS.map((tag) => ({ label: TAG_WORDS[tag].replace(/^./, (c) => c.toUpperCase()), icon: <TagIcon tag={tag} size={13} />, run: () => put(tag, PART_STARTS[tag]) }))
     : KINDS.map(([tag, word]) => ({ label: word, icon: <TagIcon tag={tag} size={13} />, run: () => put(tag, STARTS[tag]) }));
 
 /** The components that may be placed where `home` says on `page`: those made for it, but itself. */
