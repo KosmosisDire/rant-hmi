@@ -1185,10 +1185,10 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     math.get::<_, Function>("setTypes")?.call::<_, ()>((Function::new(ctx.clone(), types)?,))?;
     // what a 3D part's event brings of a standard type comes untagged from the screen
     if let Some(fields) = p.as_map() {
-        let (tag, standard, given): (Function, Function, Object) = (math.get("tag")?, math.get("standardType")?, g.get("p")?);
+        let (tag_as, given): (Function, Object) = (math.get("tagAs")?, g.get("p")?);
         for (name, ty, _) in events::IN_SCENE.iter().filter(|(name, ty, _)| !ty.is_empty() && fields.iter().any(|(k, _)| k == name)) {
             let v: rquickjs::Value = given.get(*name)?;
-            given.set(*name, tag.call::<_, rquickjs::Value>((v, standard.call::<_, rquickjs::Value>((*ty,))?))?)?;
+            given.set(*name, tag_as.call::<_, rquickjs::Value>((v, *ty))?)?;
         }
     }
     g.set("__maker", math.get::<_, Function>("maker")?)?;

@@ -16,6 +16,7 @@ export declare const TYPE: unique symbol;
 export declare function setTypes(read: () => TypeInfo[]): void;
 export declare function wholeType(t: TypeInfo): FieldInfo;
 export declare function tag<T>(v: T, f: FieldInfo | null | undefined, how?: { skip?: (part: object) => boolean; place?: boolean }): T;
+export declare function tagAs<T>(v: T, name: string): T;
 export declare function typeOf(v: unknown): string | null;
 export declare function standardType(name: string): FieldInfo | undefined;
 export declare function maker(name: string): ((v: unknown) => unknown) | undefined;

@@ -311,6 +311,14 @@ export function tag(v, f, { skip, place } = {}) {
   return out;
 }
 
+/** `v` as the standard struct type `name` when it has exactly that type's fields, else as it is. */
+export function tagAs(v, name) {
+  const f = standardType(name);
+  if (!f || v === null || typeof v !== "object" || Array.isArray(v)) return v;
+  const fits = Object.keys(v).sort().join() === f.members.map((m) => m.name).sort().join();
+  return fits ? tag(v, f) : v;
+}
+
 /** A value's standard type: the name it carries, else the one its fields fit. Numbers by x and
  *  y are a Double2, then a Double3 and a Quaternion. Types with the same fields need the name. */
 export function typeOf(v) {

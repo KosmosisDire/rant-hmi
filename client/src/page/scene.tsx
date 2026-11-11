@@ -16,7 +16,7 @@ import { takes } from "../state/events";
 import { short } from "../state/format";
 import { component, readFar, readWhole } from "../state/store";
 import { onResize } from "../ui/size";
-import { mathType, rantMath, standardType, tag, typeOf } from "../lang/math.js";
+import { mathType, rantMath, tagAs, typeOf } from "../lang/math.js";
 import { follow } from "../ui/press";
 import { type Act, componentAct } from "./act";
 import { CLEAN, type Drawn, holds, oncePerFrame, pixelsOf } from "./drawing";
@@ -488,8 +488,8 @@ onDrew((d) => {
   foundOf.get(d.part)?.(d);
 });
 
-/** The standard type of each field a 3D part's event brings that has one. */
-const TYPED = Object.fromEntries(IN_SCENE.filter(([, t]) => t).map(([name, t]) => [name, standardType(t)]));
+/** The standard type of each field a 3D part's event brings, by its name. */
+const TYPED = Object.fromEntries(IN_SCENE.map(([name, t]) => [name, t]));
 
 /** `v` in the frame `pose` gives, a point moved and turned, a direction only turned. */
 function into(pose: Pose | undefined, v: Vec3, point: boolean): Vec3 {
@@ -518,7 +518,7 @@ function partPlace(id: number, view: View, frame: number | null): Place {
       const seen = view.ray(e);
       const ray = seen && { origin: into(pose, seen.origin, true), direction: into(pose, seen.direction, false) };
       const point = inside && u?.point ? into(pose, u.point, true) : null;
-      return { ...pointer(view.box()!, e, on), inside, ray: ray && tag(ray, TYPED.ray), point: point && tag(point, TYPED.point), index: inside ? (u?.index ?? null) : null };
+      return { ...pointer(view.box()!, e, on), inside, ray: tagAs(ray, TYPED.ray), point: tagAs(point, TYPED.point), index: inside ? (u?.index ?? null) : null };
     },
     moved: (sx, sy) => moved(canvas()!, sx, sy),
   };
