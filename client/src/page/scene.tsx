@@ -8,10 +8,11 @@ import { drawing, onDrew } from "../net/connection";
 import type { Found, Pose, Rgba, Shown, Vec3 } from "../net/draw";
 import { column, fieldsOf, numbers, refOf } from "../net/packed";
 import type { Element } from "../protocol/Element";
+import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { resolve, type Resolved, type Scope } from "../state/bind";
+import { componentScope, resolve, type Resolved, type Scope } from "../state/bind";
 import { short } from "../state/format";
-import { readFar, readWhole } from "../state/store";
+import { component, readFar, readWhole } from "../state/store";
 import { onResize } from "../ui/size";
 import { mathType, typeOf } from "../lang/math.js";
 import { CLEAN, type Drawn, holds, oncePerFrame, pixelsOf } from "./drawing";
@@ -442,18 +443,30 @@ const foundOf = new Map<number, (found: Found) => void>();
 const blinds = new Map<number, () => void>();
 onDrew((d) => ("blind" in d ? blinds.get(d.blind)?.() : foundOf.get(d.part)?.(d)));
 
-/** A part, or a copy of it per item when it repeats, in `parent`. */
-function Held(p: { element: Element; scope: Scope; scene: number; parent: number | null; view: View; design?: boolean }) {
-  return (
-    <Repeated element={p.element} scope={p.scope} design={p.design}>
-      {(scope) => <PartView element={p.element} scope={scope()} scene={p.scene} parent={p.parent} view={p.view} design={p.design} />}
-    </Repeated>
-  );
+/** Where a part sits: its scene, what holds it there, none for the scene itself, and whether it
+ *  is drawn as part of an instance, so it is the component's and not the page's. */
+interface PartProps {
+  element: Element;
+  scope: Scope;
+  scene: number;
+  parent: number | null;
+  view: View;
+  design?: boolean;
+  inside?: boolean;
 }
 
-function PartView(p: { element: Element; scope: Scope; scene: number; parent: number | null; view: View; design?: boolean }) {
-  const tag = p.element.tag;
+/** A part, or a copy of it per item when it repeats, in `parent`. */
+function Held(p: PartProps) {
+  return <Repeated element={p.element} scope={p.scope} design={p.design}>{(scope) => <PartView {...p} scope={scope()} />}</Repeated>;
+}
+
+/** A part, or an instance of a 3D component, drawn as an anchor at its pose that holds the
+ *  component's parts. */
+function PartView(p: PartProps) {
+  const instance = p.element.tag === "use";
+  const tag = instance ? "anchor" : p.element.tag;
   if (!isPart(tag)) return null;
+  const of = () => (instance ? component(p.element.component ?? "") : undefined);
   const [id, key] = [++made, Symbol()];
   drawing({ to: "part", part: id, scene: p.scene, parent: p.parent, kind: tag });
   // what the page read, and what the worker found showing it
@@ -473,9 +486,11 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
     const pose = read.pose(POSE);
     const shown: Shown = { ...SHOWS[tag](read), pose, visible: false, ghost: false };
     const d = read.drawn;
+    const fault = instance && misplaced(p.element.component ?? "", of());
+    if (fault) d.faults.push(fault);
     // one whose place or shape is unknown draws nothing rather than something untrue, and one
     // only whose look is unknown draws as a ghost
-    shown.visible = [...read.unknowns].every((k) => LOOKS.has(k));
+    shown.visible = !fault && [...read.unknowns].every((k) => LOOKS.has(k));
     if (shown.visible && read.unknowns.size > 0) ghostly(shown);
     setMine(d);
     // lists laid out here go to the worker whole, and are always new
@@ -490,16 +505,35 @@ function PartView(p: { element: Element; scope: Scope; scene: number; parent: nu
     drawing({ to: "show", part: id, shown }, laid.map((v) => v.buffer as ArrayBuffer));
     p.view.told();
   });
-  // the editor lists the robots a model holds
-  createEffect(() => holds(p.element.id, theirs().robots));
-  onCleanup(() => holds(p.element.id, undefined));
+  // the editor lists the robots a model holds, but a component's, whose ids are not the page's
+  if (!p.inside) {
+    createEffect(() => holds(p.element.id, theirs().robots));
+    onCleanup(() => holds(p.element.id, undefined));
+  }
   createEffect(() => {
-    const name = p.element.props.name ?? tag;
+    const name = p.element.props.name ?? (p.element.component || tag);
     const d = mine();
     const named = (list: string[]) => list.map((f) => `${name}: ${f}`);
     p.view.found(key, { faults: named([...d.faults, ...theirs().faults]), unknown: d.unknown, warnings: named([...d.warnings, ...theirs().warnings]) });
   });
-  return <For each={p.element.children}>{(c) => <Held element={c} scope={p.scope} scene={p.scene} parent={id} view={p.view} design={p.design} />}</For>;
+  const inner = (c: Element, scope: Scope, inside?: boolean) => <Held element={c} scope={scope} scene={p.scene} parent={id} view={p.view} design={p.design} inside={inside} />;
+  return (
+    <Show when={instance} fallback={<For each={p.element.children}>{(c) => inner(c, p.scope, p.inside)}</For>}>
+      <Show when={!misplaced(p.element.component ?? "", of()) && of()}>
+        {(c) => {
+          const scope = componentScope(c(), { props: p.element.props, outer: p.scope });
+          return <For each={c().children}>{(e) => inner(e, scope, true)}</For>;
+        }}
+      </Show>
+    </Show>
+  );
+}
+
+/** Why an instance in a scene cannot draw its component `name`, as `c` is, or nothing. */
+function misplaced(name: string, c: Page | undefined): string | undefined {
+  if (!c) return `component: ${name} is missing`;
+  if (c.interface?.space !== "3d") return `component: ${name} is 2D, so it goes on a page`;
+  return undefined;
 }
 
 /** A scene: its parts in metres with z up, seen from where its camera orbits to. Its CSS

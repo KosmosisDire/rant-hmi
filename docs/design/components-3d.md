@@ -64,6 +64,10 @@ B. Both hear it, as on a page, and the scene's handlers skip a press on a part t
    is `Element::home`, its component's space for an instance, and a page's own is `Page::home`.
    Every edit that places an element checks by them. A 3D instance writes every property as
    an attribute. `IN_SCENE` in `events.rs` lists what a 3D event brings besides.
+2. **Drawing.** `PartView` in `client/src/page/scene.tsx` draws an instance as an anchor at its
+   pose, holding its component's parts read in the component's scope. The worker needed
+   nothing new. A part drawn inside an instance lists no robots in the editor, since its id
+   is the component's. Scenario `design-scene-component`.
 
 ## Open
 

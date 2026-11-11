@@ -169,8 +169,9 @@ export class Hmi {
     return (await this.next((m) => m.type === "made")).id;
   }
 
-  async addComponent(name) {
-    this.send({ type: "edit", edit: { kind: "add_component", name } });
+  /** A component called `name`, a 2D one unless `space` is "3d". */
+  async addComponent(name, space) {
+    this.send({ type: "edit", edit: { kind: "add_component", name, ...(space && { space }) } });
     return (await this.next((m) => m.type === "made")).id;
   }
 
