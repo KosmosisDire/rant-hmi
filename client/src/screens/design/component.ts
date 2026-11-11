@@ -6,6 +6,7 @@ import type { Element } from "../../protocol/Element";
 import type { Input } from "../../protocol/Input";
 import type { Page } from "../../protocol/Page";
 import { isPercent } from "../../state/bind";
+import { homeOf } from "../../state/elements";
 import { freeName, named } from "../../state/names";
 import { notify, state } from "../../state/store";
 import { type Paint, paint } from "../../ui/highlight";
@@ -39,21 +40,14 @@ function each(elements: Element[]): Element[] {
   return elements.flatMap((e) => [e, ...each(e.children)]);
 }
 
-/** Replaces the selected elements of a page with an instance of a new component holding them. */
-export function makeComponent(page: Page, ids: string[]) {
-  const chosen = tops(page, ids);
-  // a group alone gives what it holds, and its instance takes the group's place
-  const group = chosen.length === 1 && chosen[0].tag === "group" ? chosen[0] : undefined;
-  const picked = group ? group.children : chosen;
-  if (picked.length === 0) return;
-  if (picked.some((e) => parentOf(page, e.id) !== parentOf(page, picked[0].id))) return notify("Pick elements that sit in one frame to make a component of them.", "warn");
-  const parent = parentOf(page, (group ?? picked[0]).id);
-  if (!picked.every((e) => literal(e, ["x", "y", "w", "h"]))) return notify("A component is made of elements placed by plain numbers or percents.", "warn");
+/** A 3D component's board, as the backend makes a new one. */
+const BOARD = [40, 30];
 
+/** The box around `picked` on `page`, each of `parts`, their copies, placed in it as they stand. */
+function placeOnPage(page: Page, picked: Element[], parts: Element[]) {
   const boxes = picked.map((e) => boxOf(e, roomOf(page, e.id)));
   const [left, top] = [Math.min(...boxes.map((b) => b.x)), Math.min(...boxes.map((b) => b.y))];
   const [right, bottom] = [Math.max(...boxes.map((b) => b.x + b.w)), Math.max(...boxes.map((b) => b.y + b.h))];
-  const parts: Element[] = JSON.parse(JSON.stringify(picked));
   // in pixels, since a percent of the page would mean a share of the component instead
   const room = { w: right - left, h: bottom - top };
   // each part with a place, through the groups, as the copies line up with what they copy
@@ -67,6 +61,24 @@ export function makeComponent(page: Page, ids: string[]) {
     const there = { ...b, x: b.x - left, y: b.y - top };
     Object.assign(e.props, { x: boxText(e, "x", there, room), y: boxText(e, "y", there, room) });
   });
+  return { x: left, y: top, ...room };
+}
+
+/** Replaces the selected elements of a page with an instance of a new component holding them. */
+export function makeComponent(page: Page, ids: string[]) {
+  const chosen = tops(page, ids);
+  // a group alone gives what it holds, and its instance takes the group's place
+  const group = chosen.length === 1 && chosen[0].tag === "group" ? chosen[0] : undefined;
+  const picked = group ? group.children : chosen;
+  if (picked.length === 0) return;
+  if (picked.some((e) => parentOf(page, e.id) !== parentOf(page, picked[0].id))) return notify("Pick elements that sit in one frame to make a component of them.", "warn");
+  const parent = parentOf(page, (group ?? picked[0]).id);
+  // 3D parts keep their poses, which count from the instance standing where they stood
+  const deep = homeOf(picked[0]) === "scene";
+  if (!deep && !picked.every((e) => literal(e, ["x", "y", "w", "h"]))) return notify("A component is made of elements placed by plain numbers or percents.", "warn");
+
+  const parts: Element[] = JSON.parse(JSON.stringify(picked));
+  const box = deep ? undefined : placeOnPage(page, picked, parts);
 
   // each page name a value reads becomes an input, two way when an input element takes it
   const inputs: Input[] = [];
@@ -80,7 +92,7 @@ export function makeComponent(page: Page, ids: string[]) {
           let to = renamed.get(text);
           if (!to) {
             // a member's input is named for the member alone
-            to = freeName(joined(text.split(".").at(-1) ?? text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "x", "y", "w", "h", "origin", "rotate", "text"].includes(n) || inputs.some((i) => i.name === n));
+            to = freeName(joined(text.split(".").at(-1) ?? text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "x", "y", "w", "h", "origin", "rotate", "text", "pose"].includes(n) || inputs.some((i) => i.name === n));
             renamed.set(text, to);
             inputs.push({ name: to, default: "0", bindable: false, type: "" });
           }
@@ -108,20 +120,14 @@ export function makeComponent(page: Page, ids: string[]) {
 
   const name = freeName(joined((group ?? picked[0]).props.name ?? "", (w) => w[0].toUpperCase() + w.slice(1)).replace(/^[^A-Z]+/, "") || "Part", (n) => state.pages.some((p) => p.interface !== null && p.name === n));
   const id = freeName(slug(name), (n) => state.pages.some((p) => p.id === n));
-  const component: Page = { id, name, width: right - left, height: bottom - top, shows: "full", fill: "", interface: { inputs, events, variables: [], sizing: "scale", space: "2d" }, state: [], children: parts };
-  const instance: Element = {
-    id: "",
-    tag: "use",
-    component: name,
-    props: { name, w: String(right - left), h: String(bottom - top), ...Object.fromEntries([...renamed].map(([from, to]) => [to, from])) },
-    handlers,
-    state: [],
-    children: [],
-  };
-  // where they stood, counted from the origin of their frame
-  const box = { x: left, y: top, w: right - left, h: bottom - top };
-  const frame = roomOf(page, picked[0].id);
-  Object.assign(instance.props, { x: boxText(instance, "x", box, frame), y: boxText(instance, "y", box, frame) });
+  const [width, height] = box ? [box.w, box.h] : BOARD;
+  const component: Page = { id, name, width, height, shows: "full", fill: "", interface: { inputs, events, variables: [], sizing: "scale", space: deep ? "3d" : "2d" }, state: [], children: parts };
+  const instance: Element = { id: "", tag: "use", component: name, props: { name, ...Object.fromEntries([...renamed].map(([from, to]) => [to, from])) }, handlers, state: [], children: [] };
+  // a 2D one where they stood, counted from the origin of their frame, at their size
+  if (box) {
+    const frame = roomOf(page, picked[0].id);
+    Object.assign(instance.props, { w: String(box.w), h: String(box.h), x: boxText(instance, "x", box, frame), y: boxText(instance, "y", box, frame) });
+  }
   // the instance goes where the group or the front most of them stood
   const gone = group ? [group] : picked;
   const places = gone.map((e) => childrenOf(page, parent).findIndex((c) => c.id === e.id));

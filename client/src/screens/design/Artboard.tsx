@@ -4,7 +4,7 @@
 // writes when it ends.
 
 import { createEffect, createMemo, createSignal, For, type JSX, on, onCleanup, onMount, Show, untrack } from "solid-js";
-import { type Box, fitIn, homeOf, leaves, PageView, pageGround, SHAPES, union } from "../../page/PageView";
+import { type Aim, type Box, fitIn, FRONT, leaves, PageView, pageGround, union } from "../../page/PageView";
 import { createPhonePage, reflows } from "../../page/phone";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
@@ -17,7 +17,7 @@ import { fingered } from "../../ui/touch";
 import { createSize, onResize } from "../../ui/size";
 import { wheelPx, zoomBy } from "../../ui/wheel";
 import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
-import { find } from "../../state/elements";
+import { find, homeOf, SHAPES, spaceHome } from "../../state/elements";
 import { flight, flyTo, setBoardPages } from "../../state/view";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
@@ -82,12 +82,19 @@ const KEYS: [string, string][] = [
   ["Escape", "let go"],
 ];
 
-/** A pan, a box drawn to select, a part dragged along its frame's flow to `slot`, or a move or
- *  resize of `ids` led by the one under the pointer, or scaled together by the box `around`
+/** How the editor sees each 3D component, its own and never saved. */
+const [views, setViews] = createSignal<Record<string, Aim>>({});
+const aimOf = (id: string) => views()[id] ?? FRONT;
+const setAim = (id: string, v: Aim) => setViews({ ...views(), [id]: v });
+
+/** A pan, a turn of a 3D component's view, a box drawn to select, a part dragged along its
+ *  frame's flow to `slot`, or a move or resize of `ids` led by the one under the pointer, or
+ *  scaled together by the box `around`
  *  them. `enter` is what a press on the selected element picks when it lets go unmoved: the
  *  next one at that point. */
 type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
+  | { kind: "turn"; sx: number; sy: number; view: Aim; w: number; h: number }
   | { kind: "box"; sx: number; sy: number }
   | { kind: "reorder"; id: string; parent: string; flow: Flow; sx: number; sy: number; slot: number | null; enter?: string }
   | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string; turn: Turns; around?: Around }
@@ -613,6 +620,10 @@ export function Artboard(p: {
         else if (enter) p.onPick(enter);
       } else if (e.shiftKey) {
         drag = { kind: "box", sx: e.clientX, sy: e.clientY };
+      } else if (spaceHome(p.page) === "scene" && at === p.page.id) {
+        // a 3D component's board turns round what it holds, as a scene's own handlers turn it
+        const r = host.querySelector(".page-layer.open > .page")!.getBoundingClientRect();
+        drag = { kind: "turn", sx: e.clientX, sy: e.clientY, view: aimOf(p.page.id), w: r.width, h: r.height };
       } else {
         p.onPick(null);
         drag = panFrom();
@@ -628,6 +639,11 @@ export function Artboard(p: {
     const [dx, dy] = [e.clientX - drag.sx, e.clientY - drag.sy];
     if (drag.kind === "pan") {
       setCam({ ...cam(), x: drag.vx + dx, y: drag.vy + dy });
+      return;
+    }
+    if (drag.kind === "turn") {
+      const v = drag.view;
+      setAim(p.page.id, { ...v, yaw: v.yaw - (dx / drag.w) * 2 * Math.PI, pitch: Math.min(1.5, Math.max(-1.5, v.pitch + (dy / drag.h) * Math.PI)) });
       return;
     }
     if (drag.kind === "box") {
@@ -693,7 +709,7 @@ export function Artboard(p: {
     const d = drag;
     drag = null;
     setPanning(false);
-    if (!d || d.kind === "pan") return;
+    if (!d || d.kind === "pan" || d.kind === "turn") return;
     if (d.kind === "box") setBox(null);
     else if (d.kind === "reorder") setSlotLine(null);
     else if (d.kind === "shape") d.props && showProps(p.page.id, d.id, Object.fromEntries(Object.keys(d.props).map((k) => [k, d.base.props[k] ?? null])));
@@ -716,7 +732,7 @@ export function Artboard(p: {
       if (!moved && d.enter) p.onPick(d.enter);
       return moved && setProps(p.page.id, d.id, d.props!);
     }
-    if (!d || d.kind === "pan") return;
+    if (!d || d.kind === "pan" || d.kind === "turn") return;
     const edits: Edit[] = [];
     for (const id of d.ids) {
       const props: Record<string, string> = {};
@@ -820,7 +836,7 @@ export function Artboard(p: {
   // a shape's attributes place it, and the page lays some elements out itself, so their rings
   // are measured from the drawn page, each frame while one is picked, as live values may move it
   const shape = (id: string) => SHAPES.has(find(p.page.children, id)?.tag ?? "");
-  const part = (id: string) => homeOf(find(p.page.children, id)?.tag ?? "") === "scene";
+  const part = (id: string) => homeOf(find(p.page.children, id) ?? { tag: "" }) === "scene";
   /** Whether an element's box is measured as drawn, turn and all: a shape's, and all on a phone page. */
   const asDrawn = (id: string) => shape(id) || !!preview();
   const measuredOne = (id: string) => asDrawn(id) || laidOut(p.page, id);
@@ -840,7 +856,7 @@ export function Artboard(p: {
     const keys = [...(/[ew]/.test(h) ? (["x", "w"] as const) : []), ...(/[ns]/.test(h) ? (["y", "h"] as const) : [])];
     return group
       .flatMap(leaves)
-      .every((l) => homeOf(l.tag) === "page" && !flowed(l, roomOf(p.page, l.id)) && keys.every((k) => literal(l, [k]) || ((k === "w" || k === "h") && !!sizeWord(l.props[k]))));
+      .every((l) => homeOf(l) === "page" && !flowed(l, roomOf(p.page, l.id)) && keys.every((k) => literal(l, [k]) || ((k === "w" || k === "h") && !!sizeWord(l.props[k]))));
   };
   // what holds the picked elements, outlined faintly so their bounds show
   const parents = () => [...new Set(p.selected.map((id) => parentOf(p.page, id)))].filter((id): id is string => !!id && !p.selected.includes(id));
@@ -956,7 +972,7 @@ export function Artboard(p: {
   const several = createMemo(() => (p.selected.length > 1 ? tops(p.page, p.selected) : []));
   const around = () => {
     const all = several();
-    if (all.length === 0 || all.some((e) => homeOf(e.tag) !== "page")) return undefined;
+    if (all.length === 0 || all.some((e) => homeOf(e) !== "page")) return undefined;
     if (all.some((e) => laidOut(p.page, e.id))) measured();
     const b = onScreen(union(all.flatMap((e) => boxAt(e.id) ?? [])));
     const handles = preview() ? [] : HANDLES.filter((g) => !short(g, b.width, b.height) && scalable(all, g));
@@ -1024,7 +1040,7 @@ export function Artboard(p: {
               const at = () => screenOf(boxOn(pg()));
               return (
                 <div class="page-layer" classList={{ open: open() }} data-page={id} style={{ transform: `translate(${at().left}px, ${at().top}px) scale(${cam().k / UNIT})` }}>
-                  <PageView page={open() ? (preview() ?? pg()) : pg()} overrides={open() ? overrides : undefined} grows={open() && !!preview()} design />
+                  <PageView page={open() ? (preview() ?? pg()) : pg()} overrides={open() ? overrides : undefined} grows={open() && !!preview()} view={aimOf(id)} design />
                 </div>
               );
             }}

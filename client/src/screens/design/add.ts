@@ -1,6 +1,6 @@
 // Adding elements: what each kind starts as, and where a new one lands.
 
-import { CAMERA } from "../../page/parts";
+import { CAMERA, type Part } from "../../page/parts";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Handler } from "../../protocol/Handler";
@@ -9,8 +9,10 @@ import type { Tag } from "../../protocol/Tag";
 import type { Value } from "../../protocol/Value";
 import { edit } from "../../state/change";
 import { number, resolve } from "../../state/bind";
+import { find, homeOf } from "../../state/elements";
 import { freeName } from "../../state/names";
 import { GRID } from "./Artboard";
+import { addPart } from "./SceneFields";
 import { childrenOf } from "./tree";
 
 /** What a new element starts as: visible, on the grid, plainly named, in units, and in the
@@ -62,6 +64,8 @@ export const KINDS: [keyof typeof STARTS, string][] = [
 /** Adds an element to `parent`, the page for null: at `at` in it, on the grid, else at the
  *  first step from its corner where nothing sits, so it never hides behind an old one. */
 export function addElement(page: Page, parent: string | null, tag: Tag, props: Record<string, string>, component: string | null = null, at?: { x: number; y: number }) {
+  // what goes in a scene has a pose, not a place on the page
+  if (homeOf({ tag, component }) === "scene") return addPart(page, parent === null ? undefined : find(page.children, parent), tag as Part | "use", props, component);
   let spot: { x: number; y: number };
   if (at) {
     spot = { x: Math.round(at.x / GRID) * GRID, y: Math.round(at.y / GRID) * GRID };

@@ -25,8 +25,9 @@ import { CLEAN, type Drawn, oncePerFrame, pixelsOf } from "./drawing";
 import { slowOf, timer } from "./slow";
 import { useGamepads } from "./gamepads";
 import { useKeys } from "./keys";
+import { SHAPES, spaceHome } from "../state/elements";
 import { svgOf } from "./markup";
-import { isPart } from "./parts";
+import { CAMERA } from "./parts";
 import { buttonOf, keysHeld, moved, partOf, type Pointer, pointer, type Spot } from "./pointer";
 import { COPIES, Repeated } from "./repeat";
 import { useScroll } from "./scroll";
@@ -92,13 +93,6 @@ function actingWhile<T extends { act?: Act }>(p: T, enabled: () => boolean): T {
 export const CONTEXTS = ["2d", "webgl2"] as const;
 type Context = (typeof CONTEXTS)[number];
 
-/** What a diagram holds: SVG shapes, whose every property but the name is an attribute. */
-export const SHAPES = new Set(["path", "circle", "ellipse", "rect", "line", "polyline", "polygon", "text", "g"]);
-
-/** Where an element goes, as the backend has it: a shape in a diagram, a 3D part in a scene,
- *  the rest on a page. */
-export type Home = "page" | "diagram" | "scene";
-export const homeOf = (tag: string): Home => (SHAPES.has(tag) ? "diagram" : isPart(tag) ? "scene" : "page");
 
 /** three.js loads only once a screen shows a scene. */
 const SceneView = lazy(() => import("./scene"));
@@ -162,21 +156,45 @@ const themeVars = createRoot(() =>
   }),
 );
 
-/** A page, or a component drawn on its own with its inputs' defaults. One that `grows` is as
- *  tall as what it holds, at least its own height, as a phone page is. */
-export function PageView(p: { page: Page; overrides?: Overrides; grows?: boolean; design?: boolean; act?: Act }) {
+/** How the editor sees a 3D component, which keeps no camera of its own, as a scene's camera
+ *  properties take it. */
+export interface Aim {
+  target: { x: number; y: number; z: number };
+  yaw: number;
+  pitch: number;
+  distance: number;
+}
+
+/** A 3D component's parts in a scene filling its board, seen as `view` says, with a floor and
+ *  axes of the editor's own to judge them by. */
+function boardScene(page: Page, view: Aim): Element {
+  const part = (tag: Element["tag"], name: string): Element => ({ id: "", tag, component: null, props: { name }, handlers: [], state: [], children: [] });
+  const { target: t, yaw, pitch, distance } = view;
+  const camera = { target: `vec(${t.x}, ${t.y}, ${t.z})`, yaw: String(yaw), pitch: String(pitch), distance: String(distance) };
+  return { ...part("scene", page.name), props: { name: page.name, x: "0", y: "0", w: "100%", h: "100%", ...camera }, children: [part("floor", "floor"), part("axes", "axes"), ...page.children] };
+}
+
+/** A page, or a component drawn on its own with its inputs' defaults, a 3D one as `view` sees
+ *  it. One that `grows` is as tall as what it holds, at least its own height, as a phone page is. */
+export function PageView(p: { page: Page; overrides?: Overrides; grows?: boolean; design?: boolean; act?: Act; view?: Aim }) {
   const scope = createMemo(() => docScope(p.page));
+  const deep = () => spaceHome(p.page) === "scene";
   const height = () => `${p.page.height * UNIT}px`;
   return (
     <div class="page" classList={{ design: p.design }} style={{ ...themeVars(), width: `${p.page.width * UNIT}px`, height: p.grows ? undefined : height(), "min-height": p.grows ? height() : undefined, "--page-ground": pageGround(p.page) }}>
       <Guard>
         <Doc.Provider value={() => p.page.id}>
-          <For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} />}</For>
+          <Show when={deep()} fallback={<For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} />}</For>}>
+            <Placed element={boardScene(p.page, p.view ?? FRONT)} scope={scope()} room={CORNER} design={p.design} act={p.act} />
+          </Show>
         </Doc.Provider>
       </Guard>
     </div>
   );
 }
+
+/** How a 3D component is first seen, as a new scene's camera sees. */
+export const FRONT: Aim = { target: { x: 0, y: 0, z: 0 }, yaw: Number(CAMERA.yaw), pitch: Number(CAMERA.pitch), distance: Number(CAMERA.distance) };
 
 /** The page or component the elements inside belong to, which their problems name. */
 const Doc = createContext<() => string>(() => "");

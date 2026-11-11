@@ -1,5 +1,5 @@
 import { batch, createEffect, createMemo, createSignal, For, type JSX, on, Show, useContext } from "solid-js";
-import { CONTEXTS, cssFault, homeOf, OWN } from "../../page/PageView";
+import { CONTEXTS, cssFault, OWN } from "../../page/PageView";
 import { robots } from "../../page/drawing";
 import { isPart } from "../../page/parts";
 import type { Element } from "../../protocol/Element";
@@ -24,7 +24,7 @@ import { component, notify, page as pageOf, state } from "../../state/store";
 import { stateUsedBy } from "../../state/usage";
 import { paintCss } from "../../ui/highlight";
 import { openElement, openPage } from "../../state/view";
-import { chain, find } from "../../state/elements";
+import { chain, find, homeOf } from "../../state/elements";
 import { DraftInput } from "../../ui/DraftInput";
 import { LocalIcon } from "../../ui/marks";
 import { openMenu } from "../../ui/Menu";
@@ -56,7 +56,7 @@ import {
 import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, keysOf, kindOf, type Moving, PADDING, PartsField, POINTS, RADIUS, type Where, WhereContext } from "./Field";
 import { AddRow } from "./AddRow";
-import { addPart, cameraFields, PART_KINDS, partFields, partKeys } from "./SceneFields";
+import { addPart, cameraFields, PART_KINDS, partFields, partKeys, POSE_FIELD } from "./SceneFields";
 import { addShape, GEOMETRY, ORIGINS, PAINT, ROTATE, SHAPE_KINDS, shapeKeys, type Spec, TURN } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { absolute, type Align, align, boxOf, boxText, flowed, originEdits, roomOf, scopeOf, sendEdits, setProps, showProps, spread, tops } from "./tree";
@@ -321,9 +321,9 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
   const input = () => p.element.tag === "input";
   const diagram = () => p.element.tag === "svg";
   // a shape draws in a diagram and a part in a scene, the rest is placed on the page
-  const placed = () => homeOf(p.element.tag) === "page";
-  const shape = () => homeOf(p.element.tag) === "diagram";
-  const part = () => homeOf(p.element.tag) === "scene";
+  const placed = () => homeOf(p.element) === "page";
+  const shape = () => homeOf(p.element) === "diagram";
+  const part = () => homeOf(p.element) === "scene";
   const scene = () => p.element.tag === "scene";
   const grouped = () => p.element.tag === "group";
   // the context a canvas draws with, which its draw code completes for
@@ -493,7 +493,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         </Show>
         <Show when={part()}>
           <div class="section">{TAG_WORDS[p.element.tag]}</div>
-          <For each={isPart(p.element.tag) ? partFields(p.element.tag) : []}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
+          <For each={isPart(p.element.tag) ? partFields(p.element.tag) : [POSE_FIELD]}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
         </Show>
         <Show when={robots().get(p.element.id)}>
           {(list) => (
@@ -535,8 +535,8 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             </Show>
           )}
         </Show>
-        {/* CSS on the instance's box, as dimming or hiding it whole */}
-        <Show when={instance() && component(p.element.component ?? "")}>
+        {/* CSS on a 2D instance's box, as dimming or hiding it whole */}
+        <Show when={instance() && !part() && component(p.element.component ?? "")}>
           <div class="section">Look</div>
           <For each={BOX_LOOK}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
@@ -563,7 +563,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <LooseProps page={p.page} element={p.element} loose={loose} placeholder='filter: Running ? "none" : "grayscale(1)"' css />
         </Show>
         <Show when={pageOf(p.page)?.interface === null ? pageOf(p.page) : undefined}>{(doc) => <State page={doc()} holder={p.element} />}</Show>
-        <Show when={!grouped() && !part()}>
+        <Show when={!grouped()}>
           <Events page={p.page} element={p.element} focus={(key) => typed(`on:${key}`)} />
         </Show>
       </div>

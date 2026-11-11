@@ -1,13 +1,13 @@
 // Finding elements and their boxes in a page's tree.
 
-import { type Box, type Home, homeOf, leaves, type Overrides, SHAPES, union } from "../../page/PageView";
+import { type Box, leaves, type Overrides, union } from "../../page/PageView";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { docScope, flowOf, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope, sizeWord, stateScope, UNIT } from "../../state/bind";
 import { edit, show } from "../../state/change";
-import { chain, find } from "../../state/elements";
+import { chain, find, type Home, homeOf, SHAPES, spaceHome } from "../../state/elements";
 import { notify } from "../../state/store";
 import { moving, reshape } from "./geometry";
 
@@ -76,11 +76,11 @@ export function laidOut(page: Page, id: string): boolean {
   });
 }
 
-/** Whether an element is a group, of elements or of a diagram's shapes, picked whole first. */
 /** What keeps elements of each home together, which grouping makes. */
 const GROUPS: Record<Home, Tag> = { page: "group", diagram: "g", scene: "anchor" };
 
-export const isGroup = (e: Element | undefined) => !!e && GROUPS[homeOf(e.tag)] === e.tag;
+/** Whether an element is a group, of elements, of a diagram's shapes or of parts, picked whole first. */
+export const isGroup = (e: Element | undefined) => !!e && GROUPS[homeOf(e)] === e.tag;
 
 /** What lies under a point to pick from, given what is hit there front to back: for each, the
  *  elements around it from the outermost in, each once. */
@@ -289,7 +289,7 @@ export function absolute(page: Page, id: string, overrides?: Overrides): Box | u
  *  attributes place it. */
 export function literal(e: Element, keys: (keyof Box)[]): boolean {
   if (e.tag === "group") return e.children.length > 0 && e.children.every((c) => literal(c, keys));
-  return homeOf(e.tag) === "page" && keys.every((k) => e.props[k] === undefined || isNumber(e.props[k]) || isPercent(e.props[k]));
+  return homeOf(e) === "page" && keys.every((k) => e.props[k] === undefined || isNumber(e.props[k]) || isPercent(e.props[k]));
 }
 
 /** The x and y that put `e` dx and dy on from where it sits in `room`. */
@@ -321,9 +321,9 @@ const INSIDE: Partial<Record<Tag, Home>> = { div: "page", group: "page", svg: "d
 /** Whether an element of `tag` holds others. */
 export const isHolder = (tag: Tag) => INSIDE[tag] !== undefined;
 
-/** Whether `parent`, or the page for null, may hold a `child`, as the backend allows. */
-export function holds(parent: Tag | null, child: Tag): boolean {
-  return (parent === null ? "page" : INSIDE[parent]) === homeOf(child);
+/** Whether `parent`, or `page` itself for null, may hold `child`, as the backend allows. */
+export function holds(page: Page, parent: Tag | null, child: { tag: string; component?: string | null }): boolean {
+  return (parent === null ? spaceHome(page) : INSIDE[parent]) === homeOf(child);
 }
 
 /** Moves an element to `index` of `parent`, counted without it, as moveAll does. */
@@ -392,7 +392,7 @@ export function group(page: Page, ids: string[]) {
  *  row when they spread more across than down, else a column, in that order, their average
  *  gap apart. The frame hugs them where they began, and the screen then selects it. */
 export function wrap(page: Page, ids: string[]) {
-  const picked = tops(page, ids).filter((e) => homeOf(e.tag) === "page");
+  const picked = tops(page, ids).filter((e) => homeOf(e) === "page");
   if (picked.length === 0) return;
   const parent = parentOf(page, picked[0].id);
   if (picked.some((e) => parentOf(page, e.id) !== parent)) return notify("Pick elements that sit in one frame to lay them out in a new one.", "warn");

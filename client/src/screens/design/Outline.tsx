@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, on, Show, untrack } from "solid-js";
 import { send } from "../../net/connection";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
+import type { Space } from "../../protocol/Space";
 import type { Tag } from "../../protocol/Tag";
 import type { Variable } from "../../protocol/Variable";
 import { edit } from "../../state/change";
@@ -12,7 +13,7 @@ import { flyTo, openPage } from "../../state/view";
 import { isNumber } from "../../state/bind";
 import { chain, find } from "../../state/elements";
 import { fold, FoldHead } from "../../ui/Fold";
-import { ChevronDown, ChevronRight, CircleDot, Component, CopyPlus, File, FilePlus, Plus, Repeat, Star, Trash, Zap } from "../../ui/icons";
+import { ChevronDown, ChevronRight, CircleDot, Component, CopyPlus, File, FilePlus, Plus, Repeat, Rotate3d, Star, Trash, Zap } from "../../ui/icons";
 import { type MenuEntry, openMenu } from "../../ui/Menu";
 import { addElement } from "./add";
 import { ComponentCard } from "./ComponentCard";
@@ -47,7 +48,7 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     if (!page) return;
     const last = p.selected.at(-1);
     const holder = last ? find(page.children, last) : undefined;
-    addElement(page, holder && holds(holder.tag, tag) ? holder.id : null, tag, props, component);
+    addElement(page, holder && holds(page, holder.tag, { tag, component }) ? holder.id : null, tag, props, component);
   };
   const openAdd = () => {
     const page = p.page;
@@ -61,9 +62,10 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     while (pages().some((pg) => pg.name === `Page ${n}`)) n++;
     edit({ kind: "add_page", name: `Page ${n}` });
   };
-  const addComponent = () => {
-    const name = freeName("Component", (n) => components().some((c) => c.name === n));
-    edit({ kind: "add_component", name });
+  // a 3D one holds parts and is placed in a scene
+  const addComponent = (space: Space) => {
+    const name = freeName(space === "3d" ? "Component3D" : "Component", (n) => components().some((c) => c.name === n));
+    edit({ kind: "add_component", name, space });
   };
   // a copy's name, free among the pages, spelled as a component's when it is one
   const copyPage = (pg: Page) => {
@@ -137,7 +139,10 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
   return (
     <>
       <FoldHead title="Components" fold={folds.components}>
-        <button class="icon-btn" title="Add a component" onClick={addComponent}>
+        <button class="icon-btn" title="Add a 3D component" onClick={() => addComponent("3d")}>
+          <Rotate3d size={14} />
+        </button>
+        <button class="icon-btn" title="Add a component" onClick={() => addComponent("2d")}>
           <Plus size={14} />
         </button>
       </FoldHead>
@@ -263,8 +268,8 @@ function LayerList(p: { page: Page; selected: string[]; shut: (id: string) => bo
     const rows = [...host.querySelectorAll<HTMLElement>(".list-row[data-id]")].map((row) => ({ id: row.dataset.id!, open: row.dataset.open !== undefined, r: row.getBoundingClientRect() }));
     const top = host.getBoundingClientRect().top;
     // only where all that is dragged may go: shapes in diagrams, the rest in frames
-    const tags = ids.map((id) => find(p.page.children, id)?.tag).filter((t): t is Tag => !!t);
-    const fits = (holder: string | null) => tags.every((t) => holds(holder ? (find(p.page.children, holder)?.tag ?? null) : null, t));
+    const moved = ids.map((id) => find(p.page.children, id)).filter((e): e is Element => !!e);
+    const fits = (holder: string | null) => moved.every((e) => holds(p.page, holder ? (find(p.page.children, holder)?.tag ?? null) : null, e));
     const stays = (holder: string | null) => childrenOf(p.page, holder).filter((c) => !ids.includes(c.id));
     // the row under the pointer, or in a gap the one below it
     const i = rows.findIndex(({ r }) => y < r.bottom);

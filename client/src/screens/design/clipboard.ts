@@ -5,8 +5,7 @@
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
-import { SHAPES } from "../../page/PageView";
-import { find } from "../../state/elements";
+import { find, SHAPES } from "../../state/elements";
 import { GRID } from "./Artboard";
 import { moving, reshape } from "./geometry";
 import { boxOf, childrenOf, holds, literal, parentOf, roomOf, sendEdits, shiftCopy } from "./tree";
@@ -60,7 +59,7 @@ function pasteText(text: string, page: Page, selected: string | null, spot?: { x
   const own = clip.page === page.id && clip.elements.some((c) => c.id === selected);
   let parent: string | null = null;
   let index: number | null = null;
-  if (at && clip.elements.length > 0 && holds(at.tag, clip.elements[0].tag) && !own) {
+  if (at && clip.elements.length > 0 && holds(page, at.tag, clip.elements[0]) && !own) {
     parent = at.id;
   } else if (at) {
     parent = parentOf(page, at.id);

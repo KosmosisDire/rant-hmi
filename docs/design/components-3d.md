@@ -95,6 +95,19 @@ B. Both hear it, as on a page, and the scene's handlers skip a press on a part t
    Math's `pose_apply_inverse`. `IN_SCENE` names each field's standard type, by which the
    screen tags what it sends and the system tags `p` again, as a tag does not cross the wire.
    Scenario `run-scene-component-events`, and a system handler in `run-scene-picking`.
+5. **Editor.** `homeOf` takes the element and lives in `state/elements.ts` with `spaceHome`, so
+   an instance goes where its component's space says for the page, the editor and the event
+   list alike. A button beside Add a component adds a 3D one. The add menus offer parts and 3D
+   components where a scene's parts go, and `addElement` hands what goes in a scene to
+   `addPart`, so a part never takes a place on the page. The inspector shows a 3D instance's
+   pose and no CSS, and every part's events but a wheel's. Convert to component on parts keeps
+   their poses and puts the instance where they stood. A 3D component's board is a scene with a
+   floor and axes of the editor's own, which a drag on the board turns, the view kept per
+   component while the editor runs. Scenario `design-3d-component`.
+
+   Found on the way: the scene drew a part as the kind it began as, so an instance that took the
+   id of the box it replaced drew as a box with the instance's props. A part is now made again
+   when its tag or component changes.
 
 ## Open
 

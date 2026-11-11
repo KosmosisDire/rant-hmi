@@ -4,13 +4,14 @@
 import { children, type Node, tree } from "../lang/arith.js";
 import type { Element } from "../protocol/Element";
 import type { EventInfo } from "../protocol/EventInfo";
-import { ANY, EVENTS, SENT } from "../protocol/events";
+import { ANY, EVENTS, IN_SCENE, SENT } from "../protocol/events";
 import type { Handler } from "../protocol/Handler";
 import type { Page } from "../protocol/Page";
 import type { Sender } from "../protocol/Sender";
 import type { SettingInfo } from "../protocol/SettingInfo";
 import type { When } from "../protocol/When";
 import type { Suggestion } from "./complete";
+import { homeOf } from "./elements";
 import { component } from "./store";
 
 /** The event `name` as the backend lists it, unless a component sends it. */
@@ -100,7 +101,9 @@ export function offered(e: Element): Offered[] {
   const c = e.tag === "use" ? component(e.component ?? "") : undefined;
   const own = (c?.interface?.events ?? []).map((event): Offered => ({ event, words: sendsWords(c!, event), from: "component" }));
   const input = e.tag === "input";
-  const heard = EVENTS.filter((x) => (x.from === "entry" ? input : x.from !== "pointer" || !input));
+  // a 3D part takes the pointer but neither a wheel nor two fingers, which are its scene's
+  const part = homeOf(e) === "scene";
+  const heard = EVENTS.filter((x) => (x.from === "entry" ? input : x.from === "wheel" ? !part : x.from !== "pointer" || !input));
   return [...own, ...heard.map((x): Offered => ({ event: x.name, words: x.words, from: x.from }))];
 }
 
@@ -109,7 +112,8 @@ export function brings(e: Element, event: string): Brought | undefined {
   const c = e.tag === "use" ? component(e.component ?? "") : undefined;
   if (c?.interface?.events.includes(event)) return sends(c, event);
   const known = eventInfo(event);
-  return known && known.brings.length > 0 ? { fields: known.brings.map(([name, words]) => field(name, words)) } : undefined;
+  const more = known?.from === "pointer" && homeOf(e) === "scene" ? IN_SCENE.map(([name, , words]) => field(name, words)) : [];
+  return known && known.brings.length > 0 ? { fields: [...known.brings.map(([name, words]) => field(name, words)), ...more] } : undefined;
 }
 
 /** What `p` brings to the HMI's own handler. */

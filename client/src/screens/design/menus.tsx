@@ -3,13 +3,12 @@
 
 import type { JSX } from "solid-js";
 import { wholeType } from "../../lang/math.js";
-import { homeOf } from "../../page/PageView";
 import type { FieldInfo } from "../../protocol/FieldInfo";
 import type { Page } from "../../protocol/Page";
 import type { Tag } from "../../protocol/Tag";
 import { entityOf, key } from "../../state/names";
 import { entity, state } from "../../state/store";
-import { find } from "../../state/elements";
+import { find, type Home, homeOf, spaceHome } from "../../state/elements";
 import { viewsOf } from "../../state/types";
 import { type MenuEntry, type MenuItem, openMenu } from "../../ui/Menu";
 import { KindIcon, ObjectIcon } from "../../ui/marks";
@@ -19,7 +18,8 @@ import { addElement, KINDS, STARTS } from "./add";
 import { duplicate, pasteHere } from "./clipboard";
 import { makeComponent } from "./component";
 import type { Pick } from "./DesignScreen";
-import { addPart, PART_KINDS } from "./SceneFields";
+import { addPart, PART_KINDS, PART_STARTS } from "./SceneFields";
+import type { Part } from "../../page/parts";
 import { addShape, SHAPE_KINDS } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { absolute, group, isGroup, parentOf, remove, restack, tops, ungroup, wrap } from "./tree";
@@ -30,29 +30,32 @@ type Spot = { x: number; y: number };
 /** Where an added element goes, as each menu says. */
 type Put = (tag: Tag, props: Record<string, string>, component?: string) => void;
 
-/** A row for each kind a person adds. */
-const kindRows = (put: Put): MenuItem[] => KINDS.map(([tag, word]) => ({ label: word, icon: <TagIcon tag={tag} size={13} />, run: () => put(tag, STARTS[tag]) }));
+/** A row for each kind a person adds where `home` says: elements on a page, parts in a scene. */
+const kindRows = (home: Home, put: Put): MenuItem[] =>
+  home === "scene"
+    ? PART_KINDS.map((tag) => ({ label: TAG_WORDS[tag], icon: <TagIcon tag={tag} size={13} />, run: () => put(tag, PART_STARTS[tag]) }))
+    : KINDS.map(([tag, word]) => ({ label: word, icon: <TagIcon tag={tag} size={13} />, run: () => put(tag, STARTS[tag]) }));
 
-/** The components that may be placed on `page`: all but itself. */
-const placeable = (page: Page) => state.pages.filter((pg) => pg.interface !== null && pg.id !== page.id);
+/** The components that may be placed where `home` says on `page`: those made for it, but itself. */
+const placeable = (page: Page, home: Home) => state.pages.filter((pg) => pg.interface !== null && pg.id !== page.id && spaceHome(pg) === home);
 
-/** A row that places a component at its own size, with `inputs` set. */
+/** A row that places a component, a 2D one at its own size, with `inputs` set. */
 const placing = (c: Page, put: Put, inputs: Record<string, string> = {}): MenuItem => ({
   label: c.name,
   icon: <Component size={13} />,
-  run: () => put("use", { name: c.name, w: String(c.width), h: String(c.height), ...inputs }, c.name),
+  run: () => put("use", { name: c.name, ...(spaceHome(c) === "page" && { w: String(c.width), h: String(c.height) }), ...inputs }, c.name),
 });
 
-/** A row whose submenu places each component but the one open. */
-function placeRow(page: Page, put: Put, label: string): MenuItem {
-  const components = placeable(page);
+/** A row whose submenu places each component that fits `home` but the one open. */
+function placeRow(page: Page, home: Home, put: Put, label: string): MenuItem {
+  const components = placeable(page, home);
   return { label, icon: <Component size={13} />, disabled: components.length === 0, items: components.length === 0 ? undefined : components.map((c) => placing(c, put)) };
 }
 
 /** A row whose submenu walks each object's Global imports whose type is known to the
  *  components that show it, its fields after its own, each placed showing the value at its path. */
-function showRow(page: Page, put: Put, label: string): MenuItem {
-  const components = placeable(page);
+function showRow(page: Page, home: Home, put: Put, label: string): MenuItem {
+  const components = placeable(page, home);
   const shows = (path: string, f: FieldInfo, writable: boolean): MenuEntry[] => {
     const views = viewsOf(f, writable, components).map((v) => placing(v.component, put, { [v.input]: path }));
     const fields = f.kind === "struct" ? f.members.flatMap((m): MenuItem[] => submenu(m.name, <Dot size={13} />, shows(`${path}.${m.name}`, m, writable))) : [];
@@ -76,15 +79,18 @@ function showRow(page: Page, put: Put, label: string): MenuItem {
 /** A row opening `items`, or none where there are none. */
 const submenu = (label: string, icon: JSX.Element, items: MenuEntry[]): MenuItem[] => (items.length > 0 ? [{ label, icon, items }] : []);
 
-/** What the layers pane's + offers: each kind, then a component to place, or one to show an
- *  import with. */
-export const addMenu = (page: Page, put: Put): MenuEntry[] => [...kindRows(put), "-", placeRow(page, put, "Place a component"), showRow(page, put, "Show an import")];
+/** What the layers pane's + offers at the top of `page`: each kind, then a component to place,
+ *  or one to show an import with. */
+export const addMenu = (page: Page, put: Put): MenuEntry[] => {
+  const home = spaceHome(page);
+  return [...kindRows(home, put), "-", placeRow(page, home, put, "Place a component"), showRow(page, home, put, "Show an import")];
+};
 
-/** The same as submenus of a right click's menu. */
-const adds = (page: Page, put: Put, inside = ""): MenuEntry[] => [
-  { label: `Add${inside}`, icon: <Plus size={13} />, items: kindRows(put) },
-  placeRow(page, put, `Place a component${inside}`),
-  showRow(page, put, `Show an import${inside}`),
+/** The same as submenus of a right click's menu, for what goes where `home` says. */
+const adds = (page: Page, put: Put, inside = "", home = spaceHome(page), add = `Add${inside}`): MenuEntry[] => [
+  { label: add, icon: home === "scene" ? <Rotate3d size={13} /> : <Plus size={13} />, items: kindRows(home, put) },
+  placeRow(page, home, put, `Place a component${inside}`),
+  showRow(page, home, put, `Show an import${inside}`),
 ];
 
 /** The browser copies only in a copy event, which a menu row can ask for in its click. */
@@ -105,10 +111,10 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
     const box = absolute(page, id);
     const at = spot && box ? { x: spot.x - box.x, y: spot.y - box.y } : undefined;
     entries.push(...adds(page, (tag, props, component) => addElement(page, id, tag, props, component ?? null, at), " inside"), "-");
-  } else if (element && (element.tag === "svg" || homeOf(element.tag) === "diagram") && one === id) {
+  } else if (element && (element.tag === "svg" || homeOf(element) === "diagram") && one === id) {
     entries.push({ label: "Add shape", icon: <Shapes size={13} />, items: SHAPE_KINDS.map((tag) => ({ label: TAG_WORDS[tag], icon: <TagIcon tag={tag} size={13} />, run: () => addShape(page, element, tag) })) }, "-");
-  } else if (element && (element.tag === "scene" || homeOf(element.tag) === "scene") && one === id) {
-    entries.push({ label: "Add part", icon: <Rotate3d size={13} />, items: PART_KINDS.map((tag) => ({ label: TAG_WORDS[tag], icon: <TagIcon tag={tag} size={13} />, run: () => addPart(page, element, tag) })) }, "-");
+  } else if (element && (element.tag === "scene" || homeOf(element) === "scene") && one === id) {
+    entries.push(...adds(page, (tag, props, component) => addPart(page, element, tag as Part | "use", props, component ?? null), "", "scene", "Add part"), "-");
   }
   entries.push(
     {
@@ -129,7 +135,7 @@ export function elementMenu(e: MouseEvent, page: Page, selected: string[], pick:
       label: "Lay out in a new frame",
       keys: "Shift A",
       icon: <Rows3 size={13} />,
-      disabled: picked.some((x) => homeOf(x.tag) !== "page" || parentOf(page, x.id) !== parentOf(page, picked[0].id)),
+      disabled: picked.some((x) => homeOf(x) !== "page" || parentOf(page, x.id) !== parentOf(page, picked[0].id)),
       run: () => wrap(page, ids),
     },
   );

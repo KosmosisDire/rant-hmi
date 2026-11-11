@@ -4,7 +4,7 @@
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import { edit } from "../../state/change";
-import { find } from "../../state/elements";
+import { find, spaceHome } from "../../state/elements";
 import { CAMERA, type Part, PARTS, POSE } from "../../page/parts";
 import { kindOf } from "./Field";
 import type { Spec } from "./ShapeFields";
@@ -34,15 +34,18 @@ const fields = (defaults: Record<string, string>): Spec[] =>
 /** The camera's fields on a scene. */
 export const cameraFields = () => fields(CAMERA);
 
+/** Where a part or a 3D instance sits in what holds it. */
+export const POSE_FIELD: Spec = ["Pose", POSE, { placeholder: "{ position: vec(0, 0, 0) }" }];
+
 /** A part's fields: its pose, then its own. */
-export const partFields = (tag: Part): Spec[] => [["Pose", POSE, { placeholder: "{ position: vec(0, 0, 0) }" }], ...fields(PARTS[tag])];
+export const partFields = (tag: Part): Spec[] => [POSE_FIELD, ...fields(PARTS[tag])];
 
 /** The properties a part's fields name. */
 export const partKeys = (tag: Part) => new Set([POSE, ...Object.keys(PARTS[tag])]);
 
 // a solid stands on the floor, and points start as a short line to see
 const STANDS = "{ position: vec(0, 0, 0.5) }";
-const STARTS: Record<Part, Record<string, string>> = {
+export const PART_STARTS: Record<Part, Record<string, string>> = {
   anchor: { name: "Anchor" },
   axes: { name: "Axes" },
   box: { name: "Box", pose: STANDS },
@@ -56,10 +59,11 @@ const STARTS: Record<Part, Record<string, string>> = {
   model: { name: "Model" },
 };
 
-/** Adds a part into the scene or anchor `at` is, or beside it when it is a part. */
-export function addPart(page: Page, at: Element, tag: Part) {
-  const holder = at.tag === "scene" || at.tag === "anchor" ? at.id : parentOf(page, at.id);
-  if (!holder || !find(page.children, holder)) return;
-  const element: Element = { id: "", tag, component: null, props: { ...STARTS[tag] }, handlers: [], state: [], children: [] };
+/** Adds a part, or an instance of the 3D component `component` for "use", into the scene or
+ *  anchor `at` is, beside it when it is a part, or at the top of a 3D component for none. */
+export function addPart(page: Page, at: Element | undefined, tag: Part | "use", props: Record<string, string> = tag === "use" ? {} : PART_STARTS[tag], component: string | null = null) {
+  const holder = !at ? null : at.tag === "scene" || at.tag === "anchor" ? at.id : parentOf(page, at.id);
+  if (holder === null ? spaceHome(page) !== "scene" : !find(page.children, holder)) return;
+  const element: Element = { id: "", tag, component, props: { ...props }, handlers: [], state: [], children: [] };
   edit({ kind: "add_element", page: page.id, parent: holder, index: null, element });
 }
