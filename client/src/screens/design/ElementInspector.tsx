@@ -57,7 +57,7 @@ import type { Typing } from "./DesignScreen";
 import { BorderField, Field, type FieldProps, keysOf, kindOf, type Moving, PADDING, PartsField, POINTS, RADIUS, type Where, WhereContext } from "./Field";
 import { AddRow } from "./AddRow";
 import { addPart, cameraFields, PART_KINDS, partFields, partKeys, POSE_FIELD } from "./SceneFields";
-import { addShape, GEOMETRY, ORIGINS, PAINT, ROTATE, SHAPE_KINDS, shapeKeys, type Spec, TURN } from "./ShapeFields";
+import { addShape, GEOMETRY, ORIGINS, PAINT, ROTATE, SHAPE_KINDS, shapeKeys, type Spec, TURN, VISIBLE } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
 import { absolute, type Align, align, boxOf, boxText, flowed, originEdits, roomOf, scopeOf, sendEdits, setProps, showProps, spread, tops } from "./tree";
 
@@ -71,11 +71,12 @@ const LOOK: Spec[] = [
   ["Shadow", "box-shadow", { kind: "shadow", placeholder: '"0 0.2 0.8 0 #00000066"' }],
   // how far what shows through it blurs, in units, as frosted glass
   ["Backdrop blur", "backdrop-filter", { kind: "number", min: 0, step: 0.1, placeholder: "0" }],
+  VISIBLE,
   // false dims it, and it and all it holds take no events
   ["Enabled", "enabled", { kind: "flag", placeholder: "true" }],
 ];
 /** What an instance's box takes of the look, the rest being its component's. */
-const BOX_LOOK = LOOK.filter(([, key]) => key === "opacity" || key === "box-shadow" || key === "enabled");
+const BOX_LOOK = LOOK.filter(([, key]) => key === "opacity" || key === "box-shadow" || key === "visible" || key === "enabled");
 const TEXT_LOOK: Spec[] = [
   ["Colour", "color", { kind: "colour", placeholder: "#e4e6e8" }],
   ["Size", "font-size", { kind: "number", min: 0.1, step: 0.1, placeholder: "1.6" }],
@@ -493,7 +494,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
         </Show>
         <Show when={part()}>
           <div class="section">{TAG_WORDS[p.element.tag]}</div>
-          <For each={isPart(p.element.tag) ? partFields(p.element.tag) : [POSE_FIELD]}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
+          <For each={[...(isPart(p.element.tag) ? partFields(p.element.tag) : [POSE_FIELD]), VISIBLE]}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
         </Show>
         <Show when={robots().get(p.element.id)}>
           {(list) => (
@@ -540,7 +541,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">Look</div>
           <For each={BOX_LOOK}>{([label, key, more]) => <Field {...prop(key)} {...more} label={label} />}</For>
           <div class="section">More CSS</div>
-          <LooseProps page={p.page} element={p.element} loose={loose} placeholder='visibility: Running ? "visible" : "hidden"' css />
+          <LooseProps page={p.page} element={p.element} loose={loose} placeholder='filter: Running ? "none" : "grayscale(1)"' css />
         </Show>
         <Show when={text()}>
           <div class="section">Text</div>

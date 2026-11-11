@@ -28,6 +28,9 @@ export const GEOMETRY: Partial<Record<Tag, Spec[]>> = {
   g: [["Transform", "transform", { placeholder: '`rotate(${angle} 50 50)`' }]],
 };
 
+/** Whether it is drawn: false draws none of it, so it reads nothing and takes no room. */
+export const VISIBLE: Spec = ["Visible", "visible", { kind: "flag", placeholder: "true" }];
+
 /** What every shape may be painted with. A group's transform is its geometry. */
 export const PAINT: Spec[] = [
   ["Fill", "fill", { kind: "colour", placeholder: "#000000" }],
@@ -37,6 +40,7 @@ export const PAINT: Spec[] = [
   ["Dashes", "stroke-dasharray", { placeholder: '"4 4"' }],
   ["Ends", "stroke-linecap", { kind: "choice", options: ['"butt"', '"round"', '"square"'], placeholder: '"butt"' }],
   ["Transform", "transform", { placeholder: '`rotate(${angle} 50 50)`' }],
+  VISIBLE,
   // false dims it, and it and all it holds take no events
   ["Enabled", "enabled", { kind: "flag", placeholder: "true" }],
 ];

@@ -77,7 +77,7 @@ export interface Holder {
 const CORNER: Holder = { ox: "0px", oy: "0px" };
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "enabled", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup", "context", "draw", "target", "yaw", "pitch", "distance"]);
+export const OWN = new Set(["name", "repeat", "visible", "enabled", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup", "context", "draw", "target", "yaw", "pitch", "distance"]);
 
 /** How much of its opacity an element keeps while it is not enabled. */
 const DIM = 0.4;
@@ -761,7 +761,7 @@ function ShapeView(p: ElementProps & { at?: At }) {
     // one not worked out yet counts as not enabled
     let enabled = p.element.props.enabled === undefined;
     for (const [key, value] of Object.entries(p.element.props)) {
-      if (key === "name" || key === "repeat") continue;
+      if (key === "name" || key === "repeat" || key === "visible") continue;
       const r = time(key, value, () => resolve(value, p.scope), slow);
       if (!r.ok) {
         if (r.unknown) unknown = true;

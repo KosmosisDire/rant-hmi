@@ -13,7 +13,7 @@
     </div>
     <div id="e8" name="View" x="0" y="0" w="fill" h="fill" style='background: $ground; border-radius: $radius; overflow: "hidden"'>
       <media id="e9" name="Picture" x="0" y="0" w="100%" h="100%" src="Line.LabelCam" fit='"meet"'/>
-      <svg id="e10" name="Found" x="0" y="0" w="100%" h="100%" viewbox="`0 0 ${Line.LabelCam.width} ${Line.LabelCam.height}`" fit='"meet"' style='visibility: Line.showBoxes ? "visible" : "hidden"'>
+      <svg id="e10" name="Found" x="0" y="0" w="100%" h="100%" viewbox="`0 0 ${Line.LabelCam.width} ${Line.LabelCam.height}`" fit='"meet"' style="visible: Line.showBoxes">
         <rect id="e11" name="box" fill='index ? $green.alpha(0.12) : "none"' height="item.max.y - item.min.y" repeat="Line.Labels.boxes" rx="4" stroke="index ? $green : $amber" stroke-width="3" width="item.max.x - item.min.x" x="item.min.x" y="item.min.y"/>
         <text id="e12" name="box name" fill="index ? $green : $amber" font-size="18" font-weight="700" paint-order='"stroke"' repeat="Line.Labels.boxes" stroke="$ground" stroke-width="5" x="item.min.x + 4" y="item.min.y - 8">index ? "Label " + index : "Parcel"</text>
       </svg>

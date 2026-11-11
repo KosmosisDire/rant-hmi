@@ -92,7 +92,7 @@ export function makeComponent(page: Page, ids: string[]) {
           let to = renamed.get(text);
           if (!to) {
             // a member's input is named for the member alone
-            to = freeName(joined(text.split(".").at(-1) ?? text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "x", "y", "w", "h", "origin", "rotate", "text", "pose"].includes(n) || inputs.some((i) => i.name === n));
+            to = freeName(joined(text.split(".").at(-1) ?? text, (w) => w[0].toLowerCase() + w.slice(1)) || "value", (n) => ["name", "repeat", "visible", "enabled", "x", "y", "w", "h", "origin", "rotate", "text", "pose"].includes(n) || inputs.some((i) => i.name === n));
             renamed.set(text, to);
             inputs.push({ name: to, default: "0", bindable: false, type: "" });
           }

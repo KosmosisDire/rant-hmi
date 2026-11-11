@@ -1,4 +1,5 @@
-// Repeating an element, on a page or in a scene: a copy per item of a list, or per count.
+// Repeating an element, on a page or in a scene: a copy per item of a list, or per count, each
+// drawn only while it is visible.
 
 import { createMemo, Index, type JSX, Show } from "solid-js";
 import type { Element } from "../protocol/Element";
@@ -14,7 +15,8 @@ export function copiesOf(v: unknown): unknown[] {
 }
 
 /** An element once, or a copy of it per item when it repeats: a list, or a number of times.
- *  Each is drawn by `children` with the scope it reads and which copy it is. */
+ *  Each is drawn by `children` with the scope it reads and which copy it is, while its visible
+ *  reads true there. One not drawn reads nothing and takes no room. */
 export function Repeated(p: { element: Element; scope: Scope; children: (scope: () => Scope, at?: At) => JSX.Element }) {
   const copies = createMemo(() => {
     const r = p.element.props.repeat;
@@ -22,12 +24,22 @@ export function Repeated(p: { element: Element; scope: Scope; children: (scope: 
     const got = resolve(r, p.scope);
     return copiesOf(got.ok ? got.value : undefined);
   });
+  // one not worked out yet stays hidden, as a repeat not worked out draws no copy
+  const drawn = (scope: () => Scope, at?: At) => {
+    const visible = createMemo(() => {
+      const v = p.element.props.visible;
+      if (!v?.trim()) return true;
+      const r = resolve(v, scope());
+      return r.ok && !!r.value;
+    });
+    return <Show when={visible()}>{p.children(scope, at)}</Show>;
+  };
   return (
-    <Show when={copies()} fallback={p.children(() => p.scope)}>
+    <Show when={copies()} fallback={drawn(() => p.scope)}>
       {(items) => (
         <Index each={items()}>
           {(item, index) =>
-            p.children(() => repeatScope(p.scope, index, item), {
+            drawn(() => repeatScope(p.scope, index, item), {
               index,
               get item() {
                 return item();
