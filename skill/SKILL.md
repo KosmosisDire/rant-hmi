@@ -155,6 +155,8 @@ choices below.
 - Lay out with frames: `layout`, `gap`, `padding`, `w="fill"`, `h="hug"`, and a repeated part
   for a list. `align` sets what a frame holds, or a text's lines, at one of nine points, as
   `"center left"`. Keep `x` and `y` for what sits on its own, as a marker over a picture.
+- What shows only at times takes `visible` in its style, as `visible: view == "Camera"` on each
+  of several panels in one place. Hidden, it reads nothing, so a hidden camera streams nothing.
 - Read the project's `data/theme.toml` and use its tokens: `$ground` the page, `$surface` and
   `$panel` cards, `$panel2` and `$panel3` what sits on a card, `$text`, `$dim` and `$faint`,
   the `space`, `radius` and `text` sizes. Change the look there, never element by element,
