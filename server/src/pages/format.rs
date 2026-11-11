@@ -958,14 +958,14 @@ mod tests {
     /// Shapes for a diagram, or parts and instances of the 3D component Cell for a scene, a
     /// group of them holding more.
     fn random_held(rng: &mut Rng, ids: &mut usize, depth: usize, home: Home, keeps: bool) -> Vec<Element> {
-        let (tags, keys): ([Tag; 6], &[&str]) = match home {
-            Home::Diagram => ([Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G, Tag::G], &["name", "cx", "r", "fill", "stroke", "d", "transform"]),
-            _ => ([Tag::Box, Tag::Model, Tag::Points, Tag::Arrow, Tag::Anchor, Tag::Use], &["name", "repeat", "pose", "size", "color", "points", "src", "joints"]),
+        let (tags, keys): (&[Tag], &[&str]) = match home {
+            Home::Diagram => (&[Tag::Circle, Tag::Rect, Tag::Path, Tag::SvgText, Tag::G], &["name", "cx", "r", "fill", "stroke", "d", "transform"]),
+            _ => (&[Tag::Box, Tag::Model, Tag::Points, Tag::Arrow, Tag::Anchor, Tag::Use], &["name", "repeat", "pose", "size", "color", "points", "src", "joints"]),
         };
         let mut out = Vec::new();
         for _ in 0..rng.below(3) {
             *ids += 1;
-            let tag = tags[rng.below(6)];
+            let tag = tags[rng.below(tags.len())];
             let mut props = some_props(rng, keys);
             if tag == Tag::SvgText {
                 props.insert(TEXT.to_owned(), rng.pick(&VALUES));
