@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "rant-hmi"
-version = "0.0.16"
+version = "0.0.17"
 dependencies = [
  "anyhow",
  "axum",
@@ -2421,8 +2421,8 @@ dependencies = [
 
 [[package]]
 name = "rant-math"
-version = "0.0.4"
-source = "git+https://github.com/KosmosisDire/rant-math?tag=crate-v0.0.4#3acbe19ccbd0323e2cf7681751d4d1d6738c07c9"
+version = "0.0.5"
+source = "git+https://github.com/KosmosisDire/rant-math?tag=crate-v0.0.5#ec6e93a0126fda2189f4f4323ed06c39150d2dee"
 dependencies = [
  "cc",
  "rant-types",
