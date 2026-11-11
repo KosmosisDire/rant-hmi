@@ -39,7 +39,11 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   const label = await hmi.addElement(pageId, "div", { name: "Label", x: "44", y: "4", w: "16", h: "8", color: "1 +" });
   await row("color: ").waitFor({ timeout: 4000 });
   await hmi.setProps(pageId, label, { color: "nope" });
-  await eventually(async () => (await row("color: ").count()) === 1 && (await row("color: ").textContent()).includes("nope"), "the changed fault to take the old one's place");
+  // read at once, as the old row may go between two reads
+  await eventually(async () => {
+    const rows = await row("color: ").allTextContents();
+    return rows.length === 1 && rows[0].includes("nope");
+  }, "the changed fault to take the old one's place");
   await hmi.setProps(pageId, card, { filter: "nope" });
   await row("filter: ").waitFor({ timeout: 4000 });
   await hmi.setProps(pageId, label, { "font-size": "nope" });
