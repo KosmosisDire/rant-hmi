@@ -1796,8 +1796,10 @@ interface Drawn {
   quads: boolean;
   /** The pixel a pick draws into, made with its first pick. */
   picked?: WebGLRenderTarget;
-  /** Where it told the page its camera was last. */
-  seen: string;
+  /** The number the page knows it by. */
+  id: number;
+  /** What its camera's matrix was when it told the page last. */
+  seen: number[];
 }
 
 // frames the GPU may have yet to draw, so the worker works on the next while it draws one
@@ -1834,10 +1836,9 @@ function drawAll() {
     d.px.value = d.height;
     aimEye(d);
     d.renderer.render(d.scene, d.eye);
-    const eye: Eye = { origin: vec(d.eye.position), unproject: new Matrix4().multiplyMatrices(d.eye.matrixWorld, d.eye.projectionMatrixInverse).toArray() };
-    const seen = JSON.stringify(eye);
-    if (seen !== d.seen) host.post({ seen: sceneOf(d), eye });
-    d.seen = seen;
+    const unproject = new Matrix4().multiplyMatrices(d.eye.matrixWorld, d.eye.projectionMatrixInverse).toArray();
+    if (unproject.some((n, i) => n !== d.seen[i])) host.post({ seen: d.id, eye: { origin: vec(d.eye.position), unproject } });
+    d.seen = unproject;
     const gl = d.renderer.getContext() as WebGL2RenderingContext;
     d.fences.push(gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)!);
   }
@@ -1878,13 +1879,16 @@ function pick(d: Drawn, x: number, y: number): Picked {
   d.eye.setViewOffset(d.width, d.height, x, y, 1, 1);
   d.picked ??= new WebGLRenderTarget(1, 1, { type: FloatType, minFilter: NearestFilter, magFilter: NearestFilter });
   const px = new Float32Array(4);
-  // dots size themselves by the pixels the camera sees, now one
+  // dots size themselves by the pixels the camera sees, now one, and every frame after draws as ever
   [PICKING.value, d.px.value] = [true, 1];
-  r.setRenderTarget(d.picked);
-  r.render(d.scene, d.eye);
-  r.readRenderTargetPixels(d.picked, 0, 0, 1, 1, px);
-  r.setRenderTarget(null);
-  [PICKING.value, d.px.value] = [false, d.height];
+  try {
+    r.setRenderTarget(d.picked);
+    r.render(d.scene, d.eye);
+    r.readRenderTargetPixels(d.picked, 0, 0, 1, 1, px);
+  } finally {
+    r.setRenderTarget(null);
+    [PICKING.value, d.px.value] = [false, d.height];
+  }
   const hit = px[3] > 0 ? parts.get(Math.round(px[0])) : undefined;
   // the pixel's middle is the middle of what the camera now sees
   const point = hit ? vec(new Vector3(0, 0, px[2] * 2 - 1).unproject(d.eye)) : null;
@@ -1900,9 +1904,6 @@ function pick(d: Drawn, x: number, y: number): Picked {
   }
   return { chain, index: hit && px[1] >= 0 ? Math.round(px[1]) : null, point, frames };
 }
-
-/** The number the page knows scene `d` by. */
-const sceneOf = (d: Drawn) => [...scenes].find(([, x]) => x === d)![0];
 
 /** Whether `d` may be drawn, the GPU having fewer than IN_FLIGHT of its frames to draw, so it
  *  never falls behind, as a GPU shared with the rest of the screen then would. */
@@ -1988,7 +1989,7 @@ export function hear(m: Drawing) {
       scene.add(sky, head, head.target, group);
       // where the camera last could be worked out, kept while a value cannot be read
       const aim = { target: new Vector3(), yaw: Number(CAMERA.yaw), pitch: Number(CAMERA.pitch), distance: Number(CAMERA.distance) };
-      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base, fences: [], quads: renderer ? squares(renderer) : false, seen: "" };
+      const d: Drawn = { renderer, scene, eye, head, group, aim, width: 1, height: 1, px: { value: 1 }, base: m.base, fences: [], quads: renderer ? squares(renderer) : false, id: m.scene, seen: [] };
       scenes.set(m.scene, d);
       // three.js makes its own buffers again, and the parts with buffers of their own lay theirs out again
       m.canvas.addEventListener("webglcontextrestored", () => {
