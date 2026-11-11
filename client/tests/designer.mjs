@@ -204,6 +204,14 @@ export function designer(page) {
       await d.set({ w: String(w), h: String(h) });
     },
 
+    /** Adds a 3D component from the Components list, names it, and opens it. */
+    async add3DComponent(name) {
+      await d.tab("Design");
+      await fresh("Add a 3D component", /^Component3D\d*$/);
+      await d.setField("Name", name);
+      await left().locator(".card.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
+    },
+
     /** Adds an input to the open component, from its inspector with nothing selected, written
      *  back when `twoWay`, taking the types `type` names. */
     async addInput(name, start, { twoWay = false, type = "" } = {}) {
