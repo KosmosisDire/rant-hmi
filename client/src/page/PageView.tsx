@@ -249,7 +249,7 @@ interface ElementProps {
 /** An element, or a copy of it per item when it repeats, each reading what it keeps. */
 function Placed(p: ElementProps) {
   return (
-    <Repeated element={p.element} scope={p.scope} design={p.design}>
+    <Repeated element={p.element} scope={p.scope}>
       {(scope, at) => {
         const own = createMemo(() => stateScope(scope(), p.element.id, p.element.state));
         return <ElementView {...p} scope={own()} at={at} />;

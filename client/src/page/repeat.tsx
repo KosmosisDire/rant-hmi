@@ -14,15 +14,13 @@ export function copiesOf(v: unknown): unknown[] {
 }
 
 /** An element once, or a copy of it per item when it repeats: a list, or a number of times.
- *  Each is drawn by `children` with the scope it reads and which copy it is. In the editor a
- *  repeat with nothing to show still makes one copy, so there is one to pick. */
-export function Repeated(p: { element: Element; scope: Scope; design?: boolean; children: (scope: () => Scope, at?: At) => JSX.Element }) {
+ *  Each is drawn by `children` with the scope it reads and which copy it is. */
+export function Repeated(p: { element: Element; scope: Scope; children: (scope: () => Scope, at?: At) => JSX.Element }) {
   const copies = createMemo(() => {
     const r = p.element.props.repeat;
     if (!r?.trim()) return null;
     const got = resolve(r, p.scope);
-    const items = copiesOf(got.ok ? got.value : undefined);
-    return items.length === 0 && p.design ? [undefined] : items;
+    return copiesOf(got.ok ? got.value : undefined);
   });
   return (
     <Show when={copies()} fallback={p.children(() => p.scope)}>

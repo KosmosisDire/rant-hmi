@@ -546,7 +546,7 @@ interface PartProps {
 function Held(p: PartProps) {
   return (
     <Show when={`${p.element.tag} ${p.element.component ?? ""}`} keyed>
-      {(kind) => kind && <Repeated element={p.element} scope={p.scope} design={p.design}>{(scope) => <PartView {...p} scope={scope()} />}</Repeated>}
+      {(kind) => kind && <Repeated element={p.element} scope={p.scope}>{(scope) => <PartView {...p} scope={scope()} />}</Repeated>}
     </Show>
   );
 }
