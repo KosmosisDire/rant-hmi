@@ -61,7 +61,8 @@ export default async function ({ sys, check, eventually }) {
       const reading = el("e1");
       await eventually(async () => (await reading.textContent())?.trim() === "0.50", "the demo line's speed in the window");
       check((await screen.title()) === "App line", `the screen is titled ${await screen.title()}`);
-      check(screen.url() === "hmi://localhost/run", `the window shows ${screen.url()}`);
+      // the operator's address names the page open, which a reload opens again
+      check(screen.url() === "hmi://localhost/run/main", `the window shows ${screen.url()}`);
       await el("e2").click();
       await eventually(async () => (await reading.textContent())?.trim() === "0.25", "the speed written from the window");
       await screen.reload();
