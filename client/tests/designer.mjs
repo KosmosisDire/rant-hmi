@@ -323,6 +323,13 @@ export function designer(page) {
       await box.press("Control+Enter");
     },
 
+    /** Sets the selected SVG's markup by code. */
+    async markup(text) {
+      const box = right().locator('.section:text-is("SVG") + * .editor.code');
+      await box.fill(text);
+      await box.press("Control+Enter");
+    },
+
     /** Adds a page from the layers' + and opens it. */
     async addPage(name) {
       await d.tab("Design");

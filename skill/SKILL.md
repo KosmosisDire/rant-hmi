@@ -129,8 +129,8 @@ choices below.
   its own. Work states out from those: `fill.darken(0.15)` pressed, `colour.alpha(0.15)` a
   tint.
 - Name inputs and events as the standard ones do: `value`, `min`, `max`, `step`, `unit`,
-  `digits`, `text`, `label`, `options`, `fill`, `colour`, `textColour`, `textSize`, `radius`,
-  and `change` with the new value, `confirm`, `move`.
+  `digits`, `text`, `label`, `labels`, `icon`, `options`, `fill`, `colour`, `textColour`,
+  `textSize`, `radius`, and `change` with the new value, `confirm`, `move`.
 - A control that holds a value has one `value` input with `bindable="true"`. Its code sets
   `value`, then sends `change` with it. An instance bound to a writable name writes back to
   it. One bound to the machine's state shows it, and its `change` handler asks the machine,
@@ -168,7 +168,8 @@ choices below.
   `section = Pages.Camera`. The address at `/run` follows it, as `/run/shell/camera`, and Back
   undoes each change. A page with no chrome is opened alone, `/run/kiosk`.
 - Name each page as `Pages.Camera` wherever code opens it or a view shows it, never
-  `Pages[name]`, so the editor links the pages. A tab bar takes `[Pages.A, Pages.B]` as options.
+  `Pages[name]`, so the editor links the pages. A tab bar takes `[Pages.A, Pages.B]` as options, and
+  their names as `labels`.
 - Read the project's `data/theme.toml` and use its tokens: `$ground` the page, `$surface` and
   `$panel` cards, `$panel2` and `$panel3` what sits on a card, `$text`, `$dim` and `$faint`,
   the `space`, `radius` and `text` sizes. Change the look there, never element by element,

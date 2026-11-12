@@ -2,7 +2,8 @@
 // box it gets, its look inputs that start at the theme's tokens. The dropdown keeps its open
 // state of its own, lists its options by repeating one row, closes when a press lands outside
 // it, and draws its list over what lies below, as wide as it, scrolling past its rows. The switch
-// repeats a segment per option, sharing its width. Both pick a mode for the page.
+// repeats a segment per option, sharing its width, each showing its label when it has labels.
+// Both pick a mode for the page.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   hmi.setVariable("Hmi.mode", "Auto");
@@ -47,6 +48,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.sizing("Fill");
   await d.addInput("value", '"Auto"', { twoWay: true });
   await d.addInput("options", '["Auto", "Manual"]');
+  await d.addInput("labels", "null");
   await d.addInput("fill", "$panel");
   await d.addInput("colour", "$accent");
   await d.addInput("textColour", "$text");
@@ -60,12 +62,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.setField("Repeat", "options");
   await d.handler("tap", 'value = item;\nemit("change", item);');
   await d.layOut("right", "Center");
-  await d.add("text", { Name: "segmentLabel", w: "hug", h: "hug", Text: "item", Colour: "item === value ? pickedTextColour : textColour", Size: "textSize" });
+  await d.add("text", { Name: "segmentLabel", w: "hug", h: "hug", Text: "labels ? labels[index] : item", Colour: "item === value ? pickedTextColour : textColour", Size: "textSize" });
 
   await d.addPage("Modes");
   const drop = await d.place("Dropdown", { x: "4", y: "4", w: "20", h: "4", value: "Hmi.mode" });
   const swap = await d.place("ModeSwitch", { x: "28", y: "4", w: "24", h: "4", value: "Hmi.mode", options: '["Auto", "Manual", "Off"]' });
-  const wide = await d.place("ModeSwitch", { x: "28", y: "12", w: "48", h: "6", value: "Hmi.mode", options: '["Auto", "Manual", "Off"]' });
+  const wide = await d.place("ModeSwitch", { x: "28", y: "12", w: "48", h: "6", value: "Hmi.mode", options: '["Auto", "Manual", "Off"]', labels: '["A", "M", "O"]' });
   // a card placed after the dropdown, which its open list must cover
   const card = await d.add("frame", { Name: "card", x: "4", y: "9", w: "24", h: "12", Fill: "$panel3" });
 
@@ -93,6 +95,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   // a wider switch shares its width between its segments, each label in its middle
   const [track, parts] = [await inst(wide).boundingBox(), await inst(wide).locator('.el[data-name="segment"]').evaluateAll((es) => es.map((e) => e.getBoundingClientRect().width))];
   check(parts.length === 3 && parts.every((w) => Math.abs(w - track.width / 3) < 1), `the segments are ${parts.map(Math.round)} wide in ${Math.round(track.width)}`);
+  const shown = async (id) => (await inst(id).locator('.el[data-name="segmentLabel"]').allTextContents()).join(" ");
+  check((await shown(wide)) === "A M O" && (await shown(swap)) === "Auto Manual Off", `the switches show ${await shown(wide)} and ${await shown(swap)}`);
   await inst(drop).locator('.el[data-name="face"]').click();
   await eventually(() => list.isVisible(), "the list to open again");
   await page.mouse.click(900, 600);

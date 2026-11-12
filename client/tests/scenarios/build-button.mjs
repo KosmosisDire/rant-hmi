@@ -1,14 +1,17 @@
 // A designer builds a Button in the editor alone, laid out in whatever box an instance gets: a
 // face that fills it and darkens while pressed, its label centred, and an optional hold to
 // confirm, a colour sweeping across the face under the label while held, so a round face shows
-// it too. Its look is inputs that start at the theme's tokens. On a page, a plain one runs its
-// tap, a held one confirms only once the sweep is across, and a wide one and a tall one keep
-// their labels centred and their faces whole.
+// it too. An icon shows before the label. Its look is inputs that start at the theme's tokens.
+// On a page, a plain one runs its tap, a held one confirms only once the sweep is across, a wide
+// one and a tall one keep their labels centred and their faces whole, and an icon one shows its
+// icon alone and hears a press on it.
 
 export default async function ({ page, hmi, d, check, eventually }) {
+  for (const name of ["Hmi.pressed", "Hmi.released", "Hmi.confirmed"]) hmi.setVariable(name, false);
   await d.addComponent("Button", 20, 6);
   await d.sizing("Fill");
   await d.addInput("text", '"Start"');
+  await d.addInput("icon", '""');
   await d.addInput("holdMs", "0");
   await d.addInput("fill", "$panel3");
   await d.addInput("textColour", "$text");
@@ -23,7 +26,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.select("face");
   await d.add("frame", { Name: "content", x: "0", y: "0", w: "100%", h: "100%", Fill: "", Radius: "" });
   await d.layOut("right", "Center");
-  await d.add("text", { Name: "label", w: "hug", h: "hug", Text: "text", Colour: "textColour", Size: "textSize", Weight: "600" });
+  await d.add("SVG", { Name: "glyph", w: "textSize * 1.1", h: "textSize * 1.1", Visible: "!!icon" });
+  await d.markup("icon");
+  await d.css("color: textColour");
+  await d.select("content");
+  await d.add("text", { Name: "label", w: "hug", h: "hug", Visible: "!!text", Text: "text", Colour: "textColour", Size: "textSize", Weight: "600" });
 
   await d.addPage("Hold buttons");
   const start = await d.place("Button", { x: "4", y: "4", w: "20", h: "6", text: '"Start"' });
@@ -32,6 +39,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.handler("confirm", "Line.Running = false;");
   const wide = await d.place("Button", { x: "4", y: "14", w: "48", h: "8", text: '"Wide"', fill: "$accent" });
   const tall = await d.place("Button", { x: "56", y: "4", w: "12", h: "18", text: '"Tall"' });
+  const home = await d.place("Button", { x: "72", y: "4", w: "8", h: "6", text: '""', icon: '`<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>`' });
+  await d.handler("press", "Hmi.pressed = true;");
+  await d.handler("release", "Hmi.released = true;");
+  await d.handler("confirm", "Hmi.confirmed = true;");
 
   await hmi.set("Line.Running", false);
   await d.tab("Run");
@@ -52,6 +63,17 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await inst(start).click();
   await eventually(() => hmi.state.values["Line.Running"]?.value === true, "a tap to start the line");
+
+  // an icon shows alone, in the label's colour, and a tap on it is the button's press, release and tap
+  check(!(await part(start, "glyph").isVisible()), "a button with no icon shows one");
+  check((await part(home, "glyph").locator("svg.markup circle").count()) === 1 && !(await part(home, "label").isVisible()), "the icon button does not show its icon alone");
+  const ink = await part(home, "glyph").locator("circle").evaluate((e) => getComputedStyle(e).fill);
+  const text = await part(start, "label").evaluate((e) => getComputedStyle(e).color);
+  check(ink === text, `the icon is ${ink}, the labels ${text}`);
+  // a tap on the icon itself, which stays put under the press
+  await part(home, "glyph").click();
+  const sent = () => ["Hmi.pressed", "Hmi.released", "Hmi.confirmed"].map((k) => hmi.state.values[k]?.value);
+  await eventually(() => sent().every((v) => v === true), () => `a tap on the icon to press, release and confirm, it gave ${sent()}`);
 
   // a short press on the hold button does nothing, a long one sweeps across and confirms
   const b = await inst(stop).boundingBox();

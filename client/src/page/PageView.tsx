@@ -574,7 +574,7 @@ function ElementView(p: ElementProps & { at?: At }) {
     const text = p.element.tag === "span" ? words(take("text")) : "";
     const value = p.element.tag === "input" ? take("value") : undefined;
     const diagram = p.element.tag === "svg" ? { box: diagramBox(), fit: take("fit") } : undefined;
-    const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
+    const markup = p.element.tag === "markup" ? markupOf(take("markup"), faults) : undefined;
     const canvas = p.element.tag === "canvas" ? contextOf(take("context"), faults) : undefined;
     const media = p.element.tag === "media" ? { src: take("src", p.element.props.src, resolveSource), fit: String(take("fit") ?? "meet") } : undefined;
     const given = p.element.tag === "view" ? take("page") : undefined;
@@ -589,10 +589,16 @@ function ElementView(p: ElementProps & { at?: At }) {
   });
   // the page a view shows, drawn anew only when that page changes
   const shows = createMemo(() => look().shows);
+  // its SVG made anew only when its markup changes, so a press on it keeps what it landed on
+  const markup = createMemo(() => look().markup);
+  const svg = createMemo(() => {
+    const code = markup();
+    return code ? svgOf(code) : undefined;
+  });
   if (p.element.tag === "view") createEffect(() => p.design && showsOnBoard(viewVia(), shows()));
   // what its own drawing found last, known only once it draws
   const [drawn, setDrawn] = createSignal<Drawn>(CLEAN);
-  const faults = () => [...look().faults, ...drawn().faults];
+  const faults = () => [...look().faults, ...drawn().faults, ...(svg()?.error ? [`markup: ${svg()!.error}`] : [])];
   useFaults(() => p.element.id, faults);
   useFaults(() => p.element.id, () => [...look().slow, ...drawn().warnings], "warn");
   const doc = useContext(Doc);
@@ -639,7 +645,7 @@ function ElementView(p: ElementProps & { at?: At }) {
             </svg>
           )}
         </Match>
-        <Match when={look().markup}>{(m) => <>{m()}</>}</Match>
+        <Match when={svg()?.svg}>{(m) => <>{m()}</>}</Match>
         {/* a canvas keeps the context it was made with, so another context makes a new one */}
         <Match when={look().canvas} keyed>
           {(context) => <CanvasView context={context} draw={p.element.props.draw} scope={p.scope} report={setDrawn} />}
@@ -746,17 +752,15 @@ function layoutCss(flow: Flow, wrap: boolean, align: unknown, spread: boolean): 
   };
 }
 
-/** The SVG a markup element's code gives, as text or a list of it. Why it cannot be drawn
- *  joins `faults`. */
-function svgFrom(code: unknown, faults: string[]): SVGSVGElement | undefined {
+/** The SVG markup a markup element's code gives, as text or a list of it. When it gives none
+ *  that is text, why joins `faults`. */
+function markupOf(code: unknown, faults: string[]): string | undefined {
   if (code === undefined || code === null || code === "") return undefined;
   if (typeof code !== "string" && !Array.isArray(code)) {
     faults.push("markup: the code gives no SVG markup, which is text");
     return undefined;
   }
-  const { svg, error } = svgOf(Array.isArray(code) ? code.join("") : code);
-  if (error) faults.push(`markup: ${error}`);
-  return svg;
+  return Array.isArray(code) ? code.join("") : code;
 }
 
 /** The context a canvas names, "2d" for none, or null with why when it names another. */

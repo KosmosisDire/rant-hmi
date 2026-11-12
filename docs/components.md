@@ -103,12 +103,12 @@ Controls take input:
 
 | Component | Does | Inputs | Sends |
 | --- | --- | --- | --- |
-| `Button` | a press, or a hold of `holdMs` | `text`, `holdMs` | `confirm` |
+| `Button` | a press, or a hold of `holdMs`, with an `icon` before its text | `text`, `icon` (SVG markup), `holdMs` | `confirm` |
 | `Toggle` | sets true or false | `value` (bool, bindable) | `change` |
 | `Slider` | sets a number | `value` (number, bindable), `min`, `max`, `step` | `change` |
 | `Knob` | sets a number | `value` (number, bindable), `min`, `max` | `change` |
 | `Dropdown` | picks one of a list, showing `rows` at once | `value` (bindable), `options`, `rows` | `change` |
-| `ModeSwitch` | picks one of a few side by side | `value` (bindable), `options` | `change` |
+| `ModeSwitch` | picks one of a few side by side, each shown by its label when it has `labels` | `value` (bindable), `options`, `labels` | `change` |
 | `Joystick` | a stick | `travel`, `repeatMs` | `move` as it moves and `held` every `repeatMs`, each `{ x, y }` from -1 to 1, y up, then zeros on release |
 | `Joystick1D` | a stick along one axis | `reach`, `repeatMs` | `move` and `held`, as `{ x }` |
 

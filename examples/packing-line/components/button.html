@@ -1,5 +1,6 @@
 <component name="Button" size="20x6" sizing="fill">
   <prop name="text" default='"Start"'/>
+  <prop name="icon" default='""'/>
   <prop name="holdMs" default="0"/>
   <prop name="fill" default="$panel3"/>
   <prop name="textColour" default="$text"/>
@@ -16,7 +17,10 @@
     </on>
     <div id="e2" name="progress" x="0" y="0" w="(holdMs ? 100 * Math.min(root.heldFor / holdMs, 1) : 0)%" h="100%" style="background: holdColour"/>
     <div id="e3" name="content" x="0" y="0" w="100%" h="100%" style='align: "center"; gap: $space; layout: "right"'>
-      <span id="e4" name="label" x="1" y="1" w="hug" h="hug" style="color: textColour; font-size: textSize; font-weight: 600">text</span>
+      <markup id="e4" name="glyph" x="1" y="1" w="textSize * 1.1" h="textSize * 1.1" style="color: textColour; visible: !!icon">
+        icon
+      </markup>
+      <span id="e5" name="label" x="3" y="3" w="hug" h="hug" style="color: textColour; font-size: textSize; font-weight: 600; visible: !!text">text</span>
     </div>
   </div>
 </component>

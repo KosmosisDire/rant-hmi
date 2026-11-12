@@ -1,6 +1,7 @@
 <component name="ModeSwitch" size="24x4" sizing="fill">
   <prop name="value" default='"Auto"' bindable="true"/>
   <prop name="options" default='["Auto", "Manual"]'/>
+  <prop name="labels" default="null"/>
   <prop name="fill" default="$panel"/>
   <prop name="colour" default="$accent"/>
   <prop name="textColour" default="$text"/>
@@ -14,7 +15,7 @@
         value = item;
         emit("change", item);
       </on>
-      <span id="e3" name="segmentLabel" x="1" y="1" w="hug" h="hug" style="color: item === value ? pickedTextColour : textColour; font-size: textSize">item</span>
+      <span id="e3" name="segmentLabel" x="1" y="1" w="hug" h="hug" style="color: item === value ? pickedTextColour : textColour; font-size: textSize">labels ? labels[index] : item</span>
     </div>
   </div>
 </component>
