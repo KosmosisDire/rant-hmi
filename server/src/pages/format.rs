@@ -25,6 +25,8 @@ const MARKUP: &str = "markup";
 const DRAW: &str = "draw";
 /// A canvas's context, "2d" or "webgl2".
 const CONTEXT: &str = "context";
+/// The page a view shows.
+const PAGE: &str = "page";
 /// The point a scene's camera orbits, how far round and up it is, and how far away.
 const CAMERA: [&str; 4] = ["target", "yaw", "pitch", "distance"];
 
@@ -36,6 +38,7 @@ pub(crate) fn own_attrs(tag: Tag) -> &'static [&'static str] {
         Tag::Media => &[SRC, FIT],
         Tag::Canvas => &[CONTEXT],
         Tag::Scene => &CAMERA,
+        Tag::View => &[PAGE],
         _ => &[],
     }
 }

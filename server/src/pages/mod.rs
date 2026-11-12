@@ -279,10 +279,12 @@ pub enum Tag {
     Arrow,
     /// A glTF file, its named nodes turned by joints.
     Model,
+    /// Another page drawn in its box, the one its `page` gives.
+    View,
 }
 
 /// Each tag and the word its file writes, but an instance, which takes its component's name.
-pub(crate) const WORDS: [(Tag, &str); 29] = [
+pub(crate) const WORDS: [(Tag, &str); 30] = [
     (Tag::Div, "div"),
     (Tag::Group, "group"),
     (Tag::Span, "span"),
@@ -312,6 +314,7 @@ pub(crate) const WORDS: [(Tag, &str); 29] = [
     (Tag::Floor, "floor"),
     (Tag::Arrow, "arrow"),
     (Tag::Model, "model"),
+    (Tag::View, "view"),
 ];
 
 impl Tag {
@@ -651,6 +654,11 @@ impl Pages {
         {
             return Err(format!("{host} keeps its own variables, so nothing in it keeps state"));
         }
+        if let Some(host) = &host
+            && all(std::slice::from_ref(e)).any(|e| e.tag == Tag::View)
+        {
+            return Err(format!("{host} reads only its inputs, so it shows no page"));
+        }
         for c in all(std::slice::from_ref(e)).filter_map(|e| e.component.as_ref()) {
             if self.component(c).is_none() {
                 return Err(format!("there is no component {c}"));
@@ -670,9 +678,10 @@ impl Pages {
         self.get(page).and_then(|p| find(&p.children, id))
     }
 
-    /// The state a key names, as `bound` gives it, whatever copy it is of.
+    /// The state a key names, as `bound` gives it, whatever copy or showing it is of.
     pub fn state(&self, key: &str) -> Option<&Variable> {
-        let path = key.strip_prefix('@')?.split('#').next()?;
+        let alone = unviewed(key);
+        let path = alone.strip_prefix('@')?.split('#').next()?;
         let (page, id, name) = match path.split('/').collect::<Vec<_>>().as_slice() {
             [page, name] => (*page, None, *name),
             [page, id, name] => (*page, Some(*id), *name),
@@ -688,10 +697,12 @@ impl Pages {
 
     /// The state code on the element `id` reads, each name once and the nearest: what it keeps,
     /// what holds it keeps, then the page's. Each comes with its key: the copy of each repeat
-    /// it sits in, outermost first as `copies` gives them, keeps its own.
-    pub fn bound(&self, page: &str, id: &str, copies: &[u32]) -> Vec<(String, Variable)> {
+    /// it sits in, outermost first as `copies` gives them, keeps its own, and so does each
+    /// showing of the page, by the views `via` names.
+    pub fn bound(&self, via: &str, page: &str, id: &str, copies: &[u32]) -> Vec<(String, Variable)> {
         let Some(p) = self.get(page) else { return Vec::new() };
-        let mut out: Vec<(String, Variable)> = p.state.iter().map(|v| (key(page, None, &v.name), v.clone())).collect();
+        let key = |id: Option<&str>, name: &str| format!("@{via}{}", &key(page, id, name)[1..]);
+        let mut out: Vec<(String, Variable)> = p.state.iter().map(|v| (key(None, &v.name), v.clone())).collect();
         let mut depth = 0;
         for e in chain(&p.children, id).unwrap_or_default() {
             if repeats(e) {
@@ -700,7 +711,7 @@ impl Pages {
             let copy: String = copies[..depth.min(copies.len())].iter().map(|i| format!("#{i}")).collect();
             for v in &e.state {
                 out.retain(|(_, o)| o.name != v.name);
-                out.push((format!("{}{copy}", key(page, Some(&e.id), &v.name)), v.clone()));
+                out.push((format!("{}{copy}", key(Some(&e.id), &v.name)), v.clone()));
             }
         }
         out
@@ -751,7 +762,7 @@ impl Pages {
         None
     }
 
-    /// Each page's name as handler code spells it, `Pages.RobotCell` for "Robot cell", and
+    /// Each page's name as code spells it, `Pages.RobotCell` for "Robot cell", and
     /// its id. A name spelled like an earlier one gets a number.
     pub fn keys(&self) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = Vec::new();
@@ -1322,6 +1333,15 @@ fn key(page: &str, id: Option<&str>, name: &str) -> String {
     }
 }
 
+/// A state key as the page alone keeps it, without the views a showing of it names: each view
+/// is the page, the view's id and its copies, then `>`, as `@shell/e10>overview/open`.
+pub fn unviewed(key: &str) -> std::borrow::Cow<'_, str> {
+    match key.rfind('>') {
+        Some(at) => format!("@{}", &key[at + 1..]).into(),
+        None => key.into(),
+    }
+}
+
 /// Whether an element repeats, so each copy keeps its own state.
 fn repeats(e: &Element) -> bool {
     e.props.get("repeat").is_some_and(|r| !r.trim().is_empty())
@@ -1881,9 +1901,13 @@ mod tests {
         assert!(pages.get("overview").unwrap().state.is_empty());
 
         // a run on the label reads the card's lit, its copy's
-        let bound = pages.bound("overview", &text, &[3]);
+        let bound = pages.bound("", "overview", &text, &[3]);
         assert_eq!(bound.iter().map(|(k, v)| (k.as_str(), v.name.as_str())).collect::<Vec<_>>(), [(format!("@overview/{card}/lit#3").as_str(), "lit")]);
         assert_eq!(pages.state(&bound[0].0).map(|v| v.name.as_str()), Some("lit"));
+        // shown in a view, it keeps its own, under the views it is shown through
+        let viewed = pages.bound("shell/e4#1>", "overview", &text, &[3]);
+        assert_eq!(viewed[0].0, format!("@shell/e4#1>overview/{card}/lit#3"));
+        assert_eq!(pages.state(&viewed[0].0).map(|v| v.name.as_str()), Some("lit"));
         assert!(pages.apply(Edit::SetState { page: o(), id: None, name: "index".into(), var: var("index") }).unwrap_err().contains("keep clear of p, index and item"));
         // the HMI's own lit renamed leaves what reads the card's alone
         assert!(pages.rename("lit", "shine", false).unwrap().is_empty());

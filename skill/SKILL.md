@@ -155,8 +155,18 @@ choices below.
 - Lay out with frames: `layout`, `gap`, `padding`, `w="fill"`, `h="hug"`, and a repeated part
   for a list. `align` sets what a frame holds, or a text's lines, at one of nine points, as
   `"center left"`. Keep `x` and `y` for what sits on its own, as a marker over a picture.
-- What shows only at times takes `visible` in its style, as `visible: view == "Camera"` on each
-  of several panels in one place. Hidden, it reads nothing, so a hidden camera streams nothing.
+- A small part that shows only at times takes `visible` in its style, as `visible: Line.fault`.
+  Hidden, it reads nothing, so a hidden camera streams nothing.
+- Whole panels that take turns in one place are pages of their own, each sized to the place, in
+  a `<view page='source == "Twin" ? Pages.Twin : Pages.Camera'/>`. Each is edited alone, and
+  only the one shown is drawn. Two views of one page keep their own state. A view shows a web
+  page too, as `page='"https://grafana.local/d/line1"'`, where the site allows framing.
+- Chrome, a header and a nav round every page, is a Shell page whose `<view page="section"/>`
+  shows the page a `<var name="section" start='"overview"'/>` names, the nav setting
+  `section = Pages.Camera`. The address at `/run` follows it, as `/run/shell/camera`, and Back
+  undoes each change. A page with no chrome is opened alone, `/run/kiosk`.
+- Name each page as `Pages.Camera` wherever code opens it or a view shows it, never
+  `Pages[name]`, so the editor links the pages. A tab bar takes `[Pages.A, Pages.B]` as options.
 - Read the project's `data/theme.toml` and use its tokens: `$ground` the page, `$surface` and
   `$panel` cards, `$panel2` and `$panel3` what sits on a card, `$text`, `$dim` and `$faint`,
   the `space`, `radius` and `text` sizes. Change the look there, never element by element,

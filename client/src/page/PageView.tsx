@@ -7,20 +7,20 @@ import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import type { Value } from "../protocol/Value";
-import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originCss, percentOf, resolve, resolveSource, runDraw, type Scope, sizeWord, stateScope, sourceOf, tokenValue, UNIT } from "../state/bind";
+import { type At, bareRef, componentScope, docScope, type Flow, flowOf, type Kept, originCss, percentOf, type Place as StatePlace, isUrl, resolve, resolveSource, runDraw, type Scope, sizeWord, stateScope, sourceOf, tokenValue, UNIT, viaView } from "../state/bind";
 import { takes } from "../state/events";
 import { fields, short } from "../state/format";
 import { play, type Playing, stopPlaying, unplayable } from "../net/connection";
 import type { Level } from "../protocol/Level";
 import { hold, ranInto } from "../state/problems";
 import { imported } from "../state/names";
-import { component, live, state, transcoded } from "../state/store";
+import { component, live, page as pageOf, state, transcoded } from "../state/store";
 import { Guard } from "../ui/Guard";
 import { createSize, onResize } from "../ui/size";
 import { ImagePlay, VideoOff } from "../ui/icons";
 import { FIT, picture, PictureView } from "../ui/Picture";
 import { follow, taken } from "../ui/press";
-import { componentAct, type Act, numberOf, QUICKEST } from "./act";
+import { componentAct, type Act, numberOf, pageAct, QUICKEST } from "./act";
 import { CLEAN, type Drawn, oncePerFrame, pixelsOf } from "./drawing";
 import { slowOf, timer } from "./slow";
 import { useGamepads } from "./gamepads";
@@ -31,6 +31,9 @@ import { CAMERA } from "./parts";
 import { buttonOf, keysHeld, moved, partOf, type Pointer, pointer, type Spot } from "./pointer";
 import { COPIES, Repeated } from "./repeat";
 import { useScroll } from "./scroll";
+import { drawnInView } from "../state/watch";
+import { boardShows, inPlace, showsOnBoard, viaOf } from "../state/view";
+import { linkWarnings } from "../state/links";
 import { EVENTS } from "../protocol/events";
 
 export interface Box {
@@ -77,7 +80,7 @@ export interface Holder {
 const CORNER: Holder = { ox: "0px", oy: "0px" };
 
 /** Ours, never CSS: the rest of an element's properties are CSS. */
-export const OWN = new Set(["name", "repeat", "visible", "enabled", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup", "context", "draw", "target", "yaw", "pitch", "distance"]);
+export const OWN = new Set(["name", "repeat", "visible", "enabled", "x", "y", "w", "h", "origin", "layout", "wrap", "align", "stack", "text", "value", "viewbox", "src", "fit", "markup", "context", "draw", "target", "yaw", "pitch", "distance", "page"]);
 
 /** How much of its opacity an element keeps while it is not enabled. */
 const DIM = 0.4;
@@ -175,16 +178,19 @@ function boardScene(page: Page, view: Aim): Element {
 }
 
 /** A page, or a component drawn on its own with its inputs' defaults, a 3D one as `view` sees
- *  it. One that `grows` is as tall as what it holds, at least its own height, as a phone page is. */
-export function PageView(p: { page: Page; overrides?: Overrides; grows?: boolean; design?: boolean; act?: Act; view?: Aim }) {
-  const scope = createMemo(() => docScope(p.page));
+ *  it. One that `grows` is as tall as what it holds, at least its own height, as a phone page is.
+ *  One a view shows names the views in `via`, `fills` that view's box, and is drawn `inside`
+ *  it for show only on the board, so none of it is picked. */
+export function PageView(p: { page: Page; overrides?: Overrides; grows?: boolean; design?: boolean; act?: Act; view?: Aim; via?: string; fills?: boolean; inside?: boolean }) {
+  const scope = createMemo(() => docScope(p.page, p.via));
   const deep = () => spaceHome(p.page) === "scene";
   const height = () => `${p.page.height * UNIT}px`;
+  const size = () => (p.fills ? { width: "100%", height: "100%" } : { width: `${p.page.width * UNIT}px`, height: p.grows ? undefined : height(), "min-height": p.grows ? height() : undefined });
   return (
-    <div class="page" classList={{ design: p.design }} style={{ ...themeVars(), width: `${p.page.width * UNIT}px`, height: p.grows ? undefined : height(), "min-height": p.grows ? height() : undefined, "--page-ground": pageGround(p.page) }}>
+    <div class="page" classList={{ design: p.design }} style={{ ...themeVars(), ...size(), "--page-ground": pageGround(p.page) }}>
       <Guard>
         <Doc.Provider value={() => p.page.id}>
-          <Show when={deep()} fallback={<For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} />}</For>}>
+          <Show when={deep()} fallback={<For each={p.page.children}>{(e) => <Placed element={e} scope={scope()} room={CORNER} overrides={p.overrides} design={p.design} act={p.act} inside={p.inside} />}</For>}>
             <Placed element={boardScene(p.page, p.view ?? FRONT)} scope={scope()} room={CORNER} design={p.design} act={p.act} />
           </Show>
         </Doc.Provider>
@@ -468,6 +474,8 @@ function ElementView(p: ElementProps & { at?: At }) {
   if (SHAPES.has(p.element.tag)) return <ShapeView {...p} />;
   if (p.element.tag === "group") return <GroupView {...p} />;
   const time = timer();
+  /** The showing of the page a view shows. */
+  const viewVia = () => (p.scope.place ? viaView(p.scope.place, p.element.id) : "");
   const look = createMemo(() => {
     const style: Record<string, string> = {};
     const faults: string[] = [];
@@ -569,19 +577,26 @@ function ElementView(p: ElementProps & { at?: At }) {
     const markup = p.element.tag === "markup" ? svgFrom(take("markup"), faults) : undefined;
     const canvas = p.element.tag === "canvas" ? contextOf(take("context"), faults) : undefined;
     const media = p.element.tag === "media" ? { src: take("src", p.element.props.src, resolveSource), fit: String(take("fit") ?? "meet") } : undefined;
+    const given = p.element.tag === "view" ? take("page") : undefined;
+    const shows = p.element.tag === "view" ? shownPage((p.design && boardShows()[viewVia()]) || given, p.scope.place, faults) : null;
     const first = p.element.tag === "div" && take("stack") === "first" ? p.element.children.length * COPIES : undefined;
     // a frame whose overflow scrolls, which a finger on what it holds may scroll
     const scroller = ["overflow", "overflow-x", "overflow-y"].some((k) => /auto|scroll/.test(style[k] ?? ""));
     // one not enabled dims, and one not worked out yet counts as not enabled
     const enabled = p.element.props.enabled === undefined || !!take("enabled");
     if (!enabled) style.opacity = String(Number(style.opacity ?? 1) * DIM);
-    return { style, unknown, faults, slow: slowOf(slow), text, value, diagram, markup, canvas, media, scroller, enabled, holder: { ox, oy, flow, first } as Holder };
+    return { style, unknown, faults, slow: slowOf(slow), text, value, diagram, markup, canvas, media, shows, scroller, enabled, holder: { ox, oy, flow, first } as Holder };
   });
+  // the page a view shows, drawn anew only when that page changes
+  const shows = createMemo(() => look().shows);
+  if (p.element.tag === "view") createEffect(() => p.design && showsOnBoard(viewVia(), shows()));
   // what its own drawing found last, known only once it draws
   const [drawn, setDrawn] = createSignal<Drawn>(CLEAN);
   const faults = () => [...look().faults, ...drawn().faults];
   useFaults(() => p.element.id, faults);
   useFaults(() => p.element.id, () => [...look().slow, ...drawn().warnings], "warn");
+  const doc = useContext(Doc);
+  useFaults(() => p.element.id, () => linkWarnings(doc(), p.element.id), "warn");
   const q = actingWhile(p, () => look().enabled);
   // a scene's press first finds the parts under it
   const [gate, setGate] = createSignal<Gate>();
@@ -592,7 +607,7 @@ function ElementView(p: ElementProps & { at?: At }) {
       data-id={p.inside ? undefined : p.element.id}
       data-name={p.element.props.name}
       class="el"
-      classList={{ text: p.element.tag === "span", unknown: look().unknown || drawn().unknown, faulty: p.design && faults().length > 0, live: press.live(), scrolls: press.scrolls(), scroller: look().scroller, drags: press.drags(), pressed: press.pressed() }}
+      classList={{ text: p.element.tag === "span", view: p.element.tag === "view", unknown: look().unknown || drawn().unknown, faulty: p.design && faults().length > 0, live: press.live(), scrolls: press.scrolls(), scroller: look().scroller, drags: press.drags(), pressed: press.pressed() }}
       style={{ ...look().style, "z-index": raised() === p.element ? String((p.room.first ?? 0) + 1) : look().style["z-index"] }}
       title={p.design && faults().length > 0 ? faults().join("\n") : undefined}
       ref={(el) => {
@@ -639,9 +654,55 @@ function ElementView(p: ElementProps & { at?: At }) {
         <Match when={p.element.tag === "input"}>
           <InputBox element={p.element} scope={p.scope} value={look().value} act={q.act} />
         </Match>
+        <Match when={p.element.tag === "view"}>
+          {/* the board draws the page edited in it over it, as the open page */}
+          <Show when={!(p.design && viaOf(inPlace()) === viewVia())}>
+            <Show when={shows()} keyed fallback={p.design && <div class="view-empty">No page</div>}>
+              {(id) => (isUrl(id) ? <WebPage url={id} /> : <Shown id={id} via={viewVia()} act={q.act} />)}
+            </Show>
+          </Show>
+        </Match>
       </Switch>
     </div>
   );
+}
+
+/** The id of the page a view's `page` gives, or the URL of a web page, which `at` shows it in.
+ *  Null for none, and for a page it cannot show, which says why: a component, or a page it is
+ *  shown in already. */
+function shownPage(given: unknown, at: StatePlace | undefined, faults: string[]): string | null {
+  if (given === undefined || given === null || !at) return null;
+  if (typeof given === "string" && isUrl(given)) return given;
+  const shown = typeof given === "string" ? pageOf(given) : undefined;
+  if (!shown) {
+    faults.push(`page: ${words(given)} is not a page, which Pages.Overview gives, nor a URL`);
+    return null;
+  }
+  if (shown.interface) {
+    faults.push(`page: ${shown.name} is a component, which goes in a page as an instance`);
+    return null;
+  }
+  const around = [...at.via.split(">").filter(Boolean).map((v) => v.split("/")[0]), at.page];
+  if (around.includes(shown.id)) {
+    faults.push(`page: ${shown.name} would show itself`);
+    return null;
+  }
+  return shown.id;
+}
+
+/** The page a view shows, laid out in its box. The board draws it for show, and a run runs it
+ *  as the page it is, keeping its own state for this showing. */
+function Shown(p: { id: string; via: string; act?: Act }) {
+  drawnInView(p.id);
+  const act = createMemo(() => p.act && pageAct(p.id, p.via));
+  return <Show when={pageOf(p.id)}>{(shown) => <PageView page={shown()} via={p.via} fills inside={!act()} act={act()} />}</Show>;
+}
+
+/** A web page a view shows. One on the HMI's own host runs apart from it, so it cannot drive
+ *  the screen around it. */
+function WebPage(p: { url: string }) {
+  const own = () => new URL(p.url, location.href).origin === location.origin;
+  return <iframe class="view-web" src={p.url} sandbox={`allow-scripts allow-forms allow-popups allow-downloads${own() ? "" : " allow-same-origin"}`} />;
 }
 
 /** A group: no box of its own, so what it holds sits in the room the group sits in. It still

@@ -561,10 +561,11 @@ struct Running {
 }
 
 /// A handler as it runs: an element's for an event and filter on the copy of a repeat it
-/// happened on, the index of each copy it sits in, or a rule's or a function's, which is its id
-/// or key alone.
+/// happened on, the index of each copy it sits in, and the views its page is shown through, or a
+/// rule's or a function's, which is its id or key alone.
 #[derive(Clone, PartialEq, Eq, Hash, Default)]
 struct HandlerKey {
+    via: String,
     page: String,
     id: String,
     copies: Vec<u32>,
@@ -581,6 +582,7 @@ type Filter = BTreeMap<String, String>;
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Held {
     session: u32,
+    via: String,
     page: String,
     id: String,
     copies: Vec<u32>,
@@ -987,6 +989,7 @@ impl App {
             let samples = self.history.get(&r.name).map(|h| h.iter().cloned().collect()).unwrap_or_default();
             self.send(session, &ServerMsg::Samples { name: r.name.clone(), samples, whole: true });
         }
+        self.send(session, &ServerMsg::PageKeys { keys: self.pages.keys() });
         // the pages end what is not values, so a test client waits for them as the welcome's end
         self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
         self.put_values(Some(session), self.all_values(session));
@@ -1202,11 +1205,11 @@ impl App {
                     self.edit(session, edit, Step::Redo);
                 }
             }
-            ClientMsg::Fire { page, id, event, payload, copies, item, heard, t, ending } => {
+            ClientMsg::Fire { via, page, id, event, payload, copies, item, heard, t, ending } => {
                 // a start too late never runs, while what lets go always does
                 let lets_go = ending || events::lets_go(&event, &payload);
                 let came = self.sessions.get(&session).filter(|_| !lets_go).map(|s| s.clock.at(t, s.trips.quickest()));
-                let on = HandlerKey { page, id, copies, event, filter: Filter::new() };
+                let on = HandlerKey { via, page, id, copies, event, filter: Filter::new() };
                 self.follow_held(session, &on, &payload, &heard);
                 for filter in heard {
                     self.fire(session, HandlerKey { filter, ..on.clone() }, payload.clone(), item.clone(), came);
@@ -1361,7 +1364,10 @@ impl App {
     /// Drops the values of the state under each key, every copy's on the HMI and every screen,
     /// so each reads its start again.
     fn restart_state(&mut self, keys: &[String]) {
-        let gone = |k: &String| keys.iter().any(|key| k.strip_prefix(key.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('#')));
+        let gone = |k: &String| {
+            let k = crate::pages::unviewed(k);
+            keys.iter().any(|key| k.strip_prefix(key.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('#')))
+        };
         let mut dropped: Vec<String> = self.shared.keys().filter(|k| gone(k)).cloned().collect();
         self.shared.retain(|k, _| !gone(k));
         for s in self.sessions.values_mut() {
@@ -1554,7 +1560,7 @@ impl App {
         let (page, id, event) = (on.page.as_str(), on.id.as_str(), on.event.as_str());
         let Some(info) = events::find(event) else { return };
         let end = info.ends_with.unwrap_or(info.name);
-        let at = |by: Filter| Held { session, page: page.to_owned(), id: id.to_owned(), copies: on.copies.clone(), end, by };
+        let at = |by: Filter| Held { session, via: on.via.clone(), page: page.to_owned(), id: id.to_owned(), copies: on.copies.clone(), end, by };
         if events::ends_itself(event) {
             let rest = events::rest(event, p);
             for filter in heard {
@@ -1582,7 +1588,7 @@ impl App {
         let session = running.session;
         let of = &running.of;
         let at = of.copies.last().map(|i| (*i, item.unwrap_or_default()));
-        let bound = self.pages.bound(&of.page, &of.id, &of.copies);
+        let bound = self.pages.bound(&of.via, &of.page, &of.id, &of.copies);
         let came = running.came;
         self.runs.insert(self.next_run, running);
         self.script.send(ToScript::Run { run: self.next_run, session, code, p, at, bound, own, came, takes });
@@ -1722,7 +1728,8 @@ impl App {
             FromScript::Open { run, page, replace, call } => match (self.pages.get(&page), self.runs.get(&run).and_then(|r| r.session)) {
                 (Some(_), Some(session)) => {
                     self.asks.insert(call, session);
-                    self.send(session, &ServerMsg::Open { page, replace, ask: call });
+                    let via = self.runs.get(&run).map(|r| r.of.via.clone()).unwrap_or_default();
+                    self.send(session, &ServerMsg::Open { via, page, replace, ask: call });
                 }
                 (found, _) => {
                     let message = if found.is_none() { format!("there is no page {page}") } else { "open works in an element's handler, which has a screen".into() };
@@ -1822,6 +1829,7 @@ impl App {
     /// that asked keeps its undo, and hears what it made, so it can select it.
     fn edit(&mut self, session: u32, edit: Edit, step: Step) {
         let mut shown: Vec<String> = edit.pages().into_iter().map(str::to_owned).collect();
+        let keys = self.pages.keys();
         let applied = match self.pages.apply(edit) {
             Ok(applied) => applied,
             Err(text) => {
@@ -1873,7 +1881,15 @@ impl App {
             self.send(session, &ServerMsg::Made { page, id });
         }
         self.fields_changed();
+        if self.pages.keys() != keys {
+            self.keyed();
+        }
+    }
+
+    /// Tells the engine and every screen what code calls each page, as `Pages.Overview`.
+    fn keyed(&mut self) {
         self.script.send(ToScript::Pages(self.pages.keys()));
+        self.broadcast(&ServerMsg::PageKeys { keys: self.pages.keys() });
     }
 
     /// Writes a variable, the screen's own for one each screen has, or sets a variable import
@@ -1960,7 +1976,7 @@ impl App {
                 s.undo.clear();
                 s.redo.clear();
             });
-            self.script.send(ToScript::Pages(self.pages.keys()));
+            self.keyed();
             self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() });
             self.fields_changed();
         }
@@ -2248,7 +2264,7 @@ impl App {
                 false => self.taking(&h.page, &h.id, h.end, &p),
             };
             for filter in ends {
-                let of = HandlerKey { page: h.page.clone(), id: h.id.clone(), copies: h.copies.clone(), event: h.end.into(), filter };
+                let of = HandlerKey { via: h.via.clone(), page: h.page.clone(), id: h.id.clone(), copies: h.copies.clone(), event: h.end.into(), filter };
                 self.fire(session, of, p.clone(), None, None);
             }
         }

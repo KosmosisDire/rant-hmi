@@ -1,0 +1,543 @@
+<title>Pages Inside Pages</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600;700&display=swap">
+<style>
+/* The HMI editor's look, from RANT/design/design-language.md. Pages draw in units of --u px. */
+:root {
+  --ground: #ececec; --surface: #f8f8f8; --panel: #ffffff; --panel2: #f4f4f4; --panel3: #e6e6e6;
+  --border: #e1dcdc; --border2: #d6d0d0;
+  --text: #191919; --dim: #5e5e5e; --faint: #9a9a9a;
+  --accent: #910c5a; --accent-bg: rgba(145, 12, 90, 0.1); --on-fill: #ffffff;
+  --green: #317b55; --amber: #a9791f; --red: #cf3b2d;
+  --blue: #256ebe; --blue-bg: rgba(37, 110, 190, 0.1); --purple: #784ebe; --purple-bg: rgba(120, 78, 190, 0.1);
+  --page: #e9e9ec; --screen: #d9d9dc; --backdrop: rgba(0, 0, 0, 0.35);
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0a0a0a; --surface: #141414; --panel: #1b1b1b; --panel2: #212121; --panel3: #2c2c2c;
+    --border: #2a2a2a; --border2: #383838;
+    --text: #ededed; --dim: #9a9a9a; --faint: #646464;
+    --accent: #dc3853; --accent-bg: rgba(220, 56, 83, 0.15);
+    --green: #37885f; --amber: #cf9a3a; --red: #d2574b;
+    --blue: #4a8fd6; --blue-bg: rgba(74, 143, 214, 0.14); --purple: #9a6fd6; --purple-bg: rgba(154, 111, 214, 0.14);
+    --page: #111214; --screen: #050505; --backdrop: rgba(0, 0, 0, 0.55);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0a0a0a; --surface: #141414; --panel: #1b1b1b; --panel2: #212121; --panel3: #2c2c2c;
+  --border: #2a2a2a; --border2: #383838;
+  --text: #ededed; --dim: #9a9a9a; --faint: #646464;
+  --accent: #dc3853; --accent-bg: rgba(220, 56, 83, 0.15);
+  --green: #37885f; --amber: #cf9a3a; --red: #d2574b;
+  --blue: #4a8fd6; --blue-bg: rgba(74, 143, 214, 0.14); --purple: #9a6fd6; --purple-bg: rgba(154, 111, 214, 0.14);
+  --page: #111214; --screen: #050505; --backdrop: rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--ground); color: var(--text); font: 13px/1.4 var(--sans); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+.app { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 44px; background: var(--surface); border-bottom: 1px solid var(--border); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.logo { font: 700 17px var(--sans); color: var(--accent); letter-spacing: -0.02em; }
+.app-name { color: var(--dim); font-size: 12px; }
+.tabs { display: flex; align-self: stretch; }
+.tab { padding: 0 14px; border: 0; background: none; color: var(--dim); border-bottom: 2px solid transparent; border-right: 1px solid var(--border); min-height: 42px; }
+.tab:first-child { border-left: 1px solid var(--border); }
+.tab.on { color: var(--text); border-bottom-color: var(--accent); }
+.grow { flex: 1; min-width: 0; }
+.models { display: flex; gap: 2px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; flex-wrap: wrap; }
+.models button { border: 0; background: none; color: var(--dim); padding: 4px 10px; border-radius: 6px; font-size: 12px; }
+.models button b { font-family: var(--mono); margin-right: 5px; }
+.models button.on { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+
+.main { display: grid; grid-template-columns: 200px minmax(0, 1fr) 360px; min-height: 0; }
+.side { background: var(--surface); overflow: auto; min-height: 0; min-width: 0; }
+.side.left { border-right: 1px solid var(--border); }
+.side.right { border-left: 1px solid var(--border); }
+.head { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.head .path { text-transform: none; letter-spacing: 0; font: 400 11px var(--mono); color: var(--dim); }
+.rows { padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+.row-btn { display: flex; align-items: center; gap: 6px; border: 0; background: none; text-align: left; padding: 5px 8px; border-radius: 6px; font: 12px var(--mono); }
+.row-btn:hover { background: var(--panel2); }
+.row-btn.sel { background: var(--accent-bg); font-weight: 600; }
+.tag { font: 400 10px var(--mono); color: var(--dim); background: var(--panel3); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+.tag.blue { color: var(--blue); background: var(--blue-bg); }
+.tag.purple { color: var(--purple); background: var(--purple-bg); }
+.notes { margin: 0; padding: 10px 12px 14px 28px; display: flex; flex-direction: column; gap: 6px; color: var(--dim); font-size: 12.5px; }
+.code { margin: 0; padding: 10px 12px; font: 11px/1.55 var(--mono); color: var(--dim); white-space: pre-wrap; word-break: break-word; }
+.code mark { background: var(--accent-bg); color: var(--accent); border-radius: 3px; padding: 0 2px; }
+.code .t { color: var(--text); }
+.kv { display: flex; gap: 8px; padding: 5px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.kv span:first-child { color: var(--dim); width: 90px; }
+.kv span:last-child { font-family: var(--mono); }
+.pick { display: flex; gap: 2px; margin: 10px 12px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+.pick button { flex: 1; border: 0; background: none; color: var(--dim); padding: 4px 8px; border-radius: 6px; font-size: 12px; }
+.pick button.on { background: var(--panel3); color: var(--text); font-weight: 600; }
+
+.detail { position: relative; min-height: 0; min-width: 0; background: var(--ground); }
+.scroll { position: absolute; inset: 0; overflow: auto; }
+.board { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 34px 28px; padding: 28px; }
+.art-name { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font: 600 12px var(--sans); color: var(--dim); }
+.art.sel .art-name span:first-child { color: var(--accent); }
+.art > .pg { cursor: pointer; box-shadow: 0 0 0 1px var(--border2); }
+.art.sel > .pg { box-shadow: 0 0 0 2px var(--accent); }
+.zoom { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--border2); border-radius: 8px; padding: 2px; }
+.zoom button { border: 0; background: none; width: 28px; height: 26px; border-radius: 6px; color: var(--dim); font: 600 14px var(--mono); }
+.zoom button:hover { background: var(--panel3); color: var(--text); }
+
+.runwrap { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.runbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 12px; }
+.runbar button { border: 1px solid var(--border2); background: var(--panel3); border-radius: 6px; padding: 2px 10px; }
+.runbar button[disabled] { opacity: 0.4; cursor: default; }
+.addr { font-family: var(--mono); color: var(--dim); background: var(--panel2); border-radius: 6px; padding: 2px 10px; }
+.screen { flex: 1; position: relative; display: grid; place-items: center; overflow: hidden; background: var(--screen); --u: 6px; }
+.screen > * { grid-area: 1 / 1; }
+.screen > .backdrop { position: absolute; inset: 0; background: var(--backdrop); }
+.screen > .over { box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); border-radius: calc(var(--u) * 0.8); }
+
+/* HMI pages */
+.pg { position: relative; overflow: hidden; background: var(--page); color: var(--text); font-size: calc(var(--u) * 1.45); line-height: 1.25; flex: none; }
+.pg.sub { position: absolute; inset: 0; background: transparent; }
+.b { position: absolute; }
+.card { background: var(--panel); border-radius: calc(var(--u) * 0.8); }
+.col { display: flex; flex-direction: column; gap: calc(var(--u) * 1); padding: calc(var(--u) * 1); }
+.row { display: flex; align-items: center; gap: calc(var(--u) * 1); padding: 0 calc(var(--u) * 1); }
+.t2 { font-weight: 600; font-size: calc(var(--u) * 1.7); white-space: nowrap; }
+.btn { display: grid; place-items: center; flex: none; height: calc(var(--u) * 4.4); padding: 0 calc(var(--u) * 0.8); border-radius: calc(var(--u) * 0.6); background: var(--panel3); white-space: nowrap; }
+.btn.lit { background: var(--accent); color: var(--on-fill); }
+.btn.green { background: var(--green); color: var(--on-fill); }
+.btn.red { background: var(--red); color: var(--on-fill); }
+.btn.big { flex: 1; height: calc(var(--u) * 5.5); font-weight: 600; }
+.run [data-act] { cursor: pointer; }
+.lamp { display: flex; align-items: center; gap: calc(var(--u) * 0.6); color: var(--dim); white-space: nowrap; }
+.lamp::before { content: ""; width: calc(var(--u) * 1.4); height: calc(var(--u) * 1.4); border-radius: 50%; background: var(--panel3); }
+.lamp.on::before { background: var(--green); box-shadow: 0 0 calc(var(--u) * 1) var(--green); }
+.clock { font-family: var(--mono); color: var(--dim); }
+.seg { display: flex; flex: none; background: var(--panel3); border-radius: calc(var(--u) * 0.6); padding: calc(var(--u) * 0.3); }
+.seg span { display: grid; place-items: center; height: calc(var(--u) * 3.6); padding: 0 calc(var(--u) * 1); border-radius: calc(var(--u) * 0.4); color: var(--dim); }
+.seg span.on { background: var(--accent); color: var(--on-fill); }
+.pair { display: flex; gap: calc(var(--u) * 1); }
+.ro { flex: 1; display: flex; flex-direction: column; gap: calc(var(--u) * 0.3); background: var(--panel2); border-radius: calc(var(--u) * 0.6); padding: calc(var(--u) * 0.8); color: var(--dim); min-width: 0; }
+.ro b { color: var(--text); font: 600 calc(var(--u) * 2.2) var(--mono); }
+.ro small { font-size: 0.6em; color: var(--dim); font-weight: 400; }
+.ro.line { flex: none; flex-direction: row; align-items: center; }
+.bar { height: calc(var(--u) * 1.2); background: var(--panel3); border-radius: 99px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.plot { flex: 1; padding: calc(var(--u) * 0.5); }
+.plot svg, .fill svg { width: 100%; height: 100%; display: block; }
+.joints { display: grid; grid-template-columns: repeat(6, 1fr); gap: calc(var(--u) * 1); }
+.beltwrap { position: relative; flex: 1; }
+.belt { position: absolute; left: 0; right: 0; top: 40%; height: 26%; border-radius: calc(var(--u) * 0.6); background: repeating-linear-gradient(90deg, var(--panel3) 0 calc(var(--u) * 1.4), var(--panel2) 0 calc(var(--u) * 2.8)); }
+.part { position: absolute; top: 28%; width: calc(var(--u) * 4); height: calc(var(--u) * 4); background: var(--amber); border-radius: calc(var(--u) * 0.4); animation: ride 6s linear infinite; }
+@keyframes ride { from { left: -10%; } to { left: 100%; } }
+.picture { position: relative; flex: 1; border-radius: calc(var(--u) * 0.5); background: linear-gradient(160deg, var(--panel3), var(--panel2) 60%, var(--panel3)); overflow: hidden; }
+.picture.fill { position: absolute; inset: 0; }
+.det { position: absolute; border: calc(var(--u) * 0.25) solid var(--green); border-radius: calc(var(--u) * 0.3); }
+.det span { position: absolute; top: calc(var(--u) * -2); left: 0; font: calc(var(--u) * 1.2) var(--mono); color: var(--green); white-space: nowrap; }
+.finds { display: flex; gap: calc(var(--u) * 1); }
+.finds span { background: var(--panel2); border-radius: calc(var(--u) * 0.5); padding: calc(var(--u) * 0.6) calc(var(--u) * 1); font-family: var(--mono); }
+.fill { position: absolute; inset: 0; border-radius: calc(var(--u) * 0.5); background: var(--panel2); overflow: hidden; }
+.kiosk { display: grid; place-content: center; text-align: center; gap: calc(var(--u) * 2); }
+.kiosk b { font: 700 calc(var(--u) * 14) var(--mono); letter-spacing: -0.03em; }
+.kiosk span { color: var(--dim); font-size: calc(var(--u) * 2.6); }
+.dimmed { opacity: 0.32; filter: grayscale(1); }
+
+/* what the board marks */
+.view.onboard { outline: 1.5px dashed var(--blue); outline-offset: -1px; }
+.vis.onboard { outline: 1.5px dashed var(--purple); outline-offset: -1px; }
+.shared { box-shadow: inset 0 0 0 1.5px var(--purple); }
+.slot { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 10px; border: 1.5px dashed var(--blue); border-radius: calc(var(--u) * 0.8); background: var(--blue-bg); color: var(--blue); font: 600 12px var(--sans); }
+.chip { position: absolute; top: 0; right: 0; z-index: 2; background: var(--blue); color: var(--on-fill); font: 600 10px var(--mono); padding: 1px 6px; border-radius: 0 0 0 6px; cursor: pointer; }
+.chip.purple { background: var(--purple); cursor: default; }
+
+@media (max-width: 900px) {
+  .main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 70vh auto; overflow: auto; }
+  .side.left, .side.right { border: 0; border-bottom: 1px solid var(--border); }
+  .side.left .rows { flex-direction: row; flex-wrap: wrap; }
+}
+</style>
+
+<div class="app">
+  <header class="top">
+    <span class="logo">Rant</span><span class="app-name">HMI, pages inside pages</span>
+    <nav class="tabs" id="tabs"></nav>
+    <span class="grow"></span>
+    <div class="models" id="models"></div>
+  </header>
+  <div class="main">
+    <aside class="side left"><div class="head">Pages</div><div class="rows" id="files"></div></aside>
+    <section class="detail" id="detail"></section>
+    <aside class="side right" id="side"></aside>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const U = (n) => `calc(var(--u) * ${n})`;
+const B = (x, y, w, h, cls, inner = "", attrs = "") => `<div class="b ${cls}" style="left:${U(x)};top:${U(y)};width:${U(w)};height:${U(h)}" ${attrs}>${inner}</div>`;
+
+const MODELS = { C: "Page names its frame", A: "Shell with state", B: "Shared elements" };
+const NAV = ["Overview", "Camera", "Trends"];
+const LIST = {
+  C: ["Shell", "Overview", "Camera", "Trends", "Kiosk", "Settings", "WellCamera", "WellTwin", "WellPlot"],
+  A: ["Shell", "Overview", "Camera", "Trends", "Kiosk", "Settings", "WellCamera", "WellTwin", "WellPlot"],
+  B: ["Overview", "Camera", "Trends", "Kiosk", "Settings"],
+};
+const START = { C: "Overview", A: "Shell", B: "Overview" };
+const LINKS = { C: ["Overview", "Camera", "Kiosk"], A: ["Shell", "Camera", "Kiosk"], B: ["Overview", "Camera", "Kiosk"] };
+
+const S = { model: "C", tab: "design", sel: "Overview", around: true, zoom: 3.6, viewSource: "Camera", section: "Overview", mode: "Auto", stack: ["Overview"] };
+
+function size(id, m = S.model) {
+  if (id === "Shell" || id === "Kiosk") return [128, 72];
+  if (id === "Settings") return [44, 30];
+  if (id.startsWith("Well")) return [38, 22];
+  return m === "B" ? [128, 72] : [126, 62];
+}
+const frameOf = (id, m = S.model) => (m === "C" && NAV.includes(id) ? "Shell" : null);
+const isOver = (id) => id === "Settings";
+
+// drawing
+
+function spark(seed, colour = "var(--blue)") {
+  const pts = [];
+  for (let i = 0; i <= 40; i++) pts.push(`${i * 2.5},${(15 - 8 * Math.sin(i / 4 + seed) - 4 * Math.sin(i / 1.7 + seed * 2)).toFixed(1)}`);
+  return `<svg viewBox="0 0 100 30" preserveAspectRatio="none"><polyline points="${pts.join(" ")}" style="fill:none;stroke:${colour};stroke-width:2" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+function header(ctx) {
+  const nav = NAV.map((n) => `<span class="btn${ctx.lit === n ? " lit" : ""}" data-act="nav:${n}" style="width:${U(10)}">${n}</span>`).join("");
+  const mode = ["Auto", "Manual"].map((m) => `<span class="${S.mode === m ? "on" : ""}" data-act="mode:${m}">${m}</span>`).join("");
+  const cls = `card row${ctx.dim ? " dimmed" : ""}${ctx.shared && ctx.board ? " shared" : ""}`;
+  return B(1, 1, 126, 7, cls, `<span class="t2">Packing line</span><span class="lamp on">Running</span><span class="lamp">Too fast</span><span class="seg">${mode}</span><span class="grow"></span><span class="clock">14:32</span>${nav}<span class="btn" data-act="open:Settings" style="width:${U(9)}">Settings</span>`);
+}
+
+/** A view showing `page`, or the empty slot of a frame. `framing` marks the slot holding the page an artboard is for. */
+function view(x, y, w, h, page, ctx, empty, framing = false) {
+  const inner = page ? `<div class="pg sub">${draw(page, { ...ctx, dim: false, framing: false })}</div>` : `<div class="slot">${empty}</div>`;
+  const marked = ctx.board && page && !framing;
+  return B(x, y, w, h, `view${marked ? " onboard" : ""}`, inner + (marked ? `<span class="chip" data-pick="${page}">${page}</span>` : ""));
+}
+
+function well(s) {
+  if (s === "Camera") return `<div class="picture fill"><div class="det" style="left:18%;top:30%;width:26%;height:40%"><span>label 0.97</span></div><div class="det" style="left:58%;top:38%;width:22%;height:34%"><span>label 0.91</span></div></div>`;
+  if (s === "Twin") return `<div class="fill"><svg viewBox="0 0 76 44"><polygon points="8,30 38,16 68,30 38,44" style="fill:var(--panel3)"/><polygon points="14,30 44,16 52,20 22,34" style="fill:var(--border2)"/><rect x="28" y="20" width="5" height="4" style="fill:var(--amber)"/><rect x="38" y="16" width="5" height="4" style="fill:var(--amber)"/><polyline points="52,30 52,14 60,8 64,14" style="fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"/><circle cx="52" cy="30" r="3" style="fill:var(--dim)"/></svg></div>`;
+  return `<div class="fill plot">${spark(2, "var(--purple)")}</div>`;
+}
+
+function overview(ox, oy, ctx) {
+  const src = ["Camera", "Twin", "Plot"].map((s) => `<span class="${S.viewSource === s ? "on" : ""}" data-act="src:${s}">${s}</span>`).join("");
+  const shown = ctx.model === "B"
+    ? B(1, 6.5, 38, 22, `vis${ctx.board ? " onboard" : ""}`, well(S.viewSource) + (ctx.board ? `<span class="chip purple">visible</span>` : ""))
+    : view(1, 6.5, 38, 22, "Well" + S.viewSource, ctx);
+  const line = `<span class="t2">Line</span>
+    <div class="pair"><div class="ro"><span>Belt speed</span><b>0.42<small> m/s</small></b></div><div class="ro"><span>Rate</span><b>38<small> /min</small></b></div></div>
+    <div class="ro" style="flex:none"><span>Speed 62%</span><div class="bar"><i style="width:62%"></i></div></div>
+    <div class="pair"><span class="btn big green">Hold to start</span><span class="btn big red">Stop</span></div>
+    <div class="ro line"><span>Target</span><span class="grow"></span><b>240</b></div>
+    <span class="btn">Reset the count</span>
+    <div class="ro plot">${spark(0)}</div>`;
+  const belt = `<span class="t2">Belt</span><div class="beltwrap"><div class="belt"></div>${[0, 1.5, 3, 4.5].map((d) => `<div class="part" style="animation-delay:-${d}s"></div>`).join("")}</div>`;
+  const joints = [12.0, -48.5, 92.1, -43.6, 90.0, 4.2].map((v, i) => `<div class="ro"><span>J${i + 1}</span><b>${v.toFixed(1)}</b></div>`).join("");
+  const robot = `<span class="t2">Robot</span><div class="joints">${joints}</div><div class="ro line"><span>Pose</span><span class="grow"></span><b style="font-size:${U(1.6)}">x 0.412  y -0.118  z 0.305</b></div><div class="ro plot">${spark(4, "var(--green)")}</div>`;
+  return B(ox, oy, 40, 62, "card col", line)
+    + B(ox + 41, oy, 44, 30, "card col", belt)
+    + B(ox + 86, oy, 40, 30, "card", `<div class="b row" style="left:0;top:${U(1)};width:100%;height:${U(4.4)}"><span class="t2">View</span><span class="grow"></span><span class="seg">${src}</span></div>${shown}`)
+    + B(ox + 41, oy + 31, 85, 31, "card col", robot);
+}
+
+function camera(ox, oy) {
+  return B(ox, oy, 126, 62, "card col", `<div class="pair" style="align-items:center"><span class="t2">Label camera</span><span class="grow"></span><span style="color:var(--dim)">1920x1080</span><span class="seg"><span class="on">Boxes</span></span></div>
+    <div class="picture"><div class="det" style="left:22%;top:28%;width:20%;height:38%"><span>label 0.97</span></div><div class="det" style="left:55%;top:34%;width:17%;height:30%"><span>label 0.91</span></div></div>
+    <div class="finds"><span>label 0.97</span><span>label 0.91</span></div>`);
+}
+
+function trends(ox, oy) {
+  return B(ox, oy, 62, 62, "card col", `<span class="t2">Belt speed</span><div class="ro plot">${spark(1)}</div>`)
+    + B(ox + 64, oy, 62, 62, "card col", `<span class="t2">Rate</span><div class="ro plot">${spark(3, "var(--green)")}</div>`);
+}
+
+function draw(id, ctx) {
+  const m = ctx.model, off = m === "B" ? [1, 9] : [0, 0];
+  const shared = (lit) => (m === "B" ? header({ ...ctx, lit, shared: true }) : "");
+  switch (id) {
+    case "Shell":
+      if (m === "C") return header({ ...ctx, lit: ctx.framed }) + view(1, 9, 126, 62, ctx.framed, ctx, "Overview, Camera and Trends go here", ctx.framing);
+      return header({ ...ctx, lit: S.section }) + view(1, 9, 126, 62, S.section, ctx);
+    case "Overview": return shared("Overview") + overview(off[0], off[1], ctx);
+    case "Camera": return shared("Camera") + camera(off[0], off[1]);
+    case "Trends": return shared("Trends") + trends(off[0], off[1]);
+    case "Kiosk": return B(0, 0, 128, 72, "kiosk", `<span class="lamp on" style="justify-self:center">Running</span><b>1 284</b><span>parts today, 38 a minute</span>`);
+    case "Settings": return B(0, 0, 44, 30, "card col", `<span class="t2">Settings</span><div class="ro line"><span>Mode</span><span class="grow"></span><b style="font-size:${U(1.6)}">${S.mode}</b></div><div class="ro line"><span>Target</span><span class="grow"></span><b style="font-size:${U(1.6)}">240</b></div><span class="grow"></span><span class="btn lit" data-act="back">Done</span>`);
+    default: return well(id.slice(4));
+  }
+}
+
+// files
+
+const HEAD = (lit, act) => NAV.map((n, i) => `    <Button id="e${6 + i}" name="${n}" w="10" h="4.4" text='"${n}"' fill='${lit(n)} ? $accent : $panel2'>
+      <on event="confirm">${act(n)};</on>
+    </Button>`).join("\n");
+const HEADER = (attrs, lit, act) => `  <div id="h1" name="Header"${attrs} x="1" y="1" w="126" h="7" style='layout: "right"; gap: 1; padding: 1; background: $panel'>
+    <span id="h2" name="Title" w="hug" h="hug">"Packing line"</span>
+    <Lamp id="h3" name="Running" w="10" h="3" label='"Running"' lit="Line.Running"/>
+    <ModeSwitch id="h4" name="Mode" w="16" h="4.4" options="Mode.options" value="Line.Settings.mode"/>
+    <div id="h5" name="Space" w="fill" h="1"/>
+${HEAD(lit, act)}
+    <Button id="h9" name="Settings" w="9" h="4.4" text='"Settings"'>
+      <on event="confirm">open(Pages.Settings);</on>
+    </Button>
+  </div>`;
+const WELL_VIEW = `    [[<view id="e22" name="Well" x="1" y="6.5" w="38" h="22"]]
+      [[page='viewSource == "Twin" ? Pages.WellTwin : viewSource == "Plot" ? Pages.WellPlot : Pages.WellCamera'/>]]`;
+const WELL_VISIBLE = `    <media id="e22" name="Camera" x="1" y="6.5" w="38" h="22" src="Line.LabelCam" [[style='visible: viewSource == "Camera"']]/>
+    <scene id="e23" name="Twin" x="1" y="6.5" w="38" h="22" [[style='visible: viewSource == "Twin"']]>
+      ...
+    </scene>
+    <Plot id="e24" name="Plot" x="1" y="6.5" w="38" h="22" values="Line.speedHistory" [[style='visible: viewSource == "Plot"']]/>`;
+const OVERVIEW = (open, y, x0, wellText) => `${open}
+  <div id="e1" name="Line" x="${x0}" ${y} w="40" h="62" style='layout: "down"; gap: 1; padding: 1; background: $panel'>
+    ...
+  </div>
+  <div id="e12" name="Belt" x="${x0 + 41}" ${y} w="44" h="30" style="background: $panel">
+    ...
+  </div>
+  <div id="e20" name="View" x="${x0 + 86}" ${y} w="40" h="30" style="background: $panel">
+    <var name="viewSource" start='"Camera"'/>
+    <ModeSwitch id="e21" name="Source" x="14" y="1" w="25" h="4.4" options='["Camera", "Twin", "Plot"]' value="viewSource"/>
+${wellText}
+  </div>
+  <div id="e30" name="Robot" x="${x0 + 41}" ...>
+    ...
+  </div>
+</page>`;
+const CAMERA = (open, at) => `${open}
+  <div id="e1" name="Camera" ${at} w="126" h="62" style='layout: "down"; gap: 1; padding: 1; background: $panel'>
+    <div id="e2" name="Title row" w="fill" h="4.4" style='layout: "right"; gap: 1'>
+      <span id="e3" name="Title" w="fill" h="hug">"Label camera"</span>
+      <Toggle id="e4" name="Boxes" w="8" h="4" value="Line.showBoxes"/>
+    </div>
+    <media id="e5" name="Picture" w="fill" h="fill" src="Line.LabelCam"/>
+    ...
+  </div>
+</page>`;
+const TRENDS = (open, at) => `${open}
+  <Plot id="e1" name="Belt speed" ${at} w="62" h="62" values="Line.speedHistory"/>
+  <Plot id="e2" name="Rate" ... w="62" h="62" values="Line.rateHistory"/>
+</page>`;
+const COMMON = {
+  Kiosk: `<page name="Kiosk" size="128x72">
+  <span id="e1" name="Count" x="34" y="24" w="60" h="hug">Line.partsToday</span>
+  ...
+</page>`,
+  Settings: `<page name="Settings" size="44x30" shows="over">
+  <div id="e1" name="Card" x="0" y="0" w="100%" h="100%" style='layout: "down"; gap: 1; padding: 1'>
+    ...
+    <Button id="e10" name="Done" w="fill" h="5" text='"Done"'>
+      <on event="confirm">close();</on>
+    </Button>
+  </div>
+</page>`,
+  WellCamera: `<page name="WellCamera" size="38x22">
+  <media id="e1" name="Picture" x="0" y="0" w="38" h="22" src="Line.LabelCam"/>
+</page>`,
+  WellTwin: `<page name="WellTwin" size="38x22">
+  <scene id="e1" name="Twin" x="0" y="0" w="38" h="22">
+    <floor id="e2" name="Floor"/>
+    <model id="e3" name="Line" src='"files/line.usd"' joints="Robot.Arm.JointState"/>
+  </scene>
+</page>`,
+  WellPlot: `<page name="WellPlot" size="38x22">
+  <Plot id="e1" name="Speed" x="0" y="0" w="38" h="22" values="Line.speedHistory"/>
+</page>`,
+};
+const FILES = {
+  C: {
+    Shell: `<page name="Shell" size="128x72">
+${HEADER("", (n) => `[[framed == Pages.${n}]]`, (n) => `open(Pages.${n})`)}
+  [[<view id="e10" name="Content" x="1" y="9" w="126" h="62"/>]]
+</page>`,
+    Overview: OVERVIEW(`<page name="Overview" [[frame="Shell"]]>`, `y="0"`, 0, WELL_VIEW),
+    Camera: CAMERA(`<page name="Camera" [[frame="Shell"]]>`, `x="0" y="0"`),
+    Trends: TRENDS(`<page name="Trends" [[frame="Shell"]]>`, `x="0" y="0"`),
+  },
+  A: {
+    Shell: `<page name="Shell" size="128x72">
+  [[<var name="section" start="Pages.Overview"/>]]
+${HEADER("", (n) => `[[section == Pages.${n}]]`, (n) => `[[section = Pages.${n}]]`)}
+  [[<view id="e10" name="Content" x="1" y="9" w="126" h="62" page="section"/>]]
+</page>`,
+    Overview: OVERVIEW(`<page name="Overview" size="126x62">`, `y="0"`, 0, WELL_VIEW),
+    Camera: CAMERA(`<page name="Camera" size="126x62">`, `x="0" y="0"`),
+    Trends: TRENDS(`<page name="Trends" size="126x62">`, `x="0" y="0"`),
+  },
+  B: {
+    Overview: OVERVIEW(`<page name="Overview" size="128x72">
+${HEADER(` [[pages="Overview Camera Trends"]]`, (n) => `[[page == Pages.${n}]]`, (n) => `open(Pages.${n})`)}`, `[[y="9"]]`, 1, WELL_VISIBLE),
+    Camera: CAMERA(`<page name="Camera" size="128x72">`, `x="1" [[y="9"]]`),
+    Trends: TRENDS(`<page name="Trends" size="128x72">`, `x="1" [[y="9"]]`),
+  },
+};
+const file = (id) => FILES[S.model][id] ?? COMMON[id];
+
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const highlight = (s) => esc(s).replace(/(&lt;\/?)([A-Za-z]+)/g, '$1<span class="t">$2</span>').replace(/\[\[([\s\S]*?)\]\]/g, "<mark>$1</mark>");
+
+const NOTES = {
+  C: {
+    design: [
+      "Overview, Camera and Trends say frame=\"Shell\". The board draws each inside Shell, dimmed.",
+      "Shell's empty view is where they go. Its buttons light by framed.",
+      "The well is a view whose page follows viewSource. Its chip opens that page.",
+      "Kiosk has no frame.",
+    ],
+    run: [
+      "Open Camera from the header, then Back: the stack and the address follow, the header stays.",
+      "A link to Camera shows it in Shell, a link to Kiosk shows it alone.",
+      "Settings opens over the page, frame and all.",
+    ],
+  },
+  A: {
+    design: [
+      "hmi.toml starts on Shell. Its buttons set section, and its view shows that page.",
+      "The board draws Overview, Camera and Trends alone, with no header.",
+      "The well is a view, as in C.",
+    ],
+    run: [
+      "Moving between sections changes no address and adds no Back.",
+      "A link to Camera shows it without the header. Only a link to Shell has it.",
+    ],
+  },
+  B: {
+    design: [
+      "Header lives in Overview's file and lists the pages it shows on. The board marks it purple.",
+      "Camera and Trends leave the top 8 units free for it. A taller header means editing each page.",
+      "Kiosk and Settings stay off the list by hand.",
+      "The well's three panels stay in Overview's file, hidden by visible.",
+    ],
+    run: [
+      "Navigation is as today: the header is drawn again on each page, so its own state starts over.",
+      "A link to Kiosk shows no header, since the list leaves it out.",
+    ],
+  },
+};
+
+function tags(id) {
+  const t = (s, c = "") => `<span class="tag ${c}">${s}</span>`;
+  if (id === "Settings") return t("over");
+  if (id.startsWith("Well")) return S.model === "B" ? "" : t("in a view", "blue");
+  if (S.model === "C") return id === "Shell" ? t("frame", "blue") : frameOf(id) ? t("in Shell", "blue") : t("no frame");
+  if (S.model === "A") return id === "Shell" ? t("start") : NAV.includes(id) ? t("in a view", "blue") : "";
+  return id === "Overview" ? t("holds Header", "purple") : NAV.includes(id) ? t("Header from Overview", "purple") : "";
+}
+
+// screens
+
+function boardHtml() {
+  const ctx = { model: S.model, board: true };
+  const arts = LIST[S.model].map((id) => {
+    const f = frameOf(id), around = f && S.around;
+    const [w, h] = size(around ? f : id);
+    const inner = around ? draw(f, { ...ctx, framed: id, dim: true, framing: true }) : draw(id, ctx);
+    return `<div class="art${S.sel === id ? " sel" : ""}"><div class="art-name"><span>${id}</span>${tags(id)}</div><div class="pg" data-sel="${id}" style="width:${U(w)};height:${U(h)}">${inner}</div></div>`;
+  }).join("");
+  return `<div class="scroll"><div class="board" style="--u:${S.zoom}px">${arts}</div></div>
+    <div class="zoom"><button data-zoom="-1" title="Zoom out" aria-label="Zoom out">-</button><button data-zoom="1" title="Zoom in" aria-label="Zoom in">+</button></div>`;
+}
+
+function base() {
+  let b = S.stack.length - 1;
+  while (b > 0 && isOver(S.stack[b])) b--;
+  return b;
+}
+
+function runHtml() {
+  const b = base(), id = S.stack[b], f = frameOf(id);
+  const ctx = { model: S.model, board: false };
+  const [w, h] = size(f ?? id);
+  let layers = `<div class="pg" style="width:${U(w)};height:${U(h)}">${f ? draw(f, { ...ctx, framed: id }) : draw(id, ctx)}</div>`;
+  for (const over of S.stack.slice(b + 1)) {
+    const [dw, dh] = size(over);
+    layers += `<div class="backdrop" data-act="back"></div><div class="pg over" style="width:${U(dw)};height:${U(dh)}">${draw(over, ctx)}</div>`;
+  }
+  const links = LINKS[S.model].map((l) => `<button data-link="${l}">${l}</button>`).join("");
+  return `<div class="runwrap run"><div class="runbar"><button data-act="back"${S.stack.length > 1 ? "" : " disabled"}>Back</button><span class="addr">/run/${id.toLowerCase()}</span><span class="grow"></span><span style="color:var(--faint)">Open by link</span>${links}</div>
+    <div class="screen" id="screen" data-w="${w}" data-h="${h}">${layers}</div></div>`;
+}
+
+function sideHtml() {
+  const notes = (list) => `<div class="head">This option</div><ul class="notes">${list.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>`;
+  if (S.tab === "run") {
+    const rows = S.stack.map((id, i) => `<div class="kv"><span>${i === 0 ? "bottom" : i === S.stack.length - 1 ? "top" : ""}</span><span>${id}${frameOf(id) ? ` in ${frameOf(id)}` : ""}</span></div>`).join("");
+    const state = [["viewSource", `"${S.viewSource}"`], ["mode", `"${S.mode}"`], ...(S.model === "A" ? [["section", `Pages.${S.section}`]] : [])];
+    return `<div class="head">Open pages</div>${rows}<div class="head">State</div>${state.map(([k, v]) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`).join("")}${notes(NOTES[S.model].run)}`;
+  }
+  const board = S.model === "C"
+    ? `<div class="head">Framed pages on the board</div><div class="pick"><button data-around="1" class="${S.around ? "on" : ""}">Inside their frame</button><button data-around="0" class="${S.around ? "" : "on"}">Alone</button></div>`
+    : "";
+  return `<div class="head">File <span class="path">pages/${S.sel.toLowerCase()}.html</span></div><pre class="code">${highlight(file(S.sel))}</pre>${board}${notes(NOTES[S.model].design)}`;
+}
+
+function render() {
+  $("#tabs").innerHTML = ["design", "run"].map((t) => `<button class="tab${S.tab === t ? " on" : ""}" data-tab="${t}">${t === "design" ? "Design" : "Run"}</button>`).join("");
+  $("#models").innerHTML = Object.entries(MODELS).map(([k, v]) => `<button class="${S.model === k ? "on" : ""}" data-model="${k}"><b>${k}</b>${v}</button>`).join("");
+  $("#files").innerHTML = LIST[S.model].map((id) => `<button class="row-btn${S.sel === id ? " sel" : ""}" data-file="${id}">${id}</button>`).join("");
+  $("#detail").innerHTML = S.tab === "design" ? boardHtml() : runHtml();
+  $("#side").innerHTML = sideHtml();
+  fit();
+}
+
+function fit() {
+  const sc = $("#screen");
+  if (!sc) return;
+  const r = sc.getBoundingClientRect();
+  const u = Math.max(1, Math.min((r.width - 24) / sc.dataset.w, (r.height - 24) / sc.dataset.h));
+  sc.style.setProperty("--u", `${u}px`);
+}
+new ResizeObserver(fit).observe($("#detail"));
+
+// what a press does
+
+function push(id) {
+  const at = S.stack.indexOf(id);
+  S.stack = at >= 0 ? S.stack.slice(0, at + 1) : [...S.stack, id];
+}
+
+function act(a) {
+  const [k, v] = a.split(":");
+  if (k === "nav") S.model === "A" ? (S.section = v) : push(v);
+  else if (k === "open") push(v);
+  else if (k === "mode") S.mode = v;
+  else if (k === "src") S.viewSource = v;
+  else if (k === "back" && S.stack.length > 1) S.stack = S.stack.slice(0, -1);
+}
+
+document.addEventListener("click", (e) => {
+  const at = (s) => e.target.closest(s);
+  let hit;
+  if ((hit = at("[data-model]"))) {
+    S.model = hit.dataset.model;
+    S.stack = [START[S.model]];
+    if (!LIST[S.model].includes(S.sel)) S.sel = "Overview";
+  } else if ((hit = at("[data-tab]"))) S.tab = hit.dataset.tab;
+  else if ((hit = at("[data-file]"))) { S.sel = hit.dataset.file; S.tab = "design"; }
+  else if ((hit = at("[data-around]"))) S.around = hit.dataset.around === "1";
+  else if ((hit = at("[data-zoom]"))) S.zoom = Math.min(8, Math.max(2, S.zoom + 0.8 * Number(hit.dataset.zoom)));
+  else if ((hit = at("[data-link]"))) S.stack = [hit.dataset.link];
+  else if (S.tab === "run" && (hit = at("[data-act]"))) act(hit.dataset.act);
+  else if (S.tab === "design" && (hit = at("[data-pick]"))) S.sel = hit.dataset.pick;
+  else if (S.tab === "design" && (hit = at("[data-sel]"))) S.sel = hit.dataset.sel;
+  else return;
+  render();
+});
+
+render();
+</script>

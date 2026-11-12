@@ -49,11 +49,28 @@ export function previewing(): boolean {
  *  though nothing else reads it. */
 export const [peeked, peek] = createSignal<Path | null>(null);
 
-/** The pages this screen shows. */
+/** How many views draw each page now. */
+const [viewed, setViewed] = createSignal<ReadonlyMap<string, number>>(new Map());
+
+/** Counts the page `id` as drawn in a view until what draws it goes. */
+export function drawnInView(id: string) {
+  const count = (by: number) =>
+    setViewed((m) => {
+      const n = (m.get(id) ?? 0) + by;
+      const next = new Map(m);
+      if (n > 0) next.set(id, n);
+      else next.delete(id);
+      return next;
+    });
+  count(1);
+  onCleanup(() => count(-1));
+}
+
+/** The pages this screen shows, those its views draw too. */
 function shownPages(): (Page | undefined)[] {
   const stacked = () => stack().map((o) => page(o.id));
-  if (operator) return stacked();
-  return currentTab() === "design" ? boardPages().map(page) : stacked();
+  const shown = operator || currentTab() !== "design" ? stacked() : boardPages().map(page);
+  return [...shown, ...[...viewed().keys()].map(page)];
 }
 
 /** What the shown pages read, worked out again only as they or their reads change, since every

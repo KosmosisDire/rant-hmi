@@ -17,7 +17,7 @@ import { childrenOf } from "./tree";
 
 /** What a new element starts as: visible, on the grid, plainly named, in units, and in the
  *  theme's tokens. A diagram starts empty, its shapes added from the inspector. */
-export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup" | "canvas" | "scene", Record<string, string>> = {
+export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup" | "canvas" | "scene" | "view", Record<string, string>> = {
   div: { name: "Frame", w: "16", h: "8", background: "$panel", "border-radius": "$radius" },
   span: { name: "Text", w: "16", h: "4", text: '"Text"', color: "$text", "font-size": "$textSize" },
   input: {
@@ -38,6 +38,7 @@ export const STARTS: Record<"div" | "span" | "input" | "media" | "svg" | "markup
   markup: { name: "SVG", w: "16", h: "16", markup: '`<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="${$accent}"/></svg>`' },
   canvas: { name: "Canvas", w: "16", h: "16", draw: ["ctx.fillStyle = $accent;", "ctx.beginPath();", "ctx.arc(width / 2, height / 2, min(width, height) * 0.4, 0, 2 * PI);", "ctx.fill();"].join("\n") },
   scene: { name: "Scene", w: "32", h: "24", background: "$panel", "border-radius": "$radius" },
+  view: { name: "View", w: "40", h: "30" },
 };
 
 /** What a new element holds from the start: a scene a floor and the axes of its origin, so it
@@ -59,6 +60,7 @@ export const KINDS: [keyof typeof STARTS, string][] = [
   ["markup", "SVG"],
   ["canvas", "Canvas"],
   ["scene", "Scene"],
+  ["view", "View"],
 ];
 
 /** Adds an element to `parent`, the page for null: at `at` in it, on the grid, else at the

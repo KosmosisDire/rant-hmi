@@ -1,14 +1,16 @@
-import { batch, createEffect, createSignal, on, onCleanup, onMount, Show, untrack } from "solid-js";
+import { batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import { UNIT } from "../../state/bind";
 import { onMoved, state } from "../../state/store";
-import { currentPage, flyTo, openPage, tookWanted, wanted } from "../../state/view";
+import { currentPage, flyTo, inPlace, openPage, setInPlace, tookWanted, wanted } from "../../state/view";
 import { find } from "../../state/elements";
 import { Edge, reveal, Sidebar } from "../../ui/Sidebars";
 import { Artboard, GRID, STEP } from "./Artboard";
 import { copy, duplicate, paste } from "./clipboard";
 import { ElementInspector } from "./ElementInspector";
+import { LinkInspector } from "./LinkInspector";
+import { linkKey, links } from "../../state/links";
 import { Outline } from "./Outline";
-import { group, remove, restack, sendEdits, shiftBy, tops, ungroup, wrap } from "./tree";
+import { group, placesIn, remove, restack, sendEdits, shiftBy, tops, ungroup, wrap } from "./tree";
 
 /** Picks an element, or with `add` puts it in or takes it out of the selection. None lets go. */
 export type Pick = (id: string | null, add?: boolean) => void;
@@ -22,7 +24,10 @@ export interface Typing {
 
 export function DesignScreen(p: { shown: boolean }) {
   const [selection, setSelection] = createSignal<string[]>([]);
+  /** The link picked on the board, by `linkKey`, which the inspector shows while nothing is picked. */
+  const [link, setLink] = createSignal<string | null>(null);
   const pick: Pick = (id, add = false) => {
+    setLink(null);
     if (!id) setSelection([]);
     else if (!add) setSelection([id]);
     else setSelection((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -44,6 +49,14 @@ export function DesignScreen(p: { shown: boolean }) {
     const s = selection();
     if (t && !(s.length === 1 && s[0] === t.id)) setTyping(null);
   });
+
+  // a link stays picked while its page is open
+  createEffect(() => {
+    const id = currentPage()?.id;
+    const l = untrack(link);
+    if (l && !links().some((x) => linkKey(x) === l && x.from === id)) setLink(null);
+  });
+  const pickedLink = () => links().find((x) => linkKey(x) === link());
 
   /** The page open as the selection was last made, whose ids it names. */
   let at = currentPage()?.id;
@@ -125,6 +138,17 @@ export function DesignScreen(p: { shown: boolean }) {
       }
       const page = currentPage();
       if (!page || running()) return;
+      if (e.key === "Escape" && link()) {
+        setLink(null);
+        return;
+      }
+      // with nothing picked, Escape steps out of the view the page is edited in, picking it
+      const around = inPlace();
+      if (e.key === "Escape" && selection().length === 0 && around.at(-1)?.shows === page.id) {
+        setInPlace(around.slice(0, -1));
+        openOn(around.at(-1)!.page, around.at(-1)!.view);
+        return;
+      }
       if (mod && letter === "a") {
         e.preventDefault();
         setSelection(page.children.map((c) => c.id));
@@ -182,6 +206,13 @@ export function DesignScreen(p: { shown: boolean }) {
     });
   });
 
+  /** The open page as the board edits it: at the size of the view it is edited in, if any. */
+  const edited = createMemo(() => {
+    const [page, around] = [currentPage(), inPlace()];
+    const b = page && around.at(-1)?.shows === page.id ? placesIn(around)?.at(-1) : undefined;
+    return page && b ? { ...page, width: b.w, height: b.h } : page;
+  });
+
   // the board shows every page side by side, or a component open alone
   const onBoard = () => {
     const open = currentPage();
@@ -195,13 +226,15 @@ export function DesignScreen(p: { shown: boolean }) {
       </Sidebar>
       <Edge side="left" />
       <section class="detail" onClick={tapped}>
-        <Show when={currentPage()} fallback={<div class="later">No page yet.</div>}>
-          {(page) => <Artboard pages={onBoard()} page={page()} selected={selection()} onPick={pick} onOpen={openOn} onEdit={edit} keys={keys()} onKeys={setKeys} running={running()} onRunning={setRunning} />}
+        <Show when={edited()} fallback={<div class="later">No page yet.</div>}>
+          {(page) => <Artboard pages={onBoard()} page={page()} selected={selection()} onPick={pick} onOpen={openOn} onEdit={edit} keys={keys()} onKeys={setKeys} running={running()} onRunning={setRunning} link={link()} onLink={(l) => setLink(linkKey(l))} />}
         </Show>
       </section>
       <Edge side="right" />
       <Sidebar side="right">
-        <ElementInspector page={currentPage()} selected={selection()} typing={typing()} />
+        <Show when={pickedLink()} fallback={<ElementInspector page={currentPage()} selected={selection()} typing={typing()} />}>
+          {(l) => <LinkInspector link={l()} onPick={(id) => pick(id)} />}
+        </Show>
       </Sidebar>
     </div>
   );

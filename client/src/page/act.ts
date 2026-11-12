@@ -77,7 +77,7 @@ export function runsHere(h: Handler, scope: Scope): boolean {
  *  release, so the backend knows what a screen holds should the screen be lost, and an end
  *  whenever handled, so it lets go of what its beginning held. A stream that ends itself is
  *  held per handler there, so it goes only to those. */
-export function pageAct(page: string): Act {
+export function pageAct(page: string, via = ""): Act {
   return {
     fire: (e, event, payload, scope, only, ending) => {
       const heard = hearing(e, event, payload, scope, only);
@@ -89,7 +89,7 @@ export function pageAct(page: string): Act {
         // the copy it happened on, by the index of each copy it sits in, and the nearest's item
         const item = scope.place?.copies.length ? (scope.get("item") as Value) : undefined;
         // when it happened, by the clock the pings give, so the system runs no start that comes late
-        send({ type: "fire", page, id: e.id, event, payload: (payload ?? null) as Value, copies: scope.place?.copies ?? [], item, heard: there.map((h) => h.filter), t: performance.now(), ending: !!ending });
+        send({ type: "fire", via, page, id: e.id, event, payload: (payload ?? null) as Value, copies: scope.place?.copies ?? [], item, heard: there.map((h) => h.filter), t: performance.now(), ending: !!ending });
       }
     },
     hears: (_, h, scope) => heard(h, scope),

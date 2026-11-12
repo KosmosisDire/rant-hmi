@@ -22,7 +22,7 @@ import type { ScreenCondition } from "../protocol/ScreenCondition";
 import type { ServerMsg } from "../protocol/ServerMsg";
 import type { Token } from "../protocol/Token";
 import type { WebrtcProblem } from "../protocol/WebrtcProblem";
-import { closeWith, follow, push } from "./stack";
+import { closeWith, follow, opened } from "./stack";
 import { setMode } from "./mode";
 
 export interface Live {
@@ -74,6 +74,8 @@ export interface State {
   tokens: Token[];
   entities: EntityInfo[];
   pages: Page[];
+  /** What code calls each page, as `Pages.Overview`, with its id. */
+  pageKeys: [string, string][];
   /** What this screen's last edit made, to open or select. `n` counts, so the same id twice
    *  still reads as new. */
   made: { page: string; id: string; n: number } | null;
@@ -105,6 +107,7 @@ export const [state, setState] = createStore<State>({
   tokens: [],
   entities: [],
   pages: [],
+  pageKeys: [],
   made: null,
   refused: null,
   notices: [],
@@ -216,6 +219,9 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
     case "pages":
       setState("pages", reconcile(msg.pages, { key: "id" }));
       break;
+    case "page_keys":
+      setState("pageKeys", msg.keys);
+      break;
     case "moved":
       // the page takes its new id here at once, so nothing showing it loses it before its list comes
       batch(() => {
@@ -249,7 +255,7 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
       setState("brings", reconcile(msg.imports, { key: "alias" }));
       break;
     case "open":
-      push(msg.page, msg.replace, msg.ask);
+      opened(msg.via, msg.page, page(msg.page)?.shows === "full", msg.replace, msg.ask);
       break;
     case "close":
       closeWith(msg.answer);

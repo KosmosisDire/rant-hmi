@@ -214,7 +214,7 @@ function place(b: Block, along: Flow, across: number, path: string): Element {
     widen(props, along, box.w, across);
     return frame(`${path}/n`, props, [sized(it, 1)]);
   }
-  if (e.tag === "group" || e.tag === "markup" || (e.tag === "svg" && e.props.viewbox === undefined)) return whole([it], box, across, path);
+  if (e.tag === "group" || e.tag === "markup" || e.tag === "view" || (e.tag === "svg" && e.props.viewbox === undefined)) return whole([it], box, across, path);
   // what scales itself to its box is narrowed in proportion
   if (e.tag === "media" || e.tag === "svg" || (e.tag === "use" && made?.interface?.sizing !== "fill")) return sized(it, Math.min(1, across / box.w));
   const layout = e.tag === "div" ? read(e.props.layout, scope) : undefined;

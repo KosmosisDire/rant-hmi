@@ -2,7 +2,7 @@
 // browser remembers them, and keeps each move in its history, so its back and forward step
 // through what was opened. The page falls back to the first while the chosen one is missing.
 
-import { createSignal } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 import { remembered } from "./remember";
 import { onMoved, page, state } from "./store";
 
@@ -98,6 +98,32 @@ export const flyTo = (page: string | null) => setFlight({ page, n: (flight()?.n 
 /** The pages Design's board draws now, those in sight. */
 export const [boardPages, setBoardPages] = createSignal<string[]>([]);
 
+/** A view on the board the open page is edited in: the page it is on, its id and the page it shows. */
+export interface InPlace {
+  page: string;
+  view: string;
+  shows: string;
+}
+
+/** The views the open page is edited in place through on the board, outermost first. */
+export const [inPlace, setInPlace] = createSignal<InPlace[]>([]);
+
+/** The showing `viaView` names for the page each step of `chain` shows. */
+export const viaOf = (chain: InPlace[]) => chain.map((s) => `${s.page}/${s.view}>`).join("");
+
+/** The page a view's chip picked for the board to show in it, by its showing. Never saved. */
+export const [boardShows, setBoardShows] = createSignal<Record<string, string>>({});
+
+/** The page each view on the board shows now, by its showing, as it is drawn. */
+const [shownOnBoard, setShownOnBoard] = createSignal<Record<string, string | null>>({});
+export { shownOnBoard };
+
+/** Notes what a view on the board shows, until it goes. */
+export function showsOnBoard(via: string, id: string | null) {
+  setShownOnBoard((all) => (all[via] === id ? all : { ...all, [via]: id }));
+  onCleanup(() => setShownOnBoard(({ [via]: _, ...rest }) => rest));
+}
+
 // what is open here follows a rename that moved its id, in this tab's history too
 onMoved((from, to) => {
   if (chosen() === from) {
@@ -108,6 +134,8 @@ onMoved((from, to) => {
   if (spot?.page === from) window.history.replaceState({ hmi: { ...spot, page: to } satisfies Spot }, "");
   const w = wanted();
   if (w?.page === from) setWanted({ ...w, page: to });
+  const moved = (id: string) => (id === from ? to : id);
+  if (inPlace().some((s) => s.page === from || s.shows === from)) setInPlace(inPlace().map((s) => ({ ...s, page: moved(s.page), shows: moved(s.shows) })));
 });
 
 /** Follows the browser's back and forward from here on. The editor's alone: an operator's

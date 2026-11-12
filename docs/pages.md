@@ -42,6 +42,7 @@ A page is a file of the elements it draws. This page lists every element and pro
 | `canvas` | what its code draws, in 2D or with WebGL |
 | `scene` | a 3D view of parts |
 | `group` | parts picked and moved as one, with no box of its own |
+| `view` | another page, drawn in its box ([Views](#views)) |
 | a component's name, as `<Gauge>` | an instance of that component ([Components](components.md#placing-one)), a 3D one's in a scene only |
 | `path` `circle` `ellipse` `rect` `line` `polyline` `polygon` `text` `g` | shapes, in a diagram only |
 | `anchor` `axes` `box` `sphere` `cylinder` `points` `mesh` `grid` `floor` `arrow` `model` | 3D parts, in a scene only |
@@ -187,6 +188,67 @@ A scene draws its parts in metres with z up. Every property of a part is an attr
 - A part whose `color`, `opacity`, `joints`, `names`, `field`, `range` or `joined` is unknown
   draws as a grey ghost, those at their defaults. One whose pose or other property is unknown
   draws nothing, nor what it holds. Only the camera's unknown values mark the whole scene.
+
+## Views
+
+A view draws another page in its box, as a panel that changes with a selection.
+
+```html
+<view id="e7" name="Well" x="42" y="40" w="40" h="30" page='source == "Twin" ? Pages.Twin : Pages.Camera'/>
+```
+
+| Property | Takes |
+| --- | --- |
+| `page` | the page it shows, as `Pages.Camera`, any expression giving one, a web page's URL, as `"https://grafana.local/d/line1"` or `"/files/manual.html"`, or `null` for none |
+
+- The page is laid out at the view's size, so what it places in percents or with `fill` fits.
+- Only the page shown is drawn, so a page not shown reads nothing.
+- The page runs as it does alone, its handlers too. It reads nothing of the page around it, so
+  what both read goes in an object.
+- Each view keeps its own state of the page it shows, so two views of one page keep two.
+- A page never shows itself, and a component shows no page.
+- A web page shows as the site lets it: many refuse to be framed, as Grafana does until
+  `allow_embedding` is on, and a screen on https shows no http page. One on the HMI's own host
+  runs apart from the screen around it. It loads again each time it is shown.
+- In the editor a dotted line marks each view. Double click one to edit the page it shows in
+  its place, at its size, and Escape to step out. The chip under a picked view picks which page
+  the editor shows in it, without changing `page`.
+
+### Moving between pages
+
+A view whose `page` is a name of state kept each screen moves between pages as that state
+changes, as the content of a shell with a header and a nav.
+
+```html
+<page name="Shell" size="128x72">
+  <var name="section" start='"overview"'/>
+  <div id="e1" name="Camera" x="100" y="1" w="12" h="4" style='background: section == Pages.Camera ? $accent : $panel2'>
+    <on event="tap">
+      section = Pages.Camera;
+    </on>
+  </div>
+  <view id="e2" name="Content" x="0" y="8" w="128" h="64" page="section"/>
+</page>
+```
+
+- The state starts at a page's file name, as `"overview"`, since `start` is JSON.
+- `open()` in a page such a view shows opens a full page in that view. A page with
+  `shows="over"` opens over the screen.
+- At `/run` the address names what shows, so the screen opens it again or shares it: the page,
+  then what its view shows, `/run/shell/camera`. A page with two such views names each in a
+  query, `/run/split?left=camera&right=trends`, and one nested under them after its branch's
+  name and a dot. A view showing its start is left out.
+- Back and Escape undo each change, a view's or a page's.
+- A view inside a repeat moves between pages too, but stays out of the address.
+- A view showing a web page is left out of the address too, and no address opens one. Back still
+  steps through it.
+- The editor lays the pages out down from the start page, each a row below the page that shows
+  or opens it, with a line from the view or the element that does: solid for a view, dashed for
+  `open()`. A page nothing leads to starts a column of its own to the right. A press on a line
+  lists in the inspector every element that makes it, ringed on its page.
+- A page named as `Pages.Camera` is linked. One worked out as it runs, as `open(Pages[name])`
+  or `section = Pages[name]`, warns, since the editor cannot link it. A component that picks
+  a page takes the pages as its options, as `options="[Pages.Overview, Pages.System]"`.
 
 ## Style
 

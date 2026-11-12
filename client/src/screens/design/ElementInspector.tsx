@@ -448,6 +448,10 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <Field {...prop("src")} label="Source" placeholder="Camera" source />
           <Field {...prop("fit")} label="Fit" kind="choice" options={['"meet"', '"slice"', '"stretch"']} placeholder='"meet"' />
         </Show>
+        <Show when={p.element.tag === "view"}>
+          <div class="section">View</div>
+          <Field {...prop("page")} label="Page" kind="choice" options={state.pageKeys.filter(([, id]) => id !== p.page).map(([k]) => `Pages.${k}`)} placeholder="none" />
+        </Show>
         <Show when={diagram()}>
           <div class="section">Diagram</div>
           <Field {...prop("viewbox")} label="View box" placeholder="its size" />
@@ -940,7 +944,7 @@ function statePlaces(page: Page, holder: Element | undefined): { at: Place; labe
   const outer = last === 0 ? docScope(page) : scopeOf(page, path[last - 1].id);
   const r = resolve(path[last].props.repeat, outer);
   const which = path.slice(0, last).filter((e) => !!e.props.repeat?.trim()).length;
-  return copiesOf(r.ok ? r.value : undefined).map((_, i) => ({ at: { page: first.page, copies: first.copies.map((c, j) => (j === which ? i : c)) }, label: `index ${i}` }));
+  return copiesOf(r.ok ? r.value : undefined).map((_, i) => ({ at: { ...first, copies: first.copies.map((c, j) => (j === which ? i : c)) }, label: `index ${i}` }));
 }
 
 /** What the page, or its element `holder`, keeps, a row each with its start, its value now and

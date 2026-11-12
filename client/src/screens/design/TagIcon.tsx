@@ -5,6 +5,7 @@ import { Dynamic } from "solid-js/web";
 import type { Tag } from "../../protocol/Tag";
 import {
   Anchor,
+  AppWindow,
   Axis3d,
   Box,
   Brush,
@@ -65,12 +66,14 @@ export const TAG_WORDS: Record<Tag, string> = {
   floor: "floor",
   arrow: "arrow",
   model: "model",
+  view: "view",
 };
 
 /** Each tag's icon, a frame's the square the rest fall back to. */
 const ICONS: Partial<Record<Tag, (p: { size: number }) => JSX.Element>> = {
   span: Type,
   text: Type,
+  view: AppWindow,
   use: Component,
   input: TextCursorInput,
   svg: Shapes,

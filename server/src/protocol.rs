@@ -44,6 +44,8 @@ pub enum ServerMsg {
     },
     /// Every page, whole, on connecting and when one is added or removed.
     Pages { pages: Vec<Page> },
+    /// What code calls each page, as `Pages.Overview`, and its id, on connecting and as they change.
+    PageKeys { keys: Vec<(String, String)> },
     /// One page, whole, after an edit changed it.
     Page { page: Page },
     /// What an edit from this screen made, so the screen can open or select it. For a new
@@ -80,8 +82,10 @@ pub enum ServerMsg {
     /// after a change, to each screen that previews values.
     Brings { imports: Vec<Brought> },
     /// A handler started from this screen opens a page, in place of the top one when `replace`.
-    /// `ask` names the handler's wait for what the page closes with.
+    /// `ask` names the handler's wait for what the page closes with, and `via` the views the
+    /// handler's page is shown through, whose last one a full page opens in when it navigates.
     Open {
+        via: String,
         page: String,
         replace: bool,
         #[ts(type = "number")]
@@ -307,8 +311,11 @@ pub enum ClientMsg {
     /// for it the screen heard, by their filters. With none it still tells what the screen
     /// holds, as a press, for the end to run should the screen be lost. `t` is when it happened,
     /// in ms by the clock the screen's pings give, and `ending` says a component sent it while it
-    /// handled an end, as a joystick's zeros on its release, so it runs however late.
+    /// handled an end, as a joystick's zeros on its release, so it runs however late. `via`
+    /// names the views the page is shown through, empty for a page shown alone.
     Fire {
+        #[serde(default)]
+        via: String,
         page: String,
         id: String,
         event: String,

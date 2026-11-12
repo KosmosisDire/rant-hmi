@@ -11,8 +11,9 @@ const media = window.matchMedia("(prefers-color-scheme: light)");
 const [device, setDevice] = createSignal<"dark" | "light">(media.matches ? "light" : "dark");
 media.addEventListener("change", (e) => setDevice(e.matches ? "light" : "dark"));
 
-/** Whether this is the operator's screen, at /run. Every other path is the editor. */
-export const operator = location.pathname.replace(/\/+$/, "") === "/run";
+/** Whether this is the operator's screen, at /run and the addresses under it. Every other path
+ *  is the editor. */
+export const operator = /^\/run(\/|$)/.test(location.pathname);
 
 /** What code chose for the operator's screen, kept on the device. */
 const [chosen, setChosen] = remembered<Mode>("run-mode", "device", ["device", "dark", "light"]);

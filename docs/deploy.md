@@ -5,6 +5,8 @@
 Open `http://<host>:6739/run` on any computer that reaches the HMI's host. A screen that uses
 a gamepad, or plays video without WebRTC, needs `https://<host>:6739/run`.
 
+- The address follows what the screen shows, so it opens that again or shares it:
+  `/run/shell/camera` ([Views](pages.md#views)).
 - The HMI's own certificate is in `~/.rant/hmi`, to trust on a screen.
 - `--cert` and `--key` on `rant-hmi` take a real certificate and its key, as PEM files.
 

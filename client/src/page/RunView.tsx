@@ -3,7 +3,8 @@
 
 import { createEffect, For, onCleanup, onMount, Show } from "solid-js";
 import type { Page } from "../protocol/Page";
-import { back, prune, stack } from "../state/stack";
+import { back, prune, stack, undo } from "../state/stack";
+import { fullAt } from "../state/address";
 import { page } from "../state/store";
 import { Download } from "../ui/icons";
 import { openMenu } from "../ui/Menu";
@@ -21,12 +22,7 @@ export function RunView(p: { active: boolean }) {
   // a page removed while open closes
   createEffect(() => prune((id) => page(id) !== undefined));
   /** Where the pages in sight start: the top full page. */
-  const base = () => {
-    const all = pages();
-    let n = all.length - 1;
-    while (n > 0 && all[n].shows !== "full") n--;
-    return Math.max(0, n);
-  };
+  const base = () => fullAt(pages());
   const scale = () => {
     const b = pages()[base()];
     return b ? fitIn(b.width * UNIT, b.height * UNIT, size()).k : 1;
@@ -37,8 +33,8 @@ export function RunView(p: { active: boolean }) {
   createEffect(() => p.active && size.measure());
   onMount(() => {
     size.track(host);
-    // an Escape a handler names is the handler's
-    const key = (e: KeyboardEvent) => p.active && e.key === "Escape" && !e.defaultPrevented && back();
+    // an Escape a handler names is the handler's, and one it leaves undoes the last step
+    const key = (e: KeyboardEvent) => p.active && e.key === "Escape" && !e.defaultPrevented && undo();
     window.addEventListener("keydown", key);
     onCleanup(() => window.removeEventListener("keydown", key));
   });

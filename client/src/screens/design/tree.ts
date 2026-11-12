@@ -8,7 +8,8 @@ import type { Tag } from "../../protocol/Tag";
 import { docScope, flowOf, isNumber, isPercent, originAt, pageScope, placement, repeatScope, resolve, type Scope, sizeWord, stateScope, UNIT } from "../../state/bind";
 import { edit, show } from "../../state/change";
 import { chain, find, type Home, homeOf, SHAPES, spaceHome } from "../../state/elements";
-import { notify } from "../../state/store";
+import { notify, page as pageOf } from "../../state/store";
+import type { InPlace } from "../../state/view";
 import { moving, reshape } from "./geometry";
 
 /** The selected elements no other selected one holds, in page order, so a move or a removal
@@ -282,6 +283,20 @@ export function absolute(page: Page, id: string, overrides?: Overrides): Box | u
   }
   const own = boxOf(path[path.length - 1], room, overrides, reads[path.length - 1]);
   return { ...own, x: own.x + at.x, y: own.y + at.y };
+}
+
+/** Where each view of `chain` lies in its outermost page, each page laid out at the size of the
+ *  view it shows in. Null once a page or view of it is gone. */
+export function placesIn(chain: InPlace[]): Box[] | null {
+  const boxes: Box[] = [];
+  for (const [i, s] of chain.entries()) {
+    const [pg, outer] = [pageOf(s.page), boxes.at(-1)];
+    if (!pg || (i > 0 && chain[i - 1].shows !== s.page)) return null;
+    const b = absolute(outer ? { ...pg, width: outer.w, height: outer.h } : pg, s.view);
+    if (!b) return null;
+    boxes.push({ ...b, x: b.x + (outer?.x ?? 0), y: b.y + (outer?.y ?? 0) });
+  }
+  return boxes;
 }
 
 /** True when each of `keys` is a plain number, a plain percent or unset, so a drag may write

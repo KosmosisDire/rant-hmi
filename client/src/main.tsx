@@ -20,10 +20,12 @@ import { Operator } from "./shell/Operator";
 import { catchFaults } from "./state/caught";
 import { operator } from "./state/mode";
 import { report } from "./state/problems";
-import { onAnswer } from "./state/stack";
+import { onAnswer, onViews } from "./state/stack";
+import { address, openInView, showViews } from "./state/address";
 
 catchFaults(report);
 connect();
 checkDevice();
 onAnswer((ask, value) => send({ type: "answer", ask, value }));
+onViews({ address, show: showViews, open: openInView });
 render(() => (operator ? <Operator /> : <App />), document.getElementById("root")!);

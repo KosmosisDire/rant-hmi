@@ -81,7 +81,12 @@ A stopped task call fails with `e.status` `"cancelled"`.
 | `sleep(ms)` | wait ms |
 | `open(page, options?)` | open a page, its answer when it closes |
 | `close(answer?)` | close the top page |
-| `Pages` | each page by name, to open |
+
+### Read in what a screen draws and a page's handlers
+
+| Name | Is |
+| --- | --- |
+| `Pages` | each page by name, to open or show in a view |
 
 ### Read in a component's handlers
 

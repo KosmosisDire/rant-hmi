@@ -11,19 +11,23 @@ import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Pick } from "./DesignScreen";
-import { Component, File, Keyboard, Play, Smartphone } from "../../ui/icons";
+import { AppWindow, Check, ChevronDown, Component, File, Keyboard, Play, Smartphone } from "../../ui/icons";
+import { type MenuEntry, openMenu } from "../../ui/Menu";
+import { startPage, state } from "../../state/store";
+import { type Link, linkKey, links } from "../../state/links";
+import { layOut } from "./graph";
 import { fingers } from "../../ui/fingers";
 import { follow } from "../../ui/press";
 import { fingered } from "../../ui/touch";
 import { createSize, onResize } from "../../ui/size";
 import { wheelPx, zoomBy } from "../../ui/wheel";
-import { type Flow, flowOf, resolve, sizeWord, UNIT } from "../../state/bind";
+import { type Flow, flowOf, isUrl, resolve, sizeWord, UNIT } from "../../state/bind";
 import { find, homeOf, SHAPES, spaceHome } from "../../state/elements";
 import { stack } from "../../state/stack";
-import { flight, flyTo, setBoardPages } from "../../state/view";
+import { boardShows, flight, flyTo, type InPlace, inPlace, setBoardPages, setBoardShows, setInPlace, shownOnBoard, viaOf } from "../../state/view";
 import { moving, type Reshape, reshape } from "./geometry";
 import { canvasMenu, elementMenu } from "./menus";
-import { absolute, boxOf, boxText, childrenOf, entered, flowed, laidOut, literal, moveTo, originOf, parentOf, pickFrom, roomOf, scopeOf, sendEdits, setProps, showProps, stackAt, tops } from "./tree";
+import { absolute, boxOf, boxText, childrenOf, entered, flowed, laidOut, literal, moveTo, originOf, parentOf, pickFrom, placesIn, roomOf, scopeOf, sendEdits, setProps, showProps, stackAt, tops } from "./tree";
 
 /** Places snap to whole units. A finer one is typed as a fraction, or dragged with Alt, which
  *  lands on pixels, a tenth of a unit. */
@@ -55,10 +59,22 @@ function cursorOf(h: Handle, turn: number): string {
 
 /** The room between pages on the board, in units. */
 const GAP = 12;
+/** The room between rows of pages, where the lines between them run, in units. */
+const ROWS = 40;
 /** How long a flight to a page takes, in ms. */
 const FLIGHT = 260;
 /** A page's label shows above it while the page is at least this wide on screen. */
 const LABELLED = 40;
+/** How tall a page's label is on the board in units, and at most on screen in pixels, so a
+ *  name stays half seen as the board zooms out. */
+const LABEL_TEXT = 14;
+const LABEL_TEXT_MOST = 12;
+/** How much of a page's width its label may take, so a link has the rest to land in. */
+const LABEL = 0.75;
+/** How long a link's arrowhead is in units, kept between a least and a most on screen in pixels. */
+const HEAD = 4;
+const HEAD_LEAST = 4;
+const HEAD_MOST = 10;
 
 /** What each key and gesture does here, as the keys list shows it. */
 const KEYS: [string, string][] = [
@@ -74,6 +90,7 @@ const KEYS: [string, string][] = [
   ["Drag a grip", "resize, several or a group all together"],
   ["Arrows", "nudge a unit, Shift four, Alt a pixel"],
   ["Double click", "type into the element's field"],
+  ["Double click a view", "edit the page it shows there"],
   ["Delete", "remove"],
   ["Ctrl D", "duplicate"],
   ["Ctrl G", "group, Ctrl Shift G ungroups"],
@@ -81,7 +98,7 @@ const KEYS: [string, string][] = [
   ["Ctrl C, X, V", "copy, cut and paste"],
   ["Ctrl [ and ]", "send back, bring forward, Shift all the way"],
   ["Ctrl Z", "undo, Ctrl Shift Z or Ctrl Y redoes"],
-  ["Escape", "let go"],
+  ["Escape", "let go, then step out of the view the page is edited in"],
 ];
 
 /** How the editor sees each 3D component, its own and never saved. */
@@ -214,6 +231,9 @@ export function Artboard(p: {
   /** Whether its pages run, as the Run tab runs them, instead of being edited. */
   running: boolean;
   onRunning: (on: boolean) => void;
+  /** The link picked, by `linkKey`, whose places on its page are ringed. */
+  link: string | null;
+  onLink: (link: Link) => void;
 }) {
   let host!: HTMLDivElement;
   let grid!: HTMLCanvasElement;
@@ -221,25 +241,30 @@ export function Artboard(p: {
   // a component runs only inside a page, so its board never does
   const live = () => p.running && p.page.interface === null;
   const room = createSize();
-  /** Where each page's corner sits on the board, in units, left to right in their order. */
-  const slots = createMemo(() => {
-    const at: Record<string, { x: number; y: number }> = {};
-    let x = 0;
-    for (const pg of p.pages) {
-      at[pg.id] = { x, y: 0 };
-      x += pg.width + GAP;
-    }
-    return at;
-  });
+  /** Where each page's corner sits on the board, in units, as a graph down from the start page. */
+  const slots = createMemo(() => layOut(p.pages, links(), startPage(), GAP, ROWS));
   const slot = (id: string) => slots()[id] ?? { x: 0, y: 0 };
   const byId = (id: string) => p.pages.find((pg) => pg.id === id);
+  /** While the open page is edited in place: the views it is in, the box on the board of each,
+   *  the last holding the open page, and the page on the board they are all in. */
+  const nest = createMemo(() => {
+    const chain = inPlace();
+    if (chain.at(-1)?.shows !== p.page.id || !byId(chain[0].page)) return null;
+    const boxes = placesIn(chain)?.map((b) => ({ ...b, x: b.x + slot(chain[0].page).x, y: b.y + slot(chain[0].page).y }));
+    return boxes ? { chain, boxes, root: chain[0].page } : null;
+  });
+  /** Where a page's corner sits on the board: the open one's in the view it is edited in. */
+  const corner = (id: string) => {
+    const n = nest();
+    return n && id === p.page.id ? n.boxes.at(-1)! : slot(id);
+  };
   /** Where the open page sits on screen, and `k` screen pixels per unit, as all that edits it reads. */
   const view = () => {
-    const [c, s] = [cam(), slot(p.page.id)];
+    const [c, s] = [cam(), corner(p.page.id)];
     return { k: c.k, x: c.x + s.x * c.k, y: c.y + s.y * c.k };
   };
   const setView = (v: Cam) => {
-    const s = slot(p.page.id);
+    const s = corner(p.page.id);
     setCam({ k: v.k, x: v.x - s.x * v.k, y: v.y - s.y * v.k });
   };
   const [held, setHeld] = createSignal<Held>({});
@@ -249,7 +274,7 @@ export function Artboard(p: {
   const [slotLine, setSlotLine] = createSignal<Box | null>(null);
   /** Whether the page shows as an upright phone lays it out, and that phone page while it does. */
   const [phoneOn, setPhoneOn] = createSignal(false);
-  const preview = createPhonePage(() => (phoneOn() && !asDesigned(p.page) ? p.page : null), () => PHONE);
+  const preview = createPhonePage(() => (phoneOn() && !asDesigned(p.page) && !nest() ? p.page : null), () => PHONE);
   // a phone page is as tall as what it holds, so its ground is measured as drawn
   const drawn = createSize();
   const size = () => {
@@ -266,11 +291,31 @@ export function Artboard(p: {
 
   /** A page's box on the board, the open one as the phone lays it out while it does. */
   const boxOn = (pg: Page): Box => {
-    const [s, z] = [slot(pg.id), pg.id === p.page.id ? size() : pg];
+    const [s, z] = [corner(pg.id), pg.id === p.page.id ? size() : pg];
     return { x: s.x, y: s.y, w: z.width, h: z.height };
   };
   /** A box on the board as it lands on screen. */
   const screenOf = (b: Box, c = cam()) => ({ left: c.x + b.x * c.k, top: c.y + b.y * c.k, width: b.w * c.k, height: b.h * c.k });
+  /** How long a link's arrowhead is on screen. */
+  const head = () => Math.min(HEAD_MOST, Math.max(HEAD_LEAST, HEAD * cam().k));
+  /** The links between the pages as lines on screen: from the bottom of the page a link starts
+   *  on, under the element it starts at, into the top of the page it leads to beside its label. */
+  const lines = createMemo(() => {
+    const c = cam();
+    return links().flatMap((l) => {
+      const [a, b] = [l.from === p.page.id ? p.page : byId(l.from), byId(l.to)];
+      if (!a || !b) return [];
+      const [from, to] = [boxOn(a), boxOn(b)];
+      const el = l.element ? absolute(a, l.element) : undefined;
+      const sx = from.x + (el ? Math.min(Math.max(el.x + el.w / 2, 0), from.w) : from.w / 2);
+      const [s, t] = [screenOf({ x: sx, y: from.y + from.h, w: 0, h: 0 }, c), screenOf({ x: to.x + to.w * (1 + LABEL) / 2, y: to.y, w: 0, h: 0 }, c)];
+      // the line stops where its head begins, so the head's tip is where the link ends
+      t.top -= head();
+      // a link back up or across bends out and round rather than through the pages
+      const bend = t.top > s.top ? (t.top - s.top) / 2 : 40;
+      return [{ link: l, d: `M${s.left} ${s.top}C${s.left} ${s.top + bend} ${t.left} ${t.top - bend} ${t.left} ${t.top}` }];
+    });
+  });
   /** The pages in sight or nearly, which alone are drawn, the open one always and last, so it
    *  lies over the others and what it holds is pressed first. */
   const inSight = createMemo(
@@ -364,7 +409,8 @@ export function Artboard(p: {
     for (const id of inSight()) {
       const pg = byId(id);
       if (!pg) continue;
-      const s = screenOf(boxOn(pg), c);
+      const z = boxOn(pg);
+      const s = screenOf(z, c);
       // the page's fill, else the default its style gives
       const sheet = host.querySelector<HTMLElement>(`.page-layer[data-page="${CSS.escape(id)}"] > .page`);
       const ground = pageGround(pg) ?? ((sheet && getComputedStyle(sheet).getPropertyValue("--page-ground").trim()) || "#000000");
@@ -385,8 +431,8 @@ export function Artboard(p: {
         const a = strength * Math.min(1, Math.max(0, (step * c.k - 4) / 8));
         if (a <= 0) continue;
         g.fillStyle = `rgba(${lines}, ${a})`;
-        for (let u = step; u < pg.width; u += step) g.fillRect(Math.round((s.left + u * c.k) * dpr), y0, width, y1 - y0);
-        for (let u = step; u < pg.height; u += step) g.fillRect(x0, Math.round((s.top + u * c.k) * dpr), x1 - x0, width);
+        for (let u = step; u < z.w; u += step) g.fillRect(Math.round((s.left + u * c.k) * dpr), y0, width, y1 - y0);
+        for (let u = step; u < z.h; u += step) g.fillRect(x0, Math.round((s.top + u * c.k) * dpr), x1 - x0, width);
       }
     }
   };
@@ -446,6 +492,8 @@ export function Artboard(p: {
   // component opens alone and fitted, and so does a page after it, as the board changes.
   let opened: string | null = null;
   const openId = createMemo(() => p.page.id);
+  // a page opened any other way than into a view leaves the views it was edited in
+  createEffect(on(openId, (id) => inPlace().length > 0 && inPlace().at(-1)!.shows !== id && setInPlace([])));
   const alone = createMemo(() => (p.page.interface !== null ? p.page.id : ""));
   const phone = createMemo(() => !!preview());
   createEffect(
@@ -497,6 +545,59 @@ export function Artboard(p: {
   const openHere = (id: string) => {
     if (id !== p.page.id) opened = id;
     p.onOpen(id);
+  };
+  /** Opens the page a press at a point of the screen lands on. Around a page edited in place,
+   *  that is the innermost one under the point. */
+  const openAt = (id: string, x: number, y: number) => {
+    const n = nest();
+    if (n && id === n.root) {
+      const [r, c] = [host.getBoundingClientRect(), cam()];
+      const [bx, by] = [(x - r.left - c.x) / c.k, (y - r.top - c.y) / c.k];
+      for (let i = n.boxes.length - 2; i >= 0; i--) {
+        const b = n.boxes[i];
+        if (bx < b.x || by < b.y || bx > b.x + b.w || by > b.y + b.h) continue;
+        setInPlace(n.chain.slice(0, i + 1));
+        return openHere(n.chain[i].shows);
+      }
+    }
+    openHere(id);
+  };
+  /** The showing of a view on the open page. */
+  const viaAt = (view: string) => `${viaOf(nest()?.chain ?? [])}${p.page.id}/${view}>`;
+  /** Edits the page a view on the open page shows on the board, in its place. */
+  const enter = (view: string) => {
+    const shows = shownOnBoard()[viaAt(view)];
+    // a web page is not ours to edit
+    if (!shows || isUrl(shows) || preview()) return;
+    setInPlace([...(nest()?.chain ?? []), { page: p.page.id, view, shows }]);
+    openHere(shows);
+  };
+  /** The menu of a view's chip: the pages the board may show in it, and editing it there. The
+   *  view the open page is edited in switches the page edited. */
+  const chipMenu = (e: MouseEvent, at: InPlace, via: string, edited: boolean) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const around = via.split(">").filter(Boolean).map((c) => c.split("/")[0]);
+    const show = (id: string) => {
+      setBoardShows({ ...boardShows(), [via]: id });
+      if (!edited) return;
+      setInPlace([...nest()!.chain.slice(0, -1), { ...at, shows: id }]);
+      openHere(id);
+    };
+    const rows: MenuEntry[] = state.pages
+      .filter((pg) => pg.interface === null && !around.includes(pg.id))
+      .map((pg) => ({ label: pg.name, icon: pg.id === at.shows ? <Check size={13} /> : <File size={13} />, run: () => show(pg.id) }));
+    const own = () => {
+      setBoardShows(Object.fromEntries(Object.entries(boardShows()).filter(([k]) => k !== via)));
+      // the page its property gives is known once it draws, so the view is left
+      if (edited) {
+        setInPlace(nest()!.chain.slice(0, -1));
+        p.onOpen(at.page);
+        p.onPick(at.view);
+      }
+    };
+    rows.push("-", { label: "As its page property says", disabled: !boardShows()[via], run: own });
+    if (!edited) rows.push({ label: "Edit here", keys: "Double click", disabled: !at.shows || isUrl(at.shows), run: () => enter(at.view) });
+    openMenu({ x: r.left, y: r.bottom + 4 }, rows);
   };
   /** The page drawn under a point of the screen: the one whose element or ground is there. */
   const pageAt = (x: number, y: number) => {
@@ -570,7 +671,7 @@ export function Artboard(p: {
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       // a press on another page opens it, then goes on as a press there
       const at = pageAt(e.clientX, e.clientY);
-      if (at && at !== p.page.id) openHere(at);
+      if (at && at !== p.page.id) openAt(at, e.clientX, e.clientY);
       const handle = target.closest("[data-handle]")?.getAttribute("data-handle") as Handle | null;
       const hits = hitsAt(e.clientX, e.clientY);
       const stack = stackAt(p.page, hits);
@@ -834,13 +935,13 @@ export function Artboard(p: {
   };
 
   /** The pages in sight as holes in a sheet over the artboard, each edge on a pixel's middle so
-   *  its outline stays crisp. */
+   *  its outline stays crisp. The page around one edited in place stays under it, dimmed. */
   const veil = () => {
     const r = room();
     let d = `M-10 -10H${r.w + 10}V${r.h + 10}H-10Z`;
     for (const id of inSight()) {
       const pg = byId(id);
-      if (!pg) continue;
+      if (!pg || id === nest()?.root) continue;
       const s = screenOf(boxOn(pg));
       const [l, t, rt, b] = [s.left, s.top, s.left + s.width, s.top + s.height].map((v) => Math.round(v) - 0.5);
       d += `M${l} ${t}H${rt + 1}V${b + 1}H${l}Z`;
@@ -851,7 +952,7 @@ export function Artboard(p: {
   const labelAt = (id: string) => {
     const pg = byId(id);
     const s = pg && screenOf(boxOn(pg));
-    return pg && s && s.width >= LABELLED ? { pg, style: { left: `${Math.round(s.left)}px`, top: `${Math.round(s.top)}px`, "max-width": `${Math.round(s.width)}px` } } : null;
+    return pg && s && s.width >= LABELLED ? { pg, style: { left: `${Math.round(s.left)}px`, top: `${Math.round(s.top)}px`, "max-width": `${Math.round(s.width * LABEL)}px`, "font-size": `${Math.min(LABEL_TEXT_MOST, LABEL_TEXT * cam().k)}px` } } : null;
   };
 
   // a shape's attributes place it, and the page lays some elements out itself, so their rings
@@ -881,9 +982,14 @@ export function Artboard(p: {
   };
   // what holds the picked elements, outlined faintly so their bounds show
   const parents = () => [...new Set(p.selected.map((id) => parentOf(p.page, id)))].filter((id): id is string => !!id && !p.selected.includes(id));
+  /** The elements on the open page that make the picked link. */
+  const causes = createMemo(() => {
+    const l = links().find((x) => linkKey(x) === p.link);
+    return l && l.from === p.page.id ? l.by.flatMap((c) => (c.element && find(p.page.children, c.element) ? [c.element] : [])) : [];
+  });
   const [measured, setMeasured] = createSignal<Record<string, DOMRect>>({});
   createEffect(() => {
-    const ids = [...p.selected, ...parents()].filter(measuredOne);
+    const ids = [...p.selected, ...parents(), ...causes()].filter(measuredOne);
     if (ids.length === 0) return;
     let frame = requestAnimationFrame(function measure() {
       const at: Record<string, DOMRect> = {};
@@ -983,6 +1089,15 @@ export function Artboard(p: {
   };
 
   /** A box on the page as a ring on screen, on whole pixels so its thin line stays crisp. */
+  /** The chip under the one view picked, which picks what the board shows in it. */
+  const chip = () => {
+    const id = one();
+    const e = id && !live() && !preview() ? find(p.page.children, id) : undefined;
+    const b = e?.tag === "view" ? absolute(p.page, e.id, overrides) : undefined;
+    if (!e || !b) return null;
+    const [s, via] = [onScreen(b), viaAt(e.id)];
+    return { at: { page: p.page.id, view: e.id, shows: shownOnBoard()[via] ?? "" }, via, style: { left: `${s.left}px`, top: `${s.top + s.height + 6}px` } };
+  };
   const onScreen = (b: Box) => {
     const v = view();
     const [left, top] = [Math.round(v.x + b.x * v.k), Math.round(v.y + b.y * v.k)];
@@ -1037,7 +1152,7 @@ export function Artboard(p: {
         cancel();
         if (live()) return;
         const on = pageAt(e.clientX, e.clientY);
-        if (on && on !== p.page.id) openHere(on);
+        if (on && on !== p.page.id) openAt(on, e.clientX, e.clientY);
         const stack = stackAt(p.page, hitsAt(e.clientX, e.clientY));
         // on what is selected, or inside it, the menu acts on the selection
         const around = stack.find((id) => p.selected.includes(id));
@@ -1051,7 +1166,8 @@ export function Artboard(p: {
         if (live()) return;
         // the press captured the pointer, so the target is the artboard: look beneath it
         const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest(".el[data-id]")?.getAttribute("data-id");
-        if (hit) p.onEdit(hit);
+        if (hit && find(p.page.children, hit)?.tag === "view") enter(hit);
+        else if (hit) p.onEdit(hit);
       }}
     >
       <canvas class="artboard-grid" ref={grid} />
@@ -1064,7 +1180,7 @@ export function Artboard(p: {
               const act = pageAct(id);
               return (
                 <div class="page-layer" classList={{ open: open() }} data-page={id} style={{ transform: `translate(${at().left}px, ${at().top}px) scale(${cam().k / UNIT})` }}>
-                  <PageView page={open() ? (preview() ?? pg()) : pg()} overrides={open() && !live() ? overrides : undefined} grows={open() && !!preview()} view={aimOf(id)} design={!live()} act={live() ? act : undefined} />
+                  <PageView page={open() ? (preview() ?? p.page) : pg()} via={open() ? viaOf(nest()?.chain ?? []) : ""} overrides={open() && !live() ? overrides : undefined} grows={open() && !!preview()} view={aimOf(id)} design={!live()} act={live() ? act : undefined} />
                 </div>
               );
             }}
@@ -1074,38 +1190,80 @@ export function Artboard(p: {
       <svg class="veil">
         <path d={veil()} />
       </svg>
+      <svg class="links">
+        <defs>
+          <marker id="board-link-head" viewBox="0 0 8 8" refX="0" refY="4" markerWidth={head()} markerHeight={head()} markerUnits="userSpaceOnUse" orient="auto">
+            <path d="M0 0L8 4L0 8Z" />
+          </marker>
+        </defs>
+        <For each={lines()}>
+          {(l) => (
+            <>
+              <path d={l.d} classList={{ open: l.link.kind === "open", picked: linkKey(l.link) === p.link }} marker-end="url(#board-link-head)" />
+              {/* a wider stroke no one sees takes the press, so a thin line is easy to hit */}
+              <path
+                class="hit"
+                d={l.d}
+                onPointerDown={(e) => e.button === 0 && !space() && e.stopPropagation()}
+                onClick={() => {
+                  p.onLink(l.link);
+                  openHere(l.link.from);
+                }}
+              />
+            </>
+          )}
+        </For>
+      </svg>
       <For each={inSight()}>
         {(id) => (
           <Show when={labelAt(id)}>
-            {(at) => (
-              <button
-                class="board-label"
-                classList={{ open: id === p.page.id }}
-                style={at().style}
-                title={at().pg.name}
-                onPointerDown={(e) => e.button === 0 && !space() && e.stopPropagation()}
-                onClick={() => {
-                  openHere(id);
-                  flyTo(id);
-                }}
-              >
-                <Show when={at().pg.interface !== null} fallback={<File size={12} />}>
-                  <Component size={12} />
-                </Show>
-                <span class="list-label">{at().pg.name}</span>
-                <span class="mono">
-                  {at().pg.width}x{at().pg.height}
-                </span>
-              </button>
-            )}
+            {(at) => {
+              // the page edited in place is named by its view's chip, at the view's size
+              const inView = () => (id === p.page.id ? nest() : null);
+              return (
+                <button
+                  class="board-label"
+                  classList={{ open: id === p.page.id }}
+                  style={at().style}
+                  title={inView() ? "Show another page here" : at().pg.name}
+                  onPointerDown={(e) => e.button === 0 && !space() && e.stopPropagation()}
+                  onClick={(e) => {
+                    const n = inView();
+                    if (n) return chipMenu(e, n.chain.at(-1)!, viaOf(n.chain), true);
+                    openHere(id);
+                    flyTo(id);
+                  }}
+                >
+                  <Show when={!inView()} fallback={<AppWindow size={12} />}>
+                    <Show when={at().pg.interface !== null} fallback={<File size={12} />}>
+                      <Component size={12} />
+                    </Show>
+                  </Show>
+                  <span class="list-label">{at().pg.name}</span>
+                  <Show when={inView()}>
+                    <ChevronDown size={12} />
+                  </Show>
+                </button>
+              );
+            }}
           </Show>
         )}
       </For>
+      <Show when={chip()}>
+        {(c) => (
+          <button class="view-chip" style={c().style} title="The page the board shows here" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => chipMenu(e, c().at, c().via, false)}>
+            <AppWindow size={12} />
+            <span class="list-label">{(c().at.shows && (state.pages.find((pg) => pg.id === c().at.shows)?.name ?? c().at.shows)) || "No page"}</span>
+            <ChevronDown size={12} />
+          </button>
+        )}
+      </Show>
       <Show when={box()}>{(b) => <div class="marquee" style={{ left: `${b().left}px`, top: `${b().top}px`, width: `${b().width}px`, height: `${b().height}px` }} />}</Show>
       <Show when={slotLine()}>
         {(b) => <div class="slot" style={{ left: `${view().x + b().x * view().k}px`, top: `${view().y + b().y * view().k}px`, width: `${b().w * view().k}px`, height: `${b().h * view().k}px` }} />}
       </Show>
       <For each={parents()}>{(id) => <Show when={ring(id)}>{(r) => <div class="holder" style={r()} />}</Show>}</For>
+      <For each={causes()}>{(id) => <Show when={ring(id)}>{(r) => <div class="cause" data-id={id} style={r()} />}</Show>}</For>
       {/* a ring for each selected element, its grips only when it is the one */}
       <For each={p.selected}>
         {(id) => (

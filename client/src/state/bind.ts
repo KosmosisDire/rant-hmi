@@ -1,7 +1,7 @@
 // A property's value is a JS expression over its scope's names, compiled once per text, a bare
 // #hex reading as text. Reading an unknown value stops it, so the unknown look shows instead.
 
-import { createSignal, getListener, onCleanup } from "solid-js";
+import { createMemo, createRoot, createSignal, getListener, onCleanup } from "solid-js";
 import { unwrap } from "solid-js/store";
 import { arith } from "../lang/arith.js";
 import { isHex, tokens } from "../lang/lex";
@@ -123,9 +123,11 @@ export interface Scope {
   state?(name: string): Variable | undefined;
 }
 
-/** Where a scope reads state: its page, and the index of each copy of a repeat it sits in,
- *  outermost first, as each copy keeps its own. */
+/** Where a scope reads state: its page, the index of each copy of a repeat it sits in,
+ *  outermost first, as each copy keeps its own, and the views its page is shown through, as
+ *  each showing keeps its own: each the page, the view's id and its copies, then `>`. */
 export interface Place {
+  via: string;
   page: string;
   copies: number[];
 }
@@ -200,11 +202,17 @@ const theme = Object.freeze({
   toggle: () => setMode(mode() === "dark" ? "light" : "dark"),
 });
 
+/** Each page by what code calls it, as `Pages.Overview`, which gives its id. */
+const pages = createRoot(() => createMemo(() => Object.freeze(Object.fromEntries(state.pageKeys))));
+
 /** What code on a screen reads of the screen itself, which only reads but for its mode. */
 const SCREEN: Record<string, unknown> = {
   link,
   keys,
   theme,
+  get Pages() {
+    return pages();
+  },
   get gamepads() {
     return pads.read();
   },
@@ -404,6 +412,9 @@ export function bareRef(value: string | undefined): { name: string; fields: stri
   return ref ? { name: ref[1], fields: ref[2].slice(1) } : null;
 }
 
+/** Whether what a view's `page` gives is a web page's URL. A page's id never holds `:` or `/`. */
+export const isUrl = (given: string) => given.includes("://") || given.startsWith("/");
+
 /** What an input's default and a variable's start read: the theme's tokens and the math, the
  *  same on every screen and instance. */
 const constants: Scope = { ...tokenScope, missing: (name) => `${name} cannot be read here, only the theme's tokens` };
@@ -512,16 +523,22 @@ export function repeatScope(s: Scope, index: number, item: () => unknown): Scope
     },
     writes: (name, path) => !own(name) && s.writes(name, path),
     missing: (name) => s.missing(name),
-    place: s.place && { page: s.place.page, copies: [...s.place.copies, index] },
+    place: s.place && { ...s.place, copies: [...s.place.copies, index] },
     state: s.state,
   };
 }
 
 /** The key the system keeps state under, as the backend makes it: `@page/name` for a page's,
- *  `@page/element/name` for an element's, then `#index` for each copy it sits in. */
+ *  `@page/element/name` for an element's, then `#index` for each copy it sits in, after the
+ *  views the page is shown through. */
 export function stateKey(place: Place, holder: string | null, name: string): string {
-  return `@${place.page}/${holder === null ? "" : `${holder}/`}${name}${place.copies.map((i) => `#${i}`).join("")}`;
+  return `@${place.via}${place.page}/${holder === null ? "" : `${holder}/`}${name}${copied(place.copies)}`;
 }
+
+const copied = (copies: number[]) => copies.map((i) => `#${i}`).join("");
+
+/** The showing of a page in the view `id` on the page `at` places, as a place's `via` names it. */
+export const viaView = (at: Place, id: string) => `${at.via}${at.page}/${id}${copied(at.copies)}>`;
 
 /** State `v` as kept under `key`: what was written, else its start. */
 export const keptOf = (key: string, v: Variable) => keptValue(key) ?? v.start;
@@ -558,8 +575,8 @@ export function stateScope(outer: Scope, holder: string | null, kept: Variable[]
 }
 
 /** The scope a page or component is drawn and edited in: a page's reads what it keeps. */
-export function docScope(doc: Page): Scope {
-  return doc.interface ? componentScope(doc) : stateScope({ ...pageScope, place: { page: doc.id, copies: [] } }, null, doc.state);
+export function docScope(doc: Page, via = ""): Scope {
+  return doc.interface ? componentScope(doc) : stateScope({ ...pageScope, place: { via, page: doc.id, copies: [] } }, null, doc.state);
 }
 
 const proxies = new WeakMap<Scope, object>();

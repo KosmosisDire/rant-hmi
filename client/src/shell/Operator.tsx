@@ -1,6 +1,7 @@
 import { createEffect, createSignal, Show } from "solid-js";
 import { RunView } from "../page/RunView";
 import { stack, startStack } from "../state/stack";
+import { followViews, openAddress } from "../state/address";
 import type { ScreenCondition } from "../protocol/ScreenCondition";
 import type { WebrtcProblem } from "../protocol/WebrtcProblem";
 import { conditions, startPage, state } from "../state/store";
@@ -59,8 +60,9 @@ function Banner() {
 export function Operator() {
   createEffect(() => {
     const start = startPage();
-    if (stack().length === 0 && start) startStack(start, true);
+    if (stack().length === 0 && start && state.pages.length > 0) openAddress((id) => startStack(id, true), start);
   });
+  followViews();
   createEffect(() => {
     if (state.project) document.title = state.project.name;
   });

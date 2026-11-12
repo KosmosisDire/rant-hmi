@@ -53,7 +53,7 @@ export const API = [
   { name: "sleep", takes: ["ms"], words: "wait ms", places: ["handler"], insert: "await sleep(" },
   { name: "open", takes: ["page", "options?"], words: "open a page, its answer when it closes", places: ["handler"] },
   { name: "close", takes: ["answer?"], words: "close the top page", places: ["handler"] },
-  { name: "Pages", words: "each page by name, to open", places: ["handler"] },
+  { name: "Pages", words: "each page by name, to open or show in a view", places: ["expression", "handler"] },
 
   { name: "emit", takes: ["event", "value?"], words: "send an event out", places: ["component"] },
 
