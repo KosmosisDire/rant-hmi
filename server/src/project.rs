@@ -220,19 +220,18 @@ impl Project {
         }
         let info: ProjectInfo = toml::from_str(&read(&hmi)?).with_context(|| format!("reading {}", files::shown(root, &hmi)))?;
         info.ice.iter().try_for_each(check_ice).map_err(|e| anyhow!("{}: {e}", files::shown(root, &hmi)))?;
-        let mut objects = Vec::new();
-        let dir = root.join("objects");
-        let mut found: Vec<PathBuf> = match fs::read_dir(&dir) {
-            Ok(entries) => entries.filter_map(|e| Some(e.ok()?.path())).filter(|p| p.extension().is_some_and(|x| x == "html")).collect(),
-            Err(_) => Vec::new(),
-        };
-        found.sort();
-        for path in found {
+        let mut objects: Vec<Object> = Vec::new();
+        for (path, folder) in files::html_under(&root.join("objects")) {
             let shown = files::shown(root, &path);
-            let o = object::parse(&read(&path)?).map_err(|e| anyhow!("{shown}: {e}"))?;
+            let mut o = object::parse(&read(&path)?).map_err(|e| anyhow!("{shown}: {e}"))?;
             if path.file_name().is_none_or(|n| n.to_string_lossy() != file_of(&o.name)) {
                 return Err(anyhow!("{shown} holds {}, so it is named {}", o.name, file_of(&o.name)));
             }
+            // a name is one of a kind whatever folder its file is in
+            if let Some(other) = objects.iter().find(|x| x.name.eq_ignore_ascii_case(&o.name)) {
+                return Err(anyhow!("{shown} holds {}, as objects/{} does", o.name, files::join(&other.folder, &file_of(&other.name))));
+            }
+            o.folder = folder;
             objects.push(o);
         }
         if !objects.iter().any(|o| o.name == HMI) {
@@ -324,6 +323,15 @@ impl Project {
         self.commit(next)
     }
 
+    /// Moves an object into `folder`, empty for the top, and saves. Its name and all that
+    /// names it stay. The error is for the user.
+    pub fn move_object(&mut self, name: &str, folder: &str) -> Result<(), String> {
+        files::check_folder(folder)?;
+        let mut next = self.objects.clone();
+        next.iter_mut().find(|o| o.name == name).ok_or_else(|| format!("there is no object {name}"))?.folder = folder.to_owned();
+        self.commit(next)
+    }
+
     /// Adds a mesh member to an object, and saves.
     pub fn import(&mut self, object: &str, mut import: Import) -> Result<(), String> {
         import.intent = callable(import.kind).unwrap_or(import.intent);
@@ -334,16 +342,11 @@ impl Project {
         })
     }
 
-    /// Changes a mesh member's name, intent or rate, and saves. Its entity and kind stay.
+    /// Changes a mesh member, and saves: its name, intent or rate, or the entity it brings with
+    /// that entity's kind, so what names it keeps naming it.
     pub fn change(&mut self, object: &str, alias: &str, mut to: Import) -> Result<(), String> {
         to.intent = callable(to.kind).unwrap_or(to.intent);
-        self.edit(object, |o| {
-            let old = o.imports.iter().find(|i| i.alias == alias).ok_or_else(|| format!("{alias} is not an import of {}", o.name))?;
-            if to.entity != old.entity || to.kind != old.kind {
-                return Err(format!("{alias} stays an import of {}", old.entity));
-            }
-            put_member(o, |o| &mut o.imports, alias, Some(to), "an import")
-        })
+        self.edit(object, |o| put_member(o, |o| &mut o.imports, alias, Some(to), "an import"))
     }
 
     pub fn unimport(&mut self, object: &str, alias: &str) -> Result<(), String> {
@@ -424,10 +427,11 @@ impl Project {
         }
         check_all(&next)?;
         let dir = self.root.join("objects");
+        let file = |o: &Object| files::in_folder(&dir, &o.folder).join(file_of(&o.name));
         for o in changed {
-            files::write(&dir.join(file_of(&o.name)), &object::write(o))?;
+            files::write(&file(o), &object::write(o))?;
         }
-        for gone in self.objects.iter().map(|o| dir.join(file_of(&o.name))).filter(|f| !next.iter().any(|o| dir.join(file_of(&o.name)) == *f)) {
+        for gone in self.objects.iter().map(file).filter(|f| !next.iter().any(|o| file(o) == *f)) {
             if gone.exists() {
                 fs::remove_file(&gone).map_err(|e| format!("could not remove {}: {e}", gone.display()))?;
             }
@@ -741,6 +745,18 @@ mod tests {
     }
 
     #[test]
+    fn an_object_keeps_to_its_folder() {
+        let (dir, mut p) = with_line("folders");
+        p.move_object("Line", "machines").unwrap();
+        assert!(dir.join("objects/machines/line.html").exists() && !dir.join("objects/line.html").exists());
+        assert_eq!(Project::open(&dir).unwrap().object("Line").unwrap().folder, "machines");
+        // a change saves it where it is kept
+        p.set_object("Line", Some(ObjectInfo { name: "Line".into(), mesh: "Line2".into(), note: None })).unwrap();
+        assert!(fs::read_to_string(dir.join("objects/machines/line.html")).unwrap().contains("Line2"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_new_folder_becomes_a_project_and_objects_survive_a_reopen() {
         let (dir, mut p) = with_line("reopen");
         assert_eq!(p.objects().iter().map(|o| o.name.as_str()).collect::<Vec<_>>(), ["Hmi", "Line"]);
@@ -936,6 +952,16 @@ mod tests {
         assert_eq!(p.import("Hmi", Import { entity: "/Line1/Speed".into(), ..speed() }).unwrap_err(), "Line1/Speed is already imported as Line.Speed");
         p.unimport("Line", "Speed").unwrap();
         assert!(p.flat().imports.is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_mesh_member_points_at_another_entity_under_its_name() {
+        let (dir, mut p) = with_line("repoint");
+        p.import("Line", speed()).unwrap();
+        p.change("Line", "Speed", Import { entity: "Fill".into(), kind: Kind::Task, ..speed() }).unwrap();
+        let i = &p.object("Line").unwrap().imports[0];
+        assert_eq!((i.alias.as_str(), i.entity.as_str(), i.kind, i.intent), ("Speed", "Fill", Kind::Task, Intent::Write));
         fs::remove_dir_all(&dir).unwrap();
     }
 

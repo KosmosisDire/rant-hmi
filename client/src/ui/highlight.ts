@@ -3,6 +3,8 @@
 
 import { isHex, property, type Token, tokens } from "../lang/lex";
 import type { Kind } from "../protocol/Kind";
+import { about } from "../state/about";
+import type { Suggestion } from "../state/complete";
 import { key, named } from "../state/names";
 
 export type Paint = "kw" | "str" | "com" | Kind | "local" | "prop" | null;
@@ -13,16 +15,17 @@ const KEYWORDS = new Set([
 ]);
 
 
-/** A name's colour: an import's kind, a function's, else the HMI's own, else none. Code of the
- *  object `own` names its members bare. */
-function colour(word: string, own?: string): Paint {
+/** A name's colour: an import's kind, a function's, else the HMI's own, as a name `scope` holds
+ *  is, else none. Code of the object `own` names its members bare. */
+function colour(word: string, own?: string, scope?: string[]): Paint {
   const n = (own !== undefined ? named(key(own, word)) : undefined) ?? named(word);
-  return !n ? null : (n.kind ?? (n.of === "function" ? "function" : "local"));
+  if (!n) return scope?.includes(word) || word === "Pages" ? "local" : null;
+  return n.kind ?? (n.of === "function" ? "function" : "local");
 }
 
 /** The source as runs of text and how to colour each. Code of the object `own` names its
- *  members bare. */
-export function paint(src: string, own?: string): [string, Paint][] {
+ *  members bare, and `scope` names what else the code there reads, as a page's state. */
+export function paint(src: string, own?: string, scope?: string[]): [string, Paint][] {
   const out: [string, Paint][] = [];
   const push = (text: string, p: Paint) => {
     const last = out.at(-1);
@@ -36,9 +39,10 @@ export function paint(src: string, own?: string): [string, Paint][] {
     const text = src.slice(t.start, t.end);
     if (t.kind === "comment") push(text, "com");
     else if (t.kind === "text" || (t.kind === "literal" && isHex(text))) push(text, "str");
-    else if (t.kind === "word" && !property(src, all, n)) push(text, KEYWORDS.has(text) ? "kw" : colour(text, own));
-    // after a dot an object's member, else the value's own field whatever its name
+    else if (t.kind === "word" && !property(src, all, n)) push(text, KEYWORDS.has(text) ? "kw" : colour(text, own, scope));
+    // after a dot an object's member, or a page after Pages, else the value's own field whatever its name
     else if (t.kind === "word" && objectAt(src, all, n - 2, own)) push(text, colour(key(src.slice(all[n - 2].start, all[n - 2].end), text)));
+    else if (t.kind === "word" && n >= 2 && src.slice(all[n - 2].start, all[n - 2].end) === "Pages" && !property(src, all, n - 2)) push(text, "local");
     else push(text, null);
     at = t.end;
   });
@@ -73,4 +77,13 @@ export function painted(src: string, by: (src: string) => [string, Paint][] = pa
       return p ? `<span class="hl-${p}">${safe}</span>` : safe;
     })
     .join("");
+}
+
+/** A field of code's colours and the card for its names, read with the names `scope` gives
+ *  besides the objects, and an object `own`'s members bare. */
+export function nameHelp(scope: () => Suggestion[] | undefined, own: () => string | undefined = () => undefined) {
+  return {
+    paint: (src: string) => paint(src, own(), (scope() ?? []).map((s) => s.label)),
+    about: (text: string, at: number) => about(text, at, scope() ?? [], own()),
+  };
 }

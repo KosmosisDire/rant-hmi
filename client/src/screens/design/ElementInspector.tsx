@@ -1,4 +1,4 @@
-import { batch, createEffect, createMemo, createSignal, For, type JSX, on, Show, useContext } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show, useContext } from "solid-js";
 import { CONTEXTS, cssFault, OWN } from "../../page/PageView";
 import { robots } from "../../page/drawing";
 import { isPart } from "../../page/parts";
@@ -8,29 +8,22 @@ import type { Handler } from "../../protocol/Handler";
 import type { Input } from "../../protocol/Input";
 import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
-import type { Per } from "../../protocol/Per";
-import { COMPONENT, EVENT, INPUT, STATE } from "../../protocol/rules";
+import { COMPONENT, EVENT, INPUT } from "../../protocol/rules";
 import type { Shows } from "../../protocol/Shows";
 import type { Sizing } from "../../protocol/Sizing";
-import type { Variable } from "../../protocol/Variable";
-import { docScope, keptOf, pageScope, type Place, resolve, type Scope, setKept, sizeWord, stateKey, tokenValue } from "../../state/bind";
+import { docScope, pageScope, resolve, type Scope, sizeWord, tokenValue } from "../../state/bind";
 import { complete, completeCss, completeType, componentNames, drawing, REPEAT, signature, signatureCss, stateNames } from "../../state/complete";
-import { literal } from "../../state/format";
 import { typeList } from "../../state/types";
 import { brings, filterWords, handlerKey, type Offered, offered, settingOf } from "../../state/events";
 import { fits, freeName } from "../../state/names";
 import { edit, show } from "../../state/change";
-import { component, notify, page as pageOf, state } from "../../state/store";
-import { stateUsedBy } from "../../state/usage";
-import { paintCss } from "../../ui/highlight";
-import { openElement, openPage } from "../../state/view";
+import { component, page as pageOf, state } from "../../state/store";
+import { nameHelp, paintCss } from "../../ui/highlight";
+import { openPage } from "../../state/view";
 import { chain, find, homeOf } from "../../state/elements";
 import { DraftInput } from "../../ui/DraftInput";
-import { LocalIcon } from "../../ui/marks";
 import { openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
-import { Preview } from "../../ui/Preview";
-import { copiesOf } from "../../page/repeat";
 import { Choice } from "../../ui/Choice";
 import { EventCard, EventIcon } from "./EventCard";
 import {
@@ -42,15 +35,10 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
-  ArrowLeft,
   Check,
-  Globe,
-  Monitor,
-  MoveUpRight,
   Pin,
   PinOff,
   Plus,
-  Trash,
   X,
 } from "../../ui/icons";
 import type { Typing } from "./DesignScreen";
@@ -59,6 +47,7 @@ import { AddRow } from "./AddRow";
 import { addPart, cameraFields, PART_KINDS, partFields, partKeys, POSE_FIELD } from "./SceneFields";
 import { addShape, GEOMETRY, ORIGINS, PAINT, ROTATE, SHAPE_KINDS, shapeKeys, type Spec, TURN, VISIBLE } from "./ShapeFields";
 import { TAG_WORDS, TagIcon } from "./TagIcon";
+import { ListHead, StateRows, StateView } from "./State";
 import { absolute, type Align, align, boxOf, boxText, flowed, originEdits, roomOf, scopeOf, sendEdits, setProps, showProps, spread, tops } from "./tree";
 
 /** The CSS a field offers by name, what it holds and an example of it. Anything else lives in
@@ -145,7 +134,7 @@ export function ElementInspector(p: { page: Page | undefined; selected: string[]
               </Show>
             }
           >
-            {(v) => <StateView page={page()} holder={element()} v={v()} focus={opened()?.n} />}
+            {(v) => <StateView page={page()} holder={element()} v={v()} focus={opened()?.n} onBack={() => setOpened(null)} onRename={(name) => setOpened({ page: page().id, holder: element()?.id ?? null, name })} />}
           </Show>
         </WhereContext.Provider>
       )}
@@ -278,7 +267,7 @@ function PageInspector(p: { page: Page }) {
             <label>Shows</label>
             <Choice options={SHOWS} value={p.page.shows} onPick={(shows) => edit({ kind: "set_shows", page: p.page.id, shows })} />
           </div>
-          <State page={p.page} />
+          <StateRows page={p.page} onOpen={(name, n) => setOpened({ page: p.page.id, holder: null, name, n })} />
         </Show>
       </div>
     </>
@@ -467,6 +456,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             placeholder={['`<svg viewBox="0 0 100 100">', '  <circle cx="50" cy="50" r="${Speed * 40}"/>', '</svg>`'].join("\n")}
             onCommit={(t) => setProps(p.page, p.element.id, { markup: t.trim() === "" ? null : t })}
             complete={(t, c) => complete(t, c, where().expressions, where().names, where().also)}
+            {...nameHelp(() => [...(where().names ?? []), ...(where().also ?? [])])}
           />
         </Show>
         <Show when={p.element.tag === "canvas"}>
@@ -480,6 +470,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
             placeholder={["ctx.fillStyle = $accent;", "ctx.fillRect(0, 0, width * Speed, height);"].join("\n")}
             onCommit={(t) => setProps(p.page, p.element.id, { draw: t.trim() === "" ? null : t })}
             complete={(t, c) => complete(t, c, where().expressions, where().names, [...(where().also ?? []), ...drawing(context())])}
+            {...nameHelp(() => [...(where().names ?? []), ...(where().also ?? []), ...drawing(context())])}
           />
         </Show>
         <Show when={shape()}>
@@ -567,7 +558,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">More CSS</div>
           <LooseProps page={p.page} element={p.element} loose={loose} placeholder='filter: Running ? "none" : "grayscale(1)"' css />
         </Show>
-        <Show when={pageOf(p.page)?.interface === null ? pageOf(p.page) : undefined}>{(doc) => <State page={doc()} holder={p.element} />}</Show>
+        <Show when={pageOf(p.page)?.interface === null ? pageOf(p.page) : undefined}>{(doc) => <StateRows page={doc()} holder={p.element} onOpen={(name, n) => setOpened({ page: doc().id, holder: p.element.id, name, n })} />}</Show>
         <Show when={!grouped()}>
           <Events page={p.page} element={p.element} focus={(key) => typed(`on:${key}`)} />
         </Show>
@@ -806,18 +797,6 @@ const constants = (text: string, caret: number) => complete(text, caret, "theme"
 /** A name an input or a component's variable may take. */
 const localName = (t: string) => fits(INPUT, t.trim());
 
-/** A component's interface list's head, with its add button. */
-function ListHead(p: { title: string; add: string; onAdd: () => void }) {
-  return (
-    <div class="section section-row">
-      {p.title}
-      <button class="icon-btn" title={p.add} onClick={() => p.onAdd()}>
-        <Plus size={13} />
-      </button>
-    </div>
-  );
-}
-
 /** A component's inputs, each a box: its name, whether it may be written back, its default and
  *  the types it takes. */
 function Inputs(p: { page: string; inputs: Input[] }) {
@@ -906,188 +885,9 @@ function Variables(p: { page: string; variables: Local[] }) {
   );
 }
 
-/** How state is kept, each with who sees its value. */
-const KEPT: [Per, JSX.Element, string][] = [
-  [
-    "screen",
-    <>
-      <Monitor size={12} />
-      Each screen
-    </>,
-    "Each screen keeps its own value",
-  ],
-  [
-    "hmi",
-    <>
-      <Globe size={12} />
-      Every screen
-    </>,
-    "Every screen shares one value",
-  ],
-];
-
 /** The state whose own inspector shows in place of its holder's, a page's for no holder, while
  *  that holder stays picked. `n` puts the caret in its name. */
 const [opened, setOpened] = createSignal<{ page: string; holder: string | null; name: string; n?: number } | null>(null);
-let fresh = 0;
-
-/** Where the state that `page`, or its element `holder`, keeps lives on this screen: one place,
- *  or one per copy of the nearest repeat around it, the first copy of any further out. */
-function statePlaces(page: Page, holder: Element | undefined): { at: Place; label: string }[] {
-  const first = (holder ? scopeOf(page, holder.id) : docScope(page)).place!;
-  const path = holder ? (chain(page.children, holder.id) ?? []) : [];
-  let last = -1;
-  path.forEach((e, i) => {
-    if (e.props.repeat?.trim()) last = i;
-  });
-  if (last < 0) return [{ at: first, label: "" }];
-  const outer = last === 0 ? docScope(page) : scopeOf(page, path[last - 1].id);
-  const r = resolve(path[last].props.repeat, outer);
-  const which = path.slice(0, last).filter((e) => !!e.props.repeat?.trim()).length;
-  return copiesOf(r.ok ? r.value : undefined).map((_, i) => ({ at: { ...first, copies: first.copies.map((c, j) => (j === which ? i : c)) }, label: `index ${i}` }));
-}
-
-/** What the page, or its element `holder`, keeps, a row each with its start, its value now and
- *  how it is kept, which opens it. */
-function State(p: { page: Page; holder?: Element }) {
-  const kept = () => p.holder?.state ?? p.page.state;
-  const id = () => p.holder?.id ?? null;
-  const open = (name: string, n?: number) => setOpened({ page: p.page.id, holder: id(), name, n });
-  const add = () => {
-    const name = freeName("state", (n) => kept().some((v) => v.name === n));
-    edit({ kind: "set_state", page: p.page.id, id: id(), name, var: { name, start: 0, per: "screen" } });
-    open(name, ++fresh);
-  };
-  // a repeat's state shows its first copy's value
-  const first = createMemo(() => statePlaces(p.page, p.holder)[0]?.at);
-  const now = (v: Variable) => {
-    const at = first();
-    return at ? keptOf(stateKey(at, id(), v.name), v) : v.start;
-  };
-  return (
-    <>
-      <ListHead title="State" add="Add state" onAdd={add} />
-      <For each={kept()}>
-        {(v) => (
-          <button class="list-row member-row" data-state={v.name} onClick={() => open(v.name)}>
-            <LocalIcon />
-            <span class="list-label mono">{v.name}</span>
-            <span class="member-def mono">{JSON.stringify(v.start)}</span>
-            <span class="member-value">
-              <Preview value={now(v)} known />
-            </span>
-            <span class="member-marks" title={v.per === "screen" ? "Each screen" : "Every screen"}>
-              <Show when={v.per === "screen"} fallback={<Globe size={12} />}>
-                <Monitor size={12} />
-              </Show>
-            </span>
-          </button>
-        )}
-      </For>
-    </>
-  );
-}
-
-/** One piece of state: its name, start and how it is kept, its value now on this screen, each
- *  copy's in a repeat, and what reads it. It moves to the page, a frame holding it or one it
- *  holds, while all that reads it still sees it there. */
-function StateView(p: { page: Page; holder?: Element; v: Variable; focus?: number }) {
-  const id = () => p.holder?.id ?? null;
-  const write = (v: Variable | null) => edit({ kind: "set_state", page: p.page.id, id: id(), name: p.v.name, var: v });
-  const places = createMemo(() => statePlaces(p.page, p.holder));
-  const readers = () => stateUsedBy(p.page, p.holder, p.v.name);
-  const named = (e: Element) => e.props.name ?? TAG_WORDS[e.tag];
-  const owner = () => (p.holder ? named(p.holder) : p.page.name);
-  const back = () => setOpened(null);
-  const layers = (): [string | null, string][] => {
-    if (!p.holder) return p.page.children.map((e) => [e.id, named(e)]);
-    const above = (chain(p.page.children, p.holder.id) ?? []).slice(0, -1).reverse();
-    return [...above.map((e): [string, string] => [e.id, named(e)]), [null, p.page.name], ...p.holder.children.map((e): [string, string] => [e.id, named(e)])];
-  };
-  const move = (lead: HTMLElement) => {
-    const r = lead.getBoundingClientRect();
-    openMenu(
-      { x: r.left, y: r.bottom + 4 },
-      layers().map(([to, words]) => ({ label: `To ${words}`, run: () => edit({ kind: "move_state", page: p.page.id, from: id(), to, name: p.v.name }) })),
-    );
-  };
-  const remove = () => {
-    const n = readers().length;
-    if (n > 0) return notify(`${n === 1 ? "1 place reads" : `${n} places read`} ${p.v.name}. Change those first.`, "fault");
-    write(null);
-    back();
-  };
-  return (
-    <>
-      <div class="pane-head">
-        <button class="icon-btn" title={`Back to ${owner()}`} onClick={back}>
-          <ArrowLeft size={14} />
-        </button>
-        <span class="head-title">
-          <LocalIcon />
-          <span class="mono">{p.v.name}</span>
-        </span>
-        <span class="tag">state</span>
-      </div>
-      <div class="pane-body pad">
-        <div class="section">Kept by {owner()}</div>
-        <div class="field">
-          <label>Name</label>
-          <DraftInput
-            value={p.v.name}
-            focus={p.focus}
-            accept={(t) => fits(STATE, t.trim())}
-            onCommit={(name) =>
-              batch(() => {
-                write({ ...p.v, name: name.trim() });
-                setOpened({ page: p.page.id, holder: id(), name: name.trim() });
-              })
-            }
-          />
-        </div>
-        <div class="field">
-          <label>Starts</label>
-          <DraftInput value={JSON.stringify(p.v.start)} accept={(t) => literal(t) !== undefined} onCommit={(t) => write({ ...p.v, start: literal(t)! })} />
-        </div>
-        <div class="field">
-          <label>Kept</label>
-          <Choice options={KEPT} value={p.v.per} onPick={(per) => write({ ...p.v, per })} />
-        </div>
-        <div class="section">Value now</div>
-        <For each={places()} fallback={<div class="field-hint">No copy is drawn now.</div>}>
-          {(at) => {
-            const key = () => stateKey(at.at, id(), p.v.name);
-            return (
-              <div class="field">
-                <label>{at.label || (p.v.per === "screen" ? "This screen" : "Shared")}</label>
-                <DraftInput value={JSON.stringify(keptOf(key(), p.v))} accept={(t) => literal(t) !== undefined} onCommit={(t) => setKept(key(), p.v, "", literal(t)!)} />
-              </div>
-            );
-          }}
-        </For>
-        <div class="section">Used by</div>
-        <For each={readers()} fallback={<div class="field-hint">Nothing reads it yet.</div>}>
-          {(at) => (
-            <button class="list-row" onClick={() => at.element && openElement({ page: p.page.id, element: at.element.id })}>
-              <span class="list-label">{at.element ? named(at.element) : p.page.name}</span>
-              <span class="list-trail">{at.what}</span>
-            </button>
-          )}
-        </For>
-        <div class="pane-actions">
-          <button class="button" onClick={(e) => move(e.currentTarget)}>
-            <MoveUpRight size={13} />
-            Move to
-          </button>
-          <button class="button" onClick={remove}>
-            <Trash size={13} />
-            Remove
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
 
 /** The events a component sends with `emit`, which each instance may handle. */
 function Sends(p: { page: string; events: string[] }) {

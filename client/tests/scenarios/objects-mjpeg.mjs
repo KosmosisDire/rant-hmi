@@ -6,8 +6,7 @@ export default async function ({ page, hmi, d, eventually }) {
   for (const i of hmi.state.imports.filter((x) => x.entity === "Cell/Inspection" && x.alias !== "Cell.Inspection")) await hmi.unimport(i.alias);
   if (!hmi.object("Cell")) await hmi.addObject("Cell", "Cell");
   await d.openObject("Cell");
-  const row = await d.meshRow("Cell/Inspection");
-  if ((await row.locator(".row-add").count()) > 0) await row.locator(".row-add").click();
+  if (!hmi.state.imports.some((i) => i.alias === "Cell.Inspection")) await d.addFromMesh("Cell/Inspection");
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Cell.Inspection"), "Inspection added");
   const preview = d.member("Inspection").locator("canvas");
   await eventually(async () => (await preview.count()) === 1 && (await preview.evaluate((c) => c.width)) === 160, "the frames on the sheet");

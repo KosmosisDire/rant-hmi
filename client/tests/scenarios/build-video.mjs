@@ -9,8 +9,7 @@ export default async function ({ page, hmi, d, sys, check, eventually }) {
   await d.openObject("Cell");
   for (const name of ["Camera", "Detections"]) {
     for (const i of hmi.state.imports.filter((x) => x.entity === `Cell/${name}` && x.alias !== `Cell.${name}`)) await hmi.unimport(i.alias);
-    const row = await d.meshRow(`Cell/${name}`);
-    if ((await row.locator(".row-add").count()) > 0) await row.locator(".row-add").click();
+    if (!hmi.state.imports.some((i) => i.alias === `Cell.${name}`)) await d.addFromMesh(`Cell/${name}`);
     await eventually(() => hmi.state.imports.some((i) => i.alias === `Cell.${name}`), `${name} added`);
   }
 

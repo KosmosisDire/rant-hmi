@@ -8,8 +8,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   for (const i of hmi.state.imports.filter((x) => x.entity === "Cell/Camera" && x.alias !== "Cell.Camera")) await hmi.unimport(i.alias);
   if (!hmi.object("Cell")) await hmi.addObject("Cell", "Cell");
   await d.openObject("Cell");
-  const row = await d.meshRow("Cell/Camera");
-  if ((await row.locator(".row-add").count()) > 0) await row.locator(".row-add").click();
+  if (!hmi.state.imports.some((i) => i.alias === "Cell.Camera")) await d.addFromMesh("Cell/Camera");
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Cell.Camera"), "Camera added");
   for (const [name, start] of [["Hmi.mapX", 0], ["Hmi.mapY", 0], ["Hmi.mapZoom", 1]]) hmi.setVariable(name, start, "screen");
   await eventually(() => hmi.state.variables.some((v) => v.name === "Hmi.mapZoom"), "the view's variables");

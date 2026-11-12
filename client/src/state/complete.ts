@@ -28,6 +28,8 @@ export interface Suggestion {
   preview?: () => { value: Value | null; known: boolean };
   /** What a dot after it offers, for a name completion knows no schema for. */
   members?: Suggestion[];
+  /** The page and element, none for the page, that keep it, for state. */
+  defined?: { page: string; holder: string | null };
 }
 
 export interface Completion {
@@ -112,10 +114,10 @@ function mathMethods(value: Value | null, known: boolean): Suggestion[] {
 /** The state code on the element `id` reads, or on the page for none, nearest first: what it
  *  keeps, what holds it keeps, then the page's, each name once. */
 export function stateNames(page: Page, id: string | null): Suggestion[] {
-  const holders = [...(id === null ? [] : (path(page.children, id) ?? [])).reverse().map((e) => ({ by: e.props.name ?? e.id, kept: e.state })), { by: page.name, kept: page.state }];
+  const holders = [...(id === null ? [] : (path(page.children, id) ?? [])).reverse().map((e) => ({ by: e.props.name ?? e.id, holder: e.id as string | null, kept: e.state })), { by: page.name, holder: null, kept: page.state }];
   const out: Suggestion[] = [];
-  for (const { by, kept } of holders) {
-    for (const v of kept) if (!out.some((o) => o.label === v.name)) out.push({ label: v.name, insert: v.name, icon: "local", type: `${by} keeps it`, value: v.start, known: true });
+  for (const { by, holder, kept } of holders) {
+    for (const v of kept) if (!out.some((o) => o.label === v.name)) out.push({ label: v.name, insert: v.name, icon: "local", type: `${by} keeps it`, value: v.start, known: true, defined: { page: page.id, holder } });
   }
   return out;
 }

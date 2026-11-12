@@ -1,7 +1,8 @@
 // A designer previews a wide page as an upright phone lays it out: as wide as the phone and at
 // least as tall, its bands in reading order across the whole width. A click there picks and
 // a drag pans, never moving a block, an edit lays it out again at once, and the same button
-// brings the page back. A page taller than wide has no preview.
+// brings the page back. Every page on the board shows as a phone, the open one or not, but a
+// page taller than wide shows as it is.
 
 import { props } from "../designer.mjs";
 
@@ -47,11 +48,16 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await eventually(async () => (await sheet.evaluate((e) => e.style.width)) === "1280px", "the page to come back");
   check((await d.el(a).evaluate((e) => e.style.top)) === "400px", `back on the page A sits at ${await d.el(a).evaluate((e) => e.style.top)}`);
 
-  // a page taller than wide shows on a phone as it is
+  // a page not open shows as a phone too, and one taller than wide as it is
   await hmi.addPage("Phone tall");
   await d.openPage("Phone tall");
   await d.setField("w", "40");
   await d.setField("h", "80");
-  await eventually(() => phone.isDisabled(), "the phone button to be off for a tall page");
-  check((await phone.getAttribute("title")) === "A page taller than wide shows on a phone as it is", `the button says ${await phone.getAttribute("title")}`);
+  await phone.click();
+  await page.keyboard.press("Shift+Digit1");
+  const layer = page.locator(`.artboard .page-layer[data-page="${pageId}"] > .page`);
+  await eventually(async () => (await layer.count()) === 1 && (await layer.evaluate((e) => e.style.width)) === "390px", "a page not open to show as a phone lays it out");
+  check((await sheet.evaluate((e) => e.style.width)) === "400px", `a page taller than wide changed on a phone, to ${await sheet.evaluate((e) => e.style.width)}`);
+  await phone.click();
+  await eventually(async () => (await layer.evaluate((e) => e.style.width)) === "1280px", "the pages to come back");
 }

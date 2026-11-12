@@ -274,96 +274,6 @@
 
 /* ------------------------------------------------------------------ outline */
 
-.pages {
-  flex: 0 0 auto;
-  max-height: 30%;
-  overflow-y: auto;
-  padding: 6px 0;
-}
-
-/* Components as cards, each a live picture of it over its name. A sideways drag places one,
-   while a vertical swipe still scrolls them. */
-.pages.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
-  align-content: start;
-  gap: 2px;
-  padding: 4px 6px;
-}
-
-.pages.cards .list-hint {
-  grid-column: 1 / -1;
-}
-
-.card {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  padding: 4px;
-  border-radius: 6px;
-  text-align: left;
-  touch-action: pan-y;
-}
-
-:root:not([data-pointer="touch"]) .card:hover {
-  background: var(--panel2);
-}
-
-.card.selected {
-  background: var(--accent-bg);
-}
-
-/* a long name ends in an ellipsis, the whole of it in the card's title */
-.card .list-label {
-  overflow: hidden;
-  font-size: 11px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.card.selected .list-label {
-  font-weight: 600;
-}
-
-.card.dragged {
-  opacity: 0.45;
-}
-
-.card-thumb {
-  position: relative;
-  height: 40px;
-  overflow: hidden;
-  border-radius: 4px;
-}
-
-/* a card, and what a drag carries, show the component alone on the sidebar */
-.card-fit .page {
-  background: none;
-}
-
-.card-fit {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  pointer-events: none;
-}
-
-/* What a drag carries, under the pointer and never in its way. */
-.card-ghost {
-  position: fixed;
-  z-index: 50;
-  transform: translate(-50%, -50%);
-  opacity: 0.85;
-  pointer-events: none;
-}
-
-/* With the layers folded away, the lists share their room. */
-.pages.tall {
-  flex: 0 1 auto;
-  max-height: none;
-}
-
 /* A layer being dragged, and where it would land. */
 .list-row.dragged {
   opacity: 0.45;
@@ -373,37 +283,23 @@
   position: relative;
 }
 
-/* Each page is a band of its own over its layers, pinned while they scroll beneath it. */
-.page-group + .page-group {
-  margin-top: 6px;
-}
-
-.layers .list-row.page-row {
+/* A page's row is a row of the tree like any other. The open one stays pinned while its
+   layers scroll beneath it, on the sidebar's own ground. */
+.layers .list-row.page-row.open:not(.selected) {
   position: sticky;
   top: 0;
   z-index: 1;
-  width: 100%;
-  height: var(--list);
-  margin: 0;
-  padding: 0 10px 0 4px;
-  border-radius: 0;
-  background: var(--panel2);
-  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
-:root:not([data-pointer="touch"]) .layers .list-row.page-row:hover {
-  background: var(--panel3);
+.layers .list-row.page-row.open.selected {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: linear-gradient(var(--accent-bg), var(--accent-bg)), var(--surface);
 }
 
-.layers .list-row.page-row.selected {
-  background: linear-gradient(var(--accent-bg), var(--accent-bg)), var(--panel2);
-}
-
-.page-row .list-label {
-  font-weight: 600;
-}
-
-.page-row.open .layer-icon {
+.tree-row.page-row.open .layer-icon {
   color: var(--accent);
 }
 
@@ -446,24 +342,6 @@
 }
 
 /* Layers are a tight tree, so a deep page still shows much of itself. */
-.layers .list-row {
-  gap: 4px;
-  width: calc(100% - 8px);
-  height: var(--layer);
-  margin: 0 4px;
-  padding: 0 6px 0 4px;
-}
-
-.layers .caret {
-  width: 14px;
-}
-
-/* a caret that folds reaches a little past its zone, so names still line up */
-.layers .open-caret {
-  width: 20px;
-  margin: 0 -3px;
-}
-
 /* Where dragged layers land between rows, from the depth they land at to the right edge. */
 .drop-line {
   position: absolute;
@@ -544,12 +422,6 @@
   padding: 4px 16px 8px;
 }
 
-.layer-icon {
-  flex: 0 0 auto;
-  display: inline-flex;
-  color: var(--dim);
-}
-
 /* ------------------------------------------------------------------ fields */
 
 .field {
@@ -562,6 +434,12 @@
 
 .field > .choice {
   justify-self: start;
+}
+
+/* a choice nearly fills its field, so one holding a choice keeps room above and below, as an
+   editor's smaller box does */
+.field:has(> .choice) {
+  padding: 3px 0;
 }
 
 .field > label {

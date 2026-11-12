@@ -3,7 +3,7 @@
 pub mod format;
 pub mod js;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -40,6 +40,10 @@ pub struct Page {
     #[serde(default)]
     pub state: Vec<Variable>,
     pub children: Vec<Element>,
+    /// The folder under `pages/` or `components/` its file is in, `/` between levels, empty for
+    /// none. Only where it is kept: never part of its id or its name.
+    #[serde(default)]
+    pub folder: String,
 }
 
 /// What an instance of a component fills in.
@@ -578,6 +582,9 @@ pub struct Pages {
     reset: Vec<String>,
 }
 
+/// The folders pages and components are kept in, under the project's.
+const KINDS: [&str; 2] = ["pages", "components"];
+
 /// A new page, in units of 10 px: 1280 by 720 pixels.
 const WIDTH: u32 = 128;
 const HEIGHT: u32 = 72;
@@ -590,30 +597,29 @@ const SCENE_HEIGHT: u32 = 30;
 const LARGEST: u32 = 1600;
 
 impl Pages {
-    /// Reads every page in `pages/` and component in `components/`, starting a page called
-    /// Overview when there is none.
+    /// Reads every page under `pages/` and component under `components/`, in any folder,
+    /// starting a page called Overview when there is none.
     pub fn open(root: &Path) -> Result<Pages> {
         let mut list = Vec::new();
-        for folder in ["pages", "components"] {
-            let files: Vec<PathBuf> = match fs::read_dir(root.join(folder)) {
-                Ok(entries) => entries.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "html")).collect(),
-                Err(_) => Vec::new(),
-            };
-            for file in files {
+        let mut shown: HashMap<String, String> = HashMap::new();
+        for kind in KINDS {
+            for (file, folder) in files::html_under(&root.join(kind)) {
                 let id = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                 let name = files::shown(root, &file);
-                let text = fs::read_to_string(&file).with_context(|| format!("reading {name}"))?;
-                let page = format::parse(&text, &id).map_err(|e| anyhow::anyhow!("{name}, {e}"))?;
-                if (folder == "components") != page.interface.is_some() {
-                    anyhow::bail!("{name} belongs in {}", if folder == "pages" { "components" } else { "pages" });
+                // an id is one of a kind whatever folder its file is in
+                if let Some(other) = shown.insert(id.clone(), name.clone()) {
+                    anyhow::bail!("{other} and {name} share a name, which must be one of a kind");
                 }
+                let text = fs::read_to_string(&file).with_context(|| format!("reading {name}"))?;
+                let mut page = format::parse(&text, &id).map_err(|e| anyhow::anyhow!("{name}, {e}"))?;
+                if (kind == "components") != page.interface.is_some() {
+                    anyhow::bail!("{name} belongs in {}", if kind == "pages" { "components" } else { "pages" });
+                }
+                page.folder = folder;
                 list.push(page);
             }
         }
         list.sort_by(|a, b| a.id.cmp(&b.id));
-        if let Some(twice) = list.windows(2).find(|w| w[0].id == w[1].id) {
-            anyhow::bail!("pages/{0}.html and components/{0}.html share a name, which must be one of a kind", twice[0].id);
-        }
         let mut pages = Pages { root: root.to_path_buf(), list, moved: Vec::new(), reset: Vec::new() };
         if !pages.list.iter().any(|p| p.interface.is_none()) {
             pages.apply(Edit::AddPage { name: "Overview".into() }).map_err(anyhow::Error::msg)?;
@@ -818,7 +824,7 @@ impl Pages {
             Edit::AddPage { name } => {
                 let name = named(&name)?;
                 let id = self.free_id(&slug(&name), None);
-                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, fill: String::new(), interface: None, state: Vec::new(), children: Vec::new() });
+                self.insert_page(Page { id: id.clone(), name, width: WIDTH, height: HEIGHT, shows: Shows::Full, fill: String::new(), interface: None, state: Vec::new(), children: Vec::new(), folder: String::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
@@ -829,7 +835,7 @@ impl Pages {
                 let space = space.unwrap_or_default();
                 let (width, height) = if space == Space::Scene { (SCENE_WIDTH, SCENE_HEIGHT) } else { (COMPONENT_WIDTH, COMPONENT_HEIGHT) };
                 let interface = Some(Interface { space, ..Interface::default() });
-                self.insert_page(Page { id: id.clone(), name, width, height, shows: Shows::Full, fill: String::new(), interface, state: Vec::new(), children: Vec::new() });
+                self.insert_page(Page { id: id.clone(), name, width, height, shows: Shows::Full, fill: String::new(), interface, state: Vec::new(), children: Vec::new(), folder: String::new() });
                 *made = Some((id.clone(), id.clone()));
                 touched.push(id.clone());
                 return Ok(Edit::RemovePage { page: id });
@@ -1252,20 +1258,34 @@ impl Pages {
         id
     }
 
-    /// Saves a page or component, and takes away the file of one that is gone.
+    /// Saves a page or component in its folder, and takes away its file anywhere else, as one
+    /// moved or gone leaves.
     fn save(&self, id: &str) -> Result<(), String> {
-        let Some(page) = self.get(id) else {
-            for folder in ["pages", "components"] {
-                let file = self.root.join(folder).join(format!("{id}.html"));
-                match fs::remove_file(&file) {
-                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("could not remove {}: {e}", file.display())),
-                    _ => {}
+        let file = self.get(id).map(|page| {
+            let kind = if page.interface.is_some() { "components" } else { "pages" };
+            (files::in_folder(&self.root.join(kind), &page.folder).join(format!("{id}.html")), page)
+        });
+        if let Some((at, page)) = &file {
+            files::write(at, &format::write(page, &self.list))?;
+        }
+        let name = format!("{id}.html");
+        for kind in KINDS {
+            for (other, _) in files::html_under(&self.root.join(kind)) {
+                let stray = other.file_name().is_some_and(|n| n.to_string_lossy() == name) && file.as_ref().is_none_or(|(at, _)| *at != other);
+                if stray {
+                    fs::remove_file(&other).map_err(|e| format!("could not remove {}: {e}", other.display()))?;
                 }
             }
-            return Ok(());
-        };
-        let folder = if page.interface.is_some() { "components" } else { "pages" };
-        files::write(&self.root.join(folder).join(format!("{id}.html")), &format::write(page, &self.list))
+        }
+        Ok(())
+    }
+
+    /// Moves a page or component into `folder`, empty for the top, and saves. Its id, name and
+    /// all that names it stay. The error is for the user.
+    pub fn move_to(&mut self, id: &str, folder: &str) -> Result<(), String> {
+        files::check_folder(folder)?;
+        self.page_mut(id)?.folder = folder.to_owned();
+        self.save(id)
     }
 }
 
@@ -1600,6 +1620,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rant-hmi-pages-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn a_page_keeps_to_its_folder_and_its_id_stays_one_of_a_kind() {
+        let dir = scratch("folders");
+        let mut pages = Pages::open(&dir).unwrap();
+        pages.move_to("overview", "cell/line").unwrap();
+        assert!(dir.join("pages/cell/line/overview.html").exists() && !dir.join("pages/overview.html").exists());
+        assert_eq!(Pages::open(&dir).unwrap().get("overview").unwrap().folder, "cell/line");
+        // an edit saves it where it is kept
+        pages.apply(Edit::SetShows { page: "overview".into(), shows: Shows::Over }).unwrap();
+        assert!(fs::read_to_string(dir.join("pages/cell/line/overview.html")).unwrap().contains("shows=\"over\""));
+        assert!(pages.move_to("overview", "../out").is_err());
+        fs::write(dir.join("pages/overview.html"), "<page name=\"Twin\">\n</page>\n").unwrap();
+        assert!(Pages::open(&dir).err().unwrap().to_string().contains("share a name"));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     fn props(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {

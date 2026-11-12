@@ -2,6 +2,7 @@
 // definition, its value now, and marks for Local, whose value it is, a write and its readers.
 
 import { createEffect, createSignal, For, type JSX, Show } from "solid-js";
+import type { EntityInfo } from "../../protocol/EntityInfo";
 import type { Object as Thing } from "../../protocol/Object";
 import type { Rule } from "../../protocol/Rule";
 import type { Value } from "../../protocol/Value";
@@ -18,10 +19,13 @@ import { Preview } from "../../ui/Preview";
 import { canWrite } from "./Imports";
 import { RuleIcon, triggerWords } from "./Logic";
 import { MemberIcon, removeMember } from "./Member";
+import { MeshPopover } from "./MeshTree";
 import type { Picking } from "./ObjectsScreen";
 import { recent } from "./Records";
 
-export function Sheet(p: { object: Thing; picking: Picking }) {
+export function Sheet(p: { object: Thing; picking: Picking; onAdd: (e: EntityInfo) => void }) {
+  /** The button the mesh tree floats under while it is open, to add from it. */
+  const [meshAt, setMeshAt] = createSignal<HTMLElement | null>(null);
   const o = () => p.object;
   const k = (name: string) => key(o().name, name);
   const picked = (name: string) => p.picking.picked.kind === "member" && p.picking.picked.name === name;
@@ -127,7 +131,9 @@ export function Sheet(p: { object: Thing; picking: Picking }) {
           </Show>
         </div>
       </div>
-      <Section title="Mesh" count={o().imports.length} empty="Add from the mesh on the left.">
+      {/* outside the section, whose rows are not drawn while it has none */}
+      <Show when={meshAt()}>{(at) => <MeshPopover anchor={at()} onPick={p.onAdd} onClose={() => setMeshAt(null)} />}</Show>
+      <Section title="Mesh" count={o().imports.length} add={["Add from the mesh", setMeshAt]} empty="Nothing from the mesh yet.">
         <For each={o().imports}>
           {(i) => (
             <Row
@@ -217,15 +223,16 @@ export function Sheet(p: { object: Thing; picking: Picking }) {
   }
 }
 
-/** A section of the sheet: its title and add button over its rows, `count` of them. */
-function Section(p: { title: string; count: number; add?: [string, () => void]; empty?: string; children: JSX.Element }) {
+/** A section of the sheet: its title and add button over its rows, `count` of them. The add
+ *  is given its button, for what floats under it. */
+function Section(p: { title: string; count: number; add?: [string, (button: HTMLElement) => void]; empty?: string; children: JSX.Element }) {
   return (
     <div class="members">
       <div class="members-head">
         <span class="section">{p.title}</span>
         <Show when={p.add}>
           {(a) => (
-            <button class="icon-btn" title={a()[0]} onClick={() => a()[1]()}>
+            <button class="icon-btn" title={a()[0]} onClick={(e) => a()[1](e.currentTarget)}>
               <Plus size={14} />
             </button>
           )}

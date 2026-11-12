@@ -13,8 +13,8 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   const full = await hmi.count("Line.Conveyor", 1000);
   check(full >= 14, `the conveyor came ${full} times a second at its full rate`);
 
-  await d.tab("Objects");
-  await (await d.meshRow("Line1/Conveyor")).click();
+  await d.openObject("Line");
+  await d.member("Conveyor").click();
   const side = page.locator(".screen:not([hidden]) .sidebar.right");
   await eventually(async () => (await side.locator(".head-title").textContent()).includes("Line.Conveyor"), "the inspector to show the import");
   const rate = side.locator(".field", { has: page.locator("label", { hasText: /^Rate$/ }) }).locator("input");

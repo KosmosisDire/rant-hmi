@@ -6,7 +6,7 @@
 import { createEffect, createMemo, createSignal, For, type JSX, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import { pageAct } from "../../page/act";
 import { type Aim, type Box, fitIn, FRONT, leaves, PageView, pageGround, union } from "../../page/PageView";
-import { createPhonePage, reflows } from "../../page/phone";
+import { createPhonePage, phonePage, reflows } from "../../page/phone";
 import type { Edit } from "../../protocol/Edit";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
@@ -90,7 +90,7 @@ const KEYS: [string, string][] = [
   ["Drag a grip", "resize, several or a group all together"],
   ["Arrows", "nudge a unit, Shift four, Alt a pixel"],
   ["Double click", "type into the element's field"],
-  ["Double click a view", "edit the page it shows there"],
+  ["Click a picked view", "go into the page it shows, as into a frame"],
   ["Delete", "remove"],
   ["Ctrl D", "duplicate"],
   ["Ctrl G", "group, Ctrl Shift G ungroups"],
@@ -115,9 +115,13 @@ type Drag =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "turn"; sx: number; sy: number; view: Aim; w: number; h: number }
   | { kind: "box"; sx: number; sy: number }
-  | { kind: "reorder"; id: string; parent: string; flow: Flow; sx: number; sy: number; slot: number | null; enter?: string }
-  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string; turn: Turns; around?: Around }
+  | { kind: "reorder"; id: string; parent: string; flow: Flow; sx: number; sy: number; slot: number | null; enter?: string; into?: Into }
+  | { kind: "move" | Handle; lead: string; ids: string[]; sx: number; sy: number; bases: Record<string, Box>; boxes: Record<string, Box>; n: number; enter?: string; into?: Into; turn: Turns; around?: Around }
   | { kind: "shape"; how: "move" | Handle; id: string; sx: number; sy: number; base: Element; screen: DOMMatrix; outline: DOMRect; props: Record<string, string> | null; enter?: string };
+
+/** Where a press on a view picked went down, which goes into the page the view shows when it lets
+ *  go unmoved. */
+type Into = { x: number; y: number };
 
 /** The box around several elements or a group's parts on the page as a scale began, and how far
  *  each one's room sits from the page's corner. */
@@ -241,8 +245,14 @@ export function Artboard(p: {
   // a component runs only inside a page, so its board never does
   const live = () => p.running && p.page.interface === null;
   const room = createSize();
+  /** Whether the board shows its pages as an upright phone lays them out. */
+  const [phoneOn, setPhoneOn] = createSignal(false);
+  /** Each page a phone lays out again, as one does, while the board shows phones. */
+  const phones = createMemo(() => new Map(phoneOn() ? p.pages.filter((pg) => !asDesigned(pg)).map((pg) => [pg.id, phonePage(pg, PHONE)]) : []));
+  /** A page as the board lays it out: as a phone does while it shows phones. */
+  const asLaid = (pg: Page) => phones().get(pg.id) ?? pg;
   /** Where each page's corner sits on the board, in units, as a graph down from the start page. */
-  const slots = createMemo(() => layOut(p.pages, links(), startPage(), GAP, ROWS));
+  const slots = createMemo(() => layOut(p.pages.map(asLaid), links(), startPage(), GAP, ROWS));
   const slot = (id: string) => slots()[id] ?? { x: 0, y: 0 };
   const byId = (id: string) => p.pages.find((pg) => pg.id === id);
   /** While the open page is edited in place: the views it is in, the box on the board of each,
@@ -272,8 +282,7 @@ export function Artboard(p: {
   const [box, setBox] = createSignal<{ left: number; top: number; width: number; height: number } | null>(null);
   /** The line where a part dragged along a flow would go, on the page. */
   const [slotLine, setSlotLine] = createSignal<Box | null>(null);
-  /** Whether the page shows as an upright phone lays it out, and that phone page while it does. */
-  const [phoneOn, setPhoneOn] = createSignal(false);
+  /** The open page as an upright phone lays it out, while the board shows phones. */
   const preview = createPhonePage(() => (phoneOn() && !asDesigned(p.page) && !nest() ? p.page : null), () => PHONE);
   // a phone page is as tall as what it holds, so its ground is measured as drawn
   const drawn = createSize();
@@ -289,9 +298,10 @@ export function Artboard(p: {
   /** The pinch two fingers make: how far apart they began, their middle then and the view then. */
   let pinch: { d: number; cx: number; cy: number; cam: Cam } | null = null;
 
-  /** A page's box on the board, the open one as the phone lays it out while it does. */
+  /** A page's own box on the board, the open one as the phone lays it out while it does. A page
+   *  edited in a view keeps its own box, only what edits it lying over the view. */
   const boxOn = (pg: Page): Box => {
-    const [s, z] = [corner(pg.id), pg.id === p.page.id ? size() : pg];
+    const [s, z] = [slot(pg.id), pg.id === p.page.id && !nest() ? size() : asLaid(byId(pg.id) ?? pg)];
     return { x: s.x, y: s.y, w: z.width, h: z.height };
   };
   /** A box on the board as it lands on screen. */
@@ -303,7 +313,7 @@ export function Artboard(p: {
   const lines = createMemo(() => {
     const c = cam();
     return links().flatMap((l) => {
-      const [a, b] = [l.from === p.page.id ? p.page : byId(l.from), byId(l.to)];
+      const [a, b] = [byId(l.from), byId(l.to)];
       if (!a || !b) return [];
       const [from, to] = [boxOn(a), boxOn(b)];
       const el = l.element ? absolute(a, l.element) : undefined;
@@ -390,7 +400,7 @@ export function Artboard(p: {
     const pg = byId(id);
     if (!pg) return;
     const b = boxOn(pg);
-    const screen = pg.id === p.page.id ? (preview() ?? pg) : pg;
+    const screen = pg.id === p.page.id ? (preview() ?? pg) : asLaid(pg);
     flyCam(showing({ ...b, w: screen.width, h: screen.height }), glide);
   };
   const fitAll = (glide = true) => p.pages.length > 0 && flyCam(showing(union(p.pages.map(boxOn))), glide);
@@ -424,8 +434,8 @@ export function Artboard(p: {
       g.fillStyle = ground;
       g.fillRect(x0, y0, x1 - x0, y1 - y0);
       g.restore();
-      // the phone lays the blocks out, so no grid shows
-      if (id === p.page.id && preview()) continue;
+      // the phone lays the blocks out, and a 3D component's parts sit in a scene, so no grid shows
+      if (phones().has(id) || (id === p.page.id && preview()) || spaceHome(pg) === "scene") continue;
       const width = Math.max(1, Math.round(dpr));
       for (const [step, strength] of LEVELS) {
         const a = strength * Math.min(1, Math.max(0, (step * c.k - 4) / 8));
@@ -564,49 +574,47 @@ export function Artboard(p: {
   };
   /** The showing of a view on the open page. */
   const viaAt = (view: string) => `${viaOf(nest()?.chain ?? [])}${p.page.id}/${view}>`;
-  /** Edits the page a view on the open page shows on the board, in its place. */
+  /** Edits the page a view on the open page shows on the board, where the view is. False when it
+   *  shows none of ours. */
   const enter = (view: string) => {
     const shows = shownOnBoard()[viaAt(view)];
     // a web page is not ours to edit
-    if (!shows || isUrl(shows) || preview()) return;
+    if (!shows || isUrl(shows) || preview()) return false;
     setInPlace([...(nest()?.chain ?? []), { page: p.page.id, view, shows }]);
     openHere(shows);
+    return true;
   };
-  /** The menu of a view's chip: the pages the board may show in it, and editing it there. The
-   *  view the open page is edited in switches the page edited. */
-  const chipMenu = (e: MouseEvent, at: InPlace, via: string, edited: boolean) => {
+  /** Goes into the page a view shows, picking what lies under a point of it there, as a press
+   *  again goes further into a frame. */
+  const goInto = (view: string, at: Into) => {
+    if (!enter(view)) return;
+    // the page is drawn over the view once this has run
+    requestAnimationFrame(() => {
+      const picked = pickFrom(p.page, stackAt(p.page, hitsAt(at.x, at.y)), []);
+      if (picked) p.onPick(picked);
+    });
+  };
+  /** The menu of a view's chip: the pages the board may show in it, and editing it there. */
+  const chipMenu = (e: MouseEvent, at: InPlace, via: string) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const around = via.split(">").filter(Boolean).map((c) => c.split("/")[0]);
-    const show = (id: string) => {
-      setBoardShows({ ...boardShows(), [via]: id });
-      if (!edited) return;
-      setInPlace([...nest()!.chain.slice(0, -1), { ...at, shows: id }]);
-      openHere(id);
-    };
     const rows: MenuEntry[] = state.pages
       .filter((pg) => pg.interface === null && !around.includes(pg.id))
-      .map((pg) => ({ label: pg.name, icon: pg.id === at.shows ? <Check size={13} /> : <File size={13} />, run: () => show(pg.id) }));
-    const own = () => {
-      setBoardShows(Object.fromEntries(Object.entries(boardShows()).filter(([k]) => k !== via)));
-      // the page its property gives is known once it draws, so the view is left
-      if (edited) {
-        setInPlace(nest()!.chain.slice(0, -1));
-        p.onOpen(at.page);
-        p.onPick(at.view);
-      }
-    };
+      .map((pg) => ({ label: pg.name, icon: pg.id === at.shows ? <Check size={13} /> : <File size={13} />, run: () => setBoardShows({ ...boardShows(), [via]: pg.id }) }));
+    const own = () => setBoardShows(Object.fromEntries(Object.entries(boardShows()).filter(([k]) => k !== via)));
     rows.push("-", { label: "As its page property says", disabled: !boardShows()[via], run: own });
-    if (!edited) rows.push({ label: "Edit here", keys: "Double click", disabled: !at.shows || isUrl(at.shows), run: () => enter(at.view) });
+    rows.push({ label: "Edit here", keys: "Click again", disabled: !at.shows || isUrl(at.shows), run: () => enter(at.view) });
     openMenu({ x: r.left, y: r.bottom + 4 }, rows);
   };
-  /** The page drawn under a point of the screen: the one whose element or ground is there. */
-  const pageAt = (x: number, y: number) => {
+  /** The page layer drawn under a point of the screen: the one whose element or ground is there. */
+  const layerAt = (x: number, y: number) => {
     for (const el of document.elementsFromPoint(x, y)) {
       const layer = el.closest(".page-layer[data-page]");
-      if (layer && host.contains(layer)) return layer.getAttribute("data-page");
+      if (layer && host.contains(layer)) return layer;
     }
     return null;
   };
+  const pageAt = (x: number, y: number) => layerAt(x, y)?.getAttribute("data-page") ?? null;
 
   // a written drag keeps showing until the page carries its numbers, so nothing jumps back.
   // The page is read before the skip, so its numbers arriving after the drag run this again.
@@ -670,8 +678,11 @@ export function Artboard(p: {
       // a field being typed in commits before the canvas takes over
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       // a press on another page opens it, then goes on as a press there
-      const at = pageAt(e.clientX, e.clientY);
-      if (at && at !== p.page.id) openAt(at, e.clientX, e.clientY);
+      const layer = layerAt(e.clientX, e.clientY);
+      const at = layer?.getAttribute("data-page") ?? null;
+      // the open page's own artboard, while it is edited in a view, edits it there again
+      if (layer?.hasAttribute("data-home")) setInPlace([]);
+      else if (at && at !== p.page.id) openAt(at, e.clientX, e.clientY);
       const handle = target.closest("[data-handle]")?.getAttribute("data-handle") as Handle | null;
       const hits = hitsAt(e.clientX, e.clientY);
       const stack = stackAt(p.page, hits);
@@ -729,9 +740,11 @@ export function Artboard(p: {
         const group = tops(p.page, p.selected).filter((g) => movable(g, ["x", "y"]));
         if (group.some((g) => g.id === leader)) start("move", leader, group);
       } else if (hit) {
-        // what the press moves: the one selected there, else what it picks
+        // what the press moves: the one selected there, else what it picks. A view picked goes
+        // into the page it shows as the press lets go unmoved, further in before beneath
         const one = held ?? hit;
-        const enter = held && hit;
+        const into = held && find(p.page.children, held)?.tag === "view" ? { x: e.clientX, y: e.clientY } : undefined;
+        const enter = into ? undefined : held && hit;
         if (!held) p.onPick(hit);
         const flow = flowAround(one);
         if (shape(one)) {
@@ -740,6 +753,8 @@ export function Artboard(p: {
         } else if (movable(find(p.page.children, one)!, ["x", "y"])) start("move", one, [find(p.page.children, one)!], enter);
         else if (flow) drag = { kind: "reorder", id: one, parent: parentOf(p.page, one)!, flow, sx: e.clientX, sy: e.clientY, slot: null, enter };
         else if (enter) p.onPick(enter);
+        if (into && drag && (drag.kind === "move" || drag.kind === "reorder")) drag.into = into;
+        else if (into) goInto(one, into);
       } else if (e.shiftKey) {
         drag = { kind: "box", sx: e.clientX, sy: e.clientY };
       } else if (spaceHome(p.page) === "scene" && at === p.page.id) {
@@ -847,6 +862,7 @@ export function Artboard(p: {
       setSlotLine(null);
       const at = childrenOf(p.page, d.parent).findIndex((c) => c.id === d.id);
       if (d.slot !== null && d.slot !== at) return moveTo(p.page, d.id, d.parent, d.slot);
+      if (d.into) return goInto(d.id, d.into);
       return d.enter && p.onPick(d.enter);
     }
     if (d?.kind === "shape") {
@@ -875,6 +891,7 @@ export function Artboard(p: {
     }
     sendEdits(edits);
     if (edits.length === 0 && d.enter) p.onPick(d.enter);
+    if (edits.length === 0 && d.into) goInto(d.lead, d.into);
     // a refused write must not hold its boxes forever
     window.setTimeout(() => d.ids.forEach((id) => release(id, d.n)), 3000);
   };
@@ -935,13 +952,13 @@ export function Artboard(p: {
   };
 
   /** The pages in sight as holes in a sheet over the artboard, each edge on a pixel's middle so
-   *  its outline stays crisp. The page around one edited in place stays under it, dimmed. */
+   *  its outline stays crisp. */
   const veil = () => {
     const r = room();
     let d = `M-10 -10H${r.w + 10}V${r.h + 10}H-10Z`;
     for (const id of inSight()) {
       const pg = byId(id);
-      if (!pg || id === nest()?.root) continue;
+      if (!pg) continue;
       const s = screenOf(boxOn(pg));
       const [l, t, rt, b] = [s.left, s.top, s.left + s.width, s.top + s.height].map((v) => Math.round(v) - 0.5);
       d += `M${l} ${t}H${rt + 1}V${b + 1}H${l}Z`;
@@ -1171,16 +1188,27 @@ export function Artboard(p: {
       }}
     >
       <canvas class="artboard-grid" ref={grid} />
+      {/* the page edited in a view still shows on its own artboard, where a press edits it again */}
+      <Show when={nest() && byId(p.page.id)}>
+        {(pg) => {
+          const at = () => screenOf(boxOn(pg()));
+          return (
+            <div class="page-layer" data-page={pg().id} data-home="" style={{ transform: `translate(${at().left}px, ${at().top}px) scale(${cam().k / UNIT})` }}>
+              <PageView page={pg()} view={aimOf(pg().id)} design={!live()} />
+            </div>
+          );
+        }}
+      </Show>
       <For each={inSight()}>
         {(id) => (
           <Show when={byId(id)}>
             {(pg) => {
               const open = () => id === p.page.id;
-              const at = () => screenOf(boxOn(pg()));
+              const at = () => screenOf({ ...corner(id), w: 0, h: 0 });
               const act = pageAct(id);
               return (
                 <div class="page-layer" classList={{ open: open() }} data-page={id} style={{ transform: `translate(${at().left}px, ${at().top}px) scale(${cam().k / UNIT})` }}>
-                  <PageView page={open() ? (preview() ?? p.page) : pg()} via={open() ? viaOf(nest()?.chain ?? []) : ""} overrides={open() && !live() ? overrides : undefined} grows={open() && !!preview()} view={aimOf(id)} design={!live()} act={live() ? act : undefined} />
+                  <PageView page={open() ? (preview() ?? p.page) : asLaid(pg())} via={open() ? viaOf(nest()?.chain ?? []) : ""} overrides={open() && !live() ? overrides : undefined} grows={open() ? !!preview() : phones().has(id)} view={aimOf(id)} design={!live()} act={live() ? act : undefined} />
                 </div>
               );
             }}
@@ -1217,41 +1245,31 @@ export function Artboard(p: {
       <For each={inSight()}>
         {(id) => (
           <Show when={labelAt(id)}>
-            {(at) => {
-              // the page edited in place is named by its view's chip, at the view's size
-              const inView = () => (id === p.page.id ? nest() : null);
-              return (
-                <button
-                  class="board-label"
-                  classList={{ open: id === p.page.id }}
-                  style={at().style}
-                  title={inView() ? "Show another page here" : at().pg.name}
-                  onPointerDown={(e) => e.button === 0 && !space() && e.stopPropagation()}
-                  onClick={(e) => {
-                    const n = inView();
-                    if (n) return chipMenu(e, n.chain.at(-1)!, viaOf(n.chain), true);
-                    openHere(id);
-                    flyTo(id);
-                  }}
-                >
-                  <Show when={!inView()} fallback={<AppWindow size={12} />}>
-                    <Show when={at().pg.interface !== null} fallback={<File size={12} />}>
-                      <Component size={12} />
-                    </Show>
-                  </Show>
-                  <span class="list-label">{at().pg.name}</span>
-                  <Show when={inView()}>
-                    <ChevronDown size={12} />
-                  </Show>
-                </button>
-              );
-            }}
+            {(at) => (
+              <button
+                class="board-label"
+                classList={{ open: id === p.page.id }}
+                style={at().style}
+                title={at().pg.name}
+                onPointerDown={(e) => e.button === 0 && !space() && e.stopPropagation()}
+                onClick={() => {
+                  setInPlace([]);
+                  openHere(id);
+                  flyTo(id);
+                }}
+              >
+                <Show when={at().pg.interface !== null} fallback={<File size={12} />}>
+                  <Component size={12} />
+                </Show>
+                <span class="list-label">{at().pg.name}</span>
+              </button>
+            )}
           </Show>
         )}
       </For>
       <Show when={chip()}>
         {(c) => (
-          <button class="view-chip" style={c().style} title="The page the board shows here" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => chipMenu(e, c().at, c().via, false)}>
+          <button class="view-chip" style={c().style} title="The page the board shows here" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => chipMenu(e, c().at, c().via)}>
             <AppWindow size={12} />
             <span class="list-label">{(c().at.shows && (state.pages.find((pg) => pg.id === c().at.shows)?.name ?? c().at.shows)) || "No page"}</span>
             <ChevronDown size={12} />
@@ -1305,10 +1323,10 @@ export function Artboard(p: {
         </button>
         <button
           class="icon-btn"
-          classList={{ on: !!preview() }}
-          disabled={!!asDesigned(p.page)}
-          title={asDesigned(p.page) ?? (preview() ? "Back to the page as designed" : "Show as an upright phone lays it out")}
-          onClick={() => setPhoneOn(!preview())}
+          classList={{ on: phoneOn() }}
+          disabled={!p.pages.some((pg) => !asDesigned(pg))}
+          title={phoneOn() ? "Back to the pages as designed" : "Show each page as an upright phone lays it out"}
+          onClick={() => setPhoneOn(!phoneOn())}
           onPointerDown={(e) => e.stopPropagation()}
         >
           <Smartphone size={14} />

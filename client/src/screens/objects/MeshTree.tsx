@@ -1,12 +1,14 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+// Everything on the mesh as a tree to pick an entity from, as a mesh member is added or pointed
+// elsewhere: a filter, folders that open, and each entity with the member that brings it.
+
+import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import { importOf } from "../../state/names";
-import { split, state } from "../../state/store";
-import { ChevronDown, ChevronRight, Copy, Plus, Search, Trash, X } from "../../ui/icons";
+import { state } from "../../state/store";
+import { Folder, Search, X } from "../../ui/icons";
 import { KindIcon } from "../../ui/marks";
-import { copyText, openMenu } from "../../ui/Menu";
-import { removeMember } from "./Member";
-import type { Picking } from "./ObjectsScreen";
+import { Popover } from "../../ui/Popover";
+import { TreeRow } from "../../ui/Tree";
 
 /** One step of a name: the entity there, if any, and the names under it. An entity may hold
  *  others, as a camera holds its `Video`. */
@@ -43,14 +45,15 @@ function grow(entities: EntityInfo[], filter: string): Branch {
   return root;
 }
 
-const INDENT = 14;
-
-/** Everything on the mesh, as a tree. An entity a member brings names that member, any other
- *  adds to the open object with its +, and a folder's + makes an object rooted there. */
-export function MeshTree(p: { picking: Picking; onAdd: (e: EntityInfo) => void; onMake: (path: string) => void }) {
+/** The mesh as a tree, `chosen` the entity picked now, which starts open. */
+export function MeshTree(p: { chosen?: string; onPick: (e: EntityInfo) => void }) {
+  let input!: HTMLInputElement;
+  onMount(() => input.focus());
   const [filter, setFilter] = createSignal("");
-  // folders start closed, and a filter opens every one it leaves, so each match shows
-  const [opened, setOpened] = createSignal(new Set<string>());
+  // folders start closed but those around the entity chosen, and a filter opens every one it
+  // leaves, so each match shows
+  const around = (p.chosen ?? "").split("/").slice(0, -1).map((_, i, all) => all.slice(0, i + 1).join("/"));
+  const [opened, setOpened] = createSignal(new Set<string>(around));
   const open = (path: string) => filter() !== "" || opened().has(path);
   const tree = createMemo(() => grow(state.entities, filter()));
   const toggle = (path: string) => {
@@ -59,110 +62,27 @@ export function MeshTree(p: { picking: Picking; onAdd: (e: EntityInfo) => void; 
     setOpened(next);
   };
 
-  const pick = (e: EntityInfo) => {
-    const i = importOf(e.name);
-    if (!i) return p.picking.onPick({ kind: "entity", name: e.name });
-    const [o, name] = split(i.alias);
-    p.picking.onOpen(o, { kind: "member", name });
-  };
-  const menu = (ev: MouseEvent, e: EntityInfo) => {
-    pick(e);
-    const to = p.picking.open;
-    const i = importOf(e.name);
-    openMenu(ev, [
-      ...(i ? [{ label: `Remove ${i.alias}`, icon: <Trash size={13} />, run: () => removeMember(...split(i.alias)) }, "-" as const] : []),
-      ...(to !== null && !i ? [{ label: `Add to ${to}`, icon: <Plus size={13} />, run: () => p.onAdd(e) }, "-" as const] : []),
-      { label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(e.name) },
-    ]);
-  };
-  const picked = (e: EntityInfo) => {
-    const s = p.picking.picked;
-    if (s.kind === "entity") return s.name === e.name;
-    return s.kind === "member" && importOf(e.name)?.alias === `${p.picking.open}.${s.name}`;
-  };
-
-  const Caret = (c: { branch: Branch }) => (
-    <Show when={open(c.branch.path)} fallback={<ChevronRight size={12} />}>
-      <ChevronDown size={12} />
-    </Show>
-  );
-
   const Level = (l: { branch: Branch; depth: number }) => (
     <For each={l.branch.children}>
       {(b) => (
         <>
           <Show
             when={b.entity}
-            fallback={
-              <div class="list-row branch" role="button" tabIndex={0} onClick={() => toggle(b.path)} onKeyDown={(k) => k.key === "Enter" && toggle(b.path)}>
-                <span style={{ width: `${l.depth * INDENT}px` }} />
-                <span class="caret">
-                  <Caret branch={b} />
-                </span>
-                <span class="list-label mono">{b.name}/</span>
-                <button
-                  class="row-add quiet"
-                  title={`Make an object for ${b.path}`}
-                  onClick={(c) => {
-                    c.stopPropagation();
-                    p.onMake(b.path);
-                  }}
-                >
-                  <Plus size={15} />
-                </button>
-              </div>
-            }
+            fallback={<TreeRow depth={l.depth} class="folder" open={open(b.path)} onFold={() => toggle(b.path)} onClick={() => toggle(b.path)} icon={<Folder size={14} />} label={<span class="mono">{b.name}</span>} />}
           >
             {(e) => (
-              <div
-                class="list-row"
-                role="button"
-                tabIndex={0}
-                classList={{ selected: picked(e()) }}
-                onClick={() => pick(e())}
-                onContextMenu={(ev) => menu(ev, e())}
-                onKeyDown={(k) => k.key === "Enter" && pick(e())}
+              // an entity holding others opens by its caret, and a press on the rest picks it
+              <TreeRow
+                depth={l.depth}
+                classList={{ selected: p.chosen === e().name }}
+                open={b.children.length > 0 ? open(b.path) : undefined}
+                onFold={() => toggle(b.path)}
+                onClick={() => p.onPick(e())}
                 title={e().name}
-              >
-                <span style={{ width: `${l.depth * INDENT}px` }} />
-                {/* an entity holding others opens by its caret, and a press on the rest picks it */}
-                <Show when={b.children.length > 0} fallback={<span class="caret" />}>
-                  <span
-                    class="caret open-caret"
-                    title={open(b.path) ? "Hide what it holds" : "Show what it holds"}
-                    onClick={(c) => {
-                      c.stopPropagation();
-                      toggle(b.path);
-                    }}
-                  >
-                    <Caret branch={b} />
-                  </span>
-                </Show>
-                <KindIcon kind={e().kind} />
-                <span class="list-label mono">{b.name}</span>
-                {/* the member it is, else in the same place a + that adds it to the open object */}
-                <Show
-                  when={importOf(e().name)}
-                  fallback={
-                    <Show when={p.picking.open}>
-                      {(to) => (
-                        <button
-                          class="row-add"
-                          title={`Add to ${to()}`}
-                          onClick={(c) => {
-                            c.stopPropagation();
-                            p.onAdd(e());
-                          }}
-                        >
-                          <Plus size={15} />
-                        </button>
-                      )}
-                    </Show>
-                  }
-                >
-                  {(i) => <span class="list-trail mono">{i().alias}</span>}
-                </Show>
-              </div>
+                icon={<KindIcon kind={e().kind} />}
+                label={<span class="mono">{b.name}</span>}
+                end={<Show when={importOf(e().name)}>{(i) => <span class="list-trail mono">{i().alias}</span>}</Show>}
+              />
             )}
           </Show>
           <Show when={b.children.length > 0 && open(b.path)}>
@@ -177,7 +97,7 @@ export function MeshTree(p: { picking: Picking; onAdd: (e: EntityInfo) => void; 
     <>
       <div class="filter mesh-filter">
         <Search size={14} />
-        <input placeholder="Filter the mesh..." value={filter()} onInput={(e) => setFilter(e.currentTarget.value)} aria-label="Filter the mesh" />
+        <input ref={input} placeholder="Filter the mesh..." value={filter()} onInput={(e) => setFilter(e.currentTarget.value)} aria-label="Filter the mesh" />
         <Show when={filter() !== ""}>
           <button class="icon-btn" title="Clear the filter" onClick={() => setFilter("")}>
             <X size={13} />
@@ -190,5 +110,20 @@ export function MeshTree(p: { picking: Picking; onAdd: (e: EntityInfo) => void; 
         </Show>
       </div>
     </>
+  );
+}
+
+/** The mesh tree floating under `anchor`, which closes as an entity is picked. */
+export function MeshPopover(p: { anchor: HTMLElement; chosen?: string; onPick: (e: EntityInfo) => void; onClose: () => void }) {
+  return (
+    <Popover anchor={p.anchor} onClose={p.onClose} class="mesh-picker">
+      <MeshTree
+        chosen={p.chosen}
+        onPick={(e) => {
+          p.onClose();
+          p.onPick(e);
+        }}
+      />
+    </Popover>
   );
 }

@@ -215,7 +215,7 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     let attrs = r.attrs()?;
     r.expect(">")?;
     let interface = (root == "component").then(Interface::default);
-    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 128, height: 72, shows: Shows::Full, fill: String::new(), interface, state: Vec::new(), children: Vec::new() };
+    let mut page = Page { id: id.to_owned(), name: id.to_owned(), width: 128, height: 72, shows: Shows::Full, fill: String::new(), interface, state: Vec::new(), children: Vec::new(), folder: String::new() };
     for (k, v) in attrs {
         match k.as_str() {
             "name" => page.name = v,
@@ -1055,7 +1055,7 @@ mod tests {
                 false => children.push(random_element(rng, &mut ids, 0, keeps)),
             }
         }
-        Page { id: "p".into(), name: "Overview".into(), width: 1408, height: 792, shows, fill, interface, state, children }
+        Page { id: "p".into(), name: "Overview".into(), width: 1408, height: 792, shows, fill, interface, state, children, folder: String::new() }
     }
 
     #[test]

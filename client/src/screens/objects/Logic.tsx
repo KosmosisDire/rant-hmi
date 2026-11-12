@@ -10,7 +10,7 @@ import { complete, signature } from "../../state/complete";
 import { phrase, pOf, ruleBrings } from "../../state/events";
 import { HMI } from "../../state/names";
 import { DraftInput } from "../../ui/DraftInput";
-import { paint } from "../../ui/highlight";
+import { nameHelp } from "../../ui/highlight";
 import { Activity, Monitor, MonitorOff, Power, Timer, Trash, Zap } from "../../ui/icons";
 import { RateField } from "./Computed";
 import { ItemPane } from "./Items";
@@ -111,7 +111,7 @@ export function RuleView(p: { object: Thing; rule: Rule; picking: Picking }) {
             <>
               <div class="field">
                 <label>Condition</label>
-                <DraftInput value={w().condition} placeholder="Speed > 1.5" onCommit={(condition) => when({ condition })} complete={(t, c) => complete(t, c, "system", undefined, undefined, own())} paint={(src) => paint(src, own())} />
+                <DraftInput value={w().condition} placeholder="Speed > 1.5" onCommit={(condition) => when({ condition })} complete={(t, c) => complete(t, c, "system", undefined, undefined, own())} {...nameHelp(() => [], own)} />
               </div>
               <div class="field">
                 <label>For ms</label>
@@ -125,7 +125,7 @@ export function RuleView(p: { object: Thing; rule: Rule; picking: Picking }) {
           {(w) => (
             <div class="field">
               <label>Of</label>
-              <DraftInput value={w().name} placeholder="Running" onCommit={(name) => when({ name: name.trim() })} complete={(t, c) => complete(t, c, "system", undefined, undefined, own())} paint={(src) => paint(src, own())} />
+              <DraftInput value={w().name} placeholder="Running" onCommit={(name) => when({ name: name.trim() })} complete={(t, c) => complete(t, c, "system", undefined, undefined, own())} {...nameHelp(() => [], own)} />
             </div>
           )}
         </Match>
@@ -143,7 +143,7 @@ export function RuleView(p: { object: Thing; rule: Rule; picking: Picking }) {
         onCommit={(code) => put({ code })}
         complete={(t, c) => complete(t, c, "handler", undefined, brings() ? [pOf(brings()!)] : undefined, own())}
         hint={(t, c) => signature(t, c, "handler", own())}
-        paint={(src) => paint(src, own())}
+        {...nameHelp(() => (brings() ? [pOf(brings()!)] : []), own)}
       />
       <div class="pane-actions">
         <button class="button" onClick={() => put(null)}>

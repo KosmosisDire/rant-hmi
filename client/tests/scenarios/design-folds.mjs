@@ -1,33 +1,33 @@
-// A user folds the Design sidebar's panes away by their heads: the body goes, the head and
-// its + stay, the browser keeps the choice over a reload, and a second press brings it back.
+// Design's sidebar is one tree: a Components and a Pages folder, each a row with its + on it. A
+// press folds a folder away, the browser keeps the choice over a reload, and a second press
+// brings it back.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   const pageId = await hmi.addPage("Folds");
   await hmi.addElement(pageId, "div", { name: "Folded box", x: "44", y: "44", w: "88", h: "88" });
+  await hmi.addComponent("Foldpart");
   await d.openPage("Folds");
   const left = page.locator(".screen:not([hidden]) .sidebar.left");
-  const head = (word) => left.locator("button.fold", { hasText: word });
+  const folder = (kind) => left.locator(`.list-row[data-folder-kind="${kind}"][data-folder=""]`);
   const layer = (await d.layers()).locator(".list-row", { hasText: "Folded box" });
   const pageRow = left.locator(".page-row", { has: page.getByText("Folds", { exact: true }) });
-  const cards = left.locator(".pages.cards");
+  const part = left.locator(".page-row", { has: page.getByText("Foldpart", { exact: true }) });
   await layer.waitFor();
+  check((await left.locator(".pane-head").count()) === 0, "the tree has heads above it");
 
-  await head("Layers").click();
-  await eventually(async () => !(await layer.isVisible()) && !(await pageRow.isVisible()), "the layers and their pages to fold away");
-  check((await head("Layers").getAttribute("aria-expanded")) === "false", "the Layers head does not say it is folded");
-  check(await left.locator('button[title="Add an element"]').isVisible(), "the element + went with the body");
-  check(await left.locator('button[title="Add a page"]').isVisible(), "the page + went with the body");
-  await head("Components").click();
-  await eventually(async () => !(await cards.isVisible()), "the components to fold away");
+  await folder("pages").click();
+  await eventually(async () => !(await layer.isVisible()) && !(await pageRow.isVisible()), "the pages and their layers to fold away");
+  check(await left.locator('button[title="Add a page"]').isVisible(), "the page + went with what the folder holds");
+  await folder("components").click();
+  await eventually(async () => !(await part.isVisible()), "the components to fold away");
 
   await page.reload();
   await page.locator(".statusbar", { hasText: "System" }).waitFor();
-  await head("Layers").waitFor();
-  check(!(await layer.isVisible()) && !(await pageRow.isVisible()) && !(await cards.isVisible()), "a reload unfolded the panes");
+  await folder("pages").waitFor();
+  check(!(await pageRow.isVisible()) && !(await part.isVisible()), "a reload opened the folders");
 
-  await head("Layers").click();
-  await head("Components").click();
+  await folder("pages").click();
+  await folder("components").click();
   await pageRow.waitFor();
-  await layer.waitFor();
-  await cards.waitFor();
+  await part.waitFor();
 }

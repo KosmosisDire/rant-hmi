@@ -9,14 +9,14 @@ import { edit } from "../../state/change";
 import { rememberedWords } from "../../state/remember";
 import { freeName } from "../../state/names";
 import { startPage, state } from "../../state/store";
-import { flyTo, openPage } from "../../state/view";
+import { flyTo } from "../../state/view";
 import { isNumber } from "../../state/bind";
 import { chain, find } from "../../state/elements";
-import { fold, FoldHead } from "../../ui/Fold";
-import { ChevronDown, ChevronRight, CircleDot, Component, CopyPlus, File, FilePlus, Plus, Repeat, Rotate3d, Star, Trash, Zap } from "../../ui/icons";
+import { CircleDot, Component, CopyPlus, File, FilePlus, Plus, Repeat, Rotate3d, Star, Trash, Zap } from "../../ui/icons";
+import { dragToFolder, FolderTree, INDENT, justDragged, moveRow, TreeRow } from "../../ui/Tree";
 import { type MenuEntry, openMenu } from "../../ui/Menu";
 import { addElement } from "./add";
-import { ComponentCard } from "./ComponentCard";
+import { PagePicture, placeComponent } from "./PagePicture";
 import type { Pick } from "./DesignScreen";
 import { addMenu, elementMenu, layersMenu } from "./menus";
 import { TagIcon } from "./TagIcon";
@@ -24,24 +24,16 @@ import { childrenOf, holds, isHolder, moveAll, parentOf, tops } from "./tree";
 import { follow } from "../../ui/press";
 import { closeDrawer } from "../../ui/Sidebars";
 
-/** Whether each pane of the sidebar shows its body, as this browser remembers it. */
-const folds = { components: fold("pane-components"), layers: fold("pane-layers") };
-
-const shown = (pane: keyof typeof folds) => folds[pane][0]() === "open";
-
 /** The pages and frames opened in the layers, a page by its id and a frame by its page's and
  *  its own. All start folded. */
 const [opened, setOpened] = rememberedWords("layers-open");
 
-/** How far each level of the layers steps in. */
-const INDENT = 12;
-
 /** Opens a page, with an element on it picked or none. */
 type Open = (page: string, id?: string | null) => void;
 
-/** The left sidebar: the components, then every page as the top of its layers. */
+/** The left sidebar, one tree: the components and the pages in their folders, each the top of
+ *  its layers. */
 export function Outline(p: { page: Page | undefined; selected: string[]; onPick: Pick; onOpen: Open; onEdit: (id: string, key: string) => void }) {
-  let adder!: HTMLButtonElement;
   // into the frame picked last, at its top left, else onto the page
   const place = (tag: Tag, props: Record<string, string>, component: string | null = null) => {
     const page = p.page;
@@ -50,9 +42,9 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     const holder = last ? find(page.children, last) : undefined;
     addElement(page, holder && holds(page, holder.tag, { tag, component }) ? holder.id : null, tag, props, component);
   };
-  const openAdd = () => {
+  const openAdd = (button: HTMLElement) => {
     const page = p.page;
-    const at = adder.getBoundingClientRect();
+    const at = button.getBoundingClientRect();
     if (page) openMenu({ x: at.left, y: at.bottom + 4 }, addMenu(page, place));
   };
   const pages = () => state.pages.filter((pg) => pg.interface === null);
@@ -78,14 +70,15 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
   const pageRows = (pg: Page): MenuEntry[] => {
     const component = pg.interface !== null;
     const last = !component && pages().length < 2;
+    const kind = component ? "components" : "pages";
     return [
       { label: "Duplicate", icon: <CopyPlus size={13} />, run: () => copyPage(pg) },
+      moveRow(kind, pg.id, pg.folder, state.folders[kind]),
       ...(component ? [] : [{ label: "Make the start page", icon: <Star size={13} />, disabled: startPage() === pg.id, run: () => send({ type: "set_start", page: pg.id }) }]),
       "-",
       { label: component ? "Delete component" : "Delete page", icon: <Trash size={13} />, disabled: last, run: () => edit({ kind: "remove_page", page: pg.id }) },
     ];
   };
-  const cardMenu = (e: MouseEvent, c: Page) => openMenu(e, [{ label: "Open", icon: <Component size={13} />, run: () => openPage(c.id) }, ...pageRows(c)]);
   // a band's menu adds to its page, so it opens the page first
   const bandMenu = (e: MouseEvent, pg: Page) => {
     p.onOpen(pg.id);
@@ -121,9 +114,10 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
     ),
   );
 
-  const band = (pg: Page) => (
+  const band = (pg: Page, depth: number) => (
     <PageLayers
       page={pg}
+      depth={depth}
       open={pg.id === p.page?.id}
       start={startPage() === pg.id}
       selected={p.selected}
@@ -133,50 +127,54 @@ export function Outline(p: { page: Page | undefined; selected: string[]; onPick:
       onOpen={p.onOpen}
       onEdit={p.onEdit}
       onMenu={bandMenu}
+      onAdd={openAdd}
     />
   );
 
   return (
-    <>
-      <FoldHead title="Components" fold={folds.components}>
-        <button class="icon-btn" title="Add a 3D component" onClick={() => addComponent("3d")}>
-          <Rotate3d size={14} />
-        </button>
-        <button class="icon-btn" title="Add a component" onClick={() => addComponent("2d")}>
-          <Plus size={14} />
-        </button>
-      </FoldHead>
-      <div class="pages cards" classList={{ tall: !shown("layers") }} hidden={!shown("components")}>
-        <For each={components()} fallback={<div class="field-hint list-hint">Make a part once, place it on many pages.</div>}>
-          {(c) => <ComponentCard component={c} open={c.id === p.page?.id} onMenu={(e) => cardMenu(e, c)} />}
-        </For>
-      </div>
-      <FoldHead title="Layers" fold={folds.layers} below>
-        <button class="icon-btn" title="Add a page" onClick={addPage}>
-          <FilePlus size={14} />
-        </button>
-        <button ref={adder} class="icon-btn" title="Add an element" onClick={openAdd}>
-          <Plus size={14} />
-        </button>
-      </FoldHead>
-      <Show when={shown("layers")}>
-        {/* the space below the bands is the open page's, as its band is */}
-        <div class="pane-body layers" ref={tree} onContextMenu={(e) => p.page && bandMenu(e, p.page)}>
-          {/* a component open shows alone on the board, its layers above the pages */}
-          <Show when={p.page?.interface != null && p.page} keyed>
-            {(c) => band(c)}
-          </Show>
-          <For each={pages()}>{(pg) => band(pg)}</For>
-        </div>
-      </Show>
-    </>
+    // the space below the rows is the open page's, as its row is
+    <div class="pane-body layers" ref={tree} onContextMenu={(e) => p.page && bandMenu(e, p.page)}>
+      <FolderTree
+        kind="components"
+        title="Components"
+        folders={state.folders.components}
+        items={components()}
+        folderOf={(c) => c.folder}
+        row={band}
+        end={
+          <>
+            <button class="row-add" title="Add a 3D component" onClick={(e) => (e.stopPropagation(), addComponent("3d"))}>
+              <Rotate3d size={14} />
+            </button>
+            <button class="row-add" title="Add a component" onClick={(e) => (e.stopPropagation(), addComponent("2d"))}>
+              <Plus size={15} />
+            </button>
+          </>
+        }
+      />
+      <FolderTree
+        kind="pages"
+        title="Pages"
+        folders={state.folders.pages}
+        items={pages()}
+        folderOf={(pg) => pg.folder}
+        row={band}
+        end={
+          <button class="row-add" title="Add a page" onClick={(e) => (e.stopPropagation(), addPage())}>
+            <FilePlus size={14} />
+          </button>
+        }
+      />
+    </div>
   );
 }
 
-/** A page's band, pinned while its layers scroll beneath it. A press opens the page and flies
- *  to it, and its caret shows or hides what it holds. */
+/** A page's or component's row, pinned while its layers scroll beneath it. A press opens it and
+ *  flies to it, its caret shows or hides what it holds, and a drag takes it into a folder, or a
+ *  component onto a page on the board, placed there. The open one's + adds to it. */
 function PageLayers(p: {
   page: Page;
+  depth: number;
   open: boolean;
   start: boolean;
   selected: string[];
@@ -186,57 +184,68 @@ function PageLayers(p: {
   onOpen: Open;
   onEdit: (id: string, key: string) => void;
   onMenu: (e: MouseEvent, page: Page) => void;
+  onAdd: (button: HTMLElement) => void;
 }) {
   const component = () => p.page.interface !== null;
   // a row of a page not open opens it with that row picked
   const pick: Pick = (id, add) => (p.open ? p.onPick(id, add) : p.onOpen(p.page.id, id));
   return (
     <div class="page-group" classList={{ open: p.open }}>
-      <button
-        class="list-row page-row"
+      <TreeRow
+        depth={p.depth}
+        class="page-row"
         classList={{ selected: p.open && p.selected.length === 0, open: p.open }}
         data-page={p.page.id}
+        open={p.page.children.length > 0 ? !p.shut(p.page.id) : undefined}
+        onFold={() => p.onFold(p.page.id)}
         onClick={() => {
+          if (justDragged()) return;
           p.onOpen(p.page.id);
           flyTo(p.page.id);
           closeDrawer();
         }}
+        onPointerDown={(e) =>
+          dragToFolder(e, {
+            kind: component() ? "components" : "pages",
+            name: p.page.id,
+            label: p.page.name,
+            // a component goes onto the page it lands on, so a phone's drawer gets out of its way
+            elsewhere: component() ? (x, y) => placeComponent(p.page, x, y) : undefined,
+            onStart: component() ? closeDrawer : undefined,
+          })
+        }
         onContextMenu={(e) => p.onMenu(e, p.page)}
-      >
-        <Show when={p.page.children.length > 0} fallback={<span class="caret" />}>
-          <span
-            class="caret open-caret"
-            title={p.shut(p.page.id) ? "Show what it holds" : "Hide what it holds"}
-            onClick={(c) => {
-              c.stopPropagation();
-              p.onFold(p.page.id);
-            }}
-          >
-            <Show when={p.shut(p.page.id)} fallback={<ChevronDown size={12} />}>
-              <ChevronRight size={12} />
-            </Show>
-          </span>
-        </Show>
-        <span class="layer-icon">
+        icon={
           <Show when={component()} fallback={<File size={13} />}>
             <Component size={13} />
           </Show>
-        </span>
-        <span class="list-label">{p.page.name}</span>
-        <Show when={p.start}>
-          <span class="tag" title="Operators' screens open on this page">
-            start
-          </span>
-        </Show>
-        <span class="marks">
-          <Show when={p.page.state.length > 0}>
-            <Kept state={p.page.state} />
-          </Show>
-        </span>
-      </button>
+        }
+        label={p.page.name}
+        preview={() => <PagePicture page={p.page} />}
+        end={
+          <>
+            <Show when={p.start}>
+              <span class="tag" title="Operators' screens open on this page">
+                start
+              </span>
+            </Show>
+            <span class="marks">
+              <Show when={p.page.state.length > 0}>
+                <Kept state={p.page.state} />
+              </Show>
+            </span>
+            <Show when={p.open}>
+              <button class="row-add" title="Add an element" onClick={(e) => (e.stopPropagation(), p.onAdd(e.currentTarget))}>
+                <Plus size={15} />
+              </button>
+            </Show>
+          </>
+        }
+      />
       <Show when={p.page.children.length > 0 && !p.shut(p.page.id)}>
         <LayerList
           page={p.page}
+          depth={p.depth + 1}
           selected={p.open ? p.selected : []}
           shut={(id) => p.shut(`${p.page.id} ${id}`)}
           onFold={(id) => p.onFold(`${p.page.id} ${id}`)}
@@ -258,7 +267,7 @@ type Spot = { parent: string | null; index: number; line?: { y: number; depth: n
 /** A page's layers, front first as they stack. Rows dragged onto another's edge go in front of
  *  or behind it, onto a frame's middle into that frame, and below them all to the page's back.
  *  A selected row takes the rest of the selection with it. */
-function LayerList(p: { page: Page; selected: string[]; shut: (id: string) => boolean; onFold: (id: string) => void; onPick: Pick; onEdit: (id: string, key: string) => void }) {
+function LayerList(p: { page: Page; depth: number; selected: string[]; shut: (id: string) => boolean; onFold: (id: string) => void; onPick: Pick; onEdit: (id: string, key: string) => void }) {
   let host!: HTMLDivElement;
   let press: { id: string; y: number } | null = null;
   const [dragging, setDragging] = createSignal<string[]>([]);
@@ -322,7 +331,7 @@ function LayerList(p: { page: Page; selected: string[]; shut: (id: string) => bo
     <div class="layer-list" ref={host} onPointerDown={down}>
       <Layers
         elements={p.page.children}
-        depth={0}
+        depth={p.depth}
         selected={p.selected}
         dragging={dragging()}
         spot={spot()}
@@ -338,7 +347,7 @@ function LayerList(p: { page: Page; selected: string[]; shut: (id: string) => bo
           elementMenu(e, p.page, p.selected, p.onPick, id);
         }}
       />
-      <Show when={spot()?.line}>{(l) => <div class="drop-line" style={{ top: `${l().y}px`, left: `${8 + (l().depth + 1) * INDENT}px` }} />}</Show>
+      <Show when={spot()?.line}>{(l) => <div class="drop-line" style={{ top: `${l().y}px`, left: `${8 + (p.depth + l().depth) * INDENT}px` }} />}</Show>
     </div>
   );
 }
@@ -397,40 +406,21 @@ function Layers(p: {
     <For each={[...p.elements].reverse()}>
       {(e) => (
         <>
-          <button
-            class="list-row"
+          <TreeRow
+            depth={p.depth}
             classList={{ selected: p.selected.includes(e.id), dragged: p.dragging.includes(e.id), "drop-inside": p.spot?.into === e.id }}
             data-id={e.id}
             data-frame={isHolder(e.tag) ? "" : undefined}
             data-open={e.children.length > 0 && !p.shut(e.id) ? "" : undefined}
+            open={e.children.length > 0 ? !p.shut(e.id) : undefined}
+            onFold={() => p.onFold(e.id)}
             onClick={(ev) => p.onPick(e.id, ev.shiftKey || ev.ctrlKey || ev.metaKey)}
             onDblClick={() => p.onEdit(e.id, "name")}
             onContextMenu={(ev) => p.onMenu(ev, e.id)}
-          >
-            {/* the page's band is the first level, so its layers step in once */}
-            <span style={{ width: `${(p.depth + 1) * INDENT}px` }} />
-            {/* a frame folds by its caret, and a press on the rest picks it */}
-            <Show when={e.children.length > 0} fallback={<span class="caret" />}>
-              <span
-                class="caret open-caret"
-                title={p.shut(e.id) ? "Show what it holds" : "Hide what it holds"}
-                onClick={(c) => {
-                  c.stopPropagation();
-                  p.onFold(e.id);
-                }}
-                onDblClick={(c) => c.stopPropagation()}
-              >
-                <Show when={p.shut(e.id)} fallback={<ChevronDown size={12} />}>
-                  <ChevronRight size={12} />
-                </Show>
-              </span>
-            </Show>
-            <span class="layer-icon">
-              <TagIcon tag={e.tag} size={13} />
-            </span>
-            <span class="list-label">{e.props.name ?? e.id}</span>
-            <Marks element={e} />
-          </button>
+            icon={<TagIcon tag={e.tag} size={13} />}
+            label={e.props.name ?? e.id}
+            end={<Marks element={e} />}
+          />
           <Show when={e.children.length > 0 && !p.shut(e.id)}>
             <Layers elements={e.children} depth={p.depth + 1} selected={p.selected} dragging={p.dragging} spot={p.spot} shut={p.shut} onFold={p.onFold} onPick={p.onPick} onEdit={p.onEdit} onMenu={p.onMenu} />
           </Show>

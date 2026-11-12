@@ -37,6 +37,10 @@ pub struct Object {
     pub logic: Vec<Rule>,
     /// The members only its own code reads.
     pub local: Vec<String>,
+    /// The folder under `objects/` its file is in, `/` between levels, empty for none. Only
+    /// where it is kept: never part of its name.
+    #[serde(default)]
+    pub folder: String,
 }
 
 /// Code an object runs on the system when called, giving back what it returns.
@@ -75,7 +79,7 @@ pub fn owner(key: &str) -> &str {
 impl Object {
     pub fn new(info: ObjectInfo) -> Object {
         let ObjectInfo { name, mesh, note } = info;
-        Object { name, mesh, note, imports: Vec::new(), variables: Vec::new(), computed: Vec::new(), records: Vec::new(), functions: Vec::new(), logic: Vec::new(), local: Vec::new() }
+        Object { name, mesh, note, imports: Vec::new(), variables: Vec::new(), computed: Vec::new(), records: Vec::new(), functions: Vec::new(), logic: Vec::new(), local: Vec::new(), folder: String::new() }
     }
 
     /// The Hmi object a project has before it keeps anything there.

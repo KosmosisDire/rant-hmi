@@ -21,4 +21,9 @@ imports: Array<Import>, variables: Array<Variable>, computed: Array<Computed>, r
 /**
  * The members only its own code reads.
  */
-local: Array<string>, };
+local: Array<string>, 
+/**
+ * The folder under `objects/` its file is in, `/` between levels, empty for none. Only
+ * where it is kept: never part of its name.
+ */
+folder: string, };

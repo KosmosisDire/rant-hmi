@@ -292,17 +292,23 @@ place of a `Content.open()`. Its start is a page id, as a var's start is JSON.
 
 ### Step 3 as built
 
-- `inPlace` in `state/view.ts` holds the views the open page is edited in, outermost first, and
-  `placesIn` in `tree.ts` finds their boxes, each page laid out at its view's size. Design hands
-  the board the open page at that size, the board puts its corner at the view's, veils the page
-  around it and leaves its own slot empty. The view under it draws nothing meanwhile.
-- A double click on a view enters it, nested views too. Escape with nothing picked steps out a
-  level with the view picked. A press on the page around opens the innermost page under it.
-  Opening a page any other way leaves.
+The user said on 2026-11-12 that moving the artboard into the view was wrong: every artboard
+stays where it is and a page is edited where a view shows it as naturally as a frame is.
+
+- A press picks a view, a press again on it goes into the page it shows and picks what lies
+  under the pointer there, at any depth, as a press again goes further into a frame. A double
+  click and the chip's "Edit here" go in too.
+- `inPlace` in `state/view.ts` holds the views the open page is edited through, outermost
+  first, and `placesIn` in `tree.ts` finds their boxes, each page laid out at its view's size.
+  Design hands the board the open page at that size and the board draws what edits it over the
+  view. The view under it draws nothing meanwhile.
+- The page keeps its own artboard, label and lines where they are, and a press on that artboard
+  edits it there again. Nothing is dimmed. Escape with nothing picked steps out a level with
+  the view picked, a press on the page around opens the innermost page under it, and opening a
+  page any other way leaves.
 - The chip under one picked view lists the pages the board may show in it, kept in
-  `boardShows` by the view's showing and never saved, and "Edit here". The label of the page
-  edited in place is the same chip, which switches the page edited.
-- A view in a repeat is not entered, and the phone preview is off meanwhile.
+  `boardShows` by the view's showing and never saved.
+- A view in a repeat is not gone into, nor a web page, and the phone preview is off meanwhile.
 - Scenario `design-view-edit`.
 
 ### Web pages in a view

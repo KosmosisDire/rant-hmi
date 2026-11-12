@@ -24,4 +24,9 @@ fill: string, interface: Interface | null,
 /**
  * What the page keeps, which all on it reads. A component keeps its own variables instead.
  */
-state: Array<Variable>, children: Array<Element>, };
+state: Array<Variable>, children: Array<Element>, 
+/**
+ * The folder under `pages/` or `components/` its file is in, `/` between levels, empty for
+ * none. Only where it is kept: never part of its id or its name.
+ */
+folder: string, };

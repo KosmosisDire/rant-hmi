@@ -1,23 +1,22 @@
-// A user adds the robot's pose to Robot with its mesh row's +, uses it, renames it so a page and
-// a handler follow, changes its intent, and finds a name code already uses and one another member
-// has refused. An entity picked offers to join whichever object is open.
+// A user adds the robot's pose to Robot from the mesh tree its Mesh section's + opens, uses it,
+// renames it so a page and a handler follow, changes its intent, and finds a name code already
+// uses and one another member has refused. The tree adds to whichever object is open.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   // the entities it adds start as no member, whatever scenarios ran on this system before
   for (const i of hmi.state.imports.filter((x) => ["Robot/Pose", "Line1/Conveyor"].includes(x.entity))) await hmi.unimport(i.alias);
-  const left = page.locator(".screen:not([hidden]) .sidebar.left");
   const right = page.locator(".screen:not([hidden]) .sidebar.right");
   await d.openObject("Robot");
-  // the mesh starts as its folders alone
-  await left.locator(".list-row.branch").first().waitFor();
-  check((await left.locator(".list-row[title]").count()) === 0, "the mesh tree started open");
-  const row = await d.meshRow("Robot/Pose");
-  await row.locator('.row-add[title="Add to Robot"]').click();
+  // the tree starts as its folders alone
+  await page.locator('.screen:not([hidden]) .object-sheet button[title="Add from the mesh"]').click();
+  const picker = page.locator(".popover.mesh-picker");
+  await picker.locator(".list-row.folder").first().waitFor();
+  check((await picker.locator(".list-row[title]").count()) === 0, "the mesh tree started open");
+  await page.keyboard.press("Escape");
+  await d.addFromMesh("Robot/Pose");
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Robot.RobotPose" && i.entity === "Robot/Pose" && i.intent === "read"), "the one click member");
   await right.locator(".head-title", { hasText: /^Robot\.RobotPose$/ }).waitFor();
   await d.member("RobotPose").waitFor();
-  await eventually(async () => (await row.locator(".row-add").count()) === 0, "the added row to stop offering +");
-  check((await row.locator(".list-trail").textContent()) === "Robot.RobotPose", "the row does not name its member");
 
   const pageId = await hmi.addPage("Pose page");
   const text = await hmi.addElement(pageId, "span", { name: "Pose", x: "44", y: "44", w: "264", h: "44", text: "Robot.RobotPose.position.x.toFixed(2)" });
@@ -41,12 +40,9 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await right.locator(".error-line", { hasText: "Joints is already an import of Robot" }).waitFor();
   check((await right.locator(".head-title").first().textContent()) === "Robot.Place", "the inspector left the member refused its rename");
 
-  // an entity picked offers to join the object open, under its own name
-  await (await d.meshRow("Line1/Conveyor")).click();
-  await right.locator("button", { hasText: /^Add to Robot$/ }).waitFor();
+  // the tree adds to the object open, under its own name
   await d.openObject("Line");
-  await (await d.meshRow("Line1/Conveyor")).click();
-  await right.locator("button", { hasText: /^Add to Line$/ }).click();
+  await d.addFromMesh("Line1/Conveyor");
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Line.Conveyor" && i.entity === "Line1/Conveyor"), "the conveyor added to Line");
   await right.locator(".head-title", { hasText: /^Line\.Conveyor$/ }).waitFor();
 }

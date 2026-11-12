@@ -67,6 +67,10 @@ export const object = (name: string): Thing | undefined => state.objects.find((o
 /** A mesh member's entity in full: from its object's mesh root, or the mesh's own for `/x`. */
 export const entityOf = (o: Thing, path: string) => (path.startsWith("/") ? path.slice(1) : o.mesh ? `${o.mesh}/${path}` : path);
 
+/** An entity's path as a member of `o` writes it: from the object's mesh root, else from the
+ *  mesh's own with a leading slash. `entityOf` reads it back. */
+export const pathOf = (o: Thing, entity: string) => (!o.mesh ? entity : entity.startsWith(`${o.mesh}/`) ? entity.slice(o.mesh.length + 1) : `/${entity}`);
+
 /** Every object's mesh members, each by its key with its entity in full. */
 export const imports = createRoot(() => createMemo(() => state.objects.flatMap((o) => o.imports.map((i): Import => ({ ...i, alias: key(o.name, i.alias), entity: entityOf(o, i.entity) })))));
 

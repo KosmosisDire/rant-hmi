@@ -15,22 +15,6 @@
   min-width: 0;
 }
 
-/* A part's word folds its body, the whole head left of its actions. */
-.fold {
-  align-self: stretch;
-  color: inherit;
-  text-align: left;
-}
-
-.fold > svg {
-  flex: 0 0 auto;
-  color: var(--dim);
-}
-
-.pane-head.below {
-  border-top: 1px solid var(--border);
-}
-
 .pane-body {
   flex: 1;
   min-height: 0;
@@ -498,6 +482,43 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
+/* What a name is, over its line, with a way to where it is defined. */
+.about-card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 180px;
+}
+
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.about-name {
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.about-value {
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+.about-go {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-top: 2px;
+  padding: 3px 0 0;
+  border-top: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 11px;
+  text-align: left;
+}
+
 .sign-at {
   font-weight: 700;
   color: var(--text);
@@ -712,10 +733,6 @@
 
 .list-row.selected .list-label {
   font-weight: 600;
-}
-
-.list-row.branch .list-label {
-  color: var(--dim);
 }
 
 .list-trail {
@@ -1257,4 +1274,116 @@ table.grid td.name > span {
   object-fit: contain;
   background: var(--ground);
   border-radius: 2px;
+}
+
+/* A value box that opens a list to pick from, its value on the left and a chevron on the right. */
+.editor.value-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+}
+
+/* The mesh as a tree floating under what opened it, to pick an entity. */
+.mesh-picker {
+  width: 360px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.mesh-picker .pane-body {
+  overflow: auto;
+}
+
+/* A row of any tree: every sidebar's and the mesh picker's look alike. A folder's name is dim,
+   what it holds is not. */
+.tree-row {
+  gap: 4px;
+  width: calc(100% - 8px);
+  height: var(--layer);
+  margin: 0 4px;
+  padding: 0 6px 0 4px;
+}
+
+.tree-row .caret {
+  width: 20px;
+  margin-right: 2px;
+}
+
+/* a caret that folds is a button the whole row tall, reaching a little past its zone on the
+   left, so names still line up */
+.tree-row .open-caret {
+  width: 24px;
+  margin: 0 0 0 -2px;
+  border-radius: 4px;
+}
+
+:root:not([data-pointer="touch"]) .tree-row .open-caret:hover {
+  color: var(--text);
+  background: var(--panel3);
+}
+
+.layer-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--dim);
+}
+
+.tree-row.folder .list-label {
+  color: var(--dim);
+}
+
+/* a page or component is the HMI's own, blue as an object is, apart from the folders */
+.tree-row[data-page] .layer-icon {
+  color: var(--blue);
+}
+
+/* What ends a tree's row, as marks and buttons, against its right edge. */
+.row-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.row-end > .list-trail {
+  margin-left: 0;
+}
+
+/* A page's or component's picture beside its row in a tree, while the pointer rests there. */
+.tree-preview {
+  position: fixed;
+  z-index: 70;
+  padding: 6px;
+  pointer-events: none;
+  background: var(--float);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.page-picture {
+  overflow: hidden;
+  border-radius: 3px;
+}
+
+/* A row a drag takes into a folder, or onto the board, goes with a finger's sideways drag while
+   an upright swipe still scrolls its list. */
+.list-row[data-page],
+.list-row[data-object] {
+  touch-action: pan-y;
+}
+
+/* What a dragged row is, under the pointer until it lets go. */
+.tree-ghost {
+  position: fixed;
+  z-index: 80;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text);
+  pointer-events: none;
+  background: var(--float);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
 }

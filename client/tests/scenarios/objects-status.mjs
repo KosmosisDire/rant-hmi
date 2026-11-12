@@ -5,9 +5,7 @@
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await d.tab("Objects");
-  const left = page.locator(".screen:not([hidden]) .sidebar.left");
-  await left.locator(".list-row.branch", { hasText: /^Hmi\/$/ }).click();
-  await left.locator('.list-row[title="Hmi/Status"]').waitFor();
+  await hmi.until((s) => s.entities.some((e) => e.name === "Hmi/Status"), "Hmi/Status on the mesh");
   check(!hmi.state.entities.find((e) => e.name === "Hmi/Status").writable, "the status takes writes");
 
   await hmi.import("Hmi.HmiStatus", "Hmi/Status");

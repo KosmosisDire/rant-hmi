@@ -7,7 +7,7 @@ import { change } from "../../state/change";
 import { complete, signature, type Suggestion } from "../../state/complete";
 import { fits } from "../../state/names";
 import { DraftInput } from "../../ui/DraftInput";
-import { paint } from "../../ui/highlight";
+import { nameHelp } from "../../ui/highlight";
 import { MemberPane } from "./Member";
 import type { Picking } from "./ObjectsScreen";
 
@@ -40,7 +40,7 @@ export function FunctionView(p: { object: Thing; function: Function; picking: Pi
         onCommit={(code) => put({ code })}
         complete={(t, c) => complete(t, c, "handler", undefined, passed(), p.object.name)}
         hint={(t, c) => signature(t, c, "handler", p.object.name)}
-        paint={(src) => paint(src, p.object.name)}
+        {...nameHelp(passed, () => p.object.name)}
       />
     </MemberPane>
   );

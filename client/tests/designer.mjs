@@ -10,10 +10,9 @@ export function designer(page) {
     await field.press("Enter");
   };
   // a page or component from its +, open once its row is the one selected: until then the
-  // inspector still shows the one open before, which a name typed now would rename. A
-  // component open shows as a card and a band both, the card first.
+  // inspector still shows the one open before, which a name typed now would rename.
   const fresh = async (button, named) => {
-    const open = left().locator(":is(.page-row, .card).selected .list-label");
+    const open = left().locator(".page-row.selected .list-label");
     const now = async () => ((await open.count()) > 0 ? ((await open.first().textContent()) ?? "") : "");
     const before = await now();
     await left().locator(`button[title="${button}"]`).click();
@@ -56,11 +55,11 @@ export function designer(page) {
       await page.locator(".tab", { hasText: name }).click();
     },
 
-    /** Opens a page or a component by its exact name, its band or its card, once the board has
+    /** Opens a page or a component by its exact name, its row in the tree, once the board has
      *  flown to it. */
     async openPage(name) {
       await d.tab("Design");
-      await left().locator(":is(.page-row, .card)", { has: page.getByText(name, { exact: true }) }).last().click();
+      await left().locator(".page-row", { has: page.getByText(name, { exact: true }) }).last().click();
       await landed();
     },
 
@@ -200,7 +199,7 @@ export function designer(page) {
       await d.tab("Design");
       await fresh("Add a component", /^Component\d*$/);
       await d.setField("Name", name);
-      await left().locator(".card.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
+      await left().locator(".page-row.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
       await d.set({ w: String(w), h: String(h) });
     },
 
@@ -209,7 +208,7 @@ export function designer(page) {
       await d.tab("Design");
       await fresh("Add a 3D component", /^Component3D\d*$/);
       await d.setField("Name", name);
-      await left().locator(".card.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
+      await left().locator(".page-row.selected", { has: page.getByText(name, { exact: true }) }).waitFor();
     },
 
     /** Adds an input to the open component, from its inspector with nothing selected, written
@@ -366,16 +365,17 @@ export function designer(page) {
       await d.set(fields);
     },
 
-    /** An entity's row in the Objects screen's mesh tree, found as a person finds one in a tree
-     *  that starts closed: by its name in the filter. */
-    async meshRow(entity) {
-      await left().locator(".filter input").fill(entity);
-      return left().locator(`.list-row[title="${entity}"]`);
+    /** Adds an entity to the open object from the mesh tree its Mesh section's + opens. */
+    async addFromMesh(entity) {
+      await page.locator('.screen:not([hidden]) .object-sheet button[title="Add from the mesh"]').click();
+      const picker = page.locator(".popover.mesh-picker");
+      await picker.locator(".filter input").fill(entity);
+      await picker.locator(`.list-row[title="${entity}"]`).click();
     },
 
-    /** A page's band or a component's card by its name. */
+    /** A page's or a component's row in the tree by its name. */
     pageRow(name) {
-      return left().locator(":is(.page-row, .card)", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
+      return left().locator(".page-row", { has: page.locator(".list-label", { hasText: new RegExp(`^${name}$`) }) });
     },
 
     /** The open page's band and layers, every fold in them opened as a person opens them, since

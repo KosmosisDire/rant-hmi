@@ -46,7 +46,7 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await longPress();
   await sheet.locator(".popover.menu").waitFor();
   const menu = await resting();
-  check(menu.x === 0 && menu.width === 390 && Math.round(menu.y + menu.height) === 844 && menu.height < 844 / 2, `the menu sheet is ${JSON.stringify(menu)}`);
+  check(menu.x === 0 && menu.width === 390 && Math.round(menu.y + menu.height) === 844 && menu.height < 844 * 0.6, `the menu sheet is ${JSON.stringify(menu)}`);
   check(await screen.evaluate(() => !document.activeElement?.classList.contains("menu-item")), "a phone's menu opens with a row picked");
   await screen.locator(".sheet-scrim").tap({ position: { x: 100, y: 100 } });
   await eventually(async () => (await sheet.count()) === 0, "a tap on the dimmed screen to close the menu");

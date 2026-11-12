@@ -1,8 +1,9 @@
 import { createEffect, createSignal, onMount, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
+import type { About } from "../state/about";
 import type { Completion, Signature, Suggestion } from "../state/complete";
 import { type Paint, painted } from "./highlight";
-import { SignatureHint, type Spot, Suggestions } from "./Suggestions";
+import { AboutCard, SignatureHint, type Spot, Suggestions } from "./Suggestions";
 import { onResize } from "./size";
 
 type Field = HTMLInputElement | HTMLTextAreaElement;
@@ -31,6 +32,9 @@ export function DraftInput(p: {
   hint?: (text: string, caret: number) => Signature | null;
   /** How the text is coloured, as code unless it holds lines of CSS. */
   paint?: (src: string) => [string, Paint][];
+  /** What the name at a point of the text is, shown while the caret or the pointer is on it,
+   *  and gone to with Ctrl click. */
+  about?: (text: string, at: number) => About | null;
   class?: string;
   placeholder?: string;
   title?: string;
@@ -49,7 +53,23 @@ export function DraftInput(p: {
   const [offer, setOffer] = createSignal<Completion | null>(null);
   const [chosen, setChosen] = createSignal(-1);
   const [sign, setSign] = createSignal<Signature | null>(null);
-  const signAt = () => setSign(p.hint && document.activeElement === field ? p.hint(field.value, field.selectionStart ?? field.value.length) : null);
+  // the name under the caret, and under the pointer, each with where its word starts
+  const [here, setHere] = createSignal<{ about: About; from: number } | null>(null);
+  const [hovered, setHovered] = createSignal<{ about: About; from: number } | null>(null);
+  const aboutAt = (at: number) => {
+    const about = at >= 0 && p.about ? p.about(field.value, at) : null;
+    let from = at;
+    while (from > 0 && /[\w$]/.test(field.value[from - 1])) from--;
+    return about ? { about, from } : null;
+  };
+  const signAt = () => {
+    const focused = document.activeElement === field;
+    const caret = field.selectionStart ?? field.value.length;
+    setSign(p.hint && focused ? p.hint(field.value, caret) : null);
+    setHere(focused ? aboutAt(caret) : null);
+  };
+  // the pointer's card first, else the caret's while no list or hint takes its place
+  const card = () => hovered() ?? (offer() || sign() ? null : here());
 
   const look = () => {
     setChosen(-1);
@@ -80,6 +100,7 @@ export function DraftInput(p: {
   const commit = () => {
     setOffer(null);
     setSign(null);
+    setHere(null);
     const text = draft();
     if (text === null) return;
     if (p.accept && !p.accept(text)) return setBad(true);
@@ -178,6 +199,26 @@ export function DraftInput(p: {
     return { left, top, bottom: top + line, width: r.width, word: true };
   };
 
+  /** Where in the text a point of the screen falls, -1 past a line's end. */
+  const offsetAt = (x: number, y: number): number => {
+    const [r, css] = [field.getBoundingClientRect(), getComputedStyle(field)];
+    ruler ??= document.createElement("canvas").getContext("2d");
+    if (!ruler) return -1;
+    ruler.font = `${css.fontStyle} ${css.fontWeight} ${css.fontSize} ${css.fontFamily}`;
+    const lines = field.value.split("\n");
+    const line = parseFloat(css.lineHeight) || parseFloat(css.fontSize) * 1.2;
+    const row = p.multiline ? Math.floor((y - r.top - parseFloat(css.borderTopWidth) - parseFloat(css.paddingTop) + field.scrollTop) / line) : 0;
+    if (row < 0 || row >= lines.length) return -1;
+    const tab = " ".repeat(Number(css.tabSize) || 8);
+    const px = x - r.left - parseFloat(css.borderLeftWidth) - parseFloat(css.paddingLeft) + field.scrollLeft;
+    const text = lines[row];
+    const width = (n: number) => ruler!.measureText(text.slice(0, n).replaceAll("\t", tab)).width;
+    if (px < 0 || px > width(text.length)) return -1;
+    let n = 0;
+    while (n < text.length && width(n + 1) <= px) n++;
+    return lines.slice(0, row).reduce((a, l) => a + l.length + 1, 0) + n;
+  };
+
   // a last empty line still takes its height, as it does in the field
   const shown = () => {
     const text = draft() ?? p.value;
@@ -204,7 +245,14 @@ export function DraftInput(p: {
       }}
       onScroll={follow}
       onFocus={enter}
-      onClick={enter}
+      onClick={(e: MouseEvent) => {
+        // Ctrl click goes to where the name under the pointer is defined
+        const go = (e.ctrlKey || e.metaKey) && p.about ? aboutAt(offsetAt(e.clientX, e.clientY))?.about.go : undefined;
+        if (go) return go();
+        enter();
+      }}
+      onPointerMove={(e: PointerEvent) => setHovered(p.about ? aboutAt(offsetAt(e.clientX, e.clientY)) : null)}
+      onPointerLeave={() => setHovered(null)}
       onKeyUp={moved}
       onBlur={commit}
       onKeyDown={key}
@@ -222,6 +270,7 @@ export function DraftInput(p: {
         <pre class="hl" classList={{ wrap: p.multiline && !p.code }} ref={colours} aria-hidden="true" innerHTML={shown()} />
         {/* the list comes later, so where both float it covers the hint */}
         <Show when={sign()}>{(s) => <SignatureHint sign={s()} at={() => spot(s().from)} />}</Show>
+        <Show when={card()}>{(c) => <AboutCard about={c().about} at={() => spot(c().from)} />}</Show>
         <Show when={offer()}>{(o) => <Suggestions items={o().items} chosen={chosen()} onTake={take} at={() => spot(o().from)} />}</Show>
       </span>
     </Show>

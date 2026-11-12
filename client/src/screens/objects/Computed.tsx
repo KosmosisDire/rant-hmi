@@ -11,7 +11,7 @@ import { key, names } from "../../state/names";
 import { preview } from "../../state/preview";
 import { split } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
-import { paint } from "../../ui/highlight";
+import { nameHelp } from "../../ui/highlight";
 import { Preview } from "../../ui/Preview";
 import { Field, type Where, WhereContext } from "../design/Field";
 import { MemberPane } from "./Member";
@@ -91,7 +91,7 @@ export function ComputedView(p: { object: Thing; computed: Computed; picking: Pi
               accept={(t) => t.trim() !== ""}
               onCommit={(value) => put({ set: { target: s().target, value: value.trim() } })}
               complete={(t, c) => complete(t, c, "system", undefined, [NEW_VALUE], p.object.name)}
-              paint={(src) => paint(src, p.object.name)}
+              {...nameHelp(() => [NEW_VALUE], () => p.object.name)}
             />
           </div>
         )}

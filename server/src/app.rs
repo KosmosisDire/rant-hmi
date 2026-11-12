@@ -5,6 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::ops::Deref;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -18,6 +19,7 @@ use tracing::{debug, info, warn};
 
 use crate::authorize::{Who, authorize};
 use crate::events;
+use crate::files;
 use crate::fields::Keep;
 use crate::lanes::{Lanes, PIECE};
 use crate::mesh::codec;
@@ -29,7 +31,7 @@ use crate::project::{Import, Intent, Kind, Per, Project, Target, Token, Variable
 use crate::reads::Reads;
 use crate::rules;
 use crate::problems::{Problems, word};
-use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, Level, Problem, Reader, Reported, Sample, ScreenCondition, ServerMsg, TypeInfo, ValueUpdate, WebrtcProblem, encode, encode_plain};
+use crate::protocol::{Base, Brought, ClientMsg, EnumInfo, FolderKind, Folders, Level, Problem, Reader, Reported, Sample, ScreenCondition, ServerMsg, TypeInfo, ValueUpdate, WebrtcProblem, encode, encode_plain};
 use crate::script::{CallFailure, End, FromScript, Script, ToScript, Typed};
 use crate::pages::js;
 use crate::status::{self, Client, HmiStatus};
@@ -621,6 +623,8 @@ struct Slot {
 pub struct App {
     project: Project,
     pages: Pages,
+    /// The folders of each kind, as screens were last told them.
+    folders: Folders,
     /// Rant's standard types, as every screen is told them.
     standard: Vec<TypeInfo>,
     mesh: Mesh,
@@ -696,9 +700,11 @@ impl App {
         script.send(ToScript::Pages(pages.keys()));
         let shared: HashMap<String, Value> = project.flat().variables.iter().filter(|v| v.per == Per::Hmi).map(|v| (v.name.clone(), v.start.clone())).collect();
         script.send(ToScript::values(shared.iter().map(|(k, v)| (k.clone(), Some(v.clone())))));
+        let folders = Self::folders_now(project.root());
         App {
             project,
             pages,
+            folders,
             standard,
             mesh,
             script,
@@ -990,6 +996,7 @@ impl App {
             self.send(session, &ServerMsg::Samples { name: r.name.clone(), samples, whole: true });
         }
         self.send(session, &ServerMsg::PageKeys { keys: self.pages.keys() });
+        self.send(session, &ServerMsg::Folders { folders: self.folders.clone() });
         // the pages end what is not values, so a test client waits for them as the welcome's end
         self.send(session, &ServerMsg::Pages { pages: self.pages.list.clone() });
         self.put_values(Some(session), self.all_values(session));
@@ -1137,6 +1144,21 @@ impl App {
                 self.watch(session);
             }
             ClientMsg::SetObject { name, object } => self.set_object(session, name, object),
+            ClientMsg::MoveToFolder { kind, name, folder } => {
+                let moved = match kind {
+                    FolderKind::Objects => self.project.move_object(&name, &folder),
+                    _ => self.pages.move_to(&name, &folder),
+                };
+                match moved {
+                    Ok(()) if kind == FolderKind::Objects => self.broadcast(&self.whole(List::Objects)),
+                    Ok(()) => self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() }),
+                    Err(text) => self.refuse(session, text, None),
+                }
+                self.folders_changed();
+            }
+            ClientMsg::MakeFolder { kind, folder } => self.change_folders(session, files::make_folder(&self.project.root().join(kind.dir()), &folder)),
+            ClientMsg::MoveFolder { kind, from, to } => self.change_folders(session, files::move_folder(&self.project.root().join(kind.dir()), &from, &to)),
+            ClientMsg::RemoveFolder { kind, folder } => self.change_folders(session, files::remove_folder(&self.project.root().join(kind.dir()), &folder)),
             ClientMsg::Import { object, import } => {
                 let key = object::key(&object, &import.alias);
                 self.change_objects(session, Some(key), None, |p| p.import(&object, import));
@@ -1947,6 +1969,31 @@ impl App {
         Ok(())
     }
 
+    /// The folders of each kind as the project's folder holds them now.
+    fn folders_now(root: &Path) -> Folders {
+        let of = |kind: FolderKind| files::folders_under(&root.join(kind.dir()));
+        Folders { pages: of(FolderKind::Pages), components: of(FolderKind::Components), objects: of(FolderKind::Objects) }
+    }
+
+    /// Tells every screen the folders, when they changed.
+    fn folders_changed(&mut self) {
+        let now = Self::folders_now(self.project.root());
+        if now != self.folders {
+            self.folders = now;
+            self.broadcast(&ServerMsg::Folders { folders: self.folders.clone() });
+        }
+    }
+
+    /// Takes in a change made to the folders on disk, as the files then say, or tells the screen
+    /// why it was refused.
+    fn change_folders(&mut self, session: u32, done: Result<(), String>) {
+        if let Err(text) = done {
+            return self.refuse(session, text, None);
+        }
+        self.reload();
+        self.folders_changed();
+    }
+
     /// Takes in the project as its files say now, after a change made outside the HMI. A file
     /// with a mistake leaves everything as it was, and every screen hears why.
     fn reload(&mut self) {
@@ -1980,6 +2027,7 @@ impl App {
             self.broadcast(&ServerMsg::Pages { pages: self.pages.list.clone() });
             self.fields_changed();
         }
+        self.folders_changed();
     }
 
     fn tick(&mut self) {

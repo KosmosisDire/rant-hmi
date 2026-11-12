@@ -1,7 +1,7 @@
 // A mesh member's inspector: its entity and type, what the HMI may do with it, and its value
 // with what reads each field.
 
-import { createEffect, createMemo, Match, on, onCleanup, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, Match, on, onCleanup, Show, Switch } from "solid-js";
 import type { Path } from "../../lang/reads.js";
 import { send } from "../../net/connection";
 import type { Import } from "../../protocol/Import";
@@ -10,7 +10,7 @@ import { ALIAS } from "../../protocol/rules";
 import type { Value } from "../../protocol/Value";
 import { change } from "../../state/change";
 import { bareType, choosesIntent, intents } from "../../state/format";
-import { entityOf, key } from "../../state/names";
+import { entityOf, key, pathOf } from "../../state/names";
 import { pagesReading, touches } from "../../state/paths";
 import { preview } from "../../state/preview";
 import { entity, setState, state } from "../../state/store";
@@ -19,6 +19,8 @@ import { Choice } from "../../ui/Choice";
 import { DraftInput } from "../../ui/DraftInput";
 import { Calls } from "./Entity";
 import { MemberPane } from "./Member";
+import { MeshPopover } from "./MeshTree";
+import { ChevronDown } from "../../ui/icons";
 import type { Picking } from "./ObjectsScreen";
 import { ValueTree } from "./ValueTree";
 
@@ -31,6 +33,8 @@ const rateOf = (text: string): number | undefined => (/^[1-9]\d{0,4}$/.test(text
 export function ImportView(p: { object: Thing; imp: Import; picking: Picking }) {
   const k = () => key(p.object.name, p.imp.alias);
   const full = () => entityOf(p.object, p.imp.entity);
+  /** The Entity field while the mesh tree floats under it. */
+  const [meshAt, setMeshAt] = createSignal<HTMLElement | null>(null);
   const e = () => entity(full());
   const v = () => preview(k());
   // a screen writes only what code outside the object reads
@@ -70,9 +74,21 @@ export function ImportView(p: { object: Thing; imp: Import; picking: Picking }) 
         <>
           <div class="field">
             <label>Entity</label>
-            <span class="mono field-text" title={full()}>
-              {full()}
-            </span>
+            {/* another entity picked here keeps the member's name, so what names it still does */}
+            <button class="editor value-pick" title="Bring another entity" onClick={(ev) => setMeshAt(ev.currentTarget)}>
+              <span class="list-label">{full()}</span>
+              <ChevronDown size={12} />
+            </button>
+            <Show when={meshAt()}>
+              {(at) => (
+                <MeshPopover
+                  anchor={at()}
+                  chosen={full()}
+                  onPick={(en) => put({ entity: pathOf(p.object, en.name), kind: en.kind, rate: en.kind === "topic" ? p.imp.rate : undefined })}
+                  onClose={() => setMeshAt(null)}
+                />
+              )}
+            </Show>
           </div>
           <Show when={choosesIntent(p.imp.kind)}>
             <div class="field">

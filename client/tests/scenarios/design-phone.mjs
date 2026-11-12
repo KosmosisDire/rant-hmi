@@ -1,7 +1,7 @@
 // The Design tab on a phone: the page fills the screen, the left sidebar is a drawer over it
 // and the right one a sheet along its bottom. A page or a layer picked from the drawer puts it
 // away, and an element picked there or tapped on the page shows in the sheet, kept in sight
-// above it. A component card dragged out of the drawer lands on the page, one finger drags an
+// above it. A component's row dragged out of the drawer lands on the page, one finger drags an
 // element, two pinch and pan, a small element keeps its corner grips alone, and a field's
 // clear button shows with no hover to find it by. A desktop keeps its sidebars beside the page.
 
@@ -105,21 +105,21 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await toggle.last().tap();
   await settled(sheet, "the sheet to lower again");
 
-  // a component card dragged out of the drawer puts it away and lands where it is let go
+  // a component's row dragged out of the drawer puts it away and lands where it is let go
   const placed = () => hmi.page(pageId).children.filter((c) => c.component === "Phonepart").length;
   const sheetBox = await on(".page-layer.open > .page").boundingBox();
   await toggle.first().tap();
-  await settled(drawer, "the drawer to slide out for a card");
-  const card = drawer.locator(".card", { hasText: "Phonepart" });
-  await card.scrollIntoViewIfNeeded();
-  const [cx, cy] = middle(await card.boundingBox());
+  await settled(drawer, "the drawer to slide out for a row");
+  const row = drawer.locator(".page-row", { hasText: "Phonepart" });
+  await row.scrollIntoViewIfNeeded();
+  const [cx, cy] = middle(await row.boundingBox());
   const [px, py] = [sheetBox.x + sheetBox.width * 0.6, sheetBox.y + sheetBox.height * 0.3];
   await touch("touchStart", [[cx, cy]]);
   for (let i = 1; i <= 3; i++) await touch("touchMove", [[cx + i * 10, cy]]);
-  await eventually(async () => !(await drawer.isVisible()), "the drawer to go as a card is dragged");
+  await eventually(async () => !(await drawer.isVisible()), "the drawer to go as a row is dragged");
   for (let i = 1; i <= 5; i++) await touch("touchMove", [[cx + 30 + ((px - cx - 30) * i) / 5, cy + ((py - cy) * i) / 5]]);
   await touch("touchEnd");
-  await eventually(() => placed() === 1, "the card dragged out of the drawer to land on the page");
+  await eventually(() => placed() === 1, "the row dragged out of the drawer to land on the page");
 
   // one finger drags the element by whole units
   const k = sheetBox.width / 128;

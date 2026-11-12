@@ -24,7 +24,21 @@ function pressed(e: PointerEvent) {
   // a press on what opened one leaves it to that control, which toggles it
   let at = open.length - 1;
   while (at >= 0 && !open[at].el.contains(target) && !open[at].anchor?.contains(target)) at--;
-  for (const p of open.slice(at + 1).reverse()) p.close();
+  const closing = open.slice(at + 1);
+  for (const p of [...closing].reverse()) p.close();
+  // a phone's sheet lies over a dimmed screen, so the tap on it only closes the sheet and never
+  // reaches what lies under it
+  if (closing.length > 0 && phone()) swallowClick();
+}
+
+/** Stops the click that follows a press now, so the press does nothing more than it did. */
+function swallowClick() {
+  const stop = (c: MouseEvent) => {
+    c.stopPropagation();
+    c.preventDefault();
+  };
+  window.addEventListener("click", stop, { capture: true, once: true });
+  setTimeout(() => window.removeEventListener("click", stop, true), 600);
 }
 
 function key(e: KeyboardEvent) {

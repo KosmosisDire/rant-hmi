@@ -4,6 +4,7 @@
 import { batch, createSignal, type Signal, untrack } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { setTypes, tag, TYPE } from "../lang/math.js";
+import type { Folders } from "../protocol/Folders";
 import type { Way } from "../net/data.worker";
 import { packed, samePacked } from "../net/packed";
 import type { Brought } from "../protocol/Brought";
@@ -76,6 +77,8 @@ export interface State {
   pages: Page[];
   /** What code calls each page, as `Pages.Overview`, with its id. */
   pageKeys: [string, string][];
+  /** The folders pages, components and objects are kept in, empty ones too. */
+  folders: Folders;
   /** What this screen's last edit made, to open or select. `n` counts, so the same id twice
    *  still reads as new. */
   made: { page: string; id: string; n: number } | null;
@@ -108,6 +111,7 @@ export const [state, setState] = createStore<State>({
   entities: [],
   pages: [],
   pageKeys: [],
+  folders: { pages: [], components: [], objects: [] },
   made: null,
   refused: null,
   notices: [],
@@ -221,6 +225,9 @@ export function receive(msg: ServerMsg, far: readonly string[] = []) {
       break;
     case "page_keys":
       setState("pageKeys", msg.keys);
+      break;
+    case "folders":
+      setState("folders", msg.folders);
       break;
     case "moved":
       // the page takes its new id here at once, so nothing showing it loses it before its list comes

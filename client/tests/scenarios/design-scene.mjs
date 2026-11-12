@@ -7,8 +7,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const loaded = () => page.evaluate(() => performance.getEntriesByType("resource").some((r) => /\/assets\/scene-[^/]*\.js$/.test(r.name)));
   // the board draws the pages beside this one too, and those its flight to a new page passes
   // over, and the hidden run the start page as the editor opens, any of which may hold a scene
-  // of its own, as one an earlier scenario left
-  const holds = (els) => els.some((e) => e.tag === "scene" || holds(e.children));
+  // of its own, as one an earlier scenario left, or a view showing a page that holds one
+  const holds = (els) => els.some((e) => e.tag === "scene" || e.tag === "view" || holds(e.children));
   // a fresh editor may not have drawn its board yet
   await page.locator(".artboard").waitFor({ state: "attached" });
   await page.evaluate(() => {

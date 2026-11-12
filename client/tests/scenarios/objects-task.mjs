@@ -6,13 +6,11 @@ export default async function ({ page, hmi, d, check, eventually }) {
   for (const i of hmi.state.imports.filter((x) => x.entity === "Line1/Fill")) await hmi.unimport(i.alias);
   await d.openObject("Line");
   const right = page.locator(".screen:not([hidden]) .sidebar.right");
-  await (await d.meshRow("Line1/Fill")).click();
-  await right.getByText("Progress", { exact: true }).waitFor();
-  check(!(await right.locator(".choice").isVisible()), "a task offers an intent");
-  await right.locator("button", { hasText: /^Add to Line$/ }).click();
+  await d.addFromMesh("Line1/Fill");
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Line.Fill" && i.kind === "task" && i.intent === "write"), "the member, to call");
   await right.locator(".head-title", { hasText: /^Line\.Fill$/ }).waitFor();
   check((await right.locator(".pane-head .tag").first().textContent()) === "mesh task", "the member is not tagged a mesh task");
+  await right.getByText("Progress", { exact: true }).waitFor();
 
   for (const [name, start] of [["Hmi.filled", 0], ["Hmi.parts", 0], ["Hmi.shares", 0], ["Hmi.ended", ""]]) {
     hmi.setVariable(name, start);

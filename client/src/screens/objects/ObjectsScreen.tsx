@@ -1,31 +1,48 @@
 // The Objects tab: the objects and the theme over the mesh on the left, the open one's sheet in
 // the middle, and on the right what is picked of it.
 
-import { batch, createEffect, createSignal, For, type JSX, on, onMount, Show } from "solid-js";
+import { batch, createEffect, createSignal, For, type JSX, on, onMount, Show, untrack } from "solid-js";
 import { standardType } from "../../lang/math.js";
 import { send } from "../../net/connection";
 import type { EntityInfo } from "../../protocol/EntityInfo";
-import { freeName, HMI, importOf, key, named, object } from "../../state/names";
-import { notify, setState, split, state } from "../../state/store";
+import { freeName, HMI, importOf, key, named, object, pathOf } from "../../state/names";
+import { notify, page as pageOf, setState, split, state } from "../../state/store";
 import { usedBy } from "../../state/usage";
-import { Copy, Monitor, Palette, Plus, Trash } from "../../ui/icons";
-import { ObjectIcon } from "../../ui/marks";
-import { fold, FoldHead } from "../../ui/Fold";
+import { objectsWanted, tookObjectsWanted } from "../../state/view";
+import { AppWindow, ChartSpline, CircleDot, Copy, File, Monitor, Palette, Parentheses, Plus, Sigma, Trash, Zap } from "../../ui/icons";
+import { dragToFolder, FolderTree, justDragged, moveRow, TreeRow } from "../../ui/Tree";
+import { PagePicture } from "../design/PagePicture";
+import { KindIcon, ObjectIcon } from "../../ui/marks";
 import { copyText, openMenu } from "../../ui/Menu";
 import { closeDrawer, Edge, reveal, Sidebar } from "../../ui/Sidebars";
 import { onResize } from "../../ui/size";
 import { Inspector } from "./Inspector";
-import { MeshTree } from "./MeshTree";
+import { PageSheet, stateCount } from "./PageSheet";
+import type { Element } from "../../protocol/Element";
+import type { Kind } from "../../protocol/Kind";
+import type { Object as Thing } from "../../protocol/Object";
+import type { Page } from "../../protocol/Page";
 import { Sheet } from "./Sheet";
 import { ThemeSheet } from "./Theme";
 
 /** What the inspector shows of the open sheet: the object itself, one of its members by name,
- *  one of its logic's rules, an entity on the mesh, or a token of the theme. */
-export type Pick = { kind: "object" } | { kind: "member"; name: string } | { kind: "rule"; id: string } | { kind: "entity"; name: string } | { kind: "token"; name: string };
+ *  one of its logic's rules, an entity on the mesh, a token of the theme, or a page's state by
+ *  the element keeping it, none for the page's own. */
+export type Pick =
+  | { kind: "object" }
+  | { kind: "member"; name: string }
+  | { kind: "rule"; id: string }
+  | { kind: "entity"; name: string }
+  | { kind: "token"; name: string }
+  | { kind: "state"; holder: string | null; name: string };
 
 export interface Picking {
   /** The object whose sheet shows, null while the theme's does. */
   open: string | null;
+  /** The page whose sheet shows in place of any object's, if one does. */
+  page: string | null;
+  /** Shows a page's sheet. */
+  onOpenPage: (page: string) => void;
   picked: Pick;
   /** Shows the sheet of an object, or the theme's for null, with `pick` picked, else itself. */
   onOpen: (object: string | null, pick?: Pick) => void;
@@ -54,18 +71,41 @@ function suggest(object: string, entity: string): string {
   return freeName(clash(last) && parts.length > 1 ? pascal(parts.at(-2)!) + last : last, clash);
 }
 
-/** An entity's path as a member of `object` writes it: from the object's mesh root, else from
- *  the mesh's own with a leading slash. */
-function relative(object: string, entity: string): string {
-  const root = state.objects.find((o) => o.name === object)?.mesh ?? "";
-  if (!root) return entity;
-  return entity.startsWith(`${root}/`) ? entity.slice(root.length + 1) : `/${entity}`;
+
+
+/** The kinds of mesh member, in the order an object's row marks them. */
+const KINDS: Kind[] = ["topic", "variable", "function", "task"];
+
+/** Small marks for each kind of thing an object or a page defines, in a row's trail. */
+function Defines(p: { marks: [boolean, JSX.Element, string][] }) {
+  return (
+    <span class="list-trail defines">
+      <For each={p.marks.filter(([has]) => has)}>{([, icon, title]) => <span title={title}>{icon}</span>}</For>
+    </span>
+  );
 }
 
-/** Whether the objects and the mesh, which share the sidebar, each show, as this browser
- *  remembers it. */
-const folds = { objects: fold("pane-objects"), mesh: fold("pane-mesh") };
-const shown = (part: keyof typeof folds) => folds[part][0]() === "open";
+/** What an object defines: its mesh members by kind, then its own state, computed values,
+ *  records, functions and logic. */
+const objectMarks = (o: Thing): [boolean, JSX.Element, string][] => [
+  ...KINDS.map((k): [boolean, JSX.Element, string] => [o.imports.some((i) => i.kind === k), <KindIcon kind={k} size={11} />, `mesh ${k}s`]),
+  [o.variables.length > 0, <span class="kind kind-local"><CircleDot size={11} /></span>, "state"],
+  [o.computed.length > 0, <span class="kind kind-local"><Sigma size={11} /></span>, "computed values"],
+  [o.records.length > 0, <span class="kind kind-local"><ChartSpline size={11} /></span>, "records"],
+  [o.functions.length > 0, <span class="kind kind-local"><Parentheses size={11} /></span>, "functions"],
+  [o.logic.length > 0, <span class="kind kind-local"><Zap size={11} /></span>, "logic"],
+];
+
+/** What a page defines: state, its own or its elements', and views showing other pages. */
+const pageMarks = (pg: Page): [boolean, JSX.Element, string][] => [
+  [stateCount(pg) > 0, <span class="kind kind-local"><CircleDot size={11} /></span>, "state"],
+  [keepsViews(pg.children), <span class="kind kind-local"><AppWindow size={11} /></span>, "views"],
+];
+
+/** Whether any of `elements`, or what they hold, is a view. */
+const keepsViews = (elements: Element[]): boolean => elements.some((e) => e.tag === "view" || keepsViews(e.children));
+
+
 
 /** The member just asked for from the mesh, by its key, whose refusal shows beside its entity. */
 const [adding, setAdding] = createSignal("");
@@ -80,6 +120,7 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
     return state.objects.find((o) => o.name !== HMI)?.name ?? HMI;
   };
   const [picked, setPicked] = createSignal<Pick>({ kind: "object" });
+  const [pageOpen, setPageOpen] = createSignal<string | null>(null);
   const [fresh, setFresh] = createSignal<{ id: string; n: number } | null>(null);
   const picking: Picking = {
     get open() {
@@ -88,9 +129,22 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
     get picked() {
       return picked();
     },
+    get page() {
+      const id = pageOpen();
+      return id && pageOf(id) ? id : null;
+    },
+    onOpenPage: (id) => {
+      batch(() => {
+        setFresh(null);
+        setPageOpen(id);
+        setPicked({ kind: "object" });
+      });
+      closeDrawer();
+    },
     onOpen: (o, pick) => {
       batch(() => {
         setFresh(null);
+        setPageOpen(null);
         setChosen(o);
         setPicked(pick ?? { kind: "object" });
       });
@@ -157,9 +211,23 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
     const alias = suggest(o, e.name);
     setState("refused", null);
     setAdding(key(o, alias));
-    send({ type: "import", object: o, import: { alias, entity: relative(o, e.name), kind: e.kind, intent: "read" } });
+    send({ type: "import", object: o, import: { alias, entity: pathOf(object(o)!, e.name), kind: e.kind, intent: "read" } });
     picking.onPick({ kind: "entity", name: e.name });
   };
+  // what another tab asks to show here, as a name's definition
+  createEffect(() => {
+    const w = objectsWanted();
+    if (!w) return;
+    untrack(() => {
+      if ("page" in w) {
+        picking.onOpenPage(w.page);
+        picking.onPick({ kind: "state", holder: w.holder, name: w.state });
+      } else if ("token" in w) picking.onOpen(null, { kind: "token", name: w.token });
+      else picking.onOpen(w.object, w.member ? { kind: "member", name: w.member } : undefined);
+      tookObjectsWanted();
+    });
+  });
+
   // an entity picked that becomes a member shows as that member
   createEffect(() => {
     const s = picked();
@@ -171,58 +239,97 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
 
   const remove = (name: string) => {
     const places = usedBy(name).filter((at) => at.object !== name);
-    if (places.length > 0) return notify(`${places.length === 1 ? "1 place names" : `${places.length} places name`} ${name}. Change those first.`, "fault");
+    if (places.length > 0) notify(`${places.length === 1 ? "1 place still names" : `${places.length} places still name`} ${name}`, "warn");
     send({ type: "set_object", name, object: null });
     if (chosen() === name) setChosen(undefined);
   };
   const menu = (e: MouseEvent, name: string) =>
     openMenu(e, [
       { label: "Copy the name", icon: <Copy size={13} />, run: () => copyText(name) },
-      ...(name === HMI ? [] : ["-" as const, { label: "Remove", icon: <Trash size={13} />, run: () => remove(name) }]),
+      ...(name === HMI ? [] : [moveRow("objects", name, object(name)?.folder ?? "", state.folders.objects), "-" as const, { label: "Remove", icon: <Trash size={13} />, run: () => remove(name) }]),
     ]);
-  const count = (name: string) => {
-    const o = object(name);
-    return o ? o.imports.length + o.variables.length + o.computed.length + o.records.length + o.functions.length + o.logic.length : 0;
-  };
 
-  const Row = (r: { name: string; icon: JSX.Element }) => (
-    <button class="list-row" data-object={r.name} classList={{ selected: open() === r.name }} onClick={() => picking.onOpen(r.name)} onContextMenu={(e) => menu(e, r.name)}>
-      {r.icon}
-      <span class="list-label mono">{r.name}</span>
-      <span class="list-trail">{count(r.name)}</span>
-    </button>
+  const Row = (r: { name: string; icon: JSX.Element; depth: number }) => (
+    <TreeRow
+      depth={r.depth}
+      data-object={r.name}
+      classList={{ selected: !picking.page && open() === r.name }}
+      onClick={() => !justDragged() && picking.onOpen(r.name)}
+      onPointerDown={(e) => r.name !== HMI && dragToFolder(e, { kind: "objects", name: r.name, label: r.name })}
+      onContextMenu={(e) => menu(e, r.name)}
+      icon={r.icon}
+      label={<span class="mono">{r.name}</span>}
+      end={<Show when={object(r.name)}>{(o) => <Defines marks={objectMarks(o())} />}</Show>}
+    />
   );
+  const pageMenu = (e: MouseEvent, pg: Page) => openMenu(e, [{ label: "Open in Design", icon: <File size={13} />, run: () => picking.onPage(pg.id) }, moveRow("pages", pg.id, pg.folder, state.folders.pages)]);
 
   return (
     <>
       <Sidebar side="left">
-        <FoldHead title="Objects" fold={folds.objects}>
-          <button class="icon-btn" title="Add an object" onClick={() => make("NewObject", "")}>
-            <Plus size={14} />
-          </button>
-        </FoldHead>
-        <div class="objects-list" classList={{ tall: !shown("mesh") }} hidden={!shown("objects")}>
+        <div class="objects-list">
           <Row
             name={HMI}
+            depth={0}
             icon={
               <span class="kind kind-local" title="the HMI's own object">
                 <Monitor size={14} />
               </span>
             }
           />
-          <button class="list-row" data-object="" classList={{ selected: open() === null }} onClick={() => picking.onOpen(null)}>
-            <span class="kind kind-local" title="theme">
-              <Palette size={14} />
-            </span>
-            <span class="list-label">Theme</span>
-            <span class="list-trail">{state.tokens.length}</span>
-          </button>
-          <div class="list-sep" />
-          <For each={state.objects.filter((o) => o.name !== HMI)}>{(o) => <Row name={o.name} icon={<ObjectIcon />} />}</For>
-        </div>
-        <FoldHead title="Mesh" fold={folds.mesh} below />
-        <div class="mesh-part" hidden={!shown("mesh")}>
-          <MeshTree picking={picking} onAdd={add} onMake={(path) => make(pascal(path.split("/").at(-1) ?? "Object"), path)} />
+          <TreeRow
+            depth={0}
+            data-object=""
+            classList={{ selected: !picking.page && open() === null }}
+            onClick={() => picking.onOpen(null)}
+            icon={
+              <span class="kind kind-local" title="theme">
+                <Palette size={14} />
+              </span>
+            }
+            label="Theme"
+          />
+          <FolderTree
+            kind="objects"
+            title="Objects"
+            folders={state.folders.objects}
+            items={state.objects.filter((o) => o.name !== HMI)}
+            folderOf={(o) => o.folder}
+            row={(o, depth) => <Row name={o.name} icon={<ObjectIcon />} depth={depth} />}
+            end={
+              <button
+                class="row-add"
+                title="Add an object"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  make("NewObject", "");
+                }}
+              >
+                <Plus size={15} />
+              </button>
+            }
+          />
+          <FolderTree
+            kind="pages"
+            title="Pages"
+            folders={state.folders.pages}
+            items={state.pages.filter((pg) => pg.interface === null)}
+            folderOf={(pg) => pg.folder}
+            row={(pg, depth) => (
+              <TreeRow
+                depth={depth}
+                data-page={pg.id}
+                classList={{ selected: picking.page === pg.id }}
+                onClick={() => !justDragged() && picking.onOpenPage(pg.id)}
+                onPointerDown={(e) => dragToFolder(e, { kind: "pages", name: pg.id, label: pg.name })}
+                onContextMenu={(e) => pageMenu(e, pg)}
+                icon={<File size={14} />}
+                label={pg.name}
+                end={<Defines marks={pageMarks(pg)} />}
+                preview={() => <PagePicture page={pg} />}
+              />
+            )}
+          />
         </div>
         <div class="pane-foot">
           <span class="section" style={{ margin: 0 }}>
@@ -232,8 +339,15 @@ export function ObjectsScreen(p: { onPage: (page: string) => void }) {
       </Sidebar>
       <Edge side="left" />
       <section class="detail objects-detail" ref={detail}>
-        <Show when={open() !== null} fallback={<ThemeSheet picking={picking} />}>
-          <Show when={object(open()!)}>{(o) => <Sheet object={o()} picking={picking} />}</Show>
+        <Show
+          when={picking.page ? pageOf(picking.page) : undefined}
+          fallback={
+            <Show when={open() !== null} fallback={<ThemeSheet picking={picking} />}>
+              <Show when={object(open()!)}>{(o) => <Sheet object={o()} picking={picking} onAdd={add} />}</Show>
+            </Show>
+          }
+        >
+          {(pg) => <PageSheet page={pg()} picking={picking} />}
         </Show>
       </section>
       <Edge side="right" />

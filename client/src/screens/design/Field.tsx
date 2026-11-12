@@ -11,7 +11,7 @@ import { capital } from "../../state/format";
 import { state } from "../../state/store";
 import { ColourPicker, parseColour } from "../../ui/ColourPicker";
 import { DraftInput } from "../../ui/DraftInput";
-import { paint } from "../../ui/highlight";
+import { nameHelp } from "../../ui/highlight";
 import { Activity, Braces, ChevronsUpDown, Copy, Grid3x3, Hash, Link, Minus, Plus, RotateCcw, SquareDashed, SquareRoundCorner, ToggleLeft, ToggleRight, Type, X } from "../../ui/icons";
 import { copyText, openMenu } from "../../ui/Menu";
 import { Popover } from "../../ui/Popover";
@@ -229,7 +229,7 @@ function ValueBox(p: Omit<FieldProps, "onWrite"> & { onWrite: (text: string) => 
         onCommit={p.onWrite}
         complete={p.plain ? undefined : (t, c) => complete(t, c, where().expressions, where().names, where().also, where().own)}
         hint={p.plain ? undefined : (t, c) => signature(t, c, where().expressions, where().own)}
-        paint={where().own === undefined ? undefined : (s) => paint(s, where().own)}
+        {...(p.plain ? {} : nameHelp(() => [...(where().names ?? []), ...(where().also ?? [])], () => where().own))}
       />
       <Show when={!p.plain}>
         <Lead {...p} field={field} />

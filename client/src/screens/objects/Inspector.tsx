@@ -3,7 +3,7 @@
 import { Match, Switch } from "solid-js";
 import type { EntityInfo } from "../../protocol/EntityInfo";
 import { key, named, object } from "../../state/names";
-import { entity, state } from "../../state/store";
+import { entity, page, state } from "../../state/store";
 import { ComputedView } from "./Computed";
 import { EntityView } from "./Entity";
 import { FunctionView } from "./Functions";
@@ -11,6 +11,7 @@ import { ImportView } from "./Imports";
 import { RuleView } from "./Logic";
 import type { Picking } from "./ObjectsScreen";
 import { ObjectView } from "./ObjectView";
+import { PageInspector } from "./PageSheet";
 import { RecordView } from "./Records";
 import { TokenView } from "./Theme";
 import { VariableView } from "./Variables";
@@ -27,6 +28,7 @@ export function Inspector(p: { picking: Picking; onAdd: (e: EntityInfo) => void;
   };
   return (
     <Switch fallback={<div class="placeholder">Pick a token of the theme.</div>}>
+      <Match when={p.picking.page ? page(p.picking.page) : undefined}>{(pg) => <PageInspector page={pg()} picking={p.picking} />}</Match>
       {/* keyed, so another entity starts over */}
       <Match when={s().kind === "entity" && entity((s() as { name: string }).name)} keyed>
         {(e) => <EntityView entity={e} to={p.picking.open} adding={p.adding} onAdd={() => p.onAdd(e)} />}

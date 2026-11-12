@@ -1,5 +1,6 @@
 import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { Portal } from "solid-js/web";
+import type { About } from "../state/about";
 import type { Signature, Suggestion } from "../state/complete";
 import { Dot, List, Parentheses } from "./icons";
 import { KindIcon, LocalIcon, ObjectIcon } from "./marks";
@@ -144,6 +145,40 @@ export function SignatureHint(p: { sign: Signature; at: () => Spot }) {
         </Show>
         <Show when={p.sign.unknown}>
           <div class="sign-or">{p.sign.unknown}</div>
+        </Show>
+      </div>
+    </Portal>
+  );
+}
+
+/** What the name under the caret or the pointer is, over its line: its kind, type and value, and
+ *  where it is defined, which a press goes to, as Ctrl click on the name does. */
+export function AboutCard(p: { about: About; at: () => Spot }) {
+  let el!: HTMLDivElement;
+  const style = float(() => el, () => p.at(), true, -10, () => undefined, () => [p.about.name, p.about.value]);
+  return (
+    <Portal>
+      <div ref={el} class="signature about-card" style={style()}>
+        <div class="about-head">
+          <span class="mono about-name">{p.about.name}</span>
+          <span class="tag">{p.about.kind}</span>
+        </div>
+        <Show when={p.about.type}>
+          <div class="sign-or">{p.about.type}</div>
+        </Show>
+        <Show when={p.about.value !== undefined}>
+          <div class="about-value">
+            <Preview value={p.about.value ?? null} known={p.about.known ?? false} />
+          </div>
+        </Show>
+        <Show when={p.about.go}>
+          {(go) => (
+            // pressed without taking the field's focus, so what is typed stays
+            <button class="about-go" onPointerDown={(e) => e.preventDefault()} onClick={() => go()()}>
+              In {p.about.where}
+              <span class="faint">Ctrl click</span>
+            </button>
+          )}
         </Show>
       </div>
     </Portal>

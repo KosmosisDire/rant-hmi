@@ -1,34 +1,30 @@
-// A designer finds components as small cards, each a picture of it over its name, a long one
-// cut short: a drag onto the canvas places one centred where it lands, by mouse and by a
-// finger's sideways drag, a drag let go off the canvas or after Escape places nothing, and a
-// click opens the component.
+// A designer finds components as rows in the Components folder of Design's tree. The pointer
+// resting on one shows its picture, a drag onto the canvas places one centred where it lands,
+// by mouse and by a finger's sideways drag, a drag let go off the canvas or after Escape places
+// nothing, and a click opens the component.
 
 export default async function ({ page, hmi, sys, d, check, eventually }) {
   const tile = await hmi.addComponent("Tile");
   await hmi.addElement(tile, "div", { name: "face", x: "0", y: "0", w: "8", h: "4", background: "#c62828" });
-  const target = await hmi.addPage("Cards");
-  await d.openPage("Cards");
-  const card = page.locator(".screen:not([hidden]) .sidebar.left .card", { hasText: /^Tile$/ });
-  await card.locator(".card-thumb .el").first().waitFor();
+  const target = await hmi.addPage("Rows");
+  await d.openPage("Rows");
+  const row = page.locator(".screen:not([hidden]) .sidebar.left .page-row", { hasText: /^Tile/ });
   // other scenarios' components come first, so the list may need a scroll to reach it
-  await card.scrollIntoViewIfNeeded();
-  check((await card.textContent()).trim() === "Tile", `the card says ${await card.textContent()}, not only its name`);
+  await row.scrollIntoViewIfNeeded();
 
-  // a long name ends in an ellipsis, so its card stays as narrow as the rest
-  await hmi.addComponent("ConveyorSpeedReadoutPanel");
-  const long = page.locator(".screen:not([hidden]) .sidebar.left .card", { hasText: /^ConveyorSpeedReadoutPanel$/ });
-  await long.waitFor();
-  const [cut, wide] = await long.locator(".list-label").evaluate((l) => [l.scrollWidth > l.clientWidth, l.closest(".card").offsetWidth]);
-  check(cut && wide === (await card.evaluate((c) => c.offsetWidth)), "a long name widens its card instead of ending in an ellipsis");
+  // the pointer resting on it shows its picture
+  await row.hover();
+  const picture = page.locator(".tree-preview .page-picture");
+  await picture.locator(".el").first().waitFor();
+  await page.mouse.move(0, 0);
+  await eventually(async () => (await picture.count()) === 0, "the picture to go with the pointer");
 
-  const ground = await card.locator(".card-thumb").evaluate((t) => [t, t.querySelector(".page")].map((e) => getComputedStyle(e).backgroundColor).join());
-  check(ground === "rgba(0, 0, 0, 0),rgba(0, 0, 0, 0)", `a card shows a ground, ${ground}`);
   const placed = () => hmi.page(target).children.filter((e) => e.component === "Tile");
   const { width: w, height: h } = hmi.page(tile);
   const sheet = await page.locator(".screen:not([hidden]) .artboard .page-layer.open > .page").boundingBox();
   const k = sheet.width / hmi.page(target).width;
   const on = (x, y) => ({ x: sheet.x + x * k, y: sheet.y + y * k });
-  const from = await card.boundingBox();
+  const from = await row.locator(".list-label").boundingBox();
   const start = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
   const drag = async (to, beforeUp) => {
     await page.mouse.move(start.x, start.y);
@@ -46,34 +42,35 @@ export default async function ({ page, hmi, sys, d, check, eventually }) {
   check(Math.abs(cx - 44) <= 1 && Math.abs(cy - 33) <= 1, `the Tile centres on ${cx}, ${cy}, not where it was let go`);
   check(t.props.w === String(w) && t.props.h === String(h), "the Tile is not at its size");
 
-  await drag({ x: start.x, y: start.y + 160 });
+  await drag({ x: start.x + 30, y: start.y + 400 });
   await drag(on(70, 50), () => page.keyboard.press("Escape"));
   await page.waitForTimeout(300);
   check(placed().length === 1, "a drag let go off the canvas or after Escape placed a Tile");
-  check(!(await page.locator(".card-ghost").count()), "a drag left its picture behind");
+  check(!(await page.locator(".tree-ghost").count()), "a drag left its label behind");
 
   // a finger's sideways drag places one too
   const touch = await (await page.context().browser().newContext({ hasTouch: true, viewport: { width: 1600, height: 1000 } })).newPage();
   await touch.goto(sys.url);
   await touch.locator(".statusbar", { hasText: "System" }).waitFor();
   await touch.locator(".tab", { hasText: "Design" }).click();
-  await touch.locator(".screen:not([hidden]) .page-row", { hasText: /^Cards/ }).click();
+  await touch.locator(".screen:not([hidden]) .page-row", { hasText: /^Rows/ }).click();
+  await touch.locator(".screen:not([hidden]) .artboard .page-layer.open[data-page]").and(touch.locator(`[data-page="${target}"]`)).waitFor();
   await touch.locator(".screen:not([hidden]) .artboard:not([data-flying])").waitFor();
   const tsheet = await touch.locator(".screen:not([hidden]) .artboard .page-layer.open > .page").boundingBox();
   const tk = tsheet.width / hmi.page(target).width;
-  const tcards = touch.locator(".screen:not([hidden]) .sidebar.left .card", { hasText: /^Tile$/ });
-  await tcards.scrollIntoViewIfNeeded();
-  const tcard = await tcards.boundingBox();
+  const trows = touch.locator(".screen:not([hidden]) .sidebar.left .page-row", { hasText: /^Tile/ });
+  await trows.scrollIntoViewIfNeeded();
+  const trow = await trows.locator(".list-label").boundingBox();
   const cdp = await touch.context().newCDPSession(touch);
   const finger = (type, x, y) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y }] });
-  const [fx, fy] = [tcard.x + tcard.width / 2, tcard.y + tcard.height / 2];
+  const [fx, fy] = [trow.x + trow.width / 2, trow.y + trow.height / 2];
   await finger("touchStart", fx, fy);
   for (let i = 1; i <= 8; i++) await finger("touchMove", fx + ((tsheet.x + 90 * tk - fx) * i) / 8, fy + ((tsheet.y + 20 * tk - fy) * i) / 8);
   await finger("touchEnd");
   await eventually(() => placed().length === 2, "a Tile placed by a finger");
   await touch.context().close();
 
-  await card.click();
-  await eventually(async () => (await card.getAttribute("class")).includes("selected"), "a click to open the component");
+  await row.click();
+  await eventually(async () => (await row.getAttribute("class")).includes("selected"), "a click to open the component");
   check((await page.locator(".screen:not([hidden]) .sidebar.right .head-title").textContent()).includes("Tile"), "the inspector does not show the component");
 }

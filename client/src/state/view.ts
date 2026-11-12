@@ -88,6 +88,22 @@ export function openElement(w: Wanted) {
 /** Design took what was asked for. */
 export const tookWanted = () => setWanted(null);
 
+/** What the Objects tab is asked to show: an object or one of its members, a token of the theme,
+ *  or state a page or one of its elements keeps. */
+export type InObjects = { object: string; member?: string } | { token: string } | { page: string; holder: string | null; state: string };
+
+const [objectsWanted, setObjectsWanted] = createSignal<InObjects | null>(null);
+export { objectsWanted };
+
+/** Shows something in the Objects tab, as going to where a name is defined does. */
+export function openInObjects(w: InObjects) {
+  setObjectsWanted(w);
+  openTab("objects");
+}
+
+/** The Objects tab took what was asked for. */
+export const tookObjectsWanted = () => setObjectsWanted(null);
+
 /** A page Design's board is asked to fly to, or null for every page, counted so the same one
  *  asked again flies again. */
 const [flight, setFlight] = createSignal<{ page: string | null; n: number } | null>(null);

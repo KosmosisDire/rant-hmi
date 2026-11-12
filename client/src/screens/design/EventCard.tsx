@@ -9,6 +9,7 @@ import { complete, signature, type Suggestion } from "../../state/complete";
 import { type Brought, eventInfo, keyWords, type Offered, pOf, settingsOf } from "../../state/events";
 import { type Pad, pads } from "../../state/input";
 import { DraftInput } from "../../ui/DraftInput";
+import { nameHelp } from "../../ui/highlight";
 import { Component, Gamepad2, Keyboard, Mouse, X, Zap } from "../../ui/icons";
 import { closeMenu, type MenuEntry, menuOpen, openMenu } from "../../ui/Menu";
 
@@ -180,7 +181,7 @@ export function EventCard(p: {
               <div class="field">
                 <label>{s.label}</label>
                 <Show when={s.kind === "expression"} fallback={<FilterField setting={s} from={eventInfo(p.name)?.from} value={p.setting?.(s.name) ?? ""} onSet={(v) => p.onAttr?.(s.name, v)} />}>
-                  <DraftInput value={p.setting?.(s.name) ?? ""} placeholder={s.default} onCommit={(text) => p.onAttr?.(s.name, text.trim())} complete={(text, c) => complete(text, c, "expression", p.names, p.also)} />
+                  <DraftInput value={p.setting?.(s.name) ?? ""} placeholder={s.default} onCommit={(text) => p.onAttr?.(s.name, text.trim())} complete={(text, c) => complete(text, c, "expression", p.names, p.also)} {...nameHelp(() => [...(p.names ?? []), ...(p.also ?? [])])} />
                 </Show>
               </div>
             )}
@@ -197,6 +198,7 @@ export function EventCard(p: {
         focus={p.focus}
         onCommit={p.onCode}
         complete={(t, c) => complete(t, c, p.place, p.names, reads())}
+        {...nameHelp(() => [...(p.names ?? []), ...(reads() ?? [])])}
         hint={(t, c) => signature(t, c, p.place)}
       />
     </div>

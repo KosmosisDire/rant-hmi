@@ -40,11 +40,11 @@ export function MemberIcon(p: { n: Named }) {
 /** What a member is, in a word or two. */
 export const kindWord = (n: Named) => (n.of === "import" ? `mesh ${n.kind}` : n.of === "variable" ? "state" : n.of);
 
-/** Removes a member, unless something names it. */
+/** Removes a member, warning of the places that still name it. */
 export function removeMember(object: string, name: string) {
   const k = key(object, name);
   const places = usedBy(k);
-  if (places.length > 0) return notify(`${places.length === 1 ? "1 place names" : `${places.length} places name`} ${k}. Change those first.`, "fault");
+  if (places.length > 0) notify(`${places.length === 1 ? "1 place still names" : `${places.length} places still name`} ${k}`, "warn");
   setState("refused", null);
   switch (named(k)?.of) {
     case "import":

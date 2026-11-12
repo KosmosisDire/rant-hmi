@@ -14,6 +14,12 @@ files/                   models, pictures and fonts that pages load
 A page or component file is named by its name in small letters and dashes: the page
 `Robot cell` is `pages/robot-cell.html`.
 
+- `objects/`, `pages/` and `components/` may hold folders, at any depth, as
+  `pages/Cell/robot-cell.html`. A folder is only where a file is kept: names, `Pages.RobotCell`
+  and addresses stay the same, so no two files of a kind share a name in any folder.
+- The editor shows the folders as its trees do, and moves files between them, as moving the
+  files by hand does.
+
 ## Objects
 
 An object stands for one thing the HMI works with, as a line or a robot. It names what that

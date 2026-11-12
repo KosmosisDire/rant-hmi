@@ -1,6 +1,6 @@
 // The Objects tab on a phone. An object picked from the drawer opens its sheet and puts the
 // drawer away. A member tapped raises the inspector sheet with it, its row in sight above, and
-// a member picked from the drawer's mesh tree opens its object with it the same way. Another tab
+// a member of another object picked the same way shows there too. Another tab
 // lowers the sheet, and a rule tapped shows there too. Nothing runs off the side.
 
 export default async function ({ page, hmi, sys, check, eventually }) {
@@ -48,14 +48,11 @@ export default async function ({ page, hmi, sys, check, eventually }) {
   await toggle.last().tap();
   await settled(sheet, "the sheet to lower");
 
-  // a member picked from the drawer's mesh tree opens its object, its row in sight above the risen sheet
-  await toggle.first().tap();
-  await drawer.locator(".filter input").fill("Line1/Speed");
-  await drawer.locator('.list-row[title="Line1/Speed"]').tap();
-  await eventually(async () => !(await drawer.isVisible()), "the drawer to go once a member is picked");
-  await on(".object-sheet .hero", { hasText: /^Line$/ }).waitFor();
+  // a member of another object, its row in sight above the risen sheet
+  await object("Line");
+  await on('.object-sheet [data-member="Speed"]').tap();
   await sheet.locator(".head-title", { hasText: "Line.Speed" }).waitFor();
-  check((await sheet.boundingBox()).height > 300, "the picked member left the sheet down");
+  await eventually(async () => (await sheet.boundingBox()).height > 300, "the picked member to raise the sheet");
   check(await inSight(on(".object-sheet .member-row.selected")), "the picked member's row is under the sheet");
   check((await on(".object-sheet .member-row.selected").getAttribute("data-member")) === "Speed", "another row than the picked member's is selected");
 

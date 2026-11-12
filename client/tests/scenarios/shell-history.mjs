@@ -9,7 +9,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   check((await page.locator('.topbar button[title^="Back"], .topbar button[title^="Forward"]').count()) === 0, "the top bar has back and forward of its own");
   const where = async () => {
     const tab = (await page.locator(".tab.on span:not(.count)").textContent()).trim();
-    const open = page.locator(".screen:not([hidden]) :is(.page-row.open, .card.selected) .list-label");
+    const open = page.locator(".screen:not([hidden]) .page-row.open .list-label");
     return tab === "Design" ? `Design ${(await open.count()) ? (await open.first().textContent()).trim() : ""}` : tab;
   };
   const at = async (want, what) => {
@@ -19,7 +19,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
 
   await d.openPage("Hist one");
   await d.openPage("Hist two");
-  await page.locator(".screen:not([hidden]) .sidebar.left .card", { hasText: /^HistPart$/ }).click();
+  await page.locator(".screen:not([hidden]) .sidebar.left .page-row", { hasText: /^HistPart$/ }).click();
   await d.tab("Objects");
   await at("Objects", "the last move");
 

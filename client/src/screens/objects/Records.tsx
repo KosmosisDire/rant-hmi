@@ -10,7 +10,7 @@ import { complete } from "../../state/complete";
 import { key } from "../../state/names";
 import { live } from "../../state/store";
 import { DraftInput } from "../../ui/DraftInput";
-import { paint } from "../../ui/highlight";
+import { nameHelp } from "../../ui/highlight";
 import { Preview } from "../../ui/Preview";
 import { MemberPane } from "./Member";
 import type { Picking } from "./ObjectsScreen";
@@ -39,7 +39,7 @@ export function RecordView(p: { object: Thing; record: Record; picking: Picking 
           accept={(t) => t.trim() !== ""}
           onCommit={(source) => put({ source: source.trim() })}
           complete={(t, c) => complete(t, c, "system", undefined, undefined, p.object.name)}
-          paint={(src) => paint(src, p.object.name)}
+          {...nameHelp(() => [], () => p.object.name)}
         />
       </div>
       <div class="field">

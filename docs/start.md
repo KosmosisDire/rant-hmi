@@ -29,9 +29,9 @@ Open http://localhost:6739 to design, and http://localhost:6739/run on an operat
 
 A new project opens on an empty page.
 
-1. In **Objects**, find your machine's folder in the mesh list and press its **+**. That makes
-   an object for the machine.
-2. Press **+** on each entity the screen needs, as its speed.
+1. In **Objects**, press **+** on the Objects folder to make an object for the machine, and set
+   its **Mesh at** to the machine's folder on the mesh.
+2. Press **+** on its Mesh section and pick each entity the screen needs, as its speed.
 3. In **Design**, press **+** beside Layers, then **Show an import**, and pick the entity and a
    component to show it.
 4. Open **Run** to try it.

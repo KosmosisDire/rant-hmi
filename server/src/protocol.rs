@@ -46,6 +46,9 @@ pub enum ServerMsg {
     Pages { pages: Vec<Page> },
     /// What code calls each page, as `Pages.Overview`, and its id, on connecting and as they change.
     PageKeys { keys: Vec<(String, String)> },
+    /// The folders pages, components and objects are kept in, empty ones too, on connecting and
+    /// as they change.
+    Folders { folders: Folders },
     /// One page, whole, after an edit changed it.
     Page { page: Page },
     /// What an edit from this screen made, so the screen can open or select it. For a new
@@ -203,6 +206,37 @@ pub enum ScreenCondition {
     SlowDrawing { fps: f64, renderer: String },
 }
 
+/// The folders of each kind, `/` between levels, in order.
+#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq, Default)]
+#[ts(export)]
+pub struct Folders {
+    pub pages: Vec<String>,
+    pub components: Vec<String>,
+    pub objects: Vec<String>,
+}
+
+/// What a folder holds: pages, components or objects, each kind under its own folder of the
+/// project.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum FolderKind {
+    Pages,
+    Components,
+    Objects,
+}
+
+impl FolderKind {
+    /// The project's folder this kind is kept under.
+    pub fn dir(self) -> &'static str {
+        match self {
+            FolderKind::Pages => "pages",
+            FolderKind::Components => "components",
+            FolderKind::Objects => "objects",
+        }
+    }
+}
+
 /// From a screen to the backend.
 #[derive(Deserialize, TS, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -268,6 +302,15 @@ pub enum ClientMsg {
     /// Adds, renames, points elsewhere or with null removes the object called `name`, empty
     /// for a new one. Code that reads it follows a rename.
     SetObject { name: String, object: Option<ObjectInfo> },
+    /// Moves a page or component by its id, or an object by its name, into a folder of its
+    /// kind, empty for the top. Its name and all that names it stay.
+    MoveToFolder { kind: FolderKind, name: String, folder: String },
+    /// Makes an empty folder of a kind.
+    MakeFolder { kind: FolderKind, folder: String },
+    /// Moves a folder and all it holds elsewhere among its kind's, which renames it.
+    MoveFolder { kind: FolderKind, from: String, to: String },
+    /// Removes a folder, what it holds moving up into the folder around it.
+    RemoveFolder { kind: FolderKind, folder: String },
     /// Adds a mesh member to an object.
     Import { object: String, import: Import },
     Unimport { object: String, alias: String },

@@ -1,5 +1,4 @@
-// A user works the Objects tab from its right click menus: adds an entity from the mesh tree to
-// the object open and removes it again, flips a member's intent, copies its name, sets state
+// A user works the Objects tab from its right click menus: removes a member added from the mesh, flips a member's intent, copies its name, sets state
 // back to its start and removes it.
 
 export default async function ({ page, hmi, d, check, eventually }) {
@@ -8,11 +7,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   for (const i of hmi.state.imports.filter((x) => x.entity === "Robot/Pose")) await hmi.unimport(i.alias);
   await d.openObject("Robot");
 
-  // the mesh tree: an entity no member offers to join the object open, a member to go
-  const pose = await d.meshRow("Robot/Pose");
-  await pick(pose, "Add to Robot");
+  // a member from the mesh goes by its own menu
+  await d.addFromMesh("Robot/Pose");
   await eventually(() => hmi.state.imports.some((i) => i.alias === "Robot.RobotPose"), "Robot/Pose added");
-  await pick(pose, "Remove Robot.RobotPose");
+  await pick(d.member("RobotPose"), "Remove");
   await eventually(() => !hmi.state.imports.some((i) => i.entity === "Robot/Pose"), "Robot/Pose removed");
 
   // a member's intent, either way, and its name to the clipboard

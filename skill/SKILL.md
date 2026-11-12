@@ -39,7 +39,9 @@ for anything it leaves out:
 ## Workflow
 
 1. Find the entities: `rant ls entities`, then `rant info <name>` for a type and its fields.
-2. Write one object per machine in `objects/<Name>.html`. Name only the entities the HMI
+2. Write one object per machine in `objects/<Name>.html`, in a folder under `objects/` if the
+   project groups them, as `pages/` and `components/` may. A folder is never part of a name.
+   Name only the entities the HMI
    uses, and give `intent="write"` only to what it must change.
 3. Build pages from the standard components in `components/`, laid out with frames.
 4. Add handlers for what operators do, and logic in an object for what must happen with no
