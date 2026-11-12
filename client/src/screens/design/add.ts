@@ -82,19 +82,17 @@ export function addElement(page: Page, parent: string | null, tag: Tag, props: R
   edit({ kind: "add_element", page: page.id, parent, index: null, element });
 }
 
-/** Adds a scene with a view of its own, which a page keeps as state for each screen and a
- *  component as its own variable, and the handlers that move it, both as one edit. */
+/** Adds a scene with a view of its own, which the page or component keeps as state for each
+ *  screen, and the handlers that move it, both as one edit. */
 function addScene(page: Page, scene: Element, add: Edit) {
-  const own = page.interface;
   const base = `${(scene.props.name ?? "scene").replace(/^./, (c) => c.toLowerCase()).replace(/\W/g, "")}View`;
-  const view = own ? freeName(base, (n) => own.variables.some((v) => v.name === n) || own.inputs.some((i) => i.name === n)) : freeName(base, (n) => page.state.some((v) => v.name === n));
+  const view = freeName(base, (n) => page.state.some((v) => v.name === n) || !!page.interface?.inputs.some((i) => i.name === n));
   const start = `{ ${Object.entries(CAMERA).map(([k, v]) => `${k}: ${v}`).join(", ")} }`;
   Object.assign(scene.props, Object.fromEntries(Object.keys(CAMERA).map((k) => [k, `${view}.${k}`])));
   scene.handlers = moves(view);
-  if (own) return edit({ kind: "batch", edits: [{ kind: "set_local", page: page.id, name: view, local: { name: view, start } }, add] });
   const r = resolve(start);
   if (!r.ok) return edit(add);
-  edit({ kind: "batch", edits: [{ kind: "set_state", page: page.id, id: null, name: view, var: { name: view, start: r.value as Value, per: "screen" } }, add] });
+  edit({ kind: "batch", edits: [{ kind: "set_state", page: page.id, id: null, name: view, var: { name: view, start: r.value as Value, per: "screen", views: "shared" } }, add] });
 }
 
 /** The handlers that move a scene's `view`: a left drag or a finger turns round what it looks

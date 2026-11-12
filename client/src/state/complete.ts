@@ -314,14 +314,13 @@ const POINTER_STATE: Suggestion[] = [
   { label: "heldFor", insert: "heldFor", icon: "member", type: "ms pressed on it, 0 once the press leaves" },
 ];
 
-/** What a component's code names: its inputs, its variables and its parts. */
+/** What a component's code names besides its state: its inputs and its parts. */
 export function componentNames(c: Page): Suggestion[] {
   const i = c.interface;
   return [
     ...(i?.inputs ?? []).map((x): Suggestion => ({ label: x.name, insert: x.name, icon: "local", type: x.bindable ? "two way input" : "input" })),
-    ...(i?.variables ?? []).map((x): Suggestion => ({ label: x.name, insert: x.name, icon: "local", type: "variable" })),
     ...partNames(c)
-      .filter((n) => !i?.inputs.some((x) => x.name === n) && !i?.variables.some((x) => x.name === n))
+      .filter((n) => !i?.inputs.some((x) => x.name === n) && !c.state.some((x) => x.name === n))
       .map((n): Suggestion => ({ label: n, insert: n, icon: "member", type: n === "root" ? "the whole, for the pointer" : "a part, for the pointer", members: POINTER_STATE })),
   ];
 }

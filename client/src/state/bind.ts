@@ -130,6 +130,9 @@ export interface Place {
   via: string;
   page: string;
   copies: number[];
+  /** The instance's own store, in a component: each instance keeps its state there, on its
+   *  screen alone, where the system keeps a page's. */
+  kept?: Kept;
 }
 
 /** A theme token by the name code gives it, `$accent`. */
@@ -452,32 +455,32 @@ export function partNames(c: Page): string[] {
   return [...out];
 }
 
-/** What an instance keeps of its own on this screen: its variables, and its parts' pointer
- *  state. A component drawn on its own keeps none, so it shows its variables' starts. */
+/** What an instance keeps of its own on this screen: its state by key, and its parts' pointer
+ *  state. */
 export interface Kept {
-  /** A variable set by its code, undefined while it is at its start. */
-  get(name: string): unknown;
-  set(name: string, path: string, value: unknown): void;
+  /** State its code set, undefined while it is at its start. */
+  get(key: string): unknown;
+  set(key: string, value: unknown): void;
   part(name: string): PartState;
 }
 
-/** A component reads its inputs, its variables and its parts' pointer state, and nothing of
- *  the mesh. An input is what the instance gives, read where the instance sits, else its
- *  default, unless the instance shows its own. */
+/** What a component drawn on its own keeps: nothing, so its state shows its starts. */
+const NOWHERE: Kept = { get: () => undefined, set: () => {}, part: () => STILL };
+
+/** A component reads its inputs, its state and its parts' pointer state, and nothing of the
+ *  mesh. An input is what the instance gives, read where the instance sits, else its default,
+ *  unless the instance shows its own. */
 export function componentScope(c: Page, instance?: { props: Record<string, string | undefined>; outer: Scope; own?: Own; kept?: Kept }): Scope {
   const input = (name: string) => c.interface?.inputs.find((i) => i.name === name);
-  const variable = (name: string) => c.interface?.variables.find((v) => v.name === name);
-  const part = (name: string) => !input(name) && !variable(name) && partNames(c).includes(name);
+  const part = (name: string) => !input(name) && !c.state.some((v) => v.name === name) && partNames(c).includes(name);
   const read = (r: Resolved, name: string) => {
     if (r.ok) return r.value;
     if (r.unknown) throw new Unknown(r.unknown);
     throw new Error(`${name}: ${r.error}`);
   };
-  return onScreen({
-    has: (name) => input(name) !== undefined || variable(name) !== undefined || part(name),
+  const base = onScreen({
+    has: (name) => input(name) !== undefined || part(name),
     get: (name) => {
-      const v = variable(name);
-      if (v) return instance?.kept?.get(name) ?? read(resolve(v.start, constants), name);
       if (!input(name)) return instance?.kept?.part(name) ?? STILL;
       if (instance?.own?.has(name)) return instance.own.get(name);
       const given = instance?.props[name];
@@ -488,7 +491,6 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
     // a write goes through the instance's binding when that is a bare name, and is dropped
     // otherwise, so a control bound one way reads as a display
     set: (name, path, value) => {
-      if (variable(name)) return instance?.kept?.set(name, path, value);
       if (part(name)) throw new TypeError(`${name} is the pointer's, so it cannot be set`);
       if (!input(name)?.bindable) throw new TypeError(`${name} is not two way`);
       if (!path) instance?.own?.set(name, value);
@@ -497,12 +499,12 @@ export function componentScope(c: Page, instance?: { props: Record<string, strin
       instance.outer.set(ref.name, [ref.fields, path].filter(Boolean).join("."), value);
     },
     writes: (name) => {
-      if (variable(name)) return true;
       const ref = bareRef(instance?.props[name]);
       return !!input(name)?.bindable && !!ref && !!instance?.outer.writes(ref.name, ref.fields);
     },
-    missing: (name) => `${name} is no input, variable or part of ${c.name}`,
+    missing: (name) => `${name} is no input, state or part of ${c.name}`,
   });
+  return stateScope({ ...base, place: { via: "", page: c.id, copies: [], kept: instance?.kept ?? NOWHERE } }, null, c.state);
 }
 
 /** The copy of a repeated element: its index from 0 and the item it shows. */
@@ -528,11 +530,12 @@ export function repeatScope(s: Scope, index: number, item: () => unknown): Scope
   };
 }
 
-/** The key the system keeps state under, as the backend makes it: `@page/name` for a page's,
- *  `@page/element/name` for an element's, then `#index` for each copy it sits in, after the
- *  views the page is shown through. */
-export function stateKey(place: Place, holder: string | null, name: string): string {
-  return `@${place.via}${place.page}/${holder === null ? "" : `${holder}/`}${name}${copied(place.copies)}`;
+/** The key the system keeps state `v` under, as the backend makes it: `@page/name` for a
+ *  page's, `@page/element/name` for an element's, then `#index` for each copy it sits in,
+ *  after the views the page is shown through unless every view shares it. */
+export function stateKey(place: Place, holder: string | null, v: Variable): string {
+  const via = v.views === "shared" ? "" : place.via;
+  return `@${via}${place.page}/${holder === null ? "" : `${holder}/`}${v.name}${copied(place.copies)}`;
 }
 
 const copied = (copies: number[]) => copies.map((i) => `#${i}`).join("");
@@ -560,12 +563,16 @@ export function stateScope(outer: Scope, holder: string | null, kept: Variable[]
     has: (name) => !!own(name) || outer.has(name),
     get: (name) => {
       const v = own(name);
-      return v ? keptOf(stateKey(place, holder, name), v) : outer.get(name);
+      if (!v) return outer.get(name);
+      const key = stateKey(place, holder, v);
+      return place.kept ? (place.kept.get(key) ?? v.start) : keptOf(key, v);
     },
     set: (name, path, value) => {
       const v = own(name);
       if (!v) return outer.set(name, path, value);
-      setKept(stateKey(place, holder, name), v, path, value);
+      const key = stateKey(place, holder, v);
+      if (place.kept) place.kept.set(key, withField(place.kept.get(key) ?? v.start, path, value));
+      else setKept(key, v, path, value);
     },
     writes: (name, path) => !!own(name) || outer.writes(name, path),
     missing: (name) => outer.missing(name),

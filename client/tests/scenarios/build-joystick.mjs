@@ -16,8 +16,8 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("colour", "$accent");
   await d.addInput("knobColour", "$panel3");
   await d.addInput("lineColour", "$border2");
-  await d.addVariable("kx", "0");
-  await d.addVariable("ky", "0");
+  await d.addState("kx", "0");
+  await d.addState("ky", "0");
   await d.addSends("move");
   await d.addSends("held");
   await d.add("diagram", { Name: "pad", x: "0", y: "0", w: "20", h: "20" });

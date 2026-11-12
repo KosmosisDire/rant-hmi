@@ -6,15 +6,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
   const button = await hmi.addComponent("HoldButton");
   await hmi.edit({ kind: "resize_page", page: button, width: 20, height: 8 });
   await d.openPage("HoldButton");
-  const interface_ = () => hmi.page(button).interface;
 
-  // a variable from the inspector, renamed, starting at 0
-  await page.locator('.screen:not([hidden]) .sidebar.right button[title="Add a variable"]').click();
-  await eventually(() => interface_().variables.length === 1, "a variable");
-  const name = page.locator(".screen:not([hidden]) .sidebar.right .handler .input-name").last();
-  await name.fill("count");
-  await name.press("Enter");
-  await eventually(() => interface_().variables[0]?.name === "count", "the variable renamed");
+  // state from the inspector, named count, starting at 0
+  await d.addState("count", "0");
+  await eventually(() => hmi.page(button).state[0]?.name === "count", "the state named count");
 
   const face = await hmi.addElement(button, "div", { name: "face", x: "0", y: "0", w: "20", h: "8", background: "#2a2f35", "border-radius": "0.8" });
   await hmi.addElement(button, "div", { name: "bar", x: "0", y: "7.2", w: "20 * Math.min(root.heldFor / 600, 1)", h: "0.8", background: "#4a8fd6" }, face);
@@ -71,4 +66,23 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.waitForTimeout(600);
   check((await label(first).textContent()) === "1 holds", "a short press counted");
   check((await label(second).textContent()) === "0 holds", "the second instance shares the first one's count");
+
+  // what a component holds keeps state too, each copy of a repeat and each instance its own
+  const lamps = await hmi.addComponent("Lamps");
+  await hmi.edit({ kind: "resize_page", page: lamps, width: 30, height: 4 });
+  const row = await hmi.addElement(lamps, "div", { name: "row", x: "0", y: "0", w: "30", h: "4", layout: '"right"' });
+  const lamp = await hmi.addElement(lamps, "span", { name: "lamp", repeat: "3", w: "10", h: "4", text: 'lit ? "on" : "off"' }, row);
+  await hmi.edit({ kind: "set_state", page: lamps, id: lamp, name: "lit", var: { name: "lit", start: false, per: "screen" } });
+  await hmi.setHandler(lamps, lamp, "tap", "lit = !lit;");
+  const shelf = await hmi.addPage("Shelf");
+  const put = (y) => hmi.addElement(shelf, "use", { name: "Lamps", x: "4", y: String(y), w: "30", h: "4" }, null, "Lamps");
+  const [upper, lower] = [await put(4), await put(12)];
+  await d.tab("Design");
+  await d.openPage("Shelf");
+  await d.tab("Run");
+  const lit = async (id) => (await inst(id).locator('.el[data-name="lamp"]').allTextContents()).join(" ");
+  await eventually(async () => (await lit(upper)) === "off off off", "the lamps to start off");
+  await inst(upper).locator('.el[data-name="lamp"]').nth(1).click();
+  await eventually(async () => (await lit(upper)) === "off on off", async () => `a tap to light the middle lamp alone, it shows ${await lit(upper)}`);
+  check((await lit(lower)) === "off off off", `the other instance shows ${await lit(lower)}`);
 }

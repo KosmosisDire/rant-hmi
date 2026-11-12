@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::js::{outside, split_outside};
-use super::{Element, Handler, Home, Homes, Input, Interface, Local, Page, Shows, Sizing, Space, Tag, all, check_handler, homes};
+use super::{Element, Handler, Home, Homes, Input, Interface, Page, Shows, Sizing, Space, Tag, all, check_handler, component_state, homes};
 use crate::events::{self, rank};
-use crate::project::{Per, Variable};
+use crate::project::{Per, Variable, Views};
 use crate::rules;
 use crate::value::Value;
 
@@ -70,9 +70,6 @@ pub fn write(page: &Page, components: &[Page]) -> String {
     }
     for e in page.interface.iter().flat_map(|i| &i.events) {
         out.push_str(&format!("  <event name={}/>\n", quote(e)));
-    }
-    for v in page.interface.iter().flat_map(|i| &i.variables) {
-        out.push_str(&format!("  <var name={} start={}/>\n", quote(&v.name), quote(&v.start)));
     }
     for v in &page.state {
         var(&mut out, "  ", v, "");
@@ -163,7 +160,8 @@ fn element(out: &mut String, e: &Element, depth: usize, components: &[Page], hom
 pub(crate) fn var(out: &mut String, indent: &str, v: &Variable, more: &str) {
     let start = serde_json::to_string(&v.start).expect("a value is JSON");
     let per = if v.per == Per::Hmi { " per=\"hmi\"" } else { "" };
-    out.push_str(&format!("{indent}<var name={} start={}{per}{more}/>\n", quote(&v.name), quote(&start)));
+    let views = if v.views == Views::Each { " views=\"each\"" } else { "" };
+    out.push_str(&format!("{indent}<var name={} start={}{per}{views}{more}/>\n", quote(&v.name), quote(&start)));
 }
 
 /// Code between its opening and closing tags, a step further in, blank lines left bare.
@@ -253,17 +251,14 @@ pub fn parse(text: &str, id: &str) -> Result<Page, String> {
     if page.interface.as_ref().is_some_and(|i| i.space == Space::Scene && i.sizing != Sizing::Scale) {
         return Err(r.error("a 3D component is placed by its pose, so it takes no sizing"));
     }
-    match &mut page.interface {
-        Some(interface) => {
-            interface.inputs = r.props()?;
-            interface.events = r.events()?;
-            interface.variables = r.vars()?;
-        }
-        None => page.state = r.state()?,
+    if let Some(interface) = &mut page.interface {
+        interface.inputs = r.props()?;
+        interface.events = r.events()?;
     }
+    page.state = r.state()?;
     page.children = r.children(root)?;
-    if page.interface.is_some() && all(&page.children).any(|e| !e.state.is_empty()) {
-        return Err("a component keeps its state in its own <var> lines, and nothing in it keeps any".into());
+    if page.interface.is_some() {
+        page.state.iter().chain(all(&page.children).flat_map(|e| &e.state)).try_for_each(component_state)?;
     }
     r.gap();
     if r.at < r.s.len() {
@@ -422,30 +417,6 @@ impl Reader<'_> {
         }
     }
 
-    /// A component's `<var>` lines, its own variables.
-    fn vars(&mut self) -> Result<Vec<Local>, String> {
-        let mut out = Vec::new();
-        loop {
-            self.gap();
-            if !self.eat("<var") {
-                return Ok(out);
-            }
-            let mut v = Local { name: String::new(), start: String::new() };
-            for (k, value) in self.attrs()? {
-                match k.as_str() {
-                    "name" => v.name = value,
-                    "start" => v.start = value,
-                    other => return Err(self.error(&format!("<var> takes no attribute {other}"))),
-                }
-            }
-            self.expect("/>")?;
-            if v.name.is_empty() {
-                return Err(self.error("<var> needs a name"));
-            }
-            out.push(v);
-        }
-    }
-
     /// The `<var>` lines of what a page or an element keeps.
     fn state(&mut self) -> Result<Vec<Variable>, String> {
         let mut out = Vec::new();
@@ -462,7 +433,7 @@ impl Reader<'_> {
 
     /// The state a `<var>` line's attributes say. Kept for each screen unless it says otherwise.
     pub(crate) fn variable(&self, attrs: &[(String, String)]) -> Result<Variable, String> {
-        let mut v = Variable { name: String::new(), start: Value::Null, per: Per::Screen };
+        let mut v = Variable { name: String::new(), start: Value::Null, per: Per::Screen, views: Views::Shared };
         for (k, value) in attrs {
             match k.as_str() {
                 "name" => v.name = value.clone(),
@@ -472,6 +443,13 @@ impl Reader<'_> {
                         "screen" => Per::Screen,
                         "hmi" => Per::Hmi,
                         _ => return Err(self.error("per is screen or hmi")),
+                    }
+                }
+                "views" => {
+                    v.views = match value.as_str() {
+                        "each" => Views::Each,
+                        "shared" => Views::Shared,
+                        _ => return Err(self.error("views is each or shared")),
                     }
                 }
                 other => return Err(self.error(&format!("<var> takes no attribute {other}"))),
@@ -653,7 +631,7 @@ mod tests {
         let text = "<component name=\"Button\" size=\"176x66\">\n  <prop name=\"holdMs\" default=\"600\"/>\n  <var name=\"open\" start=\"false\"/>\n  <div id=\"e1\">\n    <on event=\"hold\" after=\"holdMs\">\n      emit(\"hold\");\n    </on>\n  </div>\n</component>\n";
         let page = parse(text, "button").unwrap();
         let i = page.interface.as_ref().unwrap();
-        assert_eq!(i.variables, [Local { name: "open".into(), start: "false".into() }]);
+        assert_eq!((i.inputs.len(), page.state[0].name.as_str(), &page.state[0].start), (1, "open", &Value::Bool(false)));
         assert_eq!(page.children[0].handlers[0].attrs["after"], "holdMs");
         assert_eq!(write(&page, &[]), text);
     }
@@ -783,8 +761,10 @@ mod tests {
         assert_eq!((e1.state[0].name.as_str(), &e1.state[0].start, e1.state[0].per), ("open", &Value::Bool(false), Per::Screen));
         assert_eq!(e1.children[0].props["text"], "open ? mode : \"\"");
         assert_eq!(write(&page, &[]), text);
+        // what a component holds keeps state too, never shared
         let held = "<component name=\"B\" size=\"10x10\">\n  <div id=\"e1\">\n    <var name=\"open\" start=\"false\"/>\n  </div>\n</component>\n";
-        assert!(parse(held, "b").unwrap_err().contains("nothing in it keeps any"));
+        assert_eq!(write(&parse(held, "b").unwrap(), &[]), held);
+        assert!(parse(&held.replace("false\"", "false\" per=\"hmi\""), "b").unwrap_err().contains("never shared"));
         assert!(parse("<page>\n<var name=\"a\" start=\"nope\"/>\n</page>", "a").unwrap_err().starts_with("line 2: nope is no start"));
     }
 
@@ -952,7 +932,8 @@ mod tests {
         for name in ["open", "count", "mode"] {
             if keeps && rng.below(4) == 0 {
                 let start = serde_json::from_str(STARTS[rng.below(STARTS.len())]).unwrap();
-                out.push(Variable { name: name.into(), start, per: if rng.below(2) == 0 { Per::Hmi } else { Per::Screen } });
+                let views = if rng.below(2) == 0 { Views::Shared } else { Views::Each };
+                out.push(Variable { name: name.into(), start, per: if rng.below(2) == 0 { Per::Hmi } else { Per::Screen }, views });
             }
         }
         out
@@ -1035,7 +1016,6 @@ mod tests {
         let interface = (rng.below(3) == 0).then(|| Interface {
             inputs: vec![Input { name: "level".into(), default: rng.pick(&VALUES), bindable: rng.below(2) == 0, r#type: ["", "number", "Pose Pose[]"][rng.below(3)].into() }],
             events: vec!["change".into()],
-            variables: vec![Local { name: "state".into(), start: rng.pick(&VALUES) }],
             sizing: if rng.below(2) == 0 { Sizing::Fill } else { Sizing::Scale },
             space: Space::Page,
         });
@@ -1045,15 +1025,27 @@ mod tests {
         let shows = if rng.below(3) == 0 { Shows::Over } else { Shows::Full };
         // a component draws on what holds it, so only a page has a fill
         let fill = if interface.is_none() && rng.below(2) == 0 { rng.pick(&VALUES) } else { String::new() };
-        // a component keeps its own variables, so nothing in it keeps state
-        let keeps = interface.is_none();
-        let state = some_state(rng, keeps);
+        let mut state = some_state(rng, true);
         let mut children = Vec::new();
         for _ in 0..1 + rng.below(4) {
             match deep {
-                true => children.extend(random_held(rng, &mut ids, 0, Home::Scene, keeps)),
-                false => children.push(random_element(rng, &mut ids, 0, keeps)),
+                true => children.extend(random_held(rng, &mut ids, 0, Home::Scene, true)),
+                false => children.push(random_element(rng, &mut ids, 0, true)),
             }
+        }
+        // each instance of a component keeps its own state on each screen
+        if interface.is_some() {
+            fn own(v: &mut Variable) {
+                v.per = Per::Screen;
+            }
+            fn walk(es: &mut [Element]) {
+                for e in es {
+                    e.state.iter_mut().for_each(own);
+                    walk(&mut e.children);
+                }
+            }
+            state.iter_mut().for_each(own);
+            walk(&mut children);
         }
         Page { id: "p".into(), name: "Overview".into(), width: 1408, height: 792, shows, fill, interface, state, children, folder: String::new() }
     }

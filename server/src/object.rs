@@ -484,7 +484,7 @@ impl Attrs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::Per;
+    use crate::project::{Per, Views};
     use crate::value::value;
 
     fn line() -> Object {
@@ -495,7 +495,7 @@ mod tests {
             Import { alias: "Reset".into(), entity: "Reset".into(), kind: Kind::Function, intent: Intent::Write, rate: None },
             Import { alias: "Joints".into(), entity: "/Robot/Joints".into(), kind: Kind::Topic, intent: Intent::Read, rate: None },
         ];
-        o.variables = vec![Variable { name: "runSeconds".into(), start: value!(0), per: Per::Hmi }, Variable { name: "mode".into(), start: value!("Auto"), per: Per::Screen }];
+        o.variables = vec![Variable { name: "runSeconds".into(), start: value!(0), per: Per::Hmi, views: Views::Shared }, Variable { name: "mode".into(), start: value!("Auto"), per: Per::Screen, views: Views::Shared }];
         o.computed = vec![Computed { name: "speedPercent".into(), get: "Speed / 2 * 100".into(), set: Some(Setter { target: "Speed".into(), value: "v / 100 * 2".into() }), rate: Some(5), unit: Some("%".into()), note: None }];
         o.records = vec![Record { name: "speedHistory".into(), source: "Conveyor.speed".into(), every_ms: 100, keep_s: 60 }];
         o.functions = vec![Function { name: "restart".into(), takes: vec!["job".into(), "mode".into()], code: "await Reset();\nreturn job;".into() }];
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn names_keep_to_their_kind_and_logic_on_screens_to_hmi() {
         let mut o = line();
-        o.variables.push(Variable { name: "Speed".into(), start: value!(1), per: Per::Hmi });
+        o.variables.push(Variable { name: "Speed".into(), start: value!(1), per: Per::Hmi, views: Views::Shared });
         assert!(check(&o).unwrap_err().contains("small letter"));
         o.variables.last_mut().unwrap().name = "speedPercent".into();
         assert_eq!(check(&o).unwrap_err(), "speedPercent is a variable of Line and a computed value too");

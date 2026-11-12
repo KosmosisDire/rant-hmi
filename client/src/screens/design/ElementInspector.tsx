@@ -6,7 +6,6 @@ import type { Element } from "../../protocol/Element";
 import { SENDERS } from "../../protocol/events";
 import type { Handler } from "../../protocol/Handler";
 import type { Input } from "../../protocol/Input";
-import type { Local } from "../../protocol/Local";
 import type { Page } from "../../protocol/Page";
 import { COMPONENT, EVENT, INPUT } from "../../protocol/rules";
 import type { Shows } from "../../protocol/Shows";
@@ -115,12 +114,14 @@ export function ElementInspector(p: { page: Page | undefined; selected: string[]
   const openedHere = () => {
     const o = opened();
     if (!o || !p.page || o.page !== p.page.id || p.selected.length > 1 || o.holder !== (element()?.id ?? null)) return undefined;
-    return (element()?.state ?? p.page.state).find((v) => v.name === o.name);
+    // a rename the system refused leaves it under the name it had
+    const kept = element()?.state ?? p.page.state;
+    return kept.find((v) => v.name === o.name) ?? kept.find((v) => v.name === o.was);
   };
   const where = createMemo((): Where => {
     const doc = p.page;
     if (!doc?.interface) return { scope: doc ? docScope(doc) : pageScope, handlers: "handler", expressions: "expression", also: doc && stateNames(doc, null) };
-    return { scope: docScope(doc), names: componentNames(doc), handlers: "component", expressions: "expression" };
+    return { scope: docScope(doc), names: componentNames(doc), handlers: "component", expressions: "expression", also: stateNames(doc, null) };
   });
   return (
     <Show when={p.page}>
@@ -134,7 +135,7 @@ export function ElementInspector(p: { page: Page | undefined; selected: string[]
               </Show>
             }
           >
-            {(v) => <StateView page={page()} holder={element()} v={v()} focus={opened()?.n} onBack={() => setOpened(null)} onRename={(name) => setOpened({ page: page().id, holder: element()?.id ?? null, name })} />}
+            {(v) => <StateView page={page()} holder={element()} v={v()} focus={opened()?.n} onBack={() => setOpened(null)} onRename={(name) => setOpened({ page: page().id, holder: element()?.id ?? null, name, was: v().name })} />}
           </Show>
         </WhereContext.Provider>
       )}
@@ -248,7 +249,7 @@ function PageInspector(p: { page: Page }) {
                 <Choice options={SIZINGS} value={i().sizing} onPick={(sizing) => edit({ kind: "set_sizing", page: p.page.id, sizing })} />
               </div>
               <Inputs page={p.page.id} inputs={i().inputs} />
-              <Variables page={p.page.id} variables={i().variables} />
+              <StateRows page={p.page} onOpen={(name, n) => setOpened({ page: p.page.id, holder: null, name, n })} />
               <Sends page={p.page.id} events={i().events} />
             </>
           )}
@@ -558,7 +559,7 @@ function Properties(p: { page: string; element: Element; typing: Typing | null }
           <div class="section">More CSS</div>
           <LooseProps page={p.page} element={p.element} loose={loose} placeholder='filter: Running ? "none" : "grayscale(1)"' css />
         </Show>
-        <Show when={pageOf(p.page)?.interface === null ? pageOf(p.page) : undefined}>{(doc) => <StateRows page={doc()} holder={p.element} onOpen={(name, n) => setOpened({ page: doc().id, holder: p.element.id, name, n })} />}</Show>
+        <Show when={pageOf(p.page)}>{(doc) => <StateRows page={doc()} holder={p.element} onOpen={(name, n) => setOpened({ page: doc().id, holder: p.element.id, name, n })} />}</Show>
         <Show when={!grouped()}>
           <Events page={p.page} element={p.element} focus={(key) => typed(`on:${key}`)} />
         </Show>
@@ -849,45 +850,10 @@ function Inputs(p: { page: string; inputs: Input[] }) {
   );
 }
 
-/** A component's own variables, each a box: its name and what each instance starts it at. */
-function Variables(p: { page: string; variables: Local[] }) {
-  const write = (name: string, local: Local | null) => edit({ kind: "set_local", page: p.page, name, local });
-  const add = () => {
-    const name = freeName("state", (n) => p.variables.some((v) => v.name === n));
-    write(name, { name, start: "0" });
-  };
-  return (
-    <>
-      <ListHead title="Variables" add="Add a variable" onAdd={add} />
-      <For each={p.variables}>
-        {(v) => (
-          <div class="handler" data-var={v.name}>
-            <div class="handler-head">
-              <DraftInput
-                class="editor input-name"
-                value={v.name}
-                accept={localName}
-                title="camelCase, and none an instance takes itself, as name, x, origin or enabled"
-                onCommit={(name) => write(v.name, { ...v, name: name.trim() })}
-              />
-              <button class="icon-btn" title={`Remove the variable ${v.name}`} onClick={() => write(v.name, null)}>
-                <X size={13} />
-              </button>
-            </div>
-            <div class="field input-default">
-              <label>Start</label>
-              <DraftInput value={v.start} onCommit={(start) => write(v.name, { ...v, start })} complete={constants} hint={(t, c) => signature(t, c, "theme")} />
-            </div>
-          </div>
-        )}
-      </For>
-    </>
-  );
-}
-
 /** The state whose own inspector shows in place of its holder's, a page's for no holder, while
- *  that holder stays picked. `n` puts the caret in its name. */
-const [opened, setOpened] = createSignal<{ page: string; holder: string | null; name: string; n?: number } | null>(null);
+ *  that holder stays picked. `n` puts the caret in its name, and `was` names it until a rename
+ *  comes back. */
+const [opened, setOpened] = createSignal<{ page: string; holder: string | null; name: string; was?: string; n?: number } | null>(null);
 
 /** The events a component sends with `emit`, which each instance may handle. */
 function Sends(p: { page: string; events: string[] }) {

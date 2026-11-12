@@ -121,7 +121,7 @@ export function makeComponent(page: Page, ids: string[]) {
   const name = freeName(joined((group ?? picked[0]).props.name ?? "", (w) => w[0].toUpperCase() + w.slice(1)).replace(/^[^A-Z]+/, "") || "Part", (n) => state.pages.some((p) => p.interface !== null && p.name === n));
   const id = freeName(slug(name), (n) => state.pages.some((p) => p.id === n));
   const [width, height] = box ? [box.w, box.h] : BOARD;
-  const component: Page = { id, name, width, height, shows: "full", fill: "", interface: { inputs, events, variables: [], sizing: "scale", space: deep ? "3d" : "2d" }, state: [], children: parts, folder: "" };
+  const component: Page = { id, name, width, height, shows: "full", fill: "", interface: { inputs, events, sizing: "scale", space: deep ? "3d" : "2d" }, state: [], children: parts, folder: "" };
   const instance: Element = { id: "", tag: "use", component: name, props: { name, ...Object.fromEntries([...renamed].map(([from, to]) => [to, from])) }, handlers, state: [], children: [] };
   // a 2D one where they stood, counted from the origin of their frame, at their size
   if (box) {

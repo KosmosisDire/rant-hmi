@@ -1,10 +1,12 @@
-// State a page or one of its elements keeps: a list of it, and one piece's own pane, which the
-// Design inspector and a page's sheet in the Objects tab both show.
+// State a page, a component or one of their elements keeps: a list of it, and one piece's own
+// pane, which the Design inspector and a page's sheet in the Objects tab both show. A
+// component's is each instance's own on its screen, so it has no value here and is never shared.
 
 import { batch, createMemo, For, type JSX, Show } from "solid-js";
 import type { Element } from "../../protocol/Element";
 import type { Page } from "../../protocol/Page";
 import type { Per } from "../../protocol/Per";
+import type { Views } from "../../protocol/Views";
 import { STATE } from "../../protocol/rules";
 import type { Variable } from "../../protocol/Variable";
 import { docScope, keptOf, type Place, resolve, setKept, stateKey } from "../../state/bind";
@@ -18,7 +20,7 @@ import { openElement } from "../../state/view";
 import { copiesOf } from "../../page/repeat";
 import { Choice } from "../../ui/Choice";
 import { DraftInput } from "../../ui/DraftInput";
-import { ArrowLeft, Globe, Monitor, MoveUpRight, Plus, Trash } from "../../ui/icons";
+import { AppWindow, ArrowLeft, Globe, Link, Monitor, MoveUpRight, Plus, Trash } from "../../ui/icons";
 import { LocalIcon } from "../../ui/marks";
 import { openMenu } from "../../ui/Menu";
 import { Preview } from "../../ui/Preview";
@@ -59,6 +61,26 @@ const KEPT: [Per, JSX.Element, string][] = [
   ],
 ];
 
+/** Whether every view of the page and the page alone share one value, or each view keeps its own. */
+const VIEWS: [Views, JSX.Element, string][] = [
+  [
+    "shared",
+    <>
+      <Link size={12} />
+      Every view
+    </>,
+    "Every view of the page, and the page shown alone, share one value",
+  ],
+  [
+    "each",
+    <>
+      <AppWindow size={12} />
+      Each view
+    </>,
+    "Each view of the page keeps its own value",
+  ],
+];
+
 
 /** Where the state that `page`, or its element `holder`, keeps lives on this screen: one place,
  *  or one per copy of the nearest repeat around it, the first copy of any further out. */
@@ -84,14 +106,14 @@ export function StateRows(p: { page: Page; holder?: Element; title?: string; pic
   const open = (name: string, n?: number) => p.onOpen(name, n);
   const add = () => {
     const name = freeName("state", (n) => kept().some((v) => v.name === n));
-    edit({ kind: "set_state", page: p.page.id, id: id(), name, var: { name, start: 0, per: "screen" } });
+    edit({ kind: "set_state", page: p.page.id, id: id(), name, var: { name, start: 0, per: "screen", views: "shared" } });
     open(name, ++fresh);
   };
   // a repeat's state shows its first copy's value
   const first = createMemo(() => statePlaces(p.page, p.holder)[0]?.at);
   const now = (v: Variable) => {
     const at = first();
-    return at ? keptOf(stateKey(at, id(), v.name), v) : v.start;
+    return at ? keptOf(stateKey(at, id(), v), v) : v.start;
   };
   return (
     <>
@@ -102,14 +124,19 @@ export function StateRows(p: { page: Page; holder?: Element; title?: string; pic
             <LocalIcon />
             <span class="list-label mono">{v.name}</span>
             <span class="member-def mono">{JSON.stringify(v.start)}</span>
-            <span class="member-value">
-              <Preview value={now(v)} known />
-            </span>
-            <span class="member-marks" title={v.per === "screen" ? "Each screen" : "Every screen"}>
-              <Show when={v.per === "screen"} fallback={<Globe size={12} />}>
-                <Monitor size={12} />
-              </Show>
-            </span>
+            <Show when={!p.page.interface}>
+              <span class="member-value">
+                <Preview value={now(v)} known />
+              </span>
+              <span class="member-marks" title={`${v.per === "screen" ? "Each screen" : "Every screen"}${v.views === "each" ? ", each view" : ""}`}>
+                <Show when={v.views === "each"}>
+                  <AppWindow size={12} />
+                </Show>
+                <Show when={v.per === "screen"} fallback={<Globe size={12} />}>
+                  <Monitor size={12} />
+                </Show>
+              </span>
+            </Show>
           </button>
         )}
       </For>
@@ -178,22 +205,28 @@ export function StateView(p: { page: Page; holder?: Element; v: Variable; focus?
           <label>Starts</label>
           <DraftInput value={JSON.stringify(p.v.start)} accept={(t) => literal(t) !== undefined} onCommit={(t) => write({ ...p.v, start: literal(t)! })} />
         </div>
-        <div class="field">
-          <label>Kept</label>
-          <Choice options={KEPT} value={p.v.per} onPick={(per) => write({ ...p.v, per })} />
-        </div>
-        <div class="section">Value now</div>
-        <For each={places()} fallback={<div class="field-hint">No copy is drawn now.</div>}>
-          {(at) => {
-            const key = () => stateKey(at.at, id(), p.v.name);
-            return (
-              <div class="field">
-                <label>{at.label || (p.v.per === "screen" ? "This screen" : "Shared")}</label>
-                <DraftInput value={JSON.stringify(keptOf(key(), p.v))} accept={(t) => literal(t) !== undefined} onCommit={(t) => setKept(key(), p.v, "", literal(t)!)} />
-              </div>
-            );
-          }}
-        </For>
+        <Show when={!p.page.interface} fallback={<div class="field-hint">Each instance keeps its own on its screen.</div>}>
+          <div class="field">
+            <label>Kept</label>
+            <Choice options={KEPT} value={p.v.per} onPick={(per) => write({ ...p.v, per })} />
+          </div>
+          <div class="field">
+            <label>Views</label>
+            <Choice options={VIEWS} value={p.v.views} onPick={(views) => write({ ...p.v, views })} />
+          </div>
+          <div class="section">Value now</div>
+          <For each={places()} fallback={<div class="field-hint">No copy is drawn now.</div>}>
+            {(at) => {
+              const key = () => stateKey(at.at, id(), p.v);
+              return (
+                <div class="field">
+                  <label>{at.label || (p.v.per === "screen" ? "This screen" : "Shared")}</label>
+                  <DraftInput value={JSON.stringify(keptOf(key(), p.v))} accept={(t) => literal(t) !== undefined} onCommit={(t) => setKept(key(), p.v, "", literal(t)!)} />
+                </div>
+              );
+            }}
+          </For>
+        </Show>
         <div class="section">Used by</div>
         <For each={readers()} fallback={<div class="field-hint">Nothing reads it yet.</div>}>
           {(at) => (

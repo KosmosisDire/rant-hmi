@@ -139,6 +139,8 @@ choices below.
   offers it for members of that type.
 - A component never names an object. Data comes in through inputs and actions go out as
   events, so one component serves any machine and the page decides what a press does.
+- What a component keeps of its own, as a dropdown's `expanded`, is a `<var>` as on a page,
+  first in the component or the part that uses it. Each instance keeps its own on each screen.
 - `sizing="fill"` for what stretches (buttons, cards, bars, plots). Leave it out for a drawing
   that must keep its shape, as a dial, which then scales whole.
 - Name each part for its role in camelCase (`track`, `thumb`). Give every press a visible
@@ -161,8 +163,9 @@ choices below.
   Hidden, it reads nothing, so a hidden camera streams nothing.
 - Whole panels that take turns in one place are pages of their own, each sized to the place, in
   a `<view page='source == "Twin" ? Pages.Twin : Pages.Camera'/>`. Each is edited alone, and
-  only the one shown is drawn. Two views of one page keep their own state. A view shows a web
-  page too, as `page='"https://grafana.local/d/line1"'`, where the site allows framing.
+  only the one shown is drawn. Every view of a page shares its state. Write `views="each"`
+  only for a page shown as separate copies. A view shows a web page too, as
+  `page='"https://grafana.local/d/line1"'`, where the site allows framing.
 - Chrome, a header and a nav round every page, is a Shell page whose `<view page="section"/>`
   shows the page a `<var name="section" start='"overview"'/>` names, the nav setting
   `section = Pages.Camera`. The address at `/run` follows it, as `/run/shell/camera`, and Back

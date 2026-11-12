@@ -22,7 +22,8 @@ name: string, width: number, height: number, shows: Shows,
  */
 fill: string, interface: Interface | null, 
 /**
- * What the page keeps, which all on it reads. A component keeps its own variables instead.
+ * What the page keeps, which all on it reads. Each instance of a component keeps its own on
+ * each screen, which only the screen knows.
  */
 state: Array<Variable>, children: Array<Element>, 
 /**

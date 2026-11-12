@@ -14,7 +14,7 @@ use ts_rs::TS;
 use crate::events::{self, rank};
 use crate::files;
 use crate::list::{self, by_name};
-use crate::project::{self, Variable};
+use crate::project::{self, Per, Variable, Views};
 use crate::rules;
 use crate::value::Value;
 
@@ -36,7 +36,8 @@ pub struct Page {
     pub fill: String,
     #[serde(default)]
     pub interface: Option<Interface>,
-    /// What the page keeps, which all on it reads. A component keeps its own variables instead.
+    /// What the page keeps, which all on it reads. Each instance of a component keeps its own on
+    /// each screen, which only the screen knows.
     #[serde(default)]
     pub state: Vec<Variable>,
     pub children: Vec<Element>,
@@ -54,9 +55,6 @@ pub struct Interface {
     /// What the component sends out with `emit`, which an instance's handlers take.
     #[serde(default)]
     pub events: Vec<String>,
-    /// Its own state, which each instance keeps on each screen.
-    #[serde(default)]
-    pub variables: Vec<Local>,
     #[serde(default)]
     pub sizing: Sizing,
     #[serde(default)]
@@ -95,15 +93,6 @@ pub enum Sizing {
     Fill,
 }
 
-/// A component's own variable, camelCase. Each instance starts it at `start`, an expression of
-/// constants and theme tokens, and its code sets it.
-#[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
-#[ts(export)]
-pub struct Local {
-    pub name: String,
-    pub start: String,
-}
-
 /// A value a component reads and each instance gives, camelCase like any local name.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
@@ -120,7 +109,7 @@ pub struct Input {
     pub r#type: String,
 }
 
-by_name!(Local, Input);
+by_name!(Input);
 
 /// How an open page shows: covering what is beneath, or floating over it while the page
 /// beneath stays in sight and keeps running, as a dialog does.
@@ -493,11 +482,8 @@ pub enum Edit {
     /// Adds the event `to` to a component when `name` is not one yet, renames `name` to it, or
     /// with null removes it. Instances' handlers follow a rename.
     SetEvent { page: String, name: String, to: Option<String> },
-    /// Adds, changes or with null removes a component's variable called `name`. The
-    /// component's code follows a rename.
-    SetLocal { page: String, name: String, local: Option<Local> },
-    /// Adds, changes or with null removes the state called `name` that the page keeps, or its
-    /// element `id`. What reads it follows a rename.
+    /// Adds, changes or with null removes the state called `name` that the page or component
+    /// keeps, or its element `id`. What reads it follows a rename.
     SetState { page: String, id: Option<String>, name: String, var: Option<Variable> },
     /// Moves the state `name` from the page or an element to another. It is refused while
     /// something that reads it would no longer see it, or would see it in place of another.
@@ -540,7 +526,6 @@ macro_rules! on_page {
             | Edit::SetHandler { page: $page, .. }
             | Edit::SetInput { page: $page, .. }
             | Edit::SetEvent { page: $page, .. }
-            | Edit::SetLocal { page: $page, .. }
             | Edit::SetState { page: $page, .. }
             | Edit::MoveState { page: $page, .. }
     };
@@ -655,10 +640,8 @@ impl Pages {
     /// exists and does not hold `page`, which would make it hold itself.
     fn check_uses(&self, page: &str, e: &Element) -> Result<(), String> {
         let host = self.get(page).filter(|p| p.interface.is_some()).map(|p| p.name.clone());
-        if let Some(host) = &host
-            && all(std::slice::from_ref(e)).any(|e| !e.state.is_empty())
-        {
-            return Err(format!("{host} keeps its own variables, so nothing in it keeps state"));
+        if host.is_some() {
+            all(std::slice::from_ref(e)).flat_map(|e| &e.state).try_for_each(component_state)?;
         }
         if let Some(host) = &host
             && all(std::slice::from_ref(e)).any(|e| e.tag == Tag::View)
@@ -693,7 +676,8 @@ impl Pages {
             [page, id, name] => (*page, Some(*id), *name),
             _ => return None,
         };
-        let p = self.get(page)?;
+        // a component's is kept by each instance on its screen, never by the system
+        let p = self.get(page).filter(|p| p.interface.is_none())?;
         let kept = match id {
             Some(id) => &find(&p.children, id)?.state,
             None => &p.state,
@@ -704,11 +688,15 @@ impl Pages {
     /// The state code on the element `id` reads, each name once and the nearest: what it keeps,
     /// what holds it keeps, then the page's. Each comes with its key: the copy of each repeat
     /// it sits in, outermost first as `copies` gives them, keeps its own, and so does each
-    /// showing of the page, by the views `via` names.
+    /// showing of the page, by the views `via` names, unless every view shares it.
     pub fn bound(&self, via: &str, page: &str, id: &str, copies: &[u32]) -> Vec<(String, Variable)> {
         let Some(p) = self.get(page) else { return Vec::new() };
-        let key = |id: Option<&str>, name: &str| format!("@{via}{}", &key(page, id, name)[1..]);
-        let mut out: Vec<(String, Variable)> = p.state.iter().map(|v| (key(None, &v.name), v.clone())).collect();
+        // what every view shares is the page's own, as it keeps it shown alone
+        let key = |id: Option<&str>, v: &Variable| {
+            let via = if v.views == Views::Shared { "" } else { via };
+            format!("@{via}{}", &key(page, id, &v.name)[1..])
+        };
+        let mut out: Vec<(String, Variable)> = p.state.iter().map(|v| (key(None, v), v.clone())).collect();
         let mut depth = 0;
         for e in chain(&p.children, id).unwrap_or_default() {
             if repeats(e) {
@@ -717,7 +705,7 @@ impl Pages {
             let copy: String = copies[..depth.min(copies.len())].iter().map(|i| format!("#{i}")).collect();
             for v in &e.state {
                 out.retain(|(_, o)| o.name != v.name);
-                out.push((format!("{}{copy}", key(Some(&e.id), &v.name)), v.clone()));
+                out.push((format!("{}{copy}", key(Some(&e.id), v)), v.clone()));
             }
         }
         out
@@ -729,9 +717,9 @@ impl Pages {
         let mut touched = Vec::new();
         for p in self.list.iter_mut().filter(|p| components || p.interface.is_none()) {
             let was = p.clone();
-            // a component's input defaults and variable starts may read a theme token
+            // a component's input defaults may read a theme token
             if let Some(i) = p.interface.as_mut() {
-                for code in i.inputs.iter_mut().map(|i| &mut i.default).chain(i.variables.iter_mut().map(|v| &mut v.start)) {
+                for code in i.inputs.iter_mut().map(|i| &mut i.default) {
                     *code = js::rename(code, from, to);
                 }
             }
@@ -1100,6 +1088,9 @@ impl Pages {
                     if list::taken(&i.inputs, &new.name, &name) {
                         return Err(format!("{component} already has an input {}", new.name));
                     }
+                    if p.state.iter().any(|v| v.name == new.name) {
+                        return Err(format!("{component} already keeps {}", new.name));
+                    }
                 }
                 let to = input.as_ref().map(|i| i.name.clone());
                 let inputs = &mut self.page_mut(&page)?.interface.as_mut().expect("a component, checked above").inputs;
@@ -1143,40 +1134,20 @@ impl Pages {
                 }
                 Edit::SetEvent { page: page.clone(), name: to.unwrap_or(name), to: old }
             }
-            Edit::SetLocal { page, name, local } => {
-                let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
-                let Some(i) = &p.interface else {
-                    return Err(format!("{} is a page, and only a component has variables of its own", p.name));
-                };
-                let component = p.name.clone();
-                if let Some(new) = &local {
-                    rules::INPUT.check(&new.name, "an input")?;
-                    if list::taken(&i.variables, &new.name, &name) || i.inputs.iter().any(|x| x.name == new.name) {
-                        return Err(format!("{component} already has {}", new.name));
-                    }
-                }
-                let to = local.as_ref().map(|v| v.name.clone());
-                let p = self.page_mut(&page)?;
-                let variables = &mut p.interface.as_mut().expect("a component, checked above").variables;
-                let old = list::put(variables, &name, local, || format!("{component} has no variable {name}"))?;
-                if let (Some(_), Some(to)) = (&old, &to)
-                    && *to != name
-                {
-                    each_mut(&mut p.children, &mut |e| rename_in(e, &name, to));
-                }
-                Edit::SetLocal { page: page.clone(), name: to.unwrap_or(name), local: old }
-            }
             Edit::SetState { page, id, name, var } => {
                 let p = self.get(&page).ok_or_else(|| format!("there is no page {page}"))?;
-                if p.interface.is_some() {
-                    return Err(format!("{} keeps its own variables, so nothing in it keeps state", p.name));
-                }
                 let (holder, kept) = keeper(p, id.as_deref())?;
                 if let Some(new) = &var {
                     rules::STATE.check(&new.name, "state")?;
                     project::unreserved(&new.name)?;
                     if new.start.is_null() {
                         return Err(format!("{} needs a start value", new.name));
+                    }
+                    if let Some(i) = &p.interface {
+                        component_state(new)?;
+                        if i.inputs.iter().any(|x| x.name == new.name) {
+                            return Err(format!("{} already has an input {}", p.name, new.name));
+                        }
                     }
                     if list::taken(kept, &new.name, &name) {
                         return Err(format!("{holder} already keeps {}", new.name));
@@ -1436,6 +1407,15 @@ fn reader(page: &Page, id: &str) -> String {
         Some(e) => called(e),
         None => format!("{}'s fill", page.name),
     }
+}
+
+/// State a component may keep: each instance keeps its own on each screen, so no screen shares
+/// it. Its views say nothing, as no view shows a component.
+pub(crate) fn component_state(v: &Variable) -> Result<(), String> {
+    if v.per == Per::Hmi {
+        return Err(format!("{} is each instance's own on each screen, so a component's state is never shared", v.name));
+    }
+    Ok(())
 }
 
 /// Writes `from` as `to` wherever it reads the state the page or its element `id` keeps, now
@@ -1729,14 +1709,12 @@ mod tests {
         assert_eq!(Pages::open(&dir).unwrap().get("overview").unwrap().fill, "$base");
         let gauge = pages.apply(Edit::AddComponent { name: "Gauge".into(), space: None }).unwrap().made.unwrap().1;
         assert_eq!(pages.apply(Edit::SetFill { page: gauge.clone(), fill: "#000".into() }).err().unwrap(), "Gauge draws on what holds it, so it has no fill");
-        // a default and a start read the theme too, so they follow its renames
-        let input = Some(Input { name: "tone".into(), default: "$base".into(), bindable: false, r#type: String::new() });
+        // a default reads the theme too, so it follows its renames
+        let input = Some(Input { name: "tone".into(), default: "$base.alpha(0.5)".into(), bindable: false, r#type: String::new() });
         pages.apply(Edit::SetInput { page: gauge.clone(), name: "tone".into(), input }).unwrap();
-        let local = Some(Local { name: "soft".into(), start: "$base.alpha(0.5)".into() });
-        pages.apply(Edit::SetLocal { page: gauge.clone(), name: "soft".into(), local }).unwrap();
         assert_eq!(pages.rename("$base", "$floor", true).unwrap(), [gauge.as_str(), "overview"]);
         let i = Pages::open(&dir).unwrap().get(&gauge).unwrap().interface.clone().unwrap();
-        assert_eq!((i.inputs[0].default.as_str(), i.variables[0].start.as_str()), ("$floor", "$floor.alpha(0.5)"));
+        assert_eq!(i.inputs[0].default, "$floor.alpha(0.5)");
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1903,7 +1881,7 @@ mod tests {
         let dir = scratch("state");
         let mut pages = Pages::open(&dir).unwrap();
         let o = || "overview".to_string();
-        let var = |name: &str| Some(Variable { name: name.into(), start: Value::Bool(false), per: project::Per::Screen });
+        let var = |name: &str| Some(Variable { name: name.into(), start: Value::Bool(false), per: project::Per::Screen, views: Views::Each });
         // a card repeats over Lines, holding a text and a frame that keeps an lit of its own
         let card = pages.apply(add(o(), None, Tag::Div, props(&[("name", "Card"), ("repeat", "lit ? Lines : []")]))).unwrap().made.unwrap().1;
         let text = pages.apply(add(o(), Some(card.clone()), Tag::Span, props(&[("name", "Label"), ("text", "lit ? 'on' : 'off'")]))).unwrap().made.unwrap().1;
@@ -1944,6 +1922,10 @@ mod tests {
         let viewed = pages.bound("shell/e4#1>", "overview", &text, &[3]);
         assert_eq!(viewed[0].0, format!("@shell/e4#1>overview/{card}/lit#3"));
         assert_eq!(pages.state(&viewed[0].0).map(|v| v.name.as_str()), Some("lit"));
+        // shared by every view, it is the one the page keeps shown alone
+        let shared = Some(Variable { views: Views::Shared, ..var("lit").unwrap() });
+        pages.apply(Edit::SetState { page: o(), id: Some(card.clone()), name: "lit".into(), var: shared }).unwrap();
+        assert_eq!(pages.bound("shell/e4#1>", "overview", &text, &[3])[0].0, format!("@overview/{card}/lit#3"));
         assert!(pages.apply(Edit::SetState { page: o(), id: None, name: "index".into(), var: var("index") }).unwrap_err().contains("keep clear of p, index and item"));
         // the HMI's own lit renamed leaves what reads the card's alone
         assert!(pages.rename("lit", "shine", false).unwrap().is_empty());
@@ -1951,27 +1933,41 @@ mod tests {
     }
 
     #[test]
-    fn a_components_variables_rename_in_its_code_and_undo() {
+    fn a_components_state_renames_in_its_code_and_undo() {
         let dir = scratch("locals");
         let mut pages = Pages::open(&dir).unwrap();
         let menu = pages.apply(Edit::AddComponent { name: "Menu".into(), space: None }).unwrap().made.unwrap().1;
-        let local = |name: &str| Some(Local { name: name.into(), start: "false".into() });
-        pages.apply(Edit::SetLocal { page: menu.clone(), name: "open".into(), local: local("open") }).unwrap();
-        pages.apply(add(menu.clone(), None, Tag::Div, props(&[("opacity", "open ? 1 : 0")]))).unwrap();
+        let local = |name: &str| Some(Variable { name: name.into(), start: Value::Bool(false), per: Per::Screen, views: Views::Shared });
+        let set = |name: &str, var| Edit::SetState { page: menu.clone(), id: None, name: name.into(), var };
+        pages.apply(set("expanded", local("expanded"))).unwrap();
+        pages.apply(add(menu.clone(), None, Tag::Div, props(&[("opacity", "expanded ? 1 : 0")]))).unwrap();
         let id = pages.get(&menu).unwrap().children[0].id.clone();
-        pages.apply(Edit::SetHandler { page: menu.clone(), id, event: "tap".into(), filter: None, code: Some("open = !open;".into()), attrs: None }).unwrap();
+        pages.apply(Edit::SetHandler { page: menu.clone(), id, event: "tap".into(), filter: None, code: Some("expanded = !expanded;".into()), attrs: None }).unwrap();
 
-        let undo = pages.apply(Edit::SetLocal { page: menu.clone(), name: "open".into(), local: local("shown") }).unwrap().undo;
+        let undo = pages.apply(set("expanded", local("shown"))).unwrap().undo;
         let e = &pages.get(&menu).unwrap().children[0];
         assert_eq!((e.props["opacity"].as_str(), e.handlers[0].code.as_str()), ("shown ? 1 : 0", "shown = !shown;"));
-        assert_eq!(Pages::open(&dir).unwrap().get(&menu).unwrap().interface.as_ref().unwrap().variables, [local("shown").unwrap()]);
+        assert_eq!(Pages::open(&dir).unwrap().get(&menu).unwrap().state, [local("shown").unwrap()]);
+        // the system never keeps it, as each instance keeps its own on its screen
+        assert!(pages.state(&format!("@{menu}/shown")).is_none());
         pages.apply(undo).unwrap();
-        assert_eq!(pages.get(&menu).unwrap().children[0].props["opacity"], "open ? 1 : 0");
+        assert_eq!(pages.get(&menu).unwrap().children[0].props["opacity"], "expanded ? 1 : 0");
 
         let input = Some(Input { name: "size".into(), default: "1".into(), bindable: false, r#type: String::new() });
         pages.apply(Edit::SetInput { page: menu.clone(), name: "size".into(), input }).unwrap();
-        assert!(pages.apply(Edit::SetLocal { page: menu.clone(), name: "size".into(), local: local("size") }).unwrap_err().contains("already has size"));
-        assert!(pages.apply(Edit::SetLocal { page: "overview".into(), name: "a".into(), local: local("a") }).unwrap_err().contains("only a component"));
+        assert!(pages.apply(set("size", local("size"))).unwrap_err().contains("already has an input size"));
+        let input = Some(Input { name: "expanded".into(), default: "1".into(), bindable: false, r#type: String::new() });
+        assert!(pages.apply(Edit::SetInput { page: menu.clone(), name: "expanded".into(), input }).unwrap_err().contains("already keeps expanded"));
+        let shared = Some(Variable { per: Per::Hmi, ..local("all").unwrap() });
+        // views say nothing in a component, so either is taken
+        pages.apply(set("each", Some(Variable { views: Views::Each, ..local("each").unwrap() }))).unwrap();
+        assert!(pages.apply(set("all", shared)).unwrap_err().contains("never shared"));
+        let id = pages.get(&menu).unwrap().children[0].id.clone();
+        // what it holds keeps state too, each instance its own
+        let inner = |var| Edit::SetState { page: menu.clone(), id: Some(id.clone()), name: "a".into(), var };
+        pages.apply(inner(local("a"))).unwrap();
+        assert_eq!(Pages::open(&dir).unwrap().get(&menu).unwrap().children[0].state, [local("a").unwrap()]);
+        assert!(pages.apply(inner(Some(Variable { per: Per::Hmi, ..local("a").unwrap() }))).unwrap_err().contains("never shared"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

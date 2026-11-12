@@ -8,7 +8,7 @@ export default async function ({ page, hmi, d, eventually }) {
   await d.addInput("value", "{ position: vec(0, 0, 0) }", { twoWay: true, type: "Pose" });
   await d.addInput("size", "0.6");
   await d.addSends("change");
-  await d.addVariable("grab", "0");
+  await d.addState("grab", "0");
   await d.add("anchor", { Name: "at", Pose: "{ position: value.position }" });
   const handle = async (axis, colour, size, along, direction) => {
     await d.addPart("box", { Name: axis, Pose: `{ position: ${along} }`, Size: size, Colour: `${axis}.hovered || ${axis}.pressed ? "#ffffff" : "${colour}"` });

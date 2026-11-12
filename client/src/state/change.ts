@@ -23,7 +23,7 @@ export const edit = (e: Edit) => change({ type: "edit", edit: e });
 export const show = (e: Edit) => setState(produce((s: State) => edited(s, e)));
 
 /** The edits that change only what the page they name holds. */
-const ALONE = new Set<Edit["kind"]>(["set_props", "set_handler", "set_input", "set_local", "set_event", "resize_page", "set_fill", "set_shows", "set_sizing"]);
+const ALONE = new Set<Edit["kind"]>(["set_props", "set_handler", "set_input", "set_event", "resize_page", "set_fill", "set_shows", "set_sizing"]);
 
 function mirror(s: State, msg: ClientMsg) {
   if (msg.type === "set_token") return putIn(s.tokens, msg.name, msg.token, (t) => t.name);
@@ -69,8 +69,6 @@ function edited(s: State, e: Edit) {
       return pg.interface && (pg.interface.sizing = e.sizing);
     case "set_input":
       return pg.interface && putIn(pg.interface.inputs, e.name, e.input, (i) => i.name);
-    case "set_local":
-      return pg.interface && putIn(pg.interface.variables, e.name, e.local, (v) => v.name);
     case "set_event":
       return pg.interface && putIn(pg.interface.events, e.name, e.to, (name) => name);
     case "set_props": {

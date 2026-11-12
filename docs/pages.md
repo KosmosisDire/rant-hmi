@@ -205,7 +205,8 @@ A view draws another page in its box, as a panel that changes with a selection.
 - Only the page shown is drawn, so a page not shown reads nothing.
 - The page runs as it does alone, its handlers too. It reads nothing of the page around it, so
   what both read goes in an object.
-- Each view keeps its own state of the page it shows, so two views of one page keep two.
+- Every view of a page shares its state, unless the state says `views="each"`, which gives
+  each view its own.
 - A page never shows itself, and a component shows no page.
 - A web page shows as the site lets it: many refuse to be framed, as Grafana does until
   `allow_embedding` is on, and a screen on https shows no http page. One on the HMI's own host
@@ -277,6 +278,9 @@ A `<var>` first inside a page or an element keeps state there:
 - The element and all it holds read it by name.
 - `start` is its first value, as JSON.
 - Each screen keeps its own, or with `per="hmi"` every screen shares one.
+- Every view of the page and the page shown alone share one, or with `views="each"` each view
+  keeps its own.
+- In a component, each instance keeps its own on each screen, and none is shared.
 
 ## Repeat
 

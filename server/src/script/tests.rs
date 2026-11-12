@@ -5,6 +5,7 @@ use crate::value::value;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::*;
+use crate::project::Views;
 use crate::logic::{Rule, When};
 use crate::object::ObjectInfo;
 use crate::protocol::FieldKind;
@@ -28,8 +29,8 @@ fn line(computed: Vec<Computed>, logic: Vec<Rule>) -> object::Object {
         import("Fill", Kind::Task, Intent::Write),
     ];
     o.variables = vec![
-        Variable { name: "jogMode".into(), start: value!("Joint"), per: Per::Screen },
-        Variable { name: "count".into(), start: value!(0), per: Per::Hmi },
+        Variable { name: "jogMode".into(), start: value!("Joint"), per: Per::Screen, views: Views::Shared },
+        Variable { name: "count".into(), start: value!(0), per: Per::Hmi, views: Views::Shared },
     ];
     o.computed = computed;
     o.logic = logic;
@@ -220,8 +221,8 @@ fn a_run_writes_what_it_sets_when_it_ends() {
 #[test]
 fn state_reads_by_its_name_over_others_from_its_start_then_its_screens_value() {
     let (script, mut rx) = engine();
-    let lit = Variable { name: "lit".into(), start: value!(false), per: Per::Screen };
-    let shared = Variable { name: "count".into(), start: value!(10), per: Per::Hmi };
+    let lit = Variable { name: "lit".into(), start: value!(false), per: Per::Screen, views: Views::Shared };
+    let shared = Variable { name: "count".into(), start: value!(10), per: Per::Hmi, views: Views::Shared };
     let bound = || vec![("@o/e1/lit#2".to_string(), lit.clone()), ("@o/count".to_string(), shared.clone())];
     // count is the HMI's variable too, which the page's count hides
     let code = "log(lit, count);\nlit = !lit;\ncount = count + 1;\nSettings.mode = \"Manual\";";

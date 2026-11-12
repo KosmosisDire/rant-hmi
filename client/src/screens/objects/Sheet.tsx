@@ -155,7 +155,7 @@ export function Sheet(p: { object: Thing; picking: Picking; onAdd: (e: EntityInf
           )}
         </For>
       </Section>
-      <Section title="State" count={o().variables.length} add={["Add state", () => newMember("newState", (name) => change({ type: "set_variable", object: o().name, name, variable: { name, start: 0, per: "hmi" } }))]}>
+      <Section title="State" count={o().variables.length} add={["Add state", () => newMember("newState", (name) => change({ type: "set_variable", object: o().name, name, variable: { name, start: 0, per: "hmi", views: "shared" } }))]}>
         <For each={o().variables}>
           {(v) => (
             <Row

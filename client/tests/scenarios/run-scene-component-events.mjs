@@ -4,7 +4,7 @@
 
 export default async function ({ page, hmi, d, eventually }) {
   const pad = await hmi.addComponent("TapPad", "3d");
-  await hmi.edit({ kind: "set_local", page: pad, name: "taps", local: { name: "taps", start: "0" } });
+  await hmi.edit({ kind: "set_state", page: pad, id: null, name: "taps", var: { name: "taps", start: 0, per: "screen" } });
   await hmi.edit({ kind: "set_event", page: pad, name: "hit", to: "hit" });
   const colour = 'cap.pressed ? "#00ff00" : cap.hovered ? "#ffff00" : taps > 0 ? "#0000ff" : "#ff0000"';
   const cap = await hmi.addElement(pad, "box", { name: "cap", size: "vec(0.5, 0.5, 0.5)", color: colour });

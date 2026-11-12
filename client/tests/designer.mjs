@@ -224,13 +224,14 @@ export function designer(page) {
       if (twoWay) await named.locator(".check input").check();
     },
 
-    /** Adds a variable of the open component's own. */
-    async addVariable(name, start) {
-      const before = await right().locator(".handler[data-var]").count();
-      await right().locator('button[title="Add a variable"]').click();
-      const row = right().locator(".handler[data-var]").nth(before);
-      await commit(row.locator(".input-name"), name);
-      await commit(right().locator(`.handler[data-var="${name}"] .input-default input`), start);
+    /** Adds state to the selected element, or with none to the open page or component, from
+     *  its pane, then goes back. */
+    async addState(name, start) {
+      await right().locator('button[title="Add state"]').click();
+      await d.setField("Name", name);
+      await d.setField("Starts", start);
+      await right().locator('button[title^="Back to"]').click();
+      await right().locator('button[title="Add state"]').waitFor();
     },
 
     /** Adds an event the open component sends. */

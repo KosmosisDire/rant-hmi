@@ -2,7 +2,7 @@
 // live. The Design and Run tabs both draw with this, so what is edited is what runs.
 
 import { createContext, createEffect, createMemo, createReaction, createRoot, createSignal, For, lazy, mapArray, Match, on, onCleanup, onMount, Show, Switch, useContext } from "solid-js";
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, reconcile } from "solid-js/store";
 import { Dynamic } from "solid-js/web";
 import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
@@ -1111,21 +1111,8 @@ export function keep(): Kept & { press(e: PointerEvent, at: [string, (m: Pointer
       }),
     );
   return {
-    get: (name) => vars[name],
-    set: (name, path, value) =>
-      setVars(
-        produce((all) => {
-          if (!path) {
-            all[name] = value;
-            return;
-          }
-          // a field of a variable that holds an object
-          const steps = path.split(".");
-          let at = all[name] as Record<string, unknown> | undefined;
-          for (const s of steps.slice(0, -1)) at = at?.[s] as Record<string, unknown> | undefined;
-          if (at && typeof at === "object") at[steps.at(-1)!] = value;
-        }),
-      ),
+    get: (key) => vars[key],
+    set: (key, value) => setVars(key, reconcile(value as never)),
     part: (name) => {
       const s = parts[name];
       return { pressed: !!s?.pressed, hovered: !!s?.hovered, heldFor: s?.pressed && !s.away ? Math.max(0, now() - s.since) : 0 };

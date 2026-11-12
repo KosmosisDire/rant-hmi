@@ -114,6 +114,18 @@ pub enum Per {
     Screen,
 }
 
+/// Whose value a page's state holds: one that every view of the page and the page shown alone
+/// share, or each view's own. A component's or an object's never differs by view, so it reads
+/// none.
+#[derive(Serialize, Deserialize, TS, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum Views {
+    #[default]
+    Shared,
+    Each,
+}
+
 /// State, named in camelCase, with the value it starts from.
 #[derive(Serialize, Deserialize, TS, Clone, Debug, PartialEq)]
 #[ts(export)]
@@ -122,6 +134,8 @@ pub struct Variable {
     pub start: Value,
     #[serde(default)]
     pub per: Per,
+    #[serde(default)]
+    pub views: Views,
 }
 
 /// A value's history, named in camelCase: `source` sampled every `every_ms`, each sample kept
@@ -823,9 +837,9 @@ mod tests {
             note: None,
         };
         p.set_computed("Line", "percent", Some(c("percent", "Speed * 100", Some(("Speed", "v / 100"))))).unwrap();
-        p.set_variable("Line", "mode", Some(Variable { name: "mode".into(), start: value!("Auto"), per: Per::Hmi })).unwrap();
+        p.set_variable("Line", "mode", Some(Variable { name: "mode".into(), start: value!("Auto"), per: Per::Hmi, views: Views::Shared })).unwrap();
         assert_eq!(p.set_computed("Line", "mode", Some(c("mode", "1", None))).unwrap_err(), "mode is already a variable of Line");
-        assert!(p.set_variable("Line", "percent", Some(Variable { name: "percent".into(), start: value!(1), per: Per::Hmi })).unwrap_err().contains("already a computed value"));
+        assert!(p.set_variable("Line", "percent", Some(Variable { name: "percent".into(), start: value!(1), per: Per::Hmi, views: Views::Shared })).unwrap_err().contains("already a computed value"));
         assert!(p.set_computed("Line", "bad", Some(c("bad", "1", Some(("Nothing", "v"))))).unwrap_err().contains("Line.Nothing takes no writes"));
         p.set_computed("Line", "half", Some(c("half", "percent / 2", None))).unwrap();
         assert!(p.set_computed("Line", "percent", Some(c("percent", "half * 2", None))).unwrap_err().contains("reads itself"));
@@ -841,15 +855,15 @@ mod tests {
     #[test]
     fn variables_survive_a_reopen_and_keep_to_their_names() {
         let (dir, mut p) = with_line("variables");
-        let mode = Variable { name: "jogMode".into(), start: value!("Joint"), per: Per::Screen };
+        let mode = Variable { name: "jogMode".into(), start: value!("Joint"), per: Per::Screen, views: Views::Shared };
         p.set_variable("Line", "jogMode", Some(mode.clone())).unwrap();
-        let limits = Variable { name: "limits".into(), start: value!({ "low": 0.5, "high": [1, 2] }), per: Per::Hmi };
+        let limits = Variable { name: "limits".into(), start: value!({ "low": 0.5, "high": [1, 2] }), per: Per::Hmi, views: Views::Shared };
         p.set_variable("Line", "limits", Some(limits.clone())).unwrap();
         assert_eq!(Project::open(&dir).unwrap().object("Line").unwrap().variables, [mode.clone(), limits]);
         assert!(p.set_variable("Line", "Speed", Some(Variable { name: "Speed".into(), ..mode.clone() })).unwrap_err().contains("small letter"));
         assert!(p.set_variable("Line", "open", Some(Variable { name: "open".into(), ..mode.clone() })).unwrap_err().contains("already uses"));
         assert!(p.set_variable("Line", "sqrt", Some(Variable { name: "sqrt".into(), ..mode.clone() })).unwrap_err().contains("already uses"));
-        assert!(p.set_variable("Line", "x", Some(Variable { name: "x".into(), start: Value::Null, per: Per::Hmi })).unwrap_err().contains("start value"));
+        assert!(p.set_variable("Line", "x", Some(Variable { name: "x".into(), start: Value::Null, per: Per::Hmi, views: Views::Shared })).unwrap_err().contains("start value"));
         // a rename keeps it local
         p.set_local("Line", "jogMode", true).unwrap();
         p.set_variable("Line", "jogMode", Some(Variable { name: "mode".into(), ..mode })).unwrap();
@@ -868,9 +882,9 @@ mod tests {
         p.set_record("Line", "speedHistory", Some(record("speedHistory", 100))).unwrap();
         assert_eq!(Project::open(&dir).unwrap().object("Line").unwrap().records, [record("speedHistory", 100)]);
         assert!(p.set_record("Line", "fast", Some(record("fast", 10))).unwrap_err().contains("50 ms or more"));
-        p.set_variable("Line", "mode", Some(Variable { name: "mode".into(), start: value!("Auto"), per: Per::Hmi })).unwrap();
+        p.set_variable("Line", "mode", Some(Variable { name: "mode".into(), start: value!("Auto"), per: Per::Hmi, views: Views::Shared })).unwrap();
         assert!(p.set_record("Line", "mode", Some(record("mode", 100))).unwrap_err().contains("already a variable"));
-        assert!(p.set_variable("Line", "speedHistory", Some(Variable { name: "speedHistory".into(), start: value!(0), per: Per::Hmi })).unwrap_err().contains("already a record"));
+        assert!(p.set_variable("Line", "speedHistory", Some(Variable { name: "speedHistory".into(), start: value!(0), per: Per::Hmi, views: Views::Shared })).unwrap_err().contains("already a record"));
         // another object may have a member of the same name
         p.set_record("Hmi", "mode", Some(record("mode", 100))).unwrap();
         p.set_record("Line", "speedHistory", None).unwrap();
@@ -987,7 +1001,7 @@ mod tests {
         let why = |found: Found, path: &str, screen: bool| found.target("X", path, screen).err().map(|u| (u.text, u.unknown));
         let read = Import { intent: Intent::Read, ..speed() };
         let call = Import { kind: Kind::Function, ..speed() };
-        let own = Variable { name: "x".into(), start: value!(0), per: Per::Screen };
+        let own = Variable { name: "x".into(), start: value!(0), per: Per::Screen, views: Views::Shared };
         let worked = Computed { name: "x".into(), get: "1".into(), set: None, rate: None, unit: None, note: None };
         assert_eq!(why(Found::Import(&speed()), "a", false), None);
         assert_eq!(why(Found::Import(&read), "", true).unwrap().0, "X is imported to read. Import it to write to change it.");

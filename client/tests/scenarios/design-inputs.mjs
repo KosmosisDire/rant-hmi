@@ -40,7 +40,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await page.keyboard.press("Escape");
 
   await d.setField("Text", "Line.Speed");
-  await page.locator(".field-note", { hasText: "Line is no input, variable or part of Meter" }).waitFor();
+  await page.locator(".field-note", { hasText: "Line is no input, state or part of Meter" }).waitFor();
   await d.setField("Text", 'level + "%"');
 
   const pageId = await hmi.addPage("Meters");
@@ -69,12 +69,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
     return inputs.length === 1 && inputs[0].name === "amount" && inputs[0].bindable;
   }, "one two way input named amount");
 
-  // a variable renamed to the input's name shows the rename at once, then the refusal undoes it
-  await side("right").locator('button[title="Add a variable"]').click();
-  await eventually(() => hmi.page(meter).interface.variables.length === 1, "a variable");
-  const varBox = side("right").locator("[data-var] .input-name");
-  await varBox.fill("amount");
-  await varBox.press("Enter");
-  await eventually(async () => (await varBox.inputValue()) === "state", "the refused rename to read state again");
-  check(hmi.page(meter).interface.variables[0].name === "state", "the variable kept its name");
+  // state renamed to the input's name shows the rename at once, then the refusal undoes it
+  await side("right").locator('button[title="Add state"]').click();
+  await eventually(() => hmi.page(meter).state.length === 1, "state");
+  const name = d.field("Name");
+  await name.fill("amount");
+  await name.press("Enter");
+  await eventually(async () => (await name.inputValue()) === "state", "the refused rename to read state again");
+  check(hmi.page(meter).state[0].name === "state", "the state kept its name");
 }

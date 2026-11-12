@@ -16,7 +16,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.addInput("colour", "$accent");
   await d.addInput("knobColour", "$panel3");
   await d.addInput("lineColour", "$border2");
-  await d.addVariable("kx", "0");
+  await d.addState("kx", "0");
   await d.addSends("move");
   await d.addSends("held");
   // the track takes the presses, which the marks and the knob on it let through

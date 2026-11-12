@@ -36,7 +36,7 @@ export function navViews(p: Page): Nav[] {
 }
 
 /** Where the full page `p`, shown through `via`, keeps what its view `n` shows. */
-const keyOf = (n: Nav, via: string, p: string) => stateKey({ via, page: p, copies: [] }, n.holder, n.v.name);
+const keyOf = (n: Nav, via: string, p: string) => stateKey({ via, page: p, copies: [] }, n.holder, n.v);
 
 /** The page a view shows now, null for none it can show. */
 function showing(n: Nav, key: string): string | null {

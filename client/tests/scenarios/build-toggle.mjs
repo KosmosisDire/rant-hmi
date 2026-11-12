@@ -57,7 +57,7 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await d.handler("tap", "Line.Speed = 1;");
   await d.tab("Run");
   await inst(line).click();
-  await page.locator(".notice.fault", { hasText: "Line is no input, variable or part of Toggle" }).waitFor({ timeout: 4000 });
+  await page.locator(".notice.fault", { hasText: "Line is no input, state or part of Toggle" }).waitFor({ timeout: 4000 });
 
   // and back, so the Toggle ends as a person would leave it
   await d.tab("Design");

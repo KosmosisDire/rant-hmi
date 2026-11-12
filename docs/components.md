@@ -21,9 +21,9 @@ page with an interface first.
 | `space` | `3d` for a [3D component](#3d-components), `2d` when left out |
 | `<prop>` | an input an instance sets: `name`, `default`, `type` ([Input types](#input-types)), and `bindable="true"` to write back to what the instance binds it to |
 | `<event>` | an event its code sends with `emit(name, value)`: `name` |
-| `<var>` | each instance's own state on each screen: `name`, `start` as JSON |
+| `<var>` | state, as on a page ([State](pages.md#state)), first inside the component or any element in it. Each instance keeps its own on each screen, so it takes no `per` |
 
-Inside it, code reads its inputs and vars by name, and each part's `pressed`, `hovered` and
+Inside it, code reads its inputs and state by name, and each part's `pressed`, `hovered` and
 `heldFor` in ms by the part's name, `root` for the whole: `thumb.pressed ? $accent : $panel`.
 `heldFor` drops to 0 once the press leaves the part, and no `hold` comes from that press.
 
