@@ -91,8 +91,8 @@ pub enum FromRtc {
     Candidate { session: u32, candidate: String },
     /// The screen's link channel opened, which sends what these lanes carry until they close.
     Channel { session: u32, lanes: Arc<Lanes> },
-    /// What the screen sent on its link channel.
-    Message { session: u32, msg: ClientMsg },
+    /// What the screen sent on its link channel, boxed as a message is far larger than the rest.
+    Message { session: u32, msg: Box<ClientMsg> },
     /// The screen's link channel closed, or its connection with it.
     ChannelClosed { session: u32 },
 }
@@ -499,7 +499,7 @@ async fn drive(p: &mut Peer, ports: &HashMap<IpAddr, Port>, said: &UnboundedSend
                 }
                 Event::ChannelData(d) if p.link.as_ref().is_some_and(|l| l.id == d.id) => match ciborium::from_reader::<ClientMsg, _>(&d.data[..]) {
                     Ok(msg) => {
-                        let _ = said.send(FromRtc::Message { session: p.session, msg });
+                        let _ = said.send(FromRtc::Message { session: p.session, msg: Box::new(msg) });
                     }
                     Err(e) => warn!("screen {} sent on its link channel what this backend cannot read: {e}", p.session),
                 },

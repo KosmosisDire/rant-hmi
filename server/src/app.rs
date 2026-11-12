@@ -2394,8 +2394,8 @@ impl App {
                 let Some(s) = self.sessions.get_mut(&session) else { return };
                 s.spoke();
                 match &mut s.held {
-                    Some(held) => held.push(msg),
-                    None => self.handle(session, msg),
+                    Some(held) => held.push(*msg),
+                    None => self.handle(session, *msg),
                 }
             }
             FromRtc::ChannelClosed { session } => self.channel_closed(session),
