@@ -1,6 +1,7 @@
 // What a call gives is known after its dot, its value there or not: a vector's length is a
 // number, so a number's methods come, a Rant Math call's answer offers its fields, and a colour's
-// lighten a colour's methods. A token's card shows its value, a colour with its swatch.
+// lighten a colour's methods. Brackets give what their arithmetic does, by Rant Math's
+// operators. A token's card shows its value, a colour with its swatch.
 
 export default async function ({ page, hmi, d, check, eventually }) {
   await hmi.import("Robot.EndPose", "Robot/Pose");
@@ -21,6 +22,12 @@ export default async function ({ page, hmi, d, check, eventually }) {
   await offers("math.poseInverse(Robot.EndPose).", "orientation");
   await offers("math.poseInverse(Robot.EndPose).position.length().", "toPrecision");
   await offers("$probeTone.lighten(0.2).", "darken");
+  // what brackets hold is worked out from what it reads, by the operators it uses
+  await offers("(Robot.EndPose.position.length() / 9.8).", "toFixed");
+  await offers("(Robot.EndPose.position * 2).", "z");
+  await offers("(-Robot.EndPose.position).", "length");
+  await offers("round(Robot.EndPose.position.x * 10).", "toPrecision");
+  await offers("($probeTone * 1.2).", "lighten");
 
   // the caret on the token shows its card, with its value and its swatch
   await field.fill("$probeTone");

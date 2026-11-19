@@ -161,6 +161,13 @@ export function givesOf(index) {
   return out.length === 1 && (out[0].kind === "return" || out[0].kind === "out") ? out[0].type || null : null;
 }
 
+/** What `left op right` gives by Rant Math's operator for those types, each as `mathType` names
+ *  it, as `givesOf` says, null where no operator takes them. */
+export function operatorGives(op, left, right) {
+  const o = rantMath().operators().find((x) => x.op === op && x.left === left && x.right === right);
+  return o ? givesOf(o.function) : null;
+}
+
 let fixedNames = null;
 
 /** Sets every type's method names where only the rewrite reads them, so it makes no Rant Math. */

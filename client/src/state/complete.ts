@@ -2,14 +2,15 @@
 // live value. It reads only the text before the caret, so the code need not parse.
 
 import { API, apiIn, type Place } from "../lang/api.js";
+import { type Node, tree } from "../lang/arith.js";
 import { isHex, tokens as lex } from "../lang/lex";
-import { givesOf, LIBRARY, methodsOf, standardType, TYPE, wholeType } from "../lang/math.js";
+import { givesOf, LIBRARY, mathType, methodsOf, operatorGives, standardType, TYPE, wholeType } from "../lang/math.js";
 import type { FieldInfo } from "../protocol/FieldInfo";
 import type { Kind } from "../protocol/Kind";
 import type { Page } from "../protocol/Page";
 import type { TypeInfo } from "../protocol/TypeInfo";
 import type { Value } from "../protocol/Value";
-import { partNames, tokenNow } from "./bind";
+import { colours, partNames, tokenNow } from "./bind";
 import { chain as path } from "./elements";
 import { bareType, fields, typeLabel } from "./format";
 import { imported, key, keyOf, members, type Named, named, names, object } from "./names";
@@ -323,6 +324,7 @@ function given(path: string[], place: Place, names?: Suggestion[], also?: Sugges
   if (token) return path.length === 1 ? (token.members ?? []) : offeredAt(path, place, own);
   const near = [...(also ?? []), ...(names ?? [])].find((n) => n.label === path[0]);
   if (near) return path.length === 1 ? (near.members ?? []) : [];
+  if (path[0].startsWith("(")) return offeredAt(path, place, own);
   // the language's names read in every place, the mesh's only where code names nothing else
   return language(path, place) ?? (names ? [] : after(path, place, own));
 }
@@ -386,8 +388,8 @@ function inWords(before: string): boolean {
 /** A call as a step of a path: its name, then `()`, or `(_)` where it is given values. */
 const CALL = /^([A-Za-z_$][\w$]*)\((_?)\)$/;
 
-/** The path a dot follows, read backwards: `Joints.position[2]` gives Joints, position, 2, and
- *  `Ft.force.length()` gives Ft, force, length(). */
+/** The path a dot follows, read backwards: `Joints.position[2]` gives Joints, position, 2,
+ *  `Ft.force.length()` gives Ft, force, length(), and `(a / 2).x` gives (a / 2), x. */
 function chain(before: string): string[] {
   const out: string[] = [];
   let i = before.length;
@@ -401,18 +403,23 @@ function chain(before: string): string[] {
       continue;
     }
     let call = "";
+    let inner = "";
     let end = i;
     if (before[i - 1] === ")") {
       const open = opening(before, i - 1);
       if (open < 0) return [];
-      call = before.slice(open + 1, i - 1).trim() ? "(_)" : "()";
+      inner = before.slice(open + 1, i - 1).trim();
+      call = inner ? "(_)" : "()";
       end = open;
     }
     let j = end;
     while (j > 0 && WORD.test(before[j - 1])) j--;
-    if (j === end) return [];
-    out.unshift(before.slice(j, end) + call);
-    if (before[j - 1] !== ".") return out;
+    if (j === end && !inner) return [];
+    // brackets with no name before them, or a call that starts the path, hold an expression,
+    // whose values matter to what it gives
+    const starts = before[j - 1] !== ".";
+    out.unshift(call && (j === end || starts) ? `(${before.slice(j, i)})` : before.slice(j, end) + call);
+    if (starts) return out;
     i = j - 1;
   }
 }
@@ -464,7 +471,11 @@ interface Typed {
 /** What `path` stands for, from a theme token where code reads those, a call of `math`, or a
  *  member. Undefined where it names none of them or a step leads nowhere. */
 function typedAt(path: string[], place: Place, own?: string): Typed | undefined {
-  const token = THEMED.includes(place) ? state.tokens.find((t) => `$${t.name}` === path[0]) : undefined;
+  if (path[0].startsWith("(")) {
+    const t = expressionAt(path[0].slice(1, -1), place, own);
+    return t && walk(t, path.slice(1));
+  }
+  const token =THEMED.includes(place) ? state.tokens.find((t) => `$${t.name}` === path[0]) : undefined;
   if (token) {
     const value = tokenNow(token);
     return walk({ value, known: value !== null, colour: typeof value === "string" && isHex(value) }, path.slice(1));
@@ -524,7 +535,121 @@ function called(t: Typed, name: string, given: boolean): Typed | undefined {
 function gives(type: string | null): FieldInfo | undefined {
   if (!type) return undefined;
   const kind = type === "bool" ? "bool" : /^(float|double|u?int(8|16|32|64)_t|size_t)$/.test(type) ? "f64" : null;
-  return standardType(type) ?? (kind ? { name: "", kind, type_name: null, elem: null, count: 0, options: [], members: [] } : undefined);
+  return standardType(type) ?? (kind ? plain(kind) : undefined);
+}
+
+/** A type of no fields, as a number, a flag or a text. */
+const plain = (kind: FieldInfo["kind"]): FieldInfo => ({ name: "", kind, type_name: null, elem: null, count: 0, options: [], members: [] });
+
+/** What the expression `src` gives, worked out from what it reads without running it, so a
+ *  call in it never runs. Undefined where that cannot be told. */
+function expressionAt(src: string, place: Place, own?: string): Typed | undefined {
+  try {
+    const statement = (tree(`(${colours(src)}\n)`).body as Node[])[0];
+    return typedNode(statement.expression as Node, place, own);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The path a node of names, fields and calls is, as `chain` reads it, else undefined. */
+function pathOfNode(n: Node): string[] | undefined {
+  if (n.type === "Identifier") return [n.name as string];
+  const step = n.type === "MemberExpression" ? stepOf(n) : n.type === "CallExpression" ? callOf(n) : undefined;
+  const base = n.type === "MemberExpression" ? (n.object as Node) : n.type === "CallExpression" ? ((n.callee as Node).object as Node | undefined) : undefined;
+  const p = base && step && pathOfNode(base);
+  return p ? [...p, step!] : undefined;
+}
+
+/** A field's or an item's step, as `.x` or `[2]` read. */
+function stepOf(n: Node): string | undefined {
+  const p = n.property as Node;
+  if (!n.computed) return p.name as string;
+  return p.type === "Literal" && typeof p.value === "number" ? String(p.value) : undefined;
+}
+
+/** A method call's step, as `chain` writes it. */
+function callOf(n: Node): string | undefined {
+  const callee = n.callee as Node;
+  if (callee.type !== "MemberExpression" || callee.computed) return undefined;
+  return `${(callee.property as Node).name as string}(${(n.arguments as Node[]).length > 0 ? "_" : ""})`;
+}
+
+/** What the language's own functions give: a vector from `vec`, the kind of its first value
+ *  from `lerp`, a colour from `mix`, and a number from the rest, all of them math. */
+function ownCall(name: string, args: (Typed | undefined)[]): Typed | undefined {
+  if (name === "vec") return { value: null, known: false, type: standardType(args.length === 2 ? "Double2" : "Double3") };
+  if (name === "lerp") return args[0] && { value: null, known: false, type: args[0].type, colour: args[0].colour };
+  if (name === "mix") return { value: null, known: false, colour: true };
+  if (typeof LIBRARY[name] !== "function") return undefined;
+  const values = args.map((a) => a?.value);
+  const known = args.every((a) => a?.known && typeof a.value === "number");
+  const value = known ? ((LIBRARY[name] as (...xs: unknown[]) => Value)(...values) ?? null) : null;
+  return { value, known: value !== null, type: plain("f64") };
+}
+
+const COMPARE = new Set(["==", "===", "!=", "!==", "<", ">", "<=", ">=", "in", "instanceof"]);
+const ARITH: Record<string, string> = { "+": "__add", "-": "__sub", "*": "__mul", "/": "__div" };
+
+function typedNode(n: Node, place: Place, own?: string): Typed | undefined {
+  const path = pathOfNode(n);
+  if (path) return typedAt(path, place, own);
+  const typed = (x: unknown) => typedNode(x as Node, place, own);
+  switch (n.type) {
+    case "Literal":
+      return ["number", "string", "boolean"].includes(typeof n.value) ? { value: n.value as Value, known: true, type: plain(typeof n.value === "number" ? "f64" : typeof n.value === "string" ? "string" : "bool"), colour: typeof n.value === "string" && isHex(n.value) } : undefined;
+    case "TemplateLiteral":
+      return { value: null, known: false, type: plain("string") };
+    case "ChainExpression":
+      return typed(n.expression);
+    case "ConditionalExpression":
+      return typed(n.consequent);
+    case "LogicalExpression":
+      return typed(n.left);
+    case "UnaryExpression":
+      if (n.operator === "!") return { value: null, known: false, type: plain("bool") };
+      return n.operator === "-" ? combined("neg", typed(n.argument), undefined) : undefined;
+    case "BinaryExpression":
+      return combined(n.operator as string, typed(n.left), typed(n.right));
+    case "MemberExpression": {
+      const base = typed(n.object);
+      const step = stepOf(n);
+      return base && step ? walk(base, [step]) : undefined;
+    }
+    case "CallExpression": {
+      const callee = n.callee as Node;
+      if (callee.type === "Identifier") return ownCall(callee.name as string, (n.arguments as Node[]).map(typed));
+      const base = callee.type === "MemberExpression" ? typed(callee.object) : undefined;
+      const step = callOf(n);
+      return base && step ? walk(base, [step]) : undefined;
+    }
+  }
+  return undefined;
+}
+
+/** What `l op r` gives, or `-l` for neg: a flag from a comparison, a text from + with one, a
+ *  colour scaled from a colour, else by Rant Math's operators, numbers by themselves. Its value
+ *  where both are known now. */
+function combined(op: string, l: Typed | undefined, r: Typed | undefined): Typed | undefined {
+  if (COMPARE.has(op)) return { value: null, known: false, type: plain("bool") };
+  if (!l || (op !== "neg" && !r)) return undefined;
+  const [a, b] = [l.value ?? like(l), r ? (r.value ?? like(r)) : null];
+  let value: Value | null = null;
+  const fn = op === "neg" ? "__neg" : ARITH[op];
+  if (fn && l.known && l.value !== null && (op === "neg" || (r!.known && r!.value !== null))) {
+    try {
+      value = (LIBRARY[fn] as (x: unknown, y?: unknown) => Value)(l.value, r?.value);
+    } catch {
+      // operands no operator takes give nothing
+    }
+  }
+  const known = value !== null;
+  if (op === "+" && (typeof a === "string" || typeof b === "string") && !l.colour) return { value, known, type: plain("string") };
+  if (l.colour || r?.colour) return { value, known, colour: true };
+  const [ta, tb] = [mathType(a), op === "neg" ? "" : mathType(b)];
+  if (ta === null || tb === null) return undefined;
+  const type = ta === "double" && (tb === "double" || op === "neg") ? plain("f64") : gives(operatorGives(op, ta, tb));
+  return type && { value, known, type };
 }
 
 /** A value of the kind `t` is, for what its methods are while its own is not known. */
