@@ -32,6 +32,9 @@ fields and calls of Rant Math broke it, and nothing said what JavaScript's own m
   that changes the list, as `push`, is declared but never run.
 - A list method's function is typed with the item as its value, so `rant.statuses().map((c) =>`
   knows `c` is a condition, and gives a list of what the function returns.
+- Code cut short at the caret parses with acorn-loose, and what it declares on the way down to
+  the caret is in scope there: the statements before it, each function's values as its caller
+  calls it, a loop's item, a caught error.
 - The tests are a scenario, `lang-types`, that runs in Node beside the backend, which gives the
   standard types.
 
@@ -39,6 +42,7 @@ fields and calls of Rant Math broke it, and nothing said what JavaScript's own m
 
 1. The model and the declarations. Done.
 2. The analyser over acorn's tree, with tests. Done.
-3. Names code declares before the caret, read with acorn's loose parser.
+3. Names code declares before the caret, read with acorn's loose parser. Done. acorn-loose is
+   vendored beside acorn, at 8.5.2.
 4. Completion, call hints and the name card on the analyser, and the patches in complete.ts
    removed.

@@ -4,7 +4,8 @@
 
 import { NAMES } from "rant-math/names";
 import { API } from "./api.js";
-import { tree } from "./arith.js";
+import { parse as loose } from "./acorn/acorn-loose.mjs";
+import { children, tree } from "./arith.js";
 import { givesOf, LIBRARY, methodsOfType, operatorGives, standardType, TYPE } from "./math.js";
 
 export const NUMBER = Object.freeze({ kind: "number" });
@@ -23,8 +24,9 @@ export const map = (item) => ({ kind: "map", item });
 export const record = (fields, name, own = []) => ({ kind: "record", fields, name, own });
 
 /** Something code calls: what it takes, in words, and what it gives, a type or a function of the
- *  call that works it out. `run` works its value out where it changes nothing. */
-export const callable = (takes, gives, run) => ({ kind: "function", takes, gives, run });
+ *  call's values that works it out. `run` works its value out where it changes nothing, `calls`
+ *  says what a function given as value i is called with, and `own` are members it has. */
+export const callable = (takes, gives, more = {}) => ({ kind: "function", takes, gives, own: [], ...more });
 
 /** A type with a value it has now, or none. */
 export const typed = (t, v) => ({ t, v, known: v !== undefined });
@@ -165,12 +167,18 @@ function own(proto, table) {
   return Object.entries(table).map(([name, [takes, gives, w]]) => method(name, takes, gives, w, (self, args) => proto[name].apply(self, args)));
 }
 
-/** What a list method's function gives, from its first value: a function written there, or one
- *  named, called with `params`. */
-const returns = (args, params) => args[0]?.returns(params) ?? UNKNOWN;
 const item = (self) => self.t.item ?? UNKNOWN;
 const same = (self) => self.t;
 const eachOf = (self) => [item(self), NUMBER, self.t];
+const pairOf = (self) => [item(self), item(self)];
+
+/** A list method that calls a function on its items: `params` are what the function is called
+ *  with, and `gives` what the method gives, from the list, what the function returns and the
+ *  call's values. */
+function each(name, takes, params, gives, words) {
+  const calls = (self, args, i) => (i === 0 ? params(self, args) : undefined);
+  return { name, takes, words, calls, gives: (self, args) => gives(self, args[0]?.returns(params(self, args)) ?? UNKNOWN, args) };
+}
 
 const NUMBER_MEMBERS = own(Number.prototype, {
   toFixed: [["digits?"], STRING, "with this many digits after the point"],
@@ -229,25 +237,25 @@ const LIST_MEMBERS = [
     toReversed: [[], same, "in the other order"],
     with: [["index", "item"], same, "with the item at index changed"],
   }),
-  method("every", ["(item, index) => ..."], BOOL, "true when the function is true for every item"),
-  method("filter", ["(item, index) => ..."], same, "the items the function is true for"),
-  method("find", ["(item, index) => ..."], item, "the first item the function is true for"),
-  method("findIndex", ["(item, index) => ..."], NUMBER, "where the first item the function is true for is"),
-  method("findLast", ["(item, index) => ..."], item, "the last item the function is true for"),
-  method("findLastIndex", ["(item, index) => ..."], NUMBER, "where the last item the function is true for is"),
-  method("flatMap", ["(item, index) => ..."], (self, args) => returns(args, eachOf(self)), "each item's list from the function, one after another"),
-  method("forEach", ["(item, index) => ..."], UNKNOWN, "runs the function on each item"),
-  method("map", ["(item, index) => ..."], (self, args) => list(returns(args, eachOf(self))), "what the function gives for each item"),
-  method("reduce", ["(sum, item, index) => ...", "start?"], (self, args) => (args[1]?.typed.t ?? returns(args, [item(self), item(self), NUMBER, self.t])), "the items folded into one by the function"),
-  method("some", ["(item, index) => ..."], BOOL, "true when the function is true for an item"),
-  method("toSorted", ["(a, b) => ...?"], same, "in the order the function gives, a negative putting a first"),
+  each("every", ["(item, index) => ..."], eachOf, () => BOOL, "true when the function is true for every item"),
+  each("filter", ["(item, index) => ..."], eachOf, same, "the items the function is true for"),
+  each("find", ["(item, index) => ..."], eachOf, item, "the first item the function is true for"),
+  each("findIndex", ["(item, index) => ..."], eachOf, () => NUMBER, "where the first item the function is true for is"),
+  each("findLast", ["(item, index) => ..."], eachOf, item, "the last item the function is true for"),
+  each("findLastIndex", ["(item, index) => ..."], eachOf, () => NUMBER, "where the last item the function is true for is"),
+  each("flatMap", ["(item, index) => ..."], eachOf, (_, r) => (r.kind === "list" ? r : list(r)), "each item's list from the function, one after another"),
+  each("forEach", ["(item, index) => ..."], eachOf, () => UNKNOWN, "runs the function on each item"),
+  each("map", ["(item, index) => ..."], eachOf, (_, r) => list(r), "what the function gives for each item"),
+  each("reduce", ["(sum, item, index) => ...", "start?"], (self, args) => [args[1]?.typed.t ?? item(self), item(self), NUMBER, self.t], (self, r, args) => (r.kind === "unknown" ? (args[1]?.typed.t ?? item(self)) : r), "the items folded into one by the function"),
+  each("some", ["(item, index) => ..."], eachOf, () => BOOL, "true when the function is true for an item"),
+  each("toSorted", ["(a, b) => ...?"], pairOf, same, "in the order the function gives, a negative putting a first"),
   // those that change the list itself are never run here
   method("push", ["...items"], NUMBER, "adds items at its end, giving its new length"),
   method("pop", [], item, "takes its last item off"),
   method("shift", [], item, "takes its first item off"),
   method("unshift", ["...items"], NUMBER, "adds items at its start, giving its new length"),
   method("splice", ["start", "count?", "...items"], same, "takes count items off at start, putting items there"),
-  method("sort", ["(a, b) => ...?"], same, "puts it in the order the function gives"),
+  each("sort", ["(a, b) => ...?"], pairOf, same, "puts it in the order the function gives"),
   method("reverse", [], same, "puts it in the other order"),
   method("fill", ["value", "start?", "end?"], same, "sets its items to value"),
 ];
@@ -312,6 +320,8 @@ export function membersOf(t) {
       if (!mathMembersOf.has(t.name)) mathMembersOf.set(t.name, mathMembers(t.name));
       return [...fields, ...t.own, ...mathMembersOf.get(t.name)];
     }
+    case "function":
+      return t.own;
   }
   return [];
 }
@@ -354,7 +364,7 @@ export function fromApi(a) {
   }
   const found = a.standard ? globalThis[a.name] : LIBRARY[a.name];
   const run = typeof found === "function" ? found : undefined;
-  if (a.takes) return typed(callable(a.takes, BY_VALUES[a.name] ?? (a.gives ? parseType(a.gives) : UNKNOWN), run));
+  if (a.takes) return typed(callable(a.takes, BY_VALUES[a.name] ?? (a.gives ? parseType(a.gives) : UNKNOWN), { run }));
   if (a.fields) {
     const fields = a.fields.filter((f) => !f.takes).map((f) => [f.name, f.gives ? parseType(f.gives) : UNKNOWN]);
     const calls = a.fields.filter((f) => f.takes).map((f) => method(f.name, f.takes, f.gives ? parseType(f.gives) : UNKNOWN, f.words));
@@ -392,7 +402,10 @@ export function read(x, name) {
   x = refined(x);
   const m = memberOf(x, name);
   if (!m) return typed(x.t.kind === "map" ? x.t.item : UNKNOWN, x.known && x.v !== null && typeof x.v === "object" ? x.v[name] : undefined);
-  if (!m.type) return typed(callable(m.takes, m.gives));
+  if (!m.type) {
+    const gives = typeof m.gives === "function" ? (args) => m.gives(x, args) : m.gives;
+    return typed(callable(m.takes, gives, { calls: m.calls && ((args, i) => m.calls(x, args, i)) }));
+  }
   const v = x.known && x.v !== null && x.v !== undefined ? x.v[name] : undefined;
   return refined(typed(m.type, v));
 }
@@ -490,37 +503,131 @@ export function inferText(src, env) {
 /** A value a call is given: what it is, and for a function written there, what it returns when
  *  called with values of these types. */
 function argOf(n, env) {
-  return {
-    typed: infer(n, env),
-    returns: (params) => {
-      if (n.type !== "ArrowFunctionExpression" && n.type !== "FunctionExpression") return undefined;
-      const bound = new Map();
-      n.params.forEach((p, i) => {
-        if (p.type === "Identifier") bound.set(p.name, typed(params[i] ?? UNKNOWN));
-      });
-      const inner = scope((name) => bound.get(name), env);
-      if (n.body.type !== "BlockStatement") return infer(n.body, inner).t;
-      const r = returned(n.body);
-      return r ? infer(r, inner).t : UNKNOWN;
-    },
-  };
+  return { typed: infer(n, env), returns: (params) => (isFunction(n) ? returnsOf(n, params, env) : undefined) };
 }
 
-/** The first value a block returns, outside the functions inside it. */
+const isFunction = (n) => n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression" || n.type === "FunctionDeclaration";
+
+// the functions being worked out now, so one that calls itself gives nothing known
+const working = new Set();
+
+/** What the function node `fn` returns when called with values of the types `params`. */
+function returnsOf(fn, params, env) {
+  if (working.has(fn)) return UNKNOWN;
+  working.add(fn);
+  try {
+    const bound = new Map();
+    fn.params.forEach((p, i) => bind(bound, p, typed(params[i] ?? UNKNOWN), env));
+    const inner = scope((name) => bound.get(name), env);
+    if (fn.body.type !== "BlockStatement") return infer(fn.body, inner).t;
+    const path = returned(fn.body);
+    return path ? infer(path.at(-1), declared(path, inner)).t : UNKNOWN;
+  } finally {
+    working.delete(fn);
+  }
+}
+
+/** The nodes from `n` down to the first value it returns, outside the functions inside it. */
 function returned(n) {
-  if (!n || typeof n !== "object") return undefined;
-  if (n.type === "ReturnStatement") return n.argument ?? undefined;
-  if (n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression" || n.type === "FunctionDeclaration") return undefined;
-  for (const k of Object.keys(n)) {
-    const v = n[k];
-    for (const c of Array.isArray(v) ? v : [v]) {
-      if (c && typeof c === "object" && typeof c.type === "string") {
-        const r = returned(c);
-        if (r) return r;
-      }
-    }
+  if (n.type === "ReturnStatement") return n.argument ? [n, n.argument] : undefined;
+  if (isFunction(n)) return undefined;
+  for (const c of children(n)) {
+    const r = returned(c);
+    if (r) return [n, ...r];
   }
   return undefined;
+}
+
+/** Binds the names the pattern `p` declares, given the value `x`: a name, a struct's fields, a
+ *  list's items, or a default where nothing is known. */
+function bind(bound, p, x, env) {
+  switch (p.type) {
+    case "Identifier":
+      bound.set(p.name, x);
+      break;
+    case "AssignmentPattern":
+      bind(bound, p.left, x.t.kind === "unknown" ? infer(p.right, env) : x, env);
+      break;
+    case "ObjectPattern":
+      for (const f of p.properties) {
+        if (f.type === "RestElement") bind(bound, f.argument, x, env);
+        else bind(bound, f.value, f.computed ? typed(UNKNOWN) : read(x, f.key.name ?? String(f.key.value)), env);
+      }
+      break;
+    case "ArrayPattern":
+      p.elements.forEach((e, i) => e && bind(bound, e.type === "RestElement" ? e.argument : e, e.type === "RestElement" ? typed(x.t) : index(x, typed(NUMBER, i)), env));
+      break;
+  }
+}
+
+/** What a call gives the function written as its value i, by what the callee says it calls it
+ *  with: a list's item to map's, a task's progress to its last. */
+function calledWith(call, i, env) {
+  const args = call.arguments.map((a) => argOf(a, env));
+  const callee = call.callee;
+  if (callee.type === "MemberExpression" && !callee.computed) {
+    const self = infer(callee.object, env);
+    return memberOf(self, callee.property.name)?.calls?.(refined(self), args, i) ?? [];
+  }
+  const f = infer(callee, env);
+  return (f.t.kind === "function" && f.t.calls?.(args, i)) || [];
+}
+
+/** The names the statement `s` declares: its variables, `let` ones without a value since code
+ *  may change them, and its functions. */
+function declare(bound, s, env) {
+  if (s.type === "VariableDeclaration") {
+    for (const d of s.declarations) {
+      const x = d.init ? infer(d.init, env) : typed(UNKNOWN);
+      bind(bound, d.id, s.kind === "const" ? x : typed(x.t), env);
+    }
+  } else if (s.type === "FunctionDeclaration" && s.id) bound.set(s.id.name, infer(s, env));
+}
+
+/** `env` with what code declares on the way down `path`, from the top to the caret: the
+ *  statements before it in each block, the values of each function it is inside, and the item
+ *  of a loop over a list. */
+function declared(path, env) {
+  for (let i = 0; i + 1 < path.length; i++) {
+    const [a, c] = [path[i], path[i + 1]];
+    const bound = new Map();
+    const inner = scope((name) => bound.get(name), env);
+    if (a.type === "Program" || a.type === "BlockStatement" || a.type === "StaticBlock") {
+      for (const s of a.body) {
+        if (s === c) break;
+        declare(bound, s, inner);
+      }
+    } else if (a.type === "VariableDeclaration") {
+      declare(bound, { ...a, declarations: a.declarations.slice(0, a.declarations.indexOf(c)) }, inner);
+    } else if (isFunction(a) && c === a.body) {
+      const call = path[i - 1];
+      const given = call?.type === "CallExpression" ? calledWith(call, call.arguments.indexOf(a), env) : [];
+      a.params.forEach((p, k) => bind(bound, p, typed(given[k] ?? UNKNOWN), inner));
+    } else if ((a.type === "ForOfStatement" || a.type === "ForInStatement") && c === a.body) {
+      const of = a.type === "ForInStatement" ? typed(STRING) : index(infer(a.right, env), typed(NUMBER));
+      const p = a.left.type === "VariableDeclaration" ? a.left.declarations[0].id : a.left;
+      bind(bound, p, typed(of.t), env);
+    } else if (a.type === "ForStatement" && c !== a.init && a.init?.type === "VariableDeclaration") {
+      declare(bound, a.init, inner);
+    } else if (a.type === "CatchClause" && c === a.body && a.param) {
+      bind(bound, a.param, typed(UNKNOWN), env);
+    }
+    if (bound.size > 0) env = inner;
+  }
+  return env;
+}
+
+/** Where the caret is in `before`, the code up to it: the nodes from the top down to it, and the
+ *  scope there, `env` with what the code declares before it. Code cut short, as while it is
+ *  typed, still parses. */
+export function reach(before, env) {
+  const path = [loose(before, { ecmaVersion: "latest", allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true })];
+  for (;;) {
+    const next = children(path.at(-1)).findLast((c) => c.start <= before.length && c.end >= before.length);
+    if (!next) break;
+    path.push(next);
+  }
+  return { path, env: declared(path, env) };
 }
 
 /** The name a non-computed member names, or the value a computed one reads. */
@@ -587,7 +694,8 @@ export function infer(n, env) {
       return n.callee.type === "Identifier" && n.callee.name === "Date" ? typed(DATE) : typed(UNKNOWN);
     case "ArrowFunctionExpression":
     case "FunctionExpression":
-      return typed(callable(n.params.map((p) => p.name ?? "value"), UNKNOWN));
+    case "FunctionDeclaration":
+      return typed(callable(n.params.map((p) => p.name ?? "value"), (args) => returnsOf(n, args.map((a) => a.typed.t), env)));
   }
   return typed(UNKNOWN);
 }

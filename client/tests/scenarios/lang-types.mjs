@@ -1,10 +1,11 @@
 // What code gives is worked out from what it reads, without running it: names, fields, items and
 // calls, Rant Math's methods and operators, JavaScript's own methods, the language's own names,
 // and a list method's function given each item. Where all it reads is known, the value comes too.
+// Code cut short at the caret knows the names it declares before it.
 
 import * as rantMath from "rant-math";
 import { LIBRARY, setTypes } from "../../src/lang/math.js";
-import { COLOUR, inferText, membersOf, NUMBER, record, scope, standard, typed, UNKNOWN, words } from "../../src/lang/types.js";
+import { COLOUR, infer, inferText, membersOf, NUMBER, reach, record, scope, standard, typed, UNKNOWN, words } from "../../src/lang/types.js";
 
 export default async function ({ hmi, check }) {
   setTypes(() => hmi.state.types ?? []);
@@ -58,6 +59,23 @@ export default async function ({ hmi, check }) {
   gives("gamepads[0].lx", "number");
   gives("keys.a", "bool");
   gives("link.pingMs", "number");
+  // what is before a dot at the end of code cut short, with the names it declares
+  const before = (src, want) => {
+    const { path, env: here } = reach(src, env);
+    const dot = path.findLast((n) => n.type === "MemberExpression");
+    const t = dot ? infer(dot.object, here) : typed(UNKNOWN);
+    check(words(t.t) === want, `${JSON.stringify(src)} has ${words(t.t) || "nothing known"} before its dot, not ${want}`);
+  };
+  before('((Ft.ExternalBase.force.length() / 9.8).toFixed(1) + "kg").', "string");
+  before("const s = rant.statuses();\ns[0].", "struct");
+  before("rant.statuses().map((c) => c.", "struct");
+  before("rant.statuses().map((c) => c.since).filter((s) => s.", "number");
+  before("for (const l of rant.logs()) { l.", "struct");
+  before("const { since, text } = rant.statuses()[0];\ntext.", "string");
+  before("const total = rant.statuses().reduce((sum, c) => sum + c.since, 0);\ntotal.", "number");
+  before("function twice(a) { return a * 2 }\nconst k = twice(speed);\nk.", "number");
+  before("let n = speed;\nif (n > 1) {\n  const m = n * 2;\n  m.", "number");
+  before("const [first] = [pose];\nfirst.", "Pose");
   // what a type offers after a dot
   const vector = membersOf(standard("Double3")).map((m) => m.name);
   check(["x", "length", "normalize", "dot"].every((n) => vector.includes(n)), `a Double3 offers ${vector.join(", ")}`);

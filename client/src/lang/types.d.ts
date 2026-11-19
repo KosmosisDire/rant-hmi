@@ -8,7 +8,15 @@ export type Type =
   | { kind: "number" | "string" | "bool" | "colour" | "bytes" | "date" | "unknown" }
   | { kind: "list" | "map"; item: Type }
   | { kind: "record"; fields: [string, Type][]; name?: string; own: Member[] }
-  | { kind: "function"; takes: string[]; gives: Type | ((args: Arg[]) => Type); run?: (...values: unknown[]) => unknown };
+  | { kind: "function"; takes: string[]; gives: Type | ((args: Arg[]) => Type); own: Member[] } & Callable;
+
+/** What a function may say besides: how to run it, what it calls a function value with, and
+ *  what it has after a dot. */
+export interface Callable {
+  run?: (...values: unknown[]) => unknown;
+  calls?: (args: Arg[], i: number) => Type[] | undefined;
+  own?: Member[];
+}
 
 /** A type with a value it has now, or none. */
 export interface Typed {
@@ -31,6 +39,7 @@ export interface Member {
   takes?: string[];
   gives?: Type | ((self: Typed, args: Arg[]) => Type);
   run?: (self: unknown, args: unknown[]) => unknown;
+  calls?: (self: Typed, args: Arg[], i: number) => Type[] | undefined;
 }
 
 export interface Env {
@@ -47,7 +56,7 @@ export declare const UNKNOWN: Type;
 export declare function list(item: Type): Type;
 export declare function map(item: Type): Type;
 export declare function record(fields: [string, Type][], name?: string, own?: Member[]): Type;
-export declare function callable(takes: string[], gives: Type | ((args: Arg[]) => Type), run?: (...values: unknown[]) => unknown): Type;
+export declare function callable(takes: string[], gives: Type | ((args: Arg[]) => Type), more?: Callable): Type;
 export declare function typed(t: Type, v?: unknown): Typed;
 export declare function fromField(f: FieldInfo): Type;
 export declare function standard(name: string): Type | undefined;
@@ -66,3 +75,4 @@ export declare function operate(op: string, a: Typed, b?: Typed): Typed;
 export declare function scope(name: (n: string) => Typed | undefined, outer?: Env): Env;
 export declare function inferText(src: string, env: Env): Typed;
 export declare function infer(n: Node, env: Env): Typed;
+export declare function reach(before: string, env: Env): { path: Node[]; env: Env };
