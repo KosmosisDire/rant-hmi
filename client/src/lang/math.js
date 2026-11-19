@@ -137,7 +137,12 @@ export function mathType(v) {
 /** The methods of `v` by name: its type's own, over its Double type's for a Float or Int vector. */
 function methodsFor(v) {
   const t = typeOf(v);
-  if (t === null) return undefined;
+  return t === null ? undefined : methodsOfType(t);
+}
+
+/** The methods of the standard type `t` by name, as `methodsFor` gives a value's, each with its
+ *  call's index in the table and the input the value fills. */
+export function methodsOfType(t) {
   const { methods, byValue } = table();
   if (!byValue.has(t)) {
     const own = methods.get(t);

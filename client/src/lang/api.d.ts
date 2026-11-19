@@ -9,7 +9,8 @@ export interface Name {
   places?: Place[];
   insert?: string;
   standard?: boolean;
-  fields?: { name: string; takes?: string[]; words: string; places?: Place[] }[];
+  gives?: string;
+  fields?: { name: string; takes?: string[]; words: string; places?: Place[]; gives?: string }[];
 }
 
 export declare const PLACES: Readonly<Record<Place, string>>;

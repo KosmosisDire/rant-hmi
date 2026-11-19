@@ -9,6 +9,7 @@ export declare function rantMath(): unknown;
 export declare function mathType(v: unknown): string | null;
 export declare function methodsOf(v: unknown): { name: string; function?: number; self?: number }[];
 export declare function givesOf(index: number): string | null;
+export declare function methodsOfType(t: string): Map<string, { function: number; self: number; field: string }> | undefined;
 export declare function operatorGives(op: string, left: string, right: string): string | null;
 export declare function setMethodNames(list: string[]): void;
 export declare function methodNames(): string[];
