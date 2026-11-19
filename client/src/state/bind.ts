@@ -173,6 +173,15 @@ export function tokenValue(t: Token, m: "dark" | "light" = workingMode ?? (mode(
   }
 }
 
+/** A token's value in the screen's mode, null where it cannot be worked out. */
+export function tokenNow(t: Token): Value | null {
+  try {
+    return tokenValue(t) as Value;
+  } catch {
+    return null;
+  }
+}
+
 /** The screen's link to the system. Each field reads the store, so what shows one follows it,
  *  and the ping is whole ms, as the status bar shows it. */
 const link = Object.freeze({

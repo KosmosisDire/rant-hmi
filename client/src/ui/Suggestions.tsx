@@ -1,5 +1,6 @@
 import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { Portal } from "solid-js/web";
+import { isHex } from "../lang/lex";
 import type { About } from "../state/about";
 import type { Signature, Suggestion } from "../state/complete";
 import { Dot, List, Parentheses } from "./icons";
@@ -167,7 +168,8 @@ export function AboutCard(p: { about: About; at: () => Spot }) {
           <div class="sign-or">{p.about.type}</div>
         </Show>
         <Show when={p.about.value !== undefined}>
-          <div class="about-value">
+          <div class="about-value swatch-row">
+            <Show when={p.about.known && typeof p.about.value === "string" && isHex(p.about.value) && p.about.value}>{(c) => <span class="swatch" style={{ background: c() }} />}</Show>
             <Preview value={p.about.value ?? null} known={p.about.known ?? false} />
           </div>
         </Show>

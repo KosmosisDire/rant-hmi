@@ -154,6 +154,13 @@ export function methodsOf(v) {
   return [...(methodsFor(v) ?? [])].map(([name, m]) => ({ name, function: m.function, self: m.self }));
 }
 
+/** What the call at `index` of Rant Math's table gives: a standard type's name or a C number
+ *  type, null where it gives a list, several values or none. */
+export function givesOf(index) {
+  const out = rantMath().functions()[index]?.outputs ?? [];
+  return out.length === 1 && (out[0].kind === "return" || out[0].kind === "out") ? out[0].type || null : null;
+}
+
 let fixedNames = null;
 
 /** Sets every type's method names where only the rewrite reads them, so it makes no Rant Math. */

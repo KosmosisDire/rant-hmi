@@ -3,6 +3,7 @@
 
 import { tokens } from "../lang/lex";
 import type { Value } from "../protocol/Value";
+import { tokenNow } from "./bind";
 import type { Suggestion } from "./complete";
 import { key, named } from "./names";
 import { live, page as pageOf, split, state } from "./store";
@@ -79,6 +80,10 @@ export function about(text: string, at: number, names: Suggestion[] = [], own?: 
   const n = named(head);
   if (!n) return null;
   if (n.of === "object") return { name: head, kind: "object", type: n.words, where: "the Objects tab", go: () => openInObjects({ object: head }) };
-  if (n.of === "token") return { name: head, kind: "token", where: "the theme", go: () => openInObjects({ token: head.slice(1) }) };
+  if (n.of === "token") {
+    const t = state.tokens.find((x) => `$${x.name}` === head);
+    const value = t ? tokenNow(t) : null;
+    return { name: head, kind: "token", value, known: value !== null, where: "the theme", go: () => openInObjects({ token: head.slice(1) }) };
+  }
   return { name: head, kind: n.of, type: n.words };
 }

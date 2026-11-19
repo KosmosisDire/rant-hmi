@@ -8,6 +8,7 @@ export declare function setMath(make: () => unknown): void;
 export declare function rantMath(): unknown;
 export declare function mathType(v: unknown): string | null;
 export declare function methodsOf(v: unknown): { name: string; function?: number; self?: number }[];
+export declare function givesOf(index: number): string | null;
 export declare function setMethodNames(list: string[]): void;
 export declare function methodNames(): string[];
 export declare const LIBRARY: Record<string, unknown>;
