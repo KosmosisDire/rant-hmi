@@ -6,7 +6,8 @@
 //! a list of points of its own. The same floor as a PointCloud, a room's walls as a LaserScan,
 //! a planned Path, a turning part and rolling ground as Meshes, the room as a map and a ball as
 //! voxels in Grids, as the standard types carry them. The room scanned whole as a big
-//! PointCloud too, a second apart.
+//! PointCloud too, a second apart. A log line each time the line starts or stops, and a
+//! condition each time it stops, which another node may clear.
 //! `cargo run --example demo -- --loopback` keeps it on this host.
 
 use std::sync::{Arc, Mutex};
@@ -17,7 +18,7 @@ use rant::types::{
     AlignedBox2D, Color, Double2, Double3, Empty, Float3, Grid, GridField, Image, ImageFormat, JointState, LaserScan, Mesh, Path, PointCloud, PointField, Pose, Quaternion, ScalarKind,
     Timestamp, Transform, VideoCodec, VideoFrame,
 };
-use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, Request, TaskOptions, TaskRequest, VariableOptions};
+use rant::{Bytes, FunctionOptions, Level, Node, NodeOptions, Qos, Request, StatusOptions, TaskOptions, TaskRequest, VariableOptions};
 
 #[derive(rant::Message, Clone)]
 struct Conveyor {
@@ -146,6 +147,7 @@ fn main() -> Result<(), rant::Error> {
     let start = Instant::now();
     let mut tick = 0u32;
     let mut frame = 0u64;
+    let mut was_on = true;
     // 20 rounds a second whatever each takes, so values keep their rates
     let mut next = start;
     loop {
@@ -158,6 +160,13 @@ fn main() -> Result<(), rant::Error> {
         }
         let t = start.elapsed().as_secs_f64();
         let on = running.get()?.unwrap_or(false);
+        if on != was_on {
+            was_on = on;
+            node.log(Level::Info, if on { "Line1 started" } else { "Line1 stopped" })?;
+            if !on {
+                node.set_status("jam", Level::Warn, "Line1 stopped, so check it for a jam", StatusOptions::new().clearable(true))?;
+            }
+        }
         let v = if on { speed.get()?.unwrap_or(0.0) } else { 0.0 };
         // a part a second while running in Auto
         if on && settings.get()?.is_some_and(|s| s.mode == Mode::Auto) && t as u32 > tick {

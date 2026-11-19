@@ -1,6 +1,6 @@
-// What this screen reads of the mesh members and computed values, which the backend sends it: the
-// paths its shown pages read, or while the editor's Objects tab previews them, each as the HMI
-// brings it and the field the tab peeks at.
+// What this screen reads of the mesh members, computed values and what the nodes say, which the
+// backend sends it: the paths its shown pages read, or while the editor's Objects tab previews
+// them, each as the HMI brings it and the field the tab peeks at.
 
 import { createMemo, createRoot, createSignal, getOwner, onCleanup } from "solid-js";
 import type { Path } from "../lang/reads.js";
@@ -8,7 +8,7 @@ import type { Page } from "../protocol/Page";
 import { operator } from "./mode";
 import { pathsOf } from "./paths";
 import { stack } from "./stack";
-import { names } from "./names";
+import { HEARD, names } from "./names";
 import { page } from "./store";
 import { boardPages, currentTab } from "./view";
 
@@ -84,7 +84,7 @@ export function watched(): Path[] | null {
     const p = peeked();
     return p ? [p] : [];
   }
-  const sent = new Set(names("import", "computed").map((n) => n.name));
+  const sent = new Set([...names("import", "computed").map((n) => n.name), ...Object.values(HEARD)]);
   const { paths, all } = shownPaths();
   if (all) return null;
   const out = paths.filter((p) => sent.has(p[0]));

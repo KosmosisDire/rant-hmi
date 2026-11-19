@@ -15,8 +15,9 @@ export const PLACES = {
 };
 
 /** One name. `takes` lists a function's parameters in order, `?` marking one that may be left
- *  out and `...` the rest; a name without it is a value, and `fields` what it holds. `standard`
- *  marks JavaScript's own, which every place has without the HMI. */
+ *  out and `...` the rest; a name without it is a value, and `fields` what it holds, each read
+ *  where its name is unless its own `places` say fewer. `standard` marks JavaScript's own, which
+ *  every place has without the HMI. */
 export const API = [
   { name: "sqrt", takes: ["x"], words: "square root" },
   { name: "abs", takes: ["x"], words: "without its sign" },
@@ -47,9 +48,20 @@ export const API = [
   { name: "mix", takes: ["a", "b", "t"], words: "a colour from a toward b by t" },
   { name: "time", words: "the clock", fields: [{ name: "now", words: "ms since 1970, moving where it shows" }] },
   { name: "math", words: "Rant Math: poses, shapes, fits, cameras, images and point clouds", fields: NAMES },
+  {
+    name: "rant",
+    words: "what the mesh's nodes say of themselves",
+    places: ["expression", "system", "handler"],
+    fields: [
+      { name: "statuses", takes: [], words: "every condition on every node's status, the HMI's own too, most serious first" },
+      { name: "logs", takes: [], words: "the last 1000 lines of every node's log, the HMI's own too, oldest first" },
+      { name: "setStatus", takes: ["key", "level", "text", "options?"], words: "raise or update a condition on the HMI's own status, { clearable: true } for one others may clear", places: ["handler"] },
+      { name: "clearStatus", takes: ["condition"], words: "clear a condition rant.statuses() gave, done once its node dropped it", places: ["handler"] },
+    ],
+  },
 
   { name: "notify", takes: ["text"], words: "tell this screen", places: ["handler"] },
-  { name: "log", takes: ["...values"], words: "write to the log", places: ["handler"] },
+  { name: "log", takes: ["...values"], words: "write to the log, the HMI's and the mesh's", places: ["handler"] },
   { name: "sleep", takes: ["ms"], words: "wait ms", places: ["handler"], insert: "await sleep(" },
   { name: "open", takes: ["page", "options?"], words: "open a page, its answer when it closes", places: ["handler"] },
   { name: "close", takes: ["answer?"], words: "close the top page", places: ["handler"] },
@@ -95,7 +107,8 @@ export const API = [
   { name: "isFinite", takes: ["value"], words: "true for a finite number", standard: true },
 ];
 
-/** The names code reads in `place`. */
+/** The names code reads in `place`, each with the fields it reads there. */
 export function apiIn(place) {
-  return API.filter((a) => !a.places || a.places.includes(place));
+  const here = (a) => !a.places || a.places.includes(place);
+  return API.filter(here).map((a) => (a.fields?.some((f) => !here(f)) ? { ...a, fields: a.fields.filter(here) } : a));
 }

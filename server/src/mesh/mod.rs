@@ -1,16 +1,17 @@
 //! The HMI's one Rant node: what the mesh offers, and a live handle for each import.
 
 pub mod codec;
+pub mod heard;
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use rant::types::{VideoCodec, VideoFrame};
-use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, FieldView, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteTask, RemoteVariable, Response, Schema, SendError, Subscriber, TaskOptions, VariableDefinition, VariableOptions};
+use rant::{Bytes, CallOptions, CallStatus, Entity, EntityKind, EventKind, FieldView, FunctionOptions, Node, NodeOptions, Publisher, Qos, RemoteFunction, RemoteTask, RemoteVariable, Response, Schema, SendError, StatusOptions, Subscriber, TaskOptions, VariableDefinition, VariableOptions};
 use crate::value::Value;
 use crate::rtc::Frame;
 use tokio::sync::mpsc::UnboundedSender;
@@ -18,10 +19,11 @@ use tracing::{debug, warn};
 
 use crate::fields::Keep;
 use crate::project::{Import, Intent, Kind};
-use crate::protocol::{EntityInfo, EnumInfo, Level, TypeInfo};
+use crate::protocol::{EntityInfo, EnumInfo, TypeInfo};
 use crate::script::{CallFailure, Form, Typed};
 use crate::status::{self, Client, HmiStatus, ProblemRow};
 use codec::Shape;
+use heard::{Condition, Heard, Line};
 
 pub struct MeshOptions {
     pub name: String,
@@ -51,6 +53,8 @@ pub struct Mesh {
     keeps: HashMap<String, Keep>,
     /// How many values were delivered.
     count: Arc<AtomicU64>,
+    /// What every node says of itself, filled on Rant's thread.
+    heard: Arc<Mutex<Heard>>,
 }
 
 /// What the HMI publishes about itself, and the last value of each, which its own imports of
@@ -130,7 +134,44 @@ impl Mesh {
             problems: node.variable_definition(&absolute(status::PROBLEMS), VariableOptions::new().read_only(true))?,
             values: HashMap::new(),
         };
-        Ok(Mesh { node, deliveries, attached: HashMap::new(), frames, videos: HashMap::new(), own, keeps: HashMap::new(), count: Arc::default() })
+        let heard = Arc::new(Mutex::new(Heard::new(&options.name)));
+        let h = heard.clone();
+        node.on_log(move |l| {
+            let line = Line { node: l.node.to_owned(), level: l.level, origin: l.origin, at_us: l.wall_us, text: l.text.into_owned() };
+            h.lock().expect("heard").line(line);
+        })?;
+        let h = heard.clone();
+        node.on_status(move |u| {
+            let list = u.conditions.into_iter().map(|c| Condition { key: c.key.into_owned(), level: c.level, origin: c.origin, clearable: c.clearable, since_us: c.since_us, text: c.text.into_owned() }).collect();
+            h.lock().expect("heard").status(u.node_id, u.node, list);
+        })?;
+        // without a handler Rant prints its errors itself
+        let h = heard.clone();
+        node.on_event(move |e| match e.kind {
+            EventKind::StatusCleared => h.lock().expect("heard").lower(e.detail.as_deref().unwrap_or_default()),
+            EventKind::Error => warn!("{e}"),
+            _ => {}
+        });
+        Ok(Mesh { node, deliveries, attached: HashMap::new(), frames, videos: HashMap::new(), own, keeps: HashMap::new(), count: Arc::default(), heard })
+    }
+
+    /// What every node says of itself, the HMI's own too.
+    pub fn heard(&self) -> MutexGuard<'_, Heard> {
+        self.heard.lock().expect("heard")
+    }
+
+    /// Writes a line to the HMI's log on the mesh, kept with the lines heard, as its node never
+    /// hears its own.
+    pub fn log(&self, level: rant::Level, text: &str) {
+        if let Err(e) = self.node.log(level, text) {
+            debug!("a log line did not go out: {e}");
+        }
+        self.heard().own_line(level, text);
+    }
+
+    /// Asks the node `id` to clear its condition `key` raised at `since_us`.
+    pub fn clear_peer(&self, id: u32, key: &str, since_us: u64) -> Result<(), String> {
+        self.node.clear_peer_status(id, key, since_us).map_err(|e| format!("the clear of {key} did not go out: {e}"))
     }
 
     /// Changes whenever anything on the mesh does.
@@ -201,22 +242,20 @@ impl Mesh {
         }
     }
 
-    /// Raises or updates the condition `key` on this node's Rant status, or with None clears it.
-    pub fn condition(&self, key: &str, raised: Option<(Level, &str)>) {
+    /// Raises or updates the condition `key` on this node's Rant status, clearable by others
+    /// when said, or with None clears it.
+    pub fn condition(&self, key: &str, raised: Option<(rant::Level, &str, bool)>) -> Result<(), String> {
         let done = match raised {
-            Some((level, text)) => {
-                let level = match level {
-                    Level::Info => rant::Level::Info,
-                    Level::Warn => rant::Level::Warn,
-                    Level::Fault => rant::Level::Error,
-                };
-                self.node.set_status(key, level, text, rant::StatusOptions::new())
-            }
+            Some((level, text, clearable)) => self.node.set_status(key, level, text, StatusOptions::new().clearable(clearable)),
             None => self.node.clear_status(key),
         };
-        if let Err(e) = done {
-            debug!("the status condition {key} did not go out: {e}");
+        done.map_err(|e| format!("the condition {key} did not go out: {e}"))?;
+        let mut h = self.heard();
+        match raised {
+            Some((level, text, clearable)) => h.raise(key, level, text, clearable),
+            None => h.lower(key),
         }
+        Ok(())
     }
 
     /// Publishes the HMI's own state, once it changed.

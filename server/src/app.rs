@@ -23,6 +23,7 @@ use crate::files;
 use crate::fields::Keep;
 use crate::lanes::{Lanes, PIECE};
 use crate::mesh::codec;
+use crate::mesh::heard::Holder;
 use crate::mesh::{Delivery, Mesh};
 use crate::logic::{Rule, When};
 use crate::object::{self, Flat, ObjectInfo};
@@ -65,6 +66,10 @@ const PROBLEMS_EVERY: Duration = Duration::from_millis(250);
 const WEBRTC_GRACE: Duration = Duration::from_secs(15);
 /// How many conditions a screen may hold here, so one that sends more is cut short.
 const SCREEN_CONDITIONS: usize = 8;
+/// How often what `rant.logs()` reads may change, as each change sends every line kept again.
+const LOGS_EVERY: Duration = Duration::from_millis(250);
+/// How long a clear of another node's condition waits for that node's status to drop it.
+const CLEAR_WAIT: Duration = Duration::from_secs(2);
 
 /// Why a screen's WebRTC did not open, where `c` says it.
 fn webrtc_problem(c: &ScreenCondition) -> Option<WebrtcProblem> {
@@ -620,6 +625,16 @@ struct Slot {
     seq: u64,
 }
 
+/// A clear code asked of another node's condition, waiting for its status to drop it: the call
+/// it answers, the node, the condition's key and when it was raised, and when it gives up.
+struct Clearing {
+    call: u64,
+    id: u32,
+    key: String,
+    since_us: u64,
+    until: Instant,
+}
+
 pub struct App {
     project: Project,
     pages: Pages,
@@ -690,6 +705,9 @@ pub struct App {
     reads: Reads,
     /// What the HMI brings of each import, as screens that preview were last told.
     brings: Vec<Brought>,
+    /// When what `rant.logs()` reads last changed.
+    logs_at: Instant,
+    clears: Vec<Clearing>,
 }
 
 impl App {
@@ -700,6 +718,13 @@ impl App {
         script.send(ToScript::Pages(pages.keys()));
         let shared: HashMap<String, Value> = project.flat().variables.iter().filter(|v| v.per == Per::Hmi).map(|v| (v.name.clone(), v.start.clone())).collect();
         script.send(ToScript::values(shared.iter().map(|(k, v)| (k.clone(), Some(v.clone())))));
+        // what the nodes say is known from the start, with nothing said yet
+        let heard = {
+            let h = mesh.heard();
+            [(rules::STATUSES, h.statuses()), (rules::LOGS, h.logs())]
+        };
+        script.send(ToScript::values(heard.iter().map(|(k, v)| ((*k).to_owned(), Some(v.clone())))));
+        let values = heard.into_iter().map(|(k, v)| (k.to_owned(), Slot { value: Some(v), known: true, seq: 0 })).collect();
         let folders = Self::folders_now(project.root());
         App {
             project,
@@ -724,7 +749,7 @@ impl App {
             wt: None,
             sessions: HashMap::new(),
             seq: Cell::new(0),
-            values: HashMap::new(),
+            values,
             changed: BTreeSet::new(),
             sent: HashSet::new(),
             shared,
@@ -742,6 +767,8 @@ impl App {
             raised: BTreeMap::new(),
             reads: Reads::new(),
             brings: Vec::new(),
+            logs_at: Instant::now(),
+            clears: Vec::new(),
         }
     }
 
@@ -1002,10 +1029,12 @@ impl App {
         self.put_values(Some(session), self.all_values(session));
     }
 
-    /// The keys a screen may leave out by what it shows: the mesh members and computed values.
-    fn watched(&self) -> impl Iterator<Item = &String> {
+    /// The keys a screen may leave out by what it shows: the mesh members, computed values and
+    /// what the nodes say.
+    fn watched(&self) -> impl Iterator<Item = &str> {
         let flat = self.project.flat();
-        flat.imports.iter().map(|i| &i.alias).chain(flat.computed.iter().map(|c| &c.name))
+        let members = flat.imports.iter().map(|i| i.alias.as_str()).chain(flat.computed.iter().map(|c| c.name.as_str()));
+        members.chain([rules::STATUSES, rules::LOGS])
     }
 
     /// Every value a screen shows: the imports', the computed ones', the shared variables' and
@@ -1104,7 +1133,7 @@ impl App {
                     }
                     by_name
                 });
-                let names: Vec<String> = self.watched().cloned().collect();
+                let names: Vec<String> = self.watched().map(str::to_owned).collect();
                 let Some(s) = self.sessions.get_mut(&session) else { return };
                 // what it shows differently from now comes at once where it still shows it
                 let changed: Vec<String> = names.into_iter().filter(|n| s.shows(n) != shown(&reads, previews, n)).collect();
@@ -1746,7 +1775,24 @@ impl App {
                     warn!("{label}: {text}");
                 }
             }
-            FromScript::Log { run, text } => info!("{}: {text}", self.label(run)),
+            FromScript::Log { run, text } => {
+                info!("{}: {text}", self.label(run));
+                self.mesh.log(rant::Level::Info, &text);
+            }
+            FromScript::SetStatus { run, key, level, text, clearable } => {
+                info!("{} raises {key}: {text}", self.label(run));
+                let done = match status::OWN_KEYS.contains(&key.as_str()) {
+                    true => Err(format!("{key} is a condition the HMI raises itself, so code takes another key")),
+                    false => self.mesh.condition(&key, Some((level, &text, clearable))),
+                };
+                if let Err(text) = done {
+                    self.tell(run, Level::Fault, text);
+                }
+            }
+            FromScript::ClearStatus { run, call, node, key, since_us } => {
+                info!("{} clears {key} on {node}", self.label(run));
+                self.clear(call, &node, &key, since_us);
+            }
             FromScript::Open { run, page, replace, call } => match (self.pages.get(&page), self.runs.get(&run).and_then(|r| r.session)) {
                 (Some(_), Some(session)) => {
                     self.asks.insert(call, session);
@@ -2060,6 +2106,7 @@ impl App {
             }
             self.run_rules(|r| r.id == id, Value::Null);
         }
+        self.hear();
         let held: Vec<String> = std::mem::take(&mut self.changed).into_iter().collect();
         self.flush(&held);
         // the engine has the new values before it judges by them
@@ -2148,6 +2195,66 @@ impl App {
         }
     }
 
+    /// Takes what the nodes said since the last tick into what `rant.statuses()` and
+    /// `rant.logs()` read, the log at most every LOGS_EVERY, and answers each clear that the
+    /// node's status settled or that waited too long.
+    fn hear(&mut self) {
+        let now = Instant::now();
+        let (mut moved, mut settled) = (Vec::new(), Vec::new());
+        {
+            let mut h = self.mesh.heard();
+            if h.take_statuses_moved() {
+                moved.push((rules::STATUSES, h.statuses()));
+            }
+            if self.logs_at.elapsed() >= LOGS_EVERY && h.take_lines_moved() {
+                self.logs_at = now;
+                moved.push((rules::LOGS, h.logs()));
+            }
+            self.clears.retain(|c| match (h.holds(c.id, &c.key, c.since_us), c.until <= now) {
+                (true, false) => true,
+                (held, _) => {
+                    settled.push((c.call, held.then(|| format!("{} was not cleared within {} s, as its node refused or did not hear", c.key, CLEAR_WAIT.as_secs()))));
+                    false
+                }
+            });
+        }
+        for (key, value) in moved {
+            let slot = self.values.entry(key.to_owned()).or_default();
+            slot.value = Some(value);
+            self.changed.insert(key.to_owned());
+        }
+        for (call, refused) in settled {
+            self.cleared(call, refused);
+        }
+    }
+
+    /// Answers a clear code asked for: done, or why the condition is still there.
+    fn cleared(&self, call: u64, refused: Option<String>) {
+        let outcome = match refused {
+            None => Ok(Value::Null),
+            Some(message) => Err(CallFailure { status: "not_cleared".into(), message }),
+        };
+        self.script.send(ToScript::Answer { call, outcome });
+    }
+
+    /// Clears the condition `key` raised at `since_us` on the node called `node`: the HMI's own at
+    /// once, another node's by asking it, answered once its status drops it. One gone already is
+    /// cleared.
+    fn clear(&mut self, call: u64, node: &str, key: &str, since_us: u64) {
+        let found = self.mesh.heard().find(node, key, since_us);
+        let refused = match found {
+            None => None,
+            Some(Holder::Own(_)) if status::OWN_KEYS.contains(&key) => Some(format!("{key} is the HMI's own, which it clears itself once the cause is gone")),
+            Some(Holder::Own(_)) => self.mesh.condition(key, None).err(),
+            Some(Holder::Peer(_, c)) if !c.clearable => Some(format!("{node} raised {key} as not clearable, so only {node} clears it")),
+            Some(Holder::Peer(id, _)) => match self.mesh.clear_peer(id, key, since_us) {
+                Ok(()) => return self.clears.push(Clearing { call, id, key: key.to_owned(), since_us, until: Instant::now() + CLEAR_WAIT }),
+                Err(text) => Some(text),
+            },
+        };
+        self.cleared(call, refused);
+    }
+
     /// Publishes the screens connected on the mesh, once that changed.
     fn publish_clients(&mut self) {
         let mut clients: Vec<Client> = self
@@ -2217,15 +2324,25 @@ impl App {
         }
         let mut texts = status::screen_conditions(&held);
         let shown: Vec<(String, &Problem)> = self.problems.page_problems().into_iter().map(|p| (self.place(p), p)).collect();
-        texts.extend(status::page_problems(&shown).map(|t| ("page_problems".to_owned(), t)));
-        texts.extend(status::missing(missing).map(|t| ("missing".to_owned(), t)));
+        texts.extend(status::page_problems(&shown).map(|t| (status::PAGE_PROBLEMS.to_owned(), t)));
+        texts.extend(status::missing(missing).map(|t| (status::MISSING.to_owned(), t)));
+        let mut failed = Vec::new();
         for key in self.raised.keys().filter(|k| !texts.contains_key(*k)) {
-            self.mesh.condition(key, None);
+            failed.extend(self.mesh.condition(key, None).err());
         }
         for (key, raised) in &texts {
             if self.raised.get(key) != Some(raised) {
-                self.mesh.condition(key, Some((raised.0, &raised.1)));
+                let (level, text) = raised;
+                let level = match level {
+                    Level::Info => rant::Level::Info,
+                    Level::Warn => rant::Level::Warn,
+                    Level::Fault => rant::Level::Error,
+                };
+                failed.extend(self.mesh.condition(key, Some((level, text, false))).err());
             }
+        }
+        for text in failed {
+            debug!("{text}");
         }
         self.raised = texts;
     }
@@ -2452,7 +2569,7 @@ impl App {
             Some(id) => vec![id],
             None => self.sessions.keys().copied().collect(),
         };
-        let leaves: HashSet<String> = self.watched().cloned().collect();
+        let leaves: HashSet<String> = self.watched().map(str::to_owned).collect();
         let mut each: HashMap<(bool, &str, Keep), Written> = HashMap::new();
         for id in ids {
             let Some(s) = self.sessions.get_mut(&id).filter(|s| s.shown) else { continue };

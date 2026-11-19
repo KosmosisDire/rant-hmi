@@ -16,7 +16,7 @@ import type { Value } from "../protocol/Value";
 import type { Variable } from "../protocol/Variable";
 import { held, pads } from "./input";
 import { mode, setMode } from "./mode";
-import { imported, key, members, named, say } from "./names";
+import { HEARD, imported, key, members, named, RANT, say } from "./names";
 import { type From, ranInto } from "./problems";
 import { entity, keptValue, live, promise, split, state } from "./store";
 import { bare } from "./types";
@@ -344,17 +344,34 @@ function setMember(k: string, path: string, value: unknown) {
   send({ type: "set", alias: k, path, value: value as Value });
 }
 
-/** What the system's own expressions read: each object, its Global members live, and the
- *  mesh's enums. It writes those members it may on the backend. */
+/** What the mesh's nodes say of themselves, as code here reads it. Raising and clearing a
+ *  condition run on the system. */
+const rant = Object.freeze(
+  Object.fromEntries(
+    Object.entries(HEARD).map(([name, k]) => [
+      name,
+      () => {
+        const v = live(k);
+        if (!v.known) throw new Unknown(k);
+        return v.value;
+      },
+    ]),
+  ),
+);
+
+/** What the system's own expressions read: each object, its Global members live, the mesh's
+ *  enums and `rant`. It writes those members it may on the backend. */
 export const systemScope: Scope = {
-  has: (name) => named(name)?.of === "object" || named(name)?.of === "enum",
+  has: (name) => named(name)?.of === "object" || named(name)?.of === "enum" || name === RANT,
   get: (name) => {
+    if (name === RANT) return rant;
     // its options a fresh list at each read, as a value's are
     if (named(name)?.of === "enum") return { options: [...(state.enums.find((e) => e.name === name)?.options ?? [])] };
     if (named(name)?.of !== "object") throw new ReferenceError(say(MISSING, name));
     return space(name);
   },
   set: (name, path, value) => {
+    if (name === RANT) throw new TypeError(`${RANT} only reads`);
     const n = named(name);
     if (n?.of === "enum") throw new TypeError(n.fixed);
     if (n?.of !== "object") throw new ReferenceError(systemScope.missing(name));

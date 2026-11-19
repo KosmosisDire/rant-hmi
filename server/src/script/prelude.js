@@ -1,7 +1,8 @@
 // What handler code sees, built in each run's context from the host's `__` functions: each
 // object with its members, an object's own code its members as plain names too, the mesh's
-// enums, the standard types' makers, `Pages`, open and close, notify, log, sleep and `theme`.
-(imports, objects, pages, enums, makers) => {
+// enums, the standard types' makers, `Pages`, open and close, notify, log, sleep, `theme` and
+// `rant`, which reads what nodes say under the keys `heard` names.
+(imports, objects, pages, enums, makers, heard) => {
   const fresh = (alias) => {
     const value = __read(alias);
     if (value === undefined) throw new __Unknown(alias);
@@ -129,6 +130,16 @@
     },
     set: (mode) => __setMode(String(mode)),
     toggle: () => __setMode(__mode() === "dark" ? "light" : "dark"),
+  });
+  // each read a fresh list, so code may sort or change it
+  globalThis.rant = Object.freeze({
+    statuses: () => fresh(heard.statuses),
+    logs: () => fresh(heard.logs),
+    setStatus: (key, level, text, options) => __setStatus(String(key), String(level), String(text ?? ""), options?.clearable === true),
+    clearStatus: (c) => {
+      if (typeof c?.node !== "string" || typeof c.key !== "string" || typeof c.since !== "number") throw new TypeError("rant.clearStatus takes a condition as rant.statuses() gives it");
+      return __clearStatus(c.node, c.key, c.since);
+    },
   });
 
   // How a run ended, in words for the person who wrote it. A call's failure comes from

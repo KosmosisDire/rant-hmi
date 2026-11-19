@@ -14,6 +14,8 @@ use rquickjs::context::EvalOptions;
 use rquickjs::function::Opt;
 use rquickjs::{Context, Ctx, Exception, Function, Module, Object, Persistent, Promise, Runtime};
 use crate::events;
+use crate::mesh::heard;
+use crate::rules;
 use crate::value::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -129,6 +131,11 @@ pub enum FromScript {
     /// A warning that leaves the run going, as code that ran long without waiting.
     Warn { run: u64, text: String },
     Log { run: u64, text: String },
+    /// Raises or updates a condition on the HMI's own status.
+    SetStatus { run: u64, key: String, level: rant::Level, text: String, clearable: bool },
+    /// Clears the condition `key` raised at `since_us` on the node called `node`, which `call`
+    /// answers once it is gone.
+    ClearStatus { run: u64, call: u64, node: String, key: String, since_us: u64 },
     /// Opens a page on the screen that started the run, in place of the top one when `replace`.
     /// `call` answers with what the page closes with.
     Open { run: u64, page: String, replace: bool, call: u64 },
@@ -774,7 +781,7 @@ fn read_as(rt: &Runtime, rw: &Rewriter, shared: &Rc<RefCell<Shared>>, sources: &
             ctx.catch();
             return Vec::new();
         }
-        for name in ["__write", "__call", "__cancel", "__send", "__run"] {
+        for name in ["__write", "__call", "__cancel", "__send", "__run", "__setStatus", "__clearStatus"] {
             let refuse = Function::new(ctx.clone(), |ctx: Ctx<'_>| -> rquickjs::Result<()> { Err(Exception::throw_type(&ctx, "this only reads")) });
             if let Ok(f) = refuse {
                 let _ = ctx.globals().set(name, f);
@@ -1089,6 +1096,26 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
     let s = shared.clone();
     g.set("__fault", Function::new(ctx.clone(), move |text: String| s.borrow().send(FromScript::Fault { run, text }))?)?;
     let s = shared.clone();
+    let set_status = move |ctx: Ctx<'js>, key: String, level: String, text: String, clearable: bool| -> rquickjs::Result<()> {
+        let level = heard::level(&level).ok_or_else(|| Exception::throw_type(&ctx, &format!("rant.setStatus takes a level of \"debug\", \"info\", \"warn\" or \"error\", not {level:?}")))?;
+        let mut st = s.borrow_mut();
+        // what the run wrote before goes out before it
+        st.flush(run);
+        st.send(FromScript::SetStatus { run, key, level, text, clearable });
+        Ok(())
+    };
+    g.set("__setStatus", Function::new(ctx.clone(), set_status)?)?;
+    let s = shared.clone();
+    let clear_status = move |ctx: Ctx<'js>, node: String, key: String, since: f64| -> rquickjs::Result<Promise<'js>> {
+        let (promise, resolve, reject) = ctx.promise()?;
+        let mut st = s.borrow_mut();
+        st.flush(run);
+        let call = st.wait(&ctx, run, resolve, reject, None, None);
+        st.send(FromScript::ClearStatus { run, call, node, key, since_us: heard::us(since) });
+        Ok(promise)
+    };
+    g.set("__clearStatus", Function::new(ctx.clone(), clear_status)?)?;
+    let s = shared.clone();
     let open = move |ctx: Ctx<'js>, page: String, replace: bool| -> rquickjs::Result<Promise<'js>> {
         let (promise, resolve, reject) = ctx.promise()?;
         let mut st = s.borrow_mut();
@@ -1192,8 +1219,9 @@ fn install<'js>(ctx: &Ctx<'js>, run: u64, shared: &Rc<RefCell<Shared>>, p: &Valu
         }
     }
     g.set("__maker", math.get::<_, Function>("maker")?)?;
+    let heard = Value::map([("statuses", rules::STATUSES.into()), ("logs", rules::LOGS.into())]);
     let prelude: Function = ctx.eval(PRELUDE)?;
-    prelude.call::<_, ()>((to_js(ctx, &Value::List(imports))?, to_js(ctx, &objects)?, to_js(ctx, &Value::List(pages))?, to_js(ctx, &Value::List(enums))?, to_js(ctx, &Value::List(makers))?))
+    prelude.call::<_, ()>((to_js(ctx, &Value::List(imports))?, to_js(ctx, &objects)?, to_js(ctx, &Value::List(pages))?, to_js(ctx, &Value::List(enums))?, to_js(ctx, &Value::List(makers))?, to_js(ctx, &heard)?))
 }
 
 /// A value as JS reads it: bytes as a Uint8Array, and a whole number past JS's safe ones as a

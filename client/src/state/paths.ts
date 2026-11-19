@@ -8,7 +8,7 @@ import type { Element } from "../protocol/Element";
 import type { Page } from "../protocol/Page";
 import { colours } from "./bind";
 import { fields } from "./format";
-import { imported, key, keyOf, members, named } from "./names";
+import { HEARD, imported, key, keyOf, members, named, RANT } from "./names";
 import { brought, component, state, transcoded } from "./store";
 
 /** What a part's property reads of the value it is given, where not all of it, as the scene's
@@ -75,9 +75,11 @@ function plays(path: Path): boolean {
 }
 
 /** A path as the backend follows it, from a member's key: `Line.Speed.x` is the key `Line.Speed`
- *  and x. An object read whole reads each of its Global members whole. */
+ *  and x, and `rant.statuses` the key of what it reads. An object read whole reads each of its
+ *  Global members whole. */
 function keyed(path: Path): Path[] {
   const [root, member] = path;
+  if (root === RANT && Object.hasOwn(HEARD, member ?? "")) return [[HEARD[member], ...path.slice(2)]];
   if (named(root)?.of !== "object") return [path];
   if (member === undefined || member === ITEM) return members(root).map((n) => [n.name]);
   return [[key(root, member), ...path.slice(2)]];

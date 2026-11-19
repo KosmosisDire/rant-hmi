@@ -17,7 +17,7 @@ for anything it leaves out:
 | https://docs.rantlib.dev/hmi-pages.md | every element and property: layout, text, media, shapes, canvas, scenes, style, state |
 | https://docs.rantlib.dev/hmi-components.md | the component file, input types, the standard components and their inputs |
 | https://docs.rantlib.dev/hmi-events.md | every event, its settings and what its `p` holds |
-| https://docs.rantlib.dev/hmi-code.md | every name and function code reads, tasks, vectors, poses, colours |
+| https://docs.rantlib.dev/hmi-code.md | every name and function code reads, tasks, vectors, poses, colours, every node's status and log |
 | https://docs.rantlib.dev/hmi-deploy.md | https, firewalls and WebRTC, apps for a device |
 | https://docs.rantlib.dev/hmi-status.md | `Hmi/Status`, `Hmi/Clients`, `Hmi/Problems`, the warnings on the HMI node's Rant status |
 
@@ -114,6 +114,10 @@ The HMI does these by itself. Never build them:
 - Standard types: each one's name makes a value of it from all its fields, as
   `Cylinder({ axis, radius })`, needed where two types share their fields, as a Capsule and a
   Cylinder do. A Float or Int vector takes its own type's methods, then its Double one's.
+- Diagnostics: `rant.statuses()` gives every node's conditions and `rant.logs()` the last 1000
+  lines of every node's log. A handler raises a condition with `rant.setStatus(key, level, text)`
+  and clears one with `await rant.clearStatus(c)`. Filter them in code, and import nothing for
+  them.
 
 You write the rest: objects, pages, components, tokens, handlers, logic, and the safety
 choices below.

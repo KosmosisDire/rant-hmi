@@ -907,6 +907,56 @@ fn a_computed_value_only_reads_and_one_without_a_setter_takes_no_write() {
 }
 
 #[test]
+fn rant_reads_what_the_nodes_say_raises_the_hmis_own_and_clears_another_nodes() {
+    let (script, mut rx) = engine();
+    let drive = value!({ "node": "plc", "key": "drive2", "level": "error", "origin": "app", "clearable": true, "since": 1763460000000.5, "text": "drive 2 tripped" });
+    let line = value!({ "node": "plc", "level": "warn", "origin": "app", "at": 1763460000001.0, "text": "battery at 18%" });
+    script.send(ToScript::values(vec![(rules::STATUSES.into(), Some(Value::List(vec![drive]))), (rules::LOGS.into(), Some(Value::List(vec![line])))]));
+    let code = r#"
+        const all = rant.statuses();
+        all.pop();
+        log(all.length, rant.statuses().length, rant.logs()[0].text);
+        rant.setStatus("tank", "warn", "tank over 90%", { clearable: true });
+        try { rant.setStatus("tank", "loud", "x"); } catch (e) { log(e.message); }
+        try { rant.clearStatus({ key: "drive2" }); } catch (e) { log(e.message); }
+        await rant.clearStatus(rant.statuses()[0]);
+        log("cleared");
+        try { await rant.clearStatus(rant.statuses()[0]); } catch (e) { log(e.status); }
+    "#;
+    script.send(ToScript::Run { run: 1, session: Some(7), code: code.into(), p: Value::Null, at: None, bound: Vec::new(), own: own(), came: None, takes: Vec::new() });
+    let mut said = Vec::new();
+    let mut clear = |said: &mut Vec<FromScript>| loop {
+        match rx.blocking_recv().unwrap() {
+            FromScript::ClearStatus { call, node, key, since_us, .. } => return (call, node, key, since_us),
+            other => said.push(other),
+        }
+    };
+    let (call, node, key, since_us) = clear(&mut said);
+    assert_eq!((node.as_str(), key.as_str(), since_us), ("plc", "drive2", 1_763_460_000_000_500));
+    script.send(ToScript::Answer { call, outcome: Ok(Value::Null) });
+    let (call, ..) = clear(&mut said);
+    script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "not_cleared".into(), message: "drive2 was not cleared".into() }) });
+    said.extend(until_done(&mut rx, 1));
+    assert_eq!(end(&said), &End::Ok);
+    let raised: Vec<(&str, rant::Level, &str, bool)> = said.iter().filter_map(|m| if let FromScript::SetStatus { key, level, text, clearable, .. } = m { Some((key.as_str(), *level, text.as_str(), *clearable)) } else { None }).collect();
+    assert_eq!(raised, [("tank", rant::Level::Warn, "tank over 90%", true)]);
+    assert_eq!(
+        logged(&said),
+        ["0 1 battery at 18%", "rant.setStatus takes a level of \"debug\", \"info\", \"warn\" or \"error\", not \"loud\"", "rant.clearStatus takes a condition as rant.statuses() gives it", "cleared", "not_cleared"]
+    );
+}
+
+#[test]
+fn a_computed_value_reads_what_the_nodes_say_but_raises_nothing() {
+    let (script, mut rx) = engine();
+    script.send(ToScript::values(vec![(rules::STATUSES.into(), Some(value!([{ "node": "plc", "key": "drive2", "level": "error" }])))]));
+    script.send(ToScript::Objects(vec![line(vec![computed("worst", "rant.statuses()[0].key", None), computed("sneaky", "(rant.setStatus(\"a\", \"info\", \"b\"), 1)", None)], Vec::new())]));
+    let t = think(&script, &mut rx, &[]);
+    assert_eq!(t.computed, values(&[("sneaky", None), ("worst", Some(value!("drive2")))]));
+    assert!(matches!(t.problems.as_slice(), [(key, Level::Fault, why)] if key == "Line.sneaky" && why.contains("only reads")), "{:?}", t.problems);
+}
+
+#[test]
 fn a_setter_that_does_not_undo_its_getter_is_caught_on_a_try() {
     let (script, mut rx) = engine();
     script.send(ToScript::Objects(vec![line(vec![computed("good", "Speed * 100", Some(("Speed", "v / 100"))), computed("bad", "Speed * 100", Some(("Speed", "v * 4")))], Vec::new())]));

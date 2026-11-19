@@ -6,11 +6,15 @@ import { wholeType } from "../lang/math.js";
 import type { Import } from "../protocol/Import";
 import type { Kind } from "../protocol/Kind";
 import type { Object as Thing } from "../protocol/Object";
-import { ENUM_FIXED, NO_SETTER, NOT_VARIABLE, READ_ONLY, RECORD, type Shape, TOKEN_FIXED } from "../protocol/rules";
+import { ENUM_FIXED, LOGS, NO_SETTER, NOT_VARIABLE, READ_ONLY, RECORD, type Shape, STATUSES, TOKEN_FIXED } from "../protocol/rules";
 import { entity, setImportTypes, state } from "./store";
 
 /** The object every project has, which holds what the HMI as a whole keeps. */
 export const HMI = "Hmi";
+
+/** What code reads of what the mesh's nodes say: `rant` and the key of each of its readers. */
+export const RANT = "rant";
+export const HEARD: Readonly<Record<string, string>> = { statuses: STATUSES, logs: LOGS };
 
 export interface Named {
   /** As code outside its object writes it: an object, a member's key `Line.Speed`, `$accent`. */

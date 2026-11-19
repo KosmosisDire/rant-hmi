@@ -85,32 +85,33 @@ fn settings(of: &[SettingInfo]) -> String {
 }
 
 /// The names api.js lists, a table for each set of places that reads them, JavaScript's own
-/// last.
+/// last. A field read in fewer places than its name goes in their table.
 fn names() -> String {
     let api = crate::script::api();
     let places = &api["PLACES"];
     let text = |v: &Json| v.as_str().unwrap_or_default().to_owned();
     let mut groups: Vec<(String, String)> = Vec::new();
+    let mut add = |heading: String, row: String| match groups.iter_mut().find(|(h, _)| *h == heading) {
+        Some((_, table)) => table.push_str(&row),
+        None => groups.push((heading, row)),
+    };
     for a in api["API"].as_array().expect("API is a list") {
         let called = |n: &Json| match n["takes"].as_array() {
             Some(takes) => format!("{}({})", text(&n["name"]), takes.iter().map(text).collect::<Vec<_>>().join(", ")),
             None => text(&n["name"]),
         };
-        let name = called(a);
-        let heading = match a["places"].as_array() {
+        let heading_of = |n: &Json| match n["places"].as_array() {
             _ if a["standard"] == Json::Bool(true) => "JavaScript's own".to_owned(),
             Some(ps) => format!("Read in {}", and(&ps.iter().map(|p| text(&places[text(p)])).collect::<Vec<_>>())),
             None => "Read everywhere".to_owned(),
         };
-        let mut rows = format!("| `{name}` | {} |\n", text(&a["words"]));
+        let heading = heading_of(a);
+        add(heading.clone(), format!("| `{}` | {} |\n", called(a), text(&a["words"])));
         // Rant Math's hundreds of calls have docs of their own, and completion lists them
         let listed = if text(&a["name"]) == "math" { None } else { a["fields"].as_array() };
         for f in listed.into_iter().flatten() {
-            writeln!(rows, "| `{}.{}` | {} |", text(&a["name"]), called(f), text(&f["words"])).unwrap();
-        }
-        match groups.iter_mut().find(|(h, _)| *h == heading) {
-            Some((_, table)) => table.push_str(&rows),
-            None => groups.push((heading, rows)),
+            let own = if f["places"].is_array() { heading_of(f) } else { heading.clone() };
+            add(own, format!("| `{}.{}` | {} |\n", text(&a["name"]), called(f), text(&f["words"])));
         }
     }
     groups.iter().map(|(heading, rows)| format!("### {heading}\n\n| Name | Is |\n| --- | --- |\n{rows}")).collect::<Vec<_>>().join("\n")

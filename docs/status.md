@@ -74,3 +74,5 @@ screen that has it:
 | `missing` | an import's entity is not on the mesh |
 
 An operator's screen shows its own screen problems in a banner across the top until dismissed.
+
+Code reads these and every other node's conditions with `rant.statuses()` ([Code](code.md)).

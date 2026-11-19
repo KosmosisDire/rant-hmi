@@ -36,6 +36,10 @@ pub const KEEP_S: (u32, u32) = (1, 86_400);
 /// names none takes the most, the backend's tick.
 pub const RATE: (u16, u16) = (1, 30);
 
+/// The keys `rant.statuses()` and `rant.logs()` read, kept as a member's value is.
+pub const STATUSES: &str = "rant.statuses";
+pub const LOGS: &str = "rant.logs";
+
 /// Why code cannot write a name, `{name}` standing for it. The engine and the editor say the same.
 pub const MISSING: &str = "{name} names no object, member or state";
 pub const NO_SETTER: &str = "{name} is worked out from other values, and has no setter to write it";
@@ -109,6 +113,7 @@ mod tests {
         }
         ts += &format!("export const TYPE_WORD = /{TYPE_WORD}/;\n");
         ts += &format!("\nexport const EVERY_MS = [{}, {}] as const;\nexport const KEEP_S = [{}, {}] as const;\nexport const RATE = [{}, {}] as const;\n\n", EVERY_MS.0, EVERY_MS.1, KEEP_S.0, KEEP_S.1, RATE.0, RATE.1);
+        ts += &format!("export const STATUSES = {STATUSES:?};\nexport const LOGS = {LOGS:?};\n\n");
         let reasons = [
             ("MISSING", MISSING),
             ("NO_SETTER", NO_SETTER),

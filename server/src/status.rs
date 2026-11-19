@@ -13,6 +13,11 @@ pub const CLIENTS: &str = "Hmi/Clients";
 pub const STATUS: &str = "Hmi/Status";
 pub const PROBLEMS: &str = "Hmi/Problems";
 
+/// The keys of the conditions the HMI raises on its own status, which code may not take.
+pub const PAGE_PROBLEMS: &str = "page_problems";
+pub const MISSING: &str = "missing";
+pub const OWN_KEYS: [&str; 6] = ["webrtc", "software_decode", "software_drawing", "slow_drawing", PAGE_PROBLEMS, MISSING];
+
 /// A problem a screen found, or a run on the system met. A list holds only fixed sizes, so its
 /// words are cut to fit, and the stack of a fault in the HMI's code is left to `GET /problems`.
 #[derive(rant::Message, Clone, Debug, PartialEq)]
@@ -226,6 +231,8 @@ mod tests {
         ];
         let texts = screen_conditions(&held);
         assert_eq!(texts.keys().collect::<Vec<_>>(), ["slow_drawing", "webrtc"]);
+        let kinds = [ScreenCondition::Webrtc { problem: None }, ScreenCondition::SoftwareDecode { video: String::new() }, ScreenCondition::SoftwareDrawing { renderer: String::new() }, slow(0.0)];
+        assert!(kinds.iter().all(|k| OWN_KEYS.contains(&k.key().as_str())), "every kind's key is one code may not take");
         assert_eq!(texts["webrtc"].1, "Screen 3 (10.0.0.5) has no WebRTC connection, so latency is increased: check it for a VPN, a privacy extension or a policy preventing WebRTC");
         assert_eq!(texts["slow_drawing"].1, "Screens 3 (10.0.0.5), 5 (10.0.0.5) and 7 (10.0.0.5) draw too slowly, so pages stutter. Screen 3: 18 frames a second on Intel UHD");
     }

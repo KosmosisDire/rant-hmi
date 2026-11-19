@@ -1,6 +1,6 @@
 //! The slice end to end in one process, on this host only: a line node offers a topic and a
-//! variable, the HMI's mesh imports both, sees their values and sets the variable, and the HMI
-//! publishes its own status.
+//! variable, the HMI's mesh imports both, sees their values and sets the variable, the HMI
+//! publishes its own status, and hears and clears what other nodes say of themselves.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -9,8 +9,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use rant::types::Timestamp;
-use rant::{Bytes, FunctionOptions, Node, NodeOptions, Qos, TaskOptions, TaskRequest, VariableOptions};
+use rant::{Bytes, FunctionOptions, Level, Node, NodeOptions, Qos, StatusOptions, TaskOptions, TaskRequest, VariableOptions};
 use rant_hmi::fields::Keep;
+use rant_hmi::mesh::heard::{self, Holder};
 use rant_hmi::mesh::{Delivery, Mesh, MeshOptions};
 use rant_hmi::project::{Import, Intent, Kind};
 use rant_hmi::status::{self, Client, HmiStatus};
@@ -278,4 +279,52 @@ fn calls_a_task_that_reports_progress_and_cancels_it() {
         assert_eq!(runtime.block_on(call).err().map(|f| f.status).as_deref(), Some("cancelled"));
     }
     assert!(mesh.cancel("Fill", Some(4)).is_ok(), "a call that ended cancels to no effect");
+}
+
+#[test]
+fn hears_every_nodes_log_and_status_and_clears_a_condition() {
+    let local = || NodeOptions::new().domain(DOMAIN + 8).multicast_interface("127.0.0.1").max_topics(16);
+    let plc = Node::new("test_plc", local()).unwrap();
+    let (said, heard_by_plc) = std::sync::mpsc::channel();
+    plc.on_log(move |l| drop(said.send((l.node.to_owned(), l.text.into_owned())))).unwrap();
+    let (tx, _rx) = unbounded_channel();
+    let (frames, _) = unbounded_channel();
+    let mesh = Mesh::open(&MeshOptions { name: "hmi_heard".into(), domain: DOMAIN + 8, loopback: true }, tx, frames).unwrap();
+    plc.set_status("drive2", Level::Error, "drive 2 tripped", StatusOptions::new().clearable(true)).unwrap();
+    plc.log(Level::Warn, "battery at 18%").unwrap();
+    mesh.condition("tank", Some((Level::Warn, "tank over 90%", false))).unwrap();
+
+    let list = |v: Value| match v {
+        Value::List(items) => items,
+        _ => panic!("not a list"),
+    };
+    let condition = |key: &str| list(mesh.heard().statuses()).into_iter().find(|c| c.get("key") == Some(&Value::from(key)));
+    let start = Instant::now();
+    let drive = loop {
+        if let Some(c) = condition("drive2") {
+            break c;
+        }
+        within("the plc's condition", start);
+    };
+    assert_eq!((drive.get("node"), drive.get("level"), drive.get("clearable")), (Some(&"test_plc".into()), Some(&"error".into()), Some(&true.into())));
+    assert_eq!(condition("tank").and_then(|c| c.get("node").cloned()), Some("hmi_heard".into()), "the HMI's own shows beside it");
+    let start = Instant::now();
+    while !list(mesh.heard().logs()).iter().any(|l| l.get("node") == Some(&"test_plc".into()) && l.get("text") == Some(&"battery at 18%".into())) {
+        within("the plc's log line", start);
+    }
+
+    // the plc hears the clear and drops the condition from its set
+    let since = heard::us(drive.get("since").and_then(Value::as_f64).unwrap());
+    let Some(Holder::Peer(id, _)) = mesh.heard().find("test_plc", "drive2", since) else { panic!("the condition is not found by its raise") };
+    mesh.clear_peer(id, "drive2", since).unwrap();
+    let start = Instant::now();
+    while condition("drive2").is_some() {
+        within("the plc to drop its condition", start);
+    }
+
+    // the HMI's own line goes on the mesh, and stays with the lines heard
+    mesh.log(Level::Info, "jam cleared");
+    let got = std::iter::from_fn(|| heard_by_plc.recv_timeout(Duration::from_secs(10)).ok()).find(|(node, _)| node == "hmi_heard").expect("the plc hears the HMI's line");
+    assert_eq!(got.1, "jam cleared");
+    assert!(list(mesh.heard().logs()).iter().any(|l| l.get("node") == Some(&"hmi_heard".into())));
 }

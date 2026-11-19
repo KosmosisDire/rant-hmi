@@ -16,6 +16,9 @@ export const EVERY_MS = [50, 86400000] as const;
 export const KEEP_S = [1, 86400] as const;
 export const RATE = [1, 30] as const;
 
+export const STATUSES = "rant.statuses";
+export const LOGS = "rant.logs";
+
 export const MISSING = "{name} names no object, member or state";
 export const NO_SETTER = "{name} is worked out from other values, and has no setter to write it";
 export const WHOLE = "{name} is worked out whole, so it is set whole";

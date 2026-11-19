@@ -72,12 +72,22 @@ A stopped task call fails with `e.status` `"cancelled"`.
 | `time.now` | ms since 1970, moving where it shows |
 | `math` | Rant Math: poses, shapes, fits, cameras, images and point clouds |
 
+### Read in what a screen draws, what the system works out and a page's handlers
+
+| Name | Is |
+| --- | --- |
+| `rant` | what the mesh's nodes say of themselves |
+| `rant.statuses()` | every condition on every node's status, the HMI's own too, most serious first |
+| `rant.logs()` | the last 1000 lines of every node's log, the HMI's own too, oldest first |
+
 ### Read in a page's handlers
 
 | Name | Is |
 | --- | --- |
+| `rant.setStatus(key, level, text, options?)` | raise or update a condition on the HMI's own status, { clearable: true } for one others may clear |
+| `rant.clearStatus(condition)` | clear a condition rant.statuses() gave, done once its node dropped it |
 | `notify(text)` | tell this screen |
-| `log(...values)` | write to the log |
+| `log(...values)` | write to the log, the HMI's and the mesh's |
 | `sleep(ms)` | wait ms |
 | `open(page, options?)` | open a page, its answer when it closes |
 | `close(answer?)` | close the top page |
@@ -198,6 +208,41 @@ Robot.EndPose * Tool                        // poses combine
 ```
 
 Vectors multiply and divide by a number. `a.multiply(b)` multiplies two part by part.
+
+## Status and log
+
+`rant` reads what every node on the mesh says of itself, the HMI's own too.
+
+```js
+rant.statuses().filter((c) => c.level === "error").length + " faults"
+rant.logs().filter((l) => l.node.startsWith("plc_")).slice(-20)
+```
+
+A condition and a log line:
+
+```js
+{ node: "plc_cell", key: "drive2", level: "error", origin: "app", clearable: true, since: 1763460000000, text: "drive 2 tripped" }
+{ node: "plc_cell", level: "warn", origin: "app", at: 1763460001234, text: "battery at 18%" }
+```
+
+- `level` is `"debug"`, `"info"`, `"warn"` or `"error"`, `origin` is `"app"` or `"rant"`.
+- `since` and `at` are ms since 1970, as `time.now`.
+- `rant.statuses()` gives the most serious first, then the newest. `rant.logs()` gives the last
+  1000 lines, oldest first.
+
+Handlers and logic raise and clear conditions:
+
+```js
+rant.setStatus("tank", "warn", "tank over 90%")
+rant.setStatus("pump", "error", "pump 2 tripped", { clearable: true })
+await rant.clearStatus(item)
+```
+
+- `rant.setStatus` raises a condition on the HMI's own status, or updates the one with that key.
+- `rant.clearStatus` takes a condition `rant.statuses()` gave. It is done once the condition is
+  gone. It fails with `e.status` `"not_cleared"` when its node keeps it 2 s, or at once when it is
+  not clearable.
+- A `log(...)` line goes to the mesh's log too.
 
 ## Rant Math
 
