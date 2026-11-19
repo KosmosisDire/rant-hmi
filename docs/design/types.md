@@ -35,6 +35,10 @@ fields and calls of Rant Math broke it, and nothing said what JavaScript's own m
 - Code cut short at the caret parses with acorn-loose, and what it declares on the way down to
   the caret is in scope there: the statements before it, each function's values as its caller
   calls it, a loop's item, a caught error.
+- The editor gives the analyser its names in `client/src/state/typed.ts`: each object a struct of
+  its members, typed by the mesh with their values now, the tokens, the language's names in each
+  place, and names given nearer. A topic's send and a task's cancel are members of their type.
+- A mesh call says its values with the mesh's own types, as `f64`, since those are what it sends.
 - The tests are a scenario, `lang-types`, that runs in Node beside the backend, which gives the
   standard types.
 
@@ -45,4 +49,4 @@ fields and calls of Rant Math broke it, and nothing said what JavaScript's own m
 3. Names code declares before the caret, read with acorn's loose parser. Done. acorn-loose is
    vendored beside acorn, at 8.5.2.
 4. Completion, call hints and the name card on the analyser, and the patches in complete.ts
-   removed.
+   removed. Done.

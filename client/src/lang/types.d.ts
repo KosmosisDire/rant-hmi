@@ -5,17 +5,21 @@ import type { Node } from "./arith.js";
 import type { Name } from "./api.js";
 
 export type Type =
-  | { kind: "number" | "string" | "bool" | "colour" | "bytes" | "date" | "unknown" }
-  | { kind: "list" | "map"; item: Type }
+  | { kind: "number" | "string" | "bool" | "colour" | "bytes" | "date" | "unknown"; own?: Member[] }
+  | { kind: "list" | "map"; item: Type; own?: Member[] }
   | { kind: "record"; fields: [string, Type][]; name?: string; own: Member[] }
   | { kind: "function"; takes: string[]; gives: Type | ((args: Arg[]) => Type); own: Member[] } & Callable;
 
-/** What a function may say besides: how to run it, what it calls a function value with, and
- *  what it has after a dot. */
+/** What a function may say besides: how to run it, what it calls a function value with, what
+ *  it has after a dot, and for a mesh call its values with their types, the type they make up or
+ *  why they are not known. */
 export interface Callable {
   run?: (...values: unknown[]) => unknown;
   calls?: (args: Arg[], i: number) => Type[] | undefined;
   own?: Member[];
+  params?: { name: string; type: string }[];
+  whole?: string;
+  unknown?: string;
 }
 
 /** A type with a value it has now, or none. */
@@ -40,6 +44,9 @@ export interface Member {
   gives?: Type | ((self: Typed, args: Arg[]) => Type);
   run?: (self: unknown, args: unknown[]) => unknown;
   calls?: (self: Typed, args: Arg[], i: number) => Type[] | undefined;
+  /** How completion offers it, where not as a plain member. */
+  icon?: string;
+  insert?: string;
 }
 
 export interface Env {
@@ -58,6 +65,8 @@ export declare function map(item: Type): Type;
 export declare function record(fields: [string, Type][], name?: string, own?: Member[]): Type;
 export declare function callable(takes: string[], gives: Type | ((args: Arg[]) => Type), more?: Callable): Type;
 export declare function typed(t: Type, v?: unknown): Typed;
+export declare function method(name: string, takes: string[], gives: Member["gives"], words: string, run?: Member["run"]): Member;
+export declare function field(name: string, type: Type, words: string): Member;
 export declare function fromField(f: FieldInfo): Type;
 export declare function standard(name: string): Type | undefined;
 export declare function fromC(type: string | null): Type;
@@ -66,6 +75,7 @@ export declare function parseType(text: string): Type;
 export declare function words(t: Type): string;
 export declare function membersOf(t: Type): Member[];
 export declare function fromApi(a: Name): Typed;
+export declare function refined(x: Typed): Typed;
 export declare function memberOf(x: Typed, name: string): Member | undefined;
 export declare function read(x: Typed, name: string): Typed;
 export declare function index(x: Typed, i: Typed): Typed;

@@ -1,20 +1,19 @@
-// What may be typed next at the caret: names, then after a dot the fields with their type and
-// live value. It reads only the text before the caret, so the code need not parse.
+// What may be typed next at the caret: names, then after a dot what the value before it offers,
+// with its type and live value. types.js works that out from the code before the caret, which
+// need not parse.
 
-import { API, apiIn, type Place } from "../lang/api.js";
-import { type Node, tree } from "../lang/arith.js";
+import { apiIn, type Place } from "../lang/api.js";
+import type { Node } from "../lang/arith.js";
 import { isHex, tokens as lex } from "../lang/lex";
-import { givesOf, LIBRARY, mathType, methodsOf, operatorGives, standardType, TYPE, wholeType } from "../lang/math.js";
-import type { FieldInfo } from "../protocol/FieldInfo";
+import { infer, reach, words } from "../lang/types.js";
 import type { Kind } from "../protocol/Kind";
 import type { Page } from "../protocol/Page";
-import type { TypeInfo } from "../protocol/TypeInfo";
 import type { Value } from "../protocol/Value";
 import { colours, partNames, tokenNow } from "./bind";
 import { chain as path } from "./elements";
-import { bareType, fields, typeLabel } from "./format";
-import { imported, key, keyOf, members, type Named, named, names, object } from "./names";
-import { entity, live, split, state } from "./store";
+import { names } from "./names";
+import { state } from "./store";
+import { envOf, rows, THEMED, whole, type Where } from "./typed";
 import { KIND_WORDS, typesIn } from "./types";
 
 export interface Suggestion {
@@ -42,66 +41,17 @@ export interface Completion {
 const MOST = 12;
 const WORD = /[A-Za-z0-9_$]/;
 
-/** The places that read the theme's tokens: all code a screen works out. */
-const THEMED: Place[] = ["expression", "theme", "component"];
-
-/** The theme's tokens, in the editor's mode, each with what its value offers after a dot, as a
- *  colour's methods. */
+/** The theme's tokens, each with its value in the editor's mode. */
 function tokens(): Suggestion[] {
   return state.tokens.map((t) => {
     const value = tokenNow(t);
-    return { label: `$${t.name}`, insert: `$${t.name}`, icon: "token", type: "token", value, known: value !== null, members: mathMethods(value, value !== null) };
+    return { label: `$${t.name}`, insert: `$${t.name}`, icon: "token", type: "token", value, known: value !== null };
   });
 }
 
 /** The language's own names in `place`, from the one list of them, a function's typed with
  *  its bracket. */
 const api = (place: Place): Suggestion[] => apiIn(place).map((a) => ({ label: a.name, insert: a.insert ?? (a.takes ? `${a.name}(` : a.name), icon: "api", type: a.words }));
-
-/** Rant Math's calls in the order of its table, so a method finds its call by index. */
-const MATH_CALLS = API.find((a) => a.name === "math")?.fields ?? [];
-
-/** What a colour's methods take, and what they give. */
-const COLOUR_WORDS: Record<string, [string[], string]> = {
-  lighten: [["t"], "toward white by t, 0 to 1"],
-  darken: [["t"], "toward black by t, 0 to 1"],
-  alpha: [["a"], "with this alpha, 0 to 1"],
-  fade: [["k"], "its alpha times k"],
-  mix: [["other", "t?"], "toward another colour by t"],
-};
-
-/** The methods `value` takes after a dot, each with what it takes besides the value and what it
- *  gives: a standard type's from Rant Math's call, a colour's from here. */
-function methodsWith(value: unknown): { name: string; takes: string[]; words: string }[] {
-  return methodsOf(value).map(({ name, function: f, self }) => {
-    if (f === undefined) return { name, takes: COLOUR_WORDS[name][0], words: COLOUR_WORDS[name][1] };
-    const c = MATH_CALLS[f];
-    return { name, takes: (c.takes ?? []).filter((_, i) => i !== self), words: c.words };
-  });
-}
-
-/** True for a value of fixed size, with no list in it, which a method taking only it works out
- *  at once. A point cloud or an image could take long. */
-const fixed = (v: unknown): boolean => !Array.isArray(v) && !ArrayBuffer.isView(v) && (typeof v !== "object" || v === null || Object.values(v).every(fixed));
-
-/** What a standard type's value or a colour offers of the math library after a dot. One taking
- *  nothing can preview what it gives, where the value is small. */
-function mathMethods(value: Value | null, known: boolean): Suggestion[] {
-  const call = LIBRARY.__method as (target: unknown, name: string) => Value;
-  const small = fixed(value);
-  return methodsWith(value).map((m): Suggestion => {
-    const preview = () => {
-      try {
-        const now = call(value, m.name);
-        return { value: now, known: known && now !== null };
-      } catch {
-        // one that cannot answer for this value, as a singular matrix's inverse, shows none
-        return { value: null, known: false };
-      }
-    };
-    return { label: m.name, insert: m.takes.length === 0 ? `${m.name}()` : `${m.name}(`, icon: "member", type: m.words, preview: m.takes.length === 0 && small ? preview : undefined };
-  });
-}
 
 /** The state code on the element `id` reads, or on the page for none, nearest first: what it
  *  keeps, what holds it keeps, then the page's, each name once. */
@@ -150,8 +100,16 @@ export function complete(text: string, caret: number, place: Place, names?: Sugg
   // a nearer name hides one further out, which is not offered
   const near = also ?? [];
   const far = (names ?? top(place, own)).filter((n) => !near.some((a) => a.label === n.label));
-  const items = before[from - 1] === "." ? given(chain(before.slice(0, from - 1)), place, names, also, own) : [...near, ...far, ...(THEMED.includes(place) ? tokens() : []), ...api(place)];
+  const items = before[from - 1] === "." ? offered(before.slice(0, from), { place, names, also, own }) : [...near, ...far, ...(THEMED.includes(place) ? tokens() : []), ...api(place)];
   return matching(items, word, from);
+}
+
+/** What the value before the dot that ends `before` offers. */
+function offered(before: string, where: Where): Suggestion[] {
+  const src = colours(before);
+  const { path, env } = reach(src, envOf(where));
+  const dot = [...path].reverse().find((n) => n.type === "MemberExpression" && !n.computed && n.end === src.length);
+  return dot ? rows(infer(dot.object as Node, env)) : [];
 }
 
 /** The items that start with the word, then those that hold it, or null where none fits or
@@ -233,56 +191,36 @@ export interface Signature {
   unknown?: string;
 }
 
-/** The call the caret is inside: one of the language's own functions, or in a handler a call
- *  of an object's function, or a send or a function or task import. */
+/** The call the caret is inside, whatever code calls there: one of the language's own functions,
+ *  a method of a value, or in a handler an object's function, a send or a function or task import. */
 export function signature(text: string, caret: number, place: Place, own?: string): Signature | null {
-  const open = opened(text.slice(0, caret));
+  const before = text.slice(0, caret);
+  const src = colours(before);
+  const open = opened(src);
   if (!open) return null;
-  const head = text.slice(0, open.at).trimEnd();
-  const path = chain(head);
-  const call = path.join(".");
-  const from = head.length - call.length;
-  const fn = path.length === 1 ? apiIn(place).find((a) => a.name === path[0] && a.takes) : undefined;
-  if (fn?.takes) {
-    // the rest of the values all fall to a last `...` one
-    const rest = fn.takes.at(-1)?.startsWith("...") ? fn.takes.length - 1 : Infinity;
-    return { from, call, params: fn.takes.map((name) => ({ name, type: "" })), at: Math.min(open.commas, rest) };
-  }
-  // a call one of the language's names holds, as math.poseInverse, or a method of a value
-  const held = path.length === 2 ? apiIn(place).find((a) => a.name === path[0])?.fields?.find((f) => f.name === path[1]) : undefined;
-  const method = path.length > 1 && !held ? methodsWith(valueAt(path.slice(0, -1), place, own)).find((m) => m.name === path.at(-1)) : undefined;
-  const values = held?.takes ?? method?.takes;
-  if (values) return { from, call, params: values.map((name) => ({ name, type: "" })), at: open.commas };
-  if (place !== "handler") return null;
-  const to = keyOf(path, own);
-  if (to && to.rest.length === 0 && named(to.key)?.of === "function") {
-    const [o, name] = split(to.key);
-    const f = object(o)?.functions.find((x) => x.name === name);
-    return { from, call, params: (f?.takes ?? []).map((name) => ({ name, type: "" })), at: open.commas };
-  }
-  const imp = to && imported(to.key);
-  if (!to || !imp) return null;
-  const sends = imp.kind === "topic" && to.rest.length === 1 && to.rest[0] === "send";
-  const calls = (imp.kind === "function" || imp.kind === "task") && to.rest.length === 0;
-  if (!(sends || calls)) return null;
-  const e = entity(imp.entity);
-  if (!e || (sends && !e.schema)) return { from, call, params: [], at: open.commas, unknown: `its type is not known while ${imp.entity} is off the mesh` };
-  // an untyped call takes nothing, and a task's last value takes each progress update
-  const { params, whole } = e.schema ? takes(e.schema) : { params: [], whole: undefined };
-  const progress = imp.kind === "task" ? [{ name: "progress", type: `(${e.progress ? `p: ${typeName(e.progress)}` : ""}) => ...` }] : [];
-  return { from, call, params: [...params, ...progress], whole, at: open.commas, gives: sends || !e.response ? undefined : typeName(e.response) };
+  const { path, env } = reach(src, envOf({ place, own }));
+  const callee = ([...path].reverse().find((n) => n.type === "CallExpression" && /^\s*$/.test(src.slice((n.callee as Node).end, open.at))) as Node | undefined)?.callee as Node | undefined;
+  const f = callee && infer(callee, env).t;
+  if (f?.kind !== "function") return null;
+  // the rest of the values all fall to a last `...` one
+  const rest = f.takes.at(-1)?.startsWith("...") ? f.takes.length - 1 : Infinity;
+  return {
+    from: back(before, callee!.start),
+    call: src.slice(callee!.start, callee!.end),
+    params: f.params ?? f.takes.map((name) => ({ name, type: "" })),
+    at: Math.min(open.commas, rest),
+    whole: f.whole,
+    gives: (typeof f.gives === "function" ? "" : words(f.gives)) || undefined,
+    unknown: f.unknown,
+  };
 }
 
-/** A type by its name, or a bare type by its one field's. */
-function typeName(t: TypeInfo): string {
-  return t.name || typeLabel(t.fields[0]);
-}
-
-/** A type as values passed one by one: a bare type is one value, a struct its fields. */
-function takes(t: TypeInfo): Pick<Signature, "params" | "whole"> {
-  const one = bareType(t.fields);
-  if (one) return { params: [{ name: "value", type: one }] };
-  return { params: t.fields.map((f) => ({ name: f.name, type: typeLabel(f) })), whole: (t.fields.length > 0 && t.name) || undefined };
+/** Where a place in `before`, with its colours made strings as `colours` makes them, is in
+ *  `before` itself. */
+function back(before: string, at: number): number {
+  let shift = 0;
+  for (const t of lex(before)) if (t.kind === "literal" && isHex(before.slice(t.start, t.end)) && t.end + shift + 2 <= at) shift += 2;
+  return at - shift;
 }
 
 /** The innermost round bracket left open before the end, and how many commas follow it there.
@@ -317,378 +255,20 @@ export function componentNames(c: Page): Suggestion[] {
   ];
 }
 
-/** After a dot, what the name before it offers: one given its members, else an object's
- *  members or a member's fields where code reads those. */
-function given(path: string[], place: Place, names?: Suggestion[], also?: Suggestion[], own?: string): Suggestion[] {
-  const token = path[0].startsWith("$") && THEMED.includes(place) ? tokens().find((t) => t.label === path[0]) : undefined;
-  if (token) return path.length === 1 ? (token.members ?? []) : offeredAt(path, place, own);
-  const near = [...(also ?? []), ...(names ?? [])].find((n) => n.label === path[0]);
-  if (near) return path.length === 1 ? (near.members ?? []) : [];
-  if (path[0].startsWith("(")) return offeredAt(path, place, own);
-  // the language's names read in every place, the mesh's only where code names nothing else
-  return language(path, place) ?? (names ? [] : after(path, place, own));
-}
-
-/** What one of the language's own names offers after a dot: the fields of a value it lists,
- *  or what one of JavaScript's own holds. Undefined for any other name. */
-function language(path: string[], place: Place): Suggestion[] | undefined {
-  const a = apiIn(place).find((x) => x.name === path[0] && (x.fields || x.standard));
-  if (!a) return undefined;
-  if (path.length > 1) return a.name === "math" ? offeredAt(path, place) : [];
-  return a.fields ? a.fields.map((f): Suggestion => ({ label: f.name, insert: f.takes ? `${f.name}(` : f.name, icon: f.takes ? "api" : "member", type: f.words })) : held((globalThis as Record<string, unknown>)[a.name]);
-}
-
 /** What code may name first: its own object's members bare, then each object, then the enums. */
 function top(place: Place, own?: string): Suggestion[] {
-  const mine = own === undefined ? [] : members(own, true).flatMap((n) => member(n, place, true));
+  const mine = own === undefined ? [] : rows(whole(own, place, true, true));
   const objects = names("object")
     .filter((n) => !mine.some((m) => m.label === n.name))
     .map((n): Suggestion => ({ label: n.name, insert: n.name, icon: "object", type: n.words }));
-  const enums = names("enum").map((n): Suggestion => ({ label: n.name, insert: n.name, icon: "enum", type: n.words, members: [options(state.enums.find((e) => e.name === n.name)?.options ?? [])] }));
+  const enums = names("enum").map((n): Suggestion => ({ label: n.name, insert: n.name, icon: "enum", type: n.words }));
   return [...mine, ...objects, ...enums];
-}
-
-/** A member as completion offers it: bare in its own object's code, where a call is awaited,
- *  else after its object's name and a dot. */
-function member(n: Named, place: Place, bare: boolean): Suggestion[] {
-  const label = split(n.name)[1];
-  const calls = n.of === "function" || n.kind === "function" || n.kind === "task";
-  // only a handler calls, so nothing it could call is offered elsewhere
-  if (calls && place !== "handler") return [];
-  const v = live(n.name);
-  switch (n.of) {
-    case "function":
-      return [{ label, insert: bare ? `await ${label}(` : `${label}(`, icon: "function", type: n.words }];
-    case "import": {
-      const t = entity(imported(n.name)?.entity ?? "")?.schema;
-      const insert = calls ? (bare ? `await ${label}(` : `${label}(`) : label;
-      return [{ label, insert, icon: n.kind!, type: t?.name || bareType(t?.fields) || n.kind, value: v.value, known: v.known }];
-    }
-    case "record": {
-      // a record shows its latest value, the list being too long to preview
-      const last = Array.isArray(v.value) ? (v.value.at(-1) as { v?: Value } | undefined)?.v : undefined;
-      return [{ label, insert: label, icon: "local", type: n.words, value: last ?? null, known: last !== undefined }];
-    }
-    default:
-      return [{ label, insert: label, icon: "local", type: n.words, value: v.value, known: v.known }];
-  }
-}
-
-/** What an enum offers after a dot: its option names, as a list. */
-function options(names: string[]): Suggestion {
-  return { label: "options", insert: "options", icon: "member", type: "its names, a list", value: [...names], known: true };
 }
 
 /** True when the text ends inside a string or a comment, where names are only words. */
 function inWords(before: string): boolean {
   const last = lex(before).at(-1);
   return !!last && (last.kind === "text" || last.kind === "comment") && last.open;
-}
-
-/** A call as a step of a path: its name, then `()`, or `(_)` where it is given values. */
-const CALL = /^([A-Za-z_$][\w$]*)\((_?)\)$/;
-
-/** The path a dot follows, read backwards: `Joints.position[2]` gives Joints, position, 2,
- *  `Ft.force.length()` gives Ft, force, length(), and `(a / 2).x` gives (a / 2), x. */
-function chain(before: string): string[] {
-  const out: string[] = [];
-  let i = before.length;
-  for (;;) {
-    if (before[i - 1] === "]") {
-      const open = before.lastIndexOf("[", i - 1);
-      const index = before.slice(open + 1, i - 1).trim();
-      if (open < 0 || !/^\d+$/.test(index)) return [];
-      out.unshift(index);
-      i = open;
-      continue;
-    }
-    let call = "";
-    let inner = "";
-    let end = i;
-    if (before[i - 1] === ")") {
-      const open = opening(before, i - 1);
-      if (open < 0) return [];
-      inner = before.slice(open + 1, i - 1).trim();
-      call = inner ? "(_)" : "()";
-      end = open;
-    }
-    let j = end;
-    while (j > 0 && WORD.test(before[j - 1])) j--;
-    if (j === end && !inner) return [];
-    // brackets with no name before them, or a call that starts the path, hold an expression,
-    // whose values matter to what it gives
-    const starts = before[j - 1] !== ".";
-    out.unshift(call && (j === end || starts) ? `(${before.slice(j, i)})` : before.slice(j, end) + call);
-    if (starts) return out;
-    i = j - 1;
-  }
-}
-
-/** Where the bracket the `)` at `close` ends opens, -1 where none does. Strings and comments
- *  are passed over. */
-function opening(text: string, close: number): number {
-  let depth = 0;
-  for (const t of lex(text.slice(0, close + 1)).filter((t) => t.kind === "mark").reverse()) {
-    const c = text[t.start];
-    if (")]}".includes(c)) depth++;
-    else if ("([{".includes(c) && --depth === 0) return c === "(" ? t.start : -1;
-  }
-  return -1;
-}
-
-const SEND: Suggestion = { label: "send", insert: "send(", icon: "api", type: "publish a message" };
-const CANCEL: Suggestion = { label: "cancel", insert: "cancel()", icon: "api", type: "stop every call of it" };
-
-/** What a path offers after a dot: an object its members, a member its fields, from its schema
- *  where it is an import, else from the value. A handler's topic imported to write offers send
- *  first, a task its cancel. */
-function after(path: string[], place: Place, own?: string): Suggestion[] {
-  if (path.length === 0) return [];
-  const whole = path.length === 1 && named(path[0])?.of === "object" && !(own !== undefined && named(key(own, path[0])));
-  if (whole) return members(path[0], path[0] === own).flatMap((n) => member(n, place, false));
-  const to = keyOf(path, own);
-  if (!to) {
-    const kind = state.enums.find((e) => e.name === path[0]);
-    if (!kind) return [];
-    const rest = path.slice(1);
-    return rest.length === 0 ? [options(kind.options)] : rest.join() === "options" ? methods([...kind.options], true) : [];
-  }
-  const imp = imported(to.key);
-  if (place === "handler" && imp?.kind === "topic" && imp.intent === "write" && to.rest.length === 0) return [SEND, ...after(path, "expression", own)];
-  if (imp?.kind === "task") return place === "handler" && to.rest.length === 0 ? [CANCEL] : [];
-  return offeredAt(path, place, own);
-}
-
-/** A value completion follows along a path: what it is now, whether that is known, its type
- *  where the mesh or Rant Math says it, and whether it is a colour. */
-interface Typed {
-  value: Value | null;
-  known: boolean;
-  type?: FieldInfo;
-  colour?: boolean;
-}
-
-/** What `path` stands for, from a theme token where code reads those, a call of `math`, or a
- *  member. Undefined where it names none of them or a step leads nowhere. */
-function typedAt(path: string[], place: Place, own?: string): Typed | undefined {
-  if (path[0].startsWith("(")) {
-    const t = expressionAt(path[0].slice(1, -1), place, own);
-    return t && walk(t, path.slice(1));
-  }
-  const token =THEMED.includes(place) ? state.tokens.find((t) => `$${t.name}` === path[0]) : undefined;
-  if (token) {
-    const value = tokenNow(token);
-    return walk({ value, known: value !== null, colour: typeof value === "string" && isHex(value) }, path.slice(1));
-  }
-  const call = CALL.exec(path[1] ?? "");
-  if (path[0] === "math" && call && apiIn(place).some((a) => a.name === "math")) {
-    const type = gives(givesOf(MATH_CALLS.findIndex((c) => c.name === call[1])));
-    return type && walk({ value: null, known: false, type }, path.slice(2));
-  }
-  const to = keyOf(path, own);
-  if (!to) return undefined;
-  const imp = imported(to.key);
-  const schema = imp && entity(imp.entity)?.schema;
-  const now = live(to.key);
-  return walk({ value: now.value, known: now.known, type: schema ? wholeType(schema) : undefined }, to.rest);
-}
-
-/** `from` followed along `steps`: a field or an item by its type where it has one, else by its
- *  value, and a call by what it gives. */
-function walk(from: Typed, steps: string[]): Typed | undefined {
-  let t: Typed | undefined = from;
-  for (const step of steps) {
-    if (!t) return undefined;
-    const call = CALL.exec(step);
-    t = call ? called(t, call[1], call[2] !== "") : field(t, step);
-  }
-  return t;
-}
-
-function field(t: Typed, step: string): Typed | undefined {
-  const value = at(t.value, step);
-  if (!t.type) return { value, known: t.known };
-  const type = /^\d+$/.test(step) ? (t.type.kind === "array" ? t.type.elem : null) : t.type.kind === "struct" ? t.type.members.find((m) => m.name === step) : null;
-  return type ? { value, known: t.known, type } : undefined;
-}
-
-/** What a method of a standard type or a colour gives: its type from Rant Math's table, a colour
- *  for a colour's, and its value where it takes nothing and the value is small and known now. */
-function called(t: Typed, name: string, given: boolean): Typed | undefined {
-  const m = methodsOf(t.value ?? like(t)).find((x) => x.name === name);
-  if (!m) return undefined;
-  const type = m.function === undefined ? undefined : gives(givesOf(m.function));
-  if (m.function !== undefined && !type) return undefined;
-  let value: Value | null = null;
-  if (!given && t.known && t.value !== null && fixed(t.value)) {
-    try {
-      value = (LIBRARY.__method as (target: unknown, name: string) => Value)(t.value, name);
-    } catch {
-      // one that cannot answer for this value gives none, as its preview does
-    }
-  }
-  return { value, known: value !== null, type, colour: m.function === undefined };
-}
-
-/** A type as one field, from what Rant Math's table says a call gives: a standard type's, else
- *  a number or a flag. */
-function gives(type: string | null): FieldInfo | undefined {
-  if (!type) return undefined;
-  const kind = type === "bool" ? "bool" : /^(float|double|u?int(8|16|32|64)_t|size_t)$/.test(type) ? "f64" : null;
-  return standardType(type) ?? (kind ? plain(kind) : undefined);
-}
-
-/** A type of no fields, as a number, a flag or a text. */
-const plain = (kind: FieldInfo["kind"]): FieldInfo => ({ name: "", kind, type_name: null, elem: null, count: 0, options: [], members: [] });
-
-/** What the expression `src` gives, worked out from what it reads without running it, so a
- *  call in it never runs. Undefined where that cannot be told. */
-function expressionAt(src: string, place: Place, own?: string): Typed | undefined {
-  try {
-    const statement = (tree(`(${colours(src)}\n)`).body as Node[])[0];
-    return typedNode(statement.expression as Node, place, own);
-  } catch {
-    return undefined;
-  }
-}
-
-/** The path a node of names, fields and calls is, as `chain` reads it, else undefined. */
-function pathOfNode(n: Node): string[] | undefined {
-  if (n.type === "Identifier") return [n.name as string];
-  const step = n.type === "MemberExpression" ? stepOf(n) : n.type === "CallExpression" ? callOf(n) : undefined;
-  const base = n.type === "MemberExpression" ? (n.object as Node) : n.type === "CallExpression" ? ((n.callee as Node).object as Node | undefined) : undefined;
-  const p = base && step && pathOfNode(base);
-  return p ? [...p, step!] : undefined;
-}
-
-/** A field's or an item's step, as `.x` or `[2]` read. */
-function stepOf(n: Node): string | undefined {
-  const p = n.property as Node;
-  if (!n.computed) return p.name as string;
-  return p.type === "Literal" && typeof p.value === "number" ? String(p.value) : undefined;
-}
-
-/** A method call's step, as `chain` writes it. */
-function callOf(n: Node): string | undefined {
-  const callee = n.callee as Node;
-  if (callee.type !== "MemberExpression" || callee.computed) return undefined;
-  return `${(callee.property as Node).name as string}(${(n.arguments as Node[]).length > 0 ? "_" : ""})`;
-}
-
-/** What the language's own functions give: a vector from `vec`, the kind of its first value
- *  from `lerp`, a colour from `mix`, and a number from the rest, all of them math. */
-function ownCall(name: string, args: (Typed | undefined)[]): Typed | undefined {
-  if (name === "vec") return { value: null, known: false, type: standardType(args.length === 2 ? "Double2" : "Double3") };
-  if (name === "lerp") return args[0] && { value: null, known: false, type: args[0].type, colour: args[0].colour };
-  if (name === "mix") return { value: null, known: false, colour: true };
-  if (typeof LIBRARY[name] !== "function") return undefined;
-  const values = args.map((a) => a?.value);
-  const known = args.every((a) => a?.known && typeof a.value === "number");
-  const value = known ? ((LIBRARY[name] as (...xs: unknown[]) => Value)(...values) ?? null) : null;
-  return { value, known: value !== null, type: plain("f64") };
-}
-
-const COMPARE = new Set(["==", "===", "!=", "!==", "<", ">", "<=", ">=", "in", "instanceof"]);
-const ARITH: Record<string, string> = { "+": "__add", "-": "__sub", "*": "__mul", "/": "__div" };
-
-function typedNode(n: Node, place: Place, own?: string): Typed | undefined {
-  const path = pathOfNode(n);
-  if (path) return typedAt(path, place, own);
-  const typed = (x: unknown) => typedNode(x as Node, place, own);
-  switch (n.type) {
-    case "Literal":
-      return ["number", "string", "boolean"].includes(typeof n.value) ? { value: n.value as Value, known: true, type: plain(typeof n.value === "number" ? "f64" : typeof n.value === "string" ? "string" : "bool"), colour: typeof n.value === "string" && isHex(n.value) } : undefined;
-    case "TemplateLiteral":
-      return { value: null, known: false, type: plain("string") };
-    case "ChainExpression":
-      return typed(n.expression);
-    case "ConditionalExpression":
-      return typed(n.consequent);
-    case "LogicalExpression":
-      return typed(n.left);
-    case "UnaryExpression":
-      if (n.operator === "!") return { value: null, known: false, type: plain("bool") };
-      return n.operator === "-" ? combined("neg", typed(n.argument), undefined) : undefined;
-    case "BinaryExpression":
-      return combined(n.operator as string, typed(n.left), typed(n.right));
-    case "MemberExpression": {
-      const base = typed(n.object);
-      const step = stepOf(n);
-      return base && step ? walk(base, [step]) : undefined;
-    }
-    case "CallExpression": {
-      const callee = n.callee as Node;
-      if (callee.type === "Identifier") return ownCall(callee.name as string, (n.arguments as Node[]).map(typed));
-      const base = callee.type === "MemberExpression" ? typed(callee.object) : undefined;
-      const step = callOf(n);
-      return base && step ? walk(base, [step]) : undefined;
-    }
-  }
-  return undefined;
-}
-
-/** What `l op r` gives, or `-l` for neg: a flag from a comparison, a text from + with one, a
- *  colour scaled from a colour, else by Rant Math's operators, numbers by themselves. Its value
- *  where both are known now. */
-function combined(op: string, l: Typed | undefined, r: Typed | undefined): Typed | undefined {
-  if (COMPARE.has(op)) return { value: null, known: false, type: plain("bool") };
-  if (!l || (op !== "neg" && !r)) return undefined;
-  const [a, b] = [l.value ?? like(l), r ? (r.value ?? like(r)) : null];
-  let value: Value | null = null;
-  const fn = op === "neg" ? "__neg" : ARITH[op];
-  if (fn && l.known && l.value !== null && (op === "neg" || (r!.known && r!.value !== null))) {
-    try {
-      value = (LIBRARY[fn] as (x: unknown, y?: unknown) => Value)(l.value, r?.value);
-    } catch {
-      // operands no operator takes give nothing
-    }
-  }
-  const known = value !== null;
-  if (op === "+" && (typeof a === "string" || typeof b === "string") && !l.colour) return { value, known, type: plain("string") };
-  if (l.colour || r?.colour) return { value, known, colour: true };
-  const [ta, tb] = [mathType(a), op === "neg" ? "" : mathType(b)];
-  if (ta === null || tb === null) return undefined;
-  const type = ta === "double" && (tb === "double" || op === "neg") ? plain("f64") : gives(operatorGives(op, ta, tb));
-  return type && { value, known, type };
-}
-
-/** A value of the kind `t` is, for what its methods are while its own is not known. */
-function like(t: Typed): Value | null {
-  if (t.colour) return "#000000";
-  const k = t.type?.kind;
-  if (k === "struct") return t.type?.type_name ? ({ [TYPE]: t.type.type_name } as unknown as Value) : null;
-  if (k === "bool") return false;
-  if (k === "string") return "";
-  return k && /^[uif]\d+$/.test(k) ? 0 : null;
-}
-
-/** What `t` offers after a dot: a struct its fields and methods, a list its length, a colour
- *  its methods, anything else what JavaScript gives its kind. */
-function offered(t: Typed): Suggestion[] {
-  const { value, known, type } = t;
-  const shown = value ?? like(t);
-  if (type?.kind === "struct") return [...type.members.map((f): Suggestion => ({ label: f.name, insert: f.name, icon: "member", type: typeLabel(f), value: at(value, f.name), known })), ...mathMethods(shown, known && value !== null)];
-  if (type?.kind === "array") return [{ label: "length", insert: "length", icon: "member", type: "number", value: Array.isArray(value) ? value.length : null, known }];
-  if (t.colour) return mathMethods(shown, known && value !== null);
-  const keyed = type ? undefined : fields(value);
-  if (keyed) return [...Object.keys(keyed).map((k): Suggestion => ({ label: k, insert: k, icon: "member", value: at(value, k), known })), ...mathMethods(value, known)];
-  return methods(shown, known && value !== null);
-}
-
-/** What `path` offers after a dot, nothing where it names nothing. */
-function offeredAt(path: string[], place: Place, own?: string): Suggestion[] {
-  const t = typedAt(path, place, own);
-  return t ? offered(t) : [];
-}
-
-/** What a plain value offers: a list or text its length, and every method JavaScript gives its
- *  kind, read from the kind itself so none is left out. A number's format comes first. */
-function methods(value: Value | null, known: boolean): Suggestion[] {
-  const out: Suggestion[] = [];
-  if (typeof value === "number") out.push({ label: "toFixed", insert: "toFixed(1)", icon: "member", type: "digits after the point", value: Number(value.toFixed(1)), known });
-  if (typeof value === "string" || Array.isArray(value) || value instanceof Uint8Array) out.push({ label: "length", insert: "length", icon: "member", type: "number", value: value.length, known });
-  const proto = typeof value === "number" ? Number.prototype : typeof value === "string" ? String.prototype : typeof value === "boolean" ? Boolean.prototype : Array.isArray(value) ? Array.prototype : value instanceof Uint8Array ? Uint8Array.prototype : null;
-  return proto ? [...out, ...held(proto).filter((m) => !out.some((o) => o.label === m.label))] : out;
 }
 
 /** What an object holds, read from it: each function, typed with its bracket, then each value. */
@@ -702,16 +282,4 @@ function held(o: unknown): Suggestion[] {
     ...calls.map((n): Suggestion => ({ label: n, insert: `${n}(`, icon: "member", type: "" })),
     ...values.map((n): Suggestion => ({ label: n, insert: n, icon: "member", type: typeof value(n), value: value(n) as Value, known: true })),
   ];
-}
-
-/** The value at a path, or while it is not known one of its kind, for the methods it takes.
- *  Null where it names nothing. */
-function valueAt(path: string[], place: Place, own?: string): Value | null {
-  const t = typedAt(path, place, own);
-  return t ? (t.value ?? like(t)) : null;
-}
-
-function at(v: Value | null, step: string): Value | null {
-  if (Array.isArray(v) || v instanceof Uint8Array) return v[Number(step)] ?? null;
-  return fields(v)?.[step] ?? null;
 }

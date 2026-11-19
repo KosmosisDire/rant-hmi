@@ -1,12 +1,15 @@
 // What a name in code is, for the card a field shows while the caret or the pointer is on it: its
 // kind, its type and value now, and where it is defined, to go there.
 
+import type { Node } from "../lang/arith.js";
 import { tokens } from "../lang/lex";
+import { infer, reach, type Typed, words } from "../lang/types.js";
 import type { Value } from "../protocol/Value";
-import { tokenNow } from "./bind";
+import { colours, tokenNow } from "./bind";
 import type { Suggestion } from "./complete";
 import { key, named } from "./names";
 import { live, page as pageOf, split, state } from "./store";
+import { envOf } from "./typed";
 import { openInObjects, openPage } from "./view";
 
 export interface About {
@@ -32,8 +35,24 @@ function pathAt(text: string, at: number): string[] | null {
   return path;
 }
 
-/** The value at `fields` inside `v`. */
-const into = (v: unknown, fields: string[]) => fields.reduce<unknown>((at, f) => (at && typeof at === "object" ? (at as Record<string, unknown>)[f] : undefined), v) as Value | null;
+/** What the code up to the end of the word at `at` reads there, as types.js works it out, and
+ *  whether its first name is one the code declares. */
+function readAt(text: string, at: number, names: Suggestion[], own?: string): { x: Typed; declared: boolean } | null {
+  const word = tokens(text).find((t) => t.kind === "word" && t.start <= at && at <= t.end);
+  if (!word) return null;
+  const src = colours(text.slice(0, word.end));
+  const base = envOf({ also: names, own });
+  const { path, env } = reach(src, base);
+  const n = path.find((x) => (x.type === "MemberExpression" || x.type === "Identifier") && x.end === src.length);
+  if (!n) return null;
+  let head: Node = n;
+  while (head.type === "MemberExpression") head = head.object as Node;
+  const name = head.type === "Identifier" ? (head.name as string) : "";
+  return { x: infer(n, env), declared: !!name && env.name(name) !== undefined && base.name(name) === undefined };
+}
+
+/** A type and a value as the card shows them. */
+const shown = (x: Typed | undefined) => ({ type: (x && words(x.t)) || undefined, value: x?.known ? (x.v as Value | null) : undefined, known: x?.known });
 
 /** What the name at `at` in `text` is, reading `names` as the code there does besides the
  *  objects, and an object `own`'s members bare in its own code. None for what names nothing. */
@@ -47,15 +66,14 @@ export function about(text: string, at: number, names: Suggestion[] = [], own?: 
     const pg = id ? pageOf(id) : undefined;
     return pg ? { name: `Pages.${rest[0]}`, kind: "page", value: pg.id, known: true, where: `the ${pg.name} page`, go: () => openPage(pg.id, "design") } : null;
   }
+  const read = () => readAt(text, at, names, own)?.x;
   const local = names.find((s) => s.label === head);
   if (local) {
     const d = local.defined;
     return {
       name: path.join("."),
       kind: rest.length > 0 ? "field" : d ? "state" : local.icon === "local" ? "name" : local.icon,
-      type: local.type,
-      value: rest.length > 0 ? undefined : local.value,
-      known: local.known,
+      ...(rest.length > 0 ? shown(read()) : { type: local.type, value: local.value, known: local.known }),
       where: d ? `${d.holder === null ? "the page" : "an element of the page"} ${pageOf(d.page)?.name ?? d.page}` : undefined,
       go: d ? () => openInObjects({ page: d.page, holder: d.holder, state: head }) : undefined,
     };
@@ -70,15 +88,17 @@ export function about(text: string, at: number, names: Suggestion[] = [], own?: 
     return {
       name: path.join("."),
       kind: fields.length > 0 ? "field" : n.of === "import" ? `mesh ${n.kind}` : n.of,
-      type: fields.length > 0 ? undefined : n.words,
-      value: now ? into(now.value, fields) : undefined,
-      known: now?.known,
+      ...(fields.length > 0 ? shown(read()) : { type: n.words, value: now?.value, known: now?.known }),
       where: `the ${object} object`,
       go: () => openInObjects({ object, member: name }),
     };
   }
   const n = named(head);
-  if (!n) return null;
+  if (!n) {
+    // a name the code itself declares, as a handler's const
+    const r = readAt(text, at, names, own);
+    return r?.declared ? { name: path.join("."), kind: rest.length > 0 ? "field" : "name", ...shown(r.x) } : null;
+  }
   if (n.of === "object") return { name: head, kind: "object", type: n.words, where: "the Objects tab", go: () => openInObjects({ object: head }) };
   if (n.of === "token") {
     const t = state.tokens.find((x) => `$${x.name}` === head);

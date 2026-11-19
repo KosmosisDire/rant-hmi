@@ -20,12 +20,13 @@ export const list = (item) => ({ kind: "list", item });
 export const map = (item) => ({ kind: "map", item });
 
 /** A struct by its fields, each a name and a type, and the type's name where it has one. `own`
- *  are members it has besides, as an object's functions. */
+ *  are members it has besides, as an object's functions. Any type may have `own`, offered first. */
 export const record = (fields, name, own = []) => ({ kind: "record", fields, name, own });
 
 /** Something code calls: what it takes, in words, and what it gives, a type or a function of the
  *  call's values that works it out. `run` works its value out where it changes nothing, `calls`
- *  says what a function given as value i is called with, and `own` are members it has. */
+ *  says what a function given as value i is called with, and `own` are members it has. A mesh
+ *  call says its `params` with their types, the `whole` type they make up, or why it is `unknown`. */
 export const callable = (takes, gives, more = {}) => ({ kind: "function", takes, gives, own: [], ...more });
 
 /** A type with a value it has now, or none. */
@@ -158,13 +159,15 @@ export function words(t) {
 
 /** A member as a type offers it after a dot: a value with its `type`, or a method with what it
  *  `takes`, in words, and what it `gives`: a type, or a function of the value and the call's
- *  values. `run` works the answer out where that changes nothing. */
-const method = (name, takes, gives, words, run) => ({ name, takes, gives, words, run });
-const field = (name, type, words) => ({ name, type, words });
+ *  values. `run` works the answer out where that changes nothing. A member may say the `icon`
+ *  and the `insert` completion offers it with. */
+export const method = (name, takes, gives, words, run) => ({ name, takes, gives, words, run });
+export const field = (name, type, words) => ({ name, type, words });
 
-/** JavaScript's own methods of `proto` that change nothing, each run on the value itself. */
+/** JavaScript's own methods of `proto` that change nothing, each run on the value itself, and
+ *  inserted as written where an insert is given. */
 function own(proto, table) {
-  return Object.entries(table).map(([name, [takes, gives, w]]) => method(name, takes, gives, w, (self, args) => proto[name].apply(self, args)));
+  return Object.entries(table).map(([name, [takes, gives, w, insert]]) => ({ ...method(name, takes, gives, w, (self, args) => proto[name].apply(self, args)), ...(insert && { insert }) }));
 }
 
 const item = (self) => self.t.item ?? UNKNOWN;
@@ -181,7 +184,7 @@ function each(name, takes, params, gives, words) {
 }
 
 const NUMBER_MEMBERS = own(Number.prototype, {
-  toFixed: [["digits?"], STRING, "with this many digits after the point"],
+  toFixed: [["digits?"], STRING, "with this many digits after the point", "toFixed(1)"],
   toPrecision: [["digits?"], STRING, "with this many digits in all"],
   toExponential: [["digits?"], STRING, "in exponent form"],
   toString: [["radix?"], STRING, "as text"],
@@ -296,9 +299,14 @@ function mathMembers(name) {
 
 const mathMembersOf = new Map();
 
-/** What a type offers after a dot: a struct its fields, its own and its type's methods; any other
- *  what JavaScript gives its kind. */
+/** What a type offers after a dot: its own members, then a struct its fields and its type's
+ *  methods, any other what JavaScript gives its kind. */
 export function membersOf(t) {
+  const base = kindMembers(t);
+  return t.own?.length ? [...t.own, ...base] : base;
+}
+
+function kindMembers(t) {
   switch (t.kind) {
     case "number":
       return NUMBER_MEMBERS;
@@ -316,12 +324,10 @@ export function membersOf(t) {
       return LIST_MEMBERS;
     case "record": {
       const fields = t.fields.map(([name, type]) => field(name, type, words(type)));
-      if (!t.name) return [...fields, ...t.own];
+      if (!t.name) return fields;
       if (!mathMembersOf.has(t.name)) mathMembersOf.set(t.name, mathMembers(t.name));
-      return [...fields, ...t.own, ...mathMembersOf.get(t.name)];
+      return [...fields, ...mathMembersOf.get(t.name)];
     }
-    case "function":
-      return t.own;
   }
   return [];
 }
@@ -364,7 +370,9 @@ export function fromApi(a) {
   }
   const found = a.standard ? globalThis[a.name] : LIBRARY[a.name];
   const run = typeof found === "function" ? found : undefined;
-  if (a.takes) return typed(callable(a.takes, BY_VALUES[a.name] ?? (a.gives ? parseType(a.gives) : UNKNOWN), { run }));
+  // JavaScript's own functions hold their statics, as Number.isInteger
+  const statics = a.standard && run ? [...functionsOf(run, UNKNOWN), ...valuesOf(run).filter(([n]) => n !== "length").map(([n]) => field(n, NUMBER, ""))] : [];
+  if (a.takes) return typed(callable(a.takes, BY_VALUES[a.name] ?? (a.gives ? parseType(a.gives) : UNKNOWN), { run, own: statics }), a.standard ? run : undefined);
   if (a.fields) {
     const fields = a.fields.filter((f) => !f.takes).map((f) => [f.name, f.gives ? parseType(f.gives) : UNKNOWN]);
     const calls = a.fields.filter((f) => f.takes).map((f) => method(f.name, f.takes, f.gives ? parseType(f.gives) : UNKNOWN, f.words));
@@ -387,9 +395,11 @@ function language(name) {
 
 // ------------------------------------------------------------------ what an expression gives
 
-/** A value's type made plain from its value where its own says nothing. */
-function refined(x) {
-  return x.t.kind === "unknown" && x.known ? typed(fromValue(x.v), x.v) : x;
+/** A value's type made plain from its value where its own says nothing, keeping its own members. */
+export function refined(x) {
+  if (x.t.kind !== "unknown" || !x.known) return x;
+  const t = fromValue(x.v);
+  return typed(x.t.own?.length ? { ...t, own: [...x.t.own, ...(t.own ?? [])] } : t, x.v);
 }
 
 /** The member `name` of what `x` is, as a value or a method. */
@@ -436,7 +446,8 @@ function invoke(gives, run, args, self) {
 export function callMethod(x, name, args) {
   x = refined(x);
   const m = memberOf(x, name);
-  if (!m || m.type) return typed(UNKNOWN);
+  if (m?.type) return callValue(read(x, name), args);
+  if (!m) return typed(UNKNOWN);
   return invoke(m.gives, m.run, args, x);
 }
 

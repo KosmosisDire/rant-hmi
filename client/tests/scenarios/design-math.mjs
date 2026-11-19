@@ -59,9 +59,10 @@ export default async function ({ page, hmi, d, check, eventually }) {
     await text.fill("");
     await page.keyboard.type(code);
     let head = "";
-    await eventually(async () => (await hint.count()) === 1 && (head = (await hint.locator("div").first().textContent()).replace(/: [^,)]+/g, "")) === want, () => `${code} to hint ${want}, not ${head}`);
+    await eventually(async () => (await hint.count()) === 1 && (head = (await hint.locator("div").first().textContent()).replace(/: [^,)]+/g, "").replace(/ gives .*$/, "")) === want, () => `${code} to hint ${want}, not ${head}`);
   };
   await hints("Robot.EndPose.position.distance(", "Robot.EndPose.position.distance(b)");
+  check((await hint.textContent()).includes("gives number"), "the hint does not say a distance is a number");
   await hints("Robot.EndPose.orientation.toEuler(", "Robot.EndPose.orientation.toEuler(order)");
   await hints("math.poseInverse(", "math.poseInverse(p)");
   await hints("$accent.mix(", "$accent.mix(other, t?)");
