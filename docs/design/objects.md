@@ -1,8 +1,7 @@
 # Objects and scopes
 
 Every import, variable, computed value and record is global today. This record weighs a model
-of objects for the things the HMI controls, and of state kept where it is used. The clickable
-mockups are in [objects/](objects/index.html), served by any static server from that folder.
+of objects for the things the HMI controls, and of state kept where it is used.
 
 ## The problem, measured
 
@@ -82,7 +81,7 @@ The user's, on 2026-10-27:
 - Pages sit in the layers tree as its top nodes, with no separate page list.
 - Design shows every page at once on one board, panned and zoomed, so moving between pages
   is moving in 2D. A page clicked in the tree is flown to. The wheel still zooms, as it always
-  has: the mockup's wheel scroll was Claude's, and the user kept zoom.
+  has: the wheel scroll Claude tried was dropped, and the user kept zoom.
 - The tree does not list values. It marks what keeps state, what repeats and what has
   handlers.
 - The Pages see it switch confused: its label and the text beside it disagreed when off. It
