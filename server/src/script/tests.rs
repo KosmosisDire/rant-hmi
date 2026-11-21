@@ -938,8 +938,8 @@ fn rant_reads_what_the_nodes_say_raises_the_hmis_own_and_clears_another_nodes() 
     script.send(ToScript::Answer { call, outcome: Err(CallFailure { status: "not_cleared".into(), message: "drive2 was not cleared".into() }) });
     said.extend(until_done(&mut rx, 1));
     assert_eq!(end(&said), &End::Ok);
-    let raised: Vec<(&str, rant::Level, &str, bool)> = said.iter().filter_map(|m| if let FromScript::SetStatus { key, level, text, clearable, .. } = m { Some((key.as_str(), *level, text.as_str(), *clearable)) } else { None }).collect();
-    assert_eq!(raised, [("tank", rant::Level::Warn, "tank over 90%", true)]);
+    let raised: Vec<(&str, rant::DiagnosticLevel, &str, bool)> = said.iter().filter_map(|m| if let FromScript::SetStatus { key, level, text, clearable, .. } = m { Some((key.as_str(), *level, text.as_str(), *clearable)) } else { None }).collect();
+    assert_eq!(raised, [("tank", rant::DiagnosticLevel::Warn, "tank over 90%", true)]);
     assert_eq!(
         logged(&said),
         ["0 1 battery at 18%", "rant.setStatus takes a level of \"debug\", \"info\", \"warn\" or \"error\", not \"loud\"", "rant.clearStatus takes a condition as rant.statuses() gives it", "cleared", "not_cleared"]

@@ -1,7 +1,7 @@
 //! Rant messages to values and back, driven by the schema the mesh reported, so the HMI needs
 //! no compiled types. Fields go by the paths Rant reads: `pose.position.x`, `boxes[2].min.x`.
 
-use rant::{Field, FieldType, FieldView, MessageBuilder, Schema};
+use rant::{Field, SchemaTypeKind, FieldView, MessageBuilder, Schema};
 
 use crate::protocol::{EnumInfo, FieldInfo, FieldKind, TypeInfo};
 use crate::value::{Num, Numbers, Records, Value};
@@ -29,7 +29,7 @@ fn level(schema: &Schema, fields: &[Field], at: &mut usize, depth: u16) -> Vec<S
         let field = fields[*at].clone();
         *at += 1;
         let options = match field.kind {
-            FieldType::Enum => schema.enum_variants(index).into_iter().map(|v| v.name).collect(),
+            SchemaTypeKind::Enum => schema.enum_variants(index).into_iter().map(|v| v.name).collect(),
             _ => Vec::new(),
         };
         let members = level(schema, fields, at, depth + 1);
@@ -41,7 +41,7 @@ fn level(schema: &Schema, fields: &[Field], at: &mut usize, depth: u16) -> Vec<S
 impl Shape {
     /// An array's element, else None.
     pub fn element(&self) -> Option<&Shape> {
-        matches!(self.field.kind, FieldType::Array | FieldType::VArray).then(|| self.members.first()).flatten()
+        matches!(self.field.kind, SchemaTypeKind::Array | SchemaTypeKind::VArray).then(|| self.members.first()).flatten()
     }
 }
 
@@ -62,7 +62,7 @@ pub fn top_fields(shapes: &[Shape]) -> Vec<String> {
 pub fn enums(shapes: &[Shape], out: &mut Vec<EnumInfo>) {
     for s in shapes {
         let name = s.field.type_name.as_deref().filter(|n| !n.is_empty());
-        if let Some(name) = name.filter(|n| s.field.kind == FieldType::Enum && !out.iter().any(|e| e.name == *n)) {
+        if let Some(name) = name.filter(|n| s.field.kind == SchemaTypeKind::Enum && !out.iter().any(|e| e.name == *n)) {
             out.push(EnumInfo { name: name.to_owned(), options: s.options.clone() });
         }
         enums(&s.members, out);
@@ -103,14 +103,14 @@ fn info_of(s: &Shape) -> FieldInfo {
         kind: kind(s.field.kind),
         type_name: s.field.type_name.clone(),
         elem: element.map(|e| Box::new(info_of(e))),
-        count: if s.field.kind == FieldType::Array { s.field.count } else { 0 },
+        count: if s.field.kind == SchemaTypeKind::Array { s.field.count } else { 0 },
         options: s.options.clone(),
         members: if element.is_some() { Vec::new() } else { info(&s.members) },
     }
 }
 
-fn kind(t: FieldType) -> FieldKind {
-    use FieldType::*;
+fn kind(t: SchemaTypeKind) -> FieldKind {
+    use SchemaTypeKind::*;
     match t {
         U8 => FieldKind::U8,
         U16 => FieldKind::U16,
@@ -151,7 +151,7 @@ fn object(view: &FieldView, shapes: &[Shape], prefix: &str) -> Value {
 }
 
 fn read(view: &FieldView, s: &Shape, path: &str) -> Value {
-    use FieldType::*;
+    use SchemaTypeKind::*;
     match s.field.kind {
         U8 | U16 | U32 | U64 => view.get_uint(path).into(),
         I8 | I16 | I32 | I64 => view.get_int(path).into(),
@@ -173,9 +173,9 @@ fn list(view: &FieldView, s: &Shape, path: &str) -> Value {
     let count = view.get_array_count(path) as usize;
     let each = || Value::List((0..count).map(|i| read(view, e, &format!("{path}[{i}]"))).collect());
     match e.field.kind {
-        FieldType::Struct => columns(view, e, path, count).unwrap_or_else(each),
+        SchemaTypeKind::Struct => columns(view, e, path, count).unwrap_or_else(each),
         // a list of bytes stays bytes, as an image's data is
-        FieldType::U8 => Value::Bytes(view.get_array(path).to_vec()),
+        SchemaTypeKind::U8 => Value::Bytes(view.get_array(path).to_vec()),
         kind => match num(kind) {
             Some(n) => Numbers::new(n, view.get_array(path)).map_or(Value::Null, Value::Numbers),
             None => each(),
@@ -200,7 +200,7 @@ fn columns(view: &FieldView, e: &Shape, path: &str, count: usize) -> Option<Valu
 fn record(members: &[Shape], bytes: &[u8], size: usize) -> Option<Vec<(String, Value)>> {
     let count = bytes.len() / size;
     let column = |m: &Shape| -> Option<Value> {
-        if m.field.kind == FieldType::Struct {
+        if m.field.kind == SchemaTypeKind::Struct {
             return Some(Value::Records(Records::new(count, record(&m.members, bytes, size)?)?));
         }
         let kind = num(m.field.kind)?;
@@ -219,8 +219,8 @@ fn record(members: &[Shape], bytes: &[u8], size: usize) -> Option<Vec<(String, V
 }
 
 /// The kinds a list keeps packed. A 64 bit whole number stays one by one, as JS reads it as a BigInt.
-fn num(t: FieldType) -> Option<Num> {
-    use FieldType::*;
+fn num(t: SchemaTypeKind) -> Option<Num> {
+    use SchemaTypeKind::*;
     Some(match t {
         U8 => Num::U8,
         I8 => Num::I8,
@@ -265,7 +265,7 @@ fn members(m: &mut MessageBuilder, shapes: &[Shape], prefix: &str, value: &Value
 }
 
 fn write(m: &mut MessageBuilder, s: &Shape, path: &str, v: &Value) -> Result<(), String> {
-    use FieldType::*;
+    use SchemaTypeKind::*;
     let refused = |e: rant::Error| e.to_string();
     match s.field.kind {
         U8 | U16 | U32 | U64 => {
@@ -309,7 +309,7 @@ fn write_list(m: &mut MessageBuilder, s: &Shape, path: &str, v: &Value) -> Resul
     let Some(e) = s.element() else { return Err(format!("{} cannot be written yet", label(path))) };
     // bytes go as they are, and numbers of the list's own kind, the rest one by one
     match (e.field.kind, v) {
-        (FieldType::U8, Value::Bytes(bytes)) => {
+        (SchemaTypeKind::U8, Value::Bytes(bytes)) => {
             m.set_array(path, bytes).map_err(refused)?;
             return Ok(());
         }
@@ -326,7 +326,7 @@ fn write_list(m: &mut MessageBuilder, s: &Shape, path: &str, v: &Value) -> Resul
         m.set_array(path, &bytes).map_err(refused)?;
         return Ok(());
     }
-    if s.field.kind == FieldType::VArray {
+    if s.field.kind == SchemaTypeKind::VArray {
         m.set_array_count(path, items.len() as u32).map_err(refused)?;
     }
     for (i, item) in items.iter().enumerate() {
@@ -335,8 +335,8 @@ fn write_list(m: &mut MessageBuilder, s: &Shape, path: &str, v: &Value) -> Resul
     Ok(())
 }
 
-fn push(out: &mut Vec<u8>, t: FieldType, v: &Value) -> Option<()> {
-    use FieldType::*;
+fn push(out: &mut Vec<u8>, t: SchemaTypeKind, v: &Value) -> Option<()> {
+    use SchemaTypeKind::*;
     let whole = || v.whole();
     match t {
         U8 => out.push(u8::try_from(whole()?).ok()?),

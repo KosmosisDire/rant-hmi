@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use rant::types::Timestamp;
-use rant::{Bytes, FunctionOptions, Level, Node, NodeOptions, Qos, StatusOptions, TaskOptions, TaskRequest, VariableOptions};
+use rant::{Bytes, DiagnosticLevel, FunctionOptions, Node, NodeOptions, Qos, StatusOptions, TaskOptions, TaskRequest, VariableOptions};
 use rant_hmi::fields::Keep;
 use rant_hmi::mesh::heard::{self, Holder};
 use rant_hmi::mesh::{Delivery, Mesh, MeshOptions};
@@ -290,9 +290,9 @@ fn hears_every_nodes_log_and_status_and_clears_a_condition() {
     let (tx, _rx) = unbounded_channel();
     let (frames, _) = unbounded_channel();
     let mesh = Mesh::open(&MeshOptions { name: "hmi_heard".into(), domain: DOMAIN + 8, loopback: true }, tx, frames).unwrap();
-    plc.set_status("drive2", Level::Error, "drive 2 tripped", StatusOptions::new().clearable(true)).unwrap();
-    plc.log(Level::Warn, "battery at 18%").unwrap();
-    mesh.condition("tank", Some((Level::Warn, "tank over 90%", false))).unwrap();
+    plc.set_status("drive2", DiagnosticLevel::Error, "drive 2 tripped", StatusOptions::new().clearable(true)).unwrap();
+    plc.log(DiagnosticLevel::Warn, "battery at 18%").unwrap();
+    mesh.condition("tank", Some((DiagnosticLevel::Warn, "tank over 90%", false))).unwrap();
 
     let list = |v: Value| match v {
         Value::List(items) => items,
@@ -323,7 +323,7 @@ fn hears_every_nodes_log_and_status_and_clears_a_condition() {
     }
 
     // the HMI's own line goes on the mesh, and stays with the lines heard
-    mesh.log(Level::Info, "jam cleared");
+    mesh.log(DiagnosticLevel::Info, "jam cleared");
     let got = std::iter::from_fn(|| heard_by_plc.recv_timeout(Duration::from_secs(10)).ok()).find(|(node, _)| node == "hmi_heard").expect("the plc hears the HMI's line");
     assert_eq!(got.1, "jam cleared");
     assert!(list(mesh.heard().logs()).iter().any(|l| l.get("node") == Some(&"hmi_heard".into())));

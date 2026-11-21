@@ -132,7 +132,7 @@ pub enum FromScript {
     Warn { run: u64, text: String },
     Log { run: u64, text: String },
     /// Raises or updates a condition on the HMI's own status.
-    SetStatus { run: u64, key: String, level: rant::Level, text: String, clearable: bool },
+    SetStatus { run: u64, key: String, level: rant::DiagnosticLevel, text: String, clearable: bool },
     /// Clears the condition `key` raised at `since_us` on the node called `node`, which `call`
     /// answers once it is gone.
     ClearStatus { run: u64, call: u64, node: String, key: String, since_us: u64 },

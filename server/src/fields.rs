@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use rant::FieldType;
+use rant::SchemaTypeKind;
 
 use crate::mesh::codec::{Shape, bare};
 use crate::value::{Records, Value};
@@ -60,7 +60,7 @@ impl Keep {
             return;
         };
         match (s.field.kind, s.element()) {
-            (FieldType::Struct, _) => self.add(&s.members, steps),
+            (SchemaTypeKind::Struct, _) => self.add(&s.members, steps),
             (_, Some(e)) if has_fields(e) => match step.as_str() {
                 ITEM => self.field(e, &steps[1..]),
                 "length" => {}
@@ -170,7 +170,7 @@ impl Keep {
 fn has_fields(e: &Shape) -> bool {
     match e.element() {
         Some(inner) => has_fields(inner),
-        None => e.field.kind == FieldType::Struct,
+        None => e.field.kind == SchemaTypeKind::Struct,
     }
 }
 

@@ -162,7 +162,7 @@ impl Mesh {
 
     /// Writes a line to the HMI's log on the mesh, kept with the lines heard, as its node never
     /// hears its own.
-    pub fn log(&self, level: rant::Level, text: &str) {
+    pub fn log(&self, level: rant::DiagnosticLevel, text: &str) {
         if let Err(e) = self.node.log(level, text) {
             debug!("a log line did not go out: {e}");
         }
@@ -244,7 +244,7 @@ impl Mesh {
 
     /// Raises or updates the condition `key` on this node's Rant status, clearable by others
     /// when said, or with None clears it.
-    pub fn condition(&self, key: &str, raised: Option<(rant::Level, &str, bool)>) -> Result<(), String> {
+    pub fn condition(&self, key: &str, raised: Option<(rant::DiagnosticLevel, &str, bool)>) -> Result<(), String> {
         let done = match raised {
             Some((level, text, clearable)) => self.node.set_status(key, level, text, StatusOptions::new().clearable(clearable)),
             None => self.node.clear_status(key),
