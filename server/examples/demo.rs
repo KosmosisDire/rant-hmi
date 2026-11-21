@@ -18,7 +18,7 @@ use rant::types::{
     AlignedBox2D, Color, Double2, Double3, Empty, Float3, Grid, GridField, Image, ImageFormat, JointState, LaserScan, Mesh, Path, PointCloud, PointField, Pose, Quaternion, ScalarKind,
     Timestamp, Transform, VideoCodec, VideoFrame,
 };
-use rant::{Bytes, FunctionOptions, Level, Node, NodeOptions, Qos, Request, StatusOptions, TaskOptions, TaskRequest, VariableOptions};
+use rant::{Bytes, DiagnosticLevel, FunctionOptions, Node, NodeOptions, Qos, Request, StatusOptions, TaskOptions, TaskRequest, VariableOptions};
 
 #[derive(rant::Message, Clone)]
 struct Conveyor {
@@ -162,9 +162,9 @@ fn main() -> Result<(), rant::Error> {
         let on = running.get()?.unwrap_or(false);
         if on != was_on {
             was_on = on;
-            node.log(Level::Info, if on { "Line1 started" } else { "Line1 stopped" })?;
+            node.log(DiagnosticLevel::Info, if on { "Line1 started" } else { "Line1 stopped" })?;
             if !on {
-                node.set_status("jam", Level::Warn, "Line1 stopped, so check it for a jam", StatusOptions::new().clearable(true))?;
+                node.set_status("jam", DiagnosticLevel::Warn, "Line1 stopped, so check it for a jam", StatusOptions::new().clearable(true))?;
             }
         }
         let v = if on { speed.get()?.unwrap_or(0.0) } else { 0.0 };

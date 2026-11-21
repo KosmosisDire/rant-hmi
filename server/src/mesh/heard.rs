@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use rant::{Level, Origin};
+use rant::{DiagnosticLevel, Origin};
 use rant::types::Timestamp;
 
 use crate::value::Value;
@@ -15,7 +15,7 @@ pub const LINES: usize = 1000;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
     pub node: String,
-    pub level: Level,
+    pub level: DiagnosticLevel,
     pub origin: Origin,
     /// When it was written, in UTC microseconds.
     pub at_us: u64,
@@ -26,7 +26,7 @@ pub struct Line {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Condition {
     pub key: String,
-    pub level: Level,
+    pub level: DiagnosticLevel,
     pub origin: Origin,
     pub clearable: bool,
     /// When it was raised, in UTC microseconds, kept through its updates.
@@ -69,7 +69,7 @@ impl Heard {
     }
 
     /// A line of the HMI's own, which its node never hears back.
-    pub fn own_line(&mut self, level: Level, text: &str) {
+    pub fn own_line(&mut self, level: DiagnosticLevel, text: &str) {
         let line = Line { node: self.name.clone(), level, origin: Origin::App, at_us: now_us(), text: text.to_owned() };
         self.line(line);
     }
@@ -84,7 +84,7 @@ impl Heard {
     }
 
     /// Raises one of the HMI's own conditions, or updates it, keeping when it was raised.
-    pub fn raise(&mut self, key: &str, level: Level, text: &str, clearable: bool) {
+    pub fn raise(&mut self, key: &str, level: DiagnosticLevel, text: &str, clearable: bool) {
         let since_us = self.own.get(key).map_or_else(now_us, |c| c.since_us);
         let c = Condition { key: key.to_owned(), level, origin: Origin::App, clearable, since_us, text: text.to_owned() };
         if self.own.get(key) != Some(&c) {
@@ -151,18 +151,18 @@ impl Heard {
 }
 
 /// A level as code names it.
-pub fn word(level: Level) -> &'static str {
+pub fn word(level: DiagnosticLevel) -> &'static str {
     match level {
-        Level::Debug => "debug",
-        Level::Info => "info",
-        Level::Warn => "warn",
-        Level::Error => "error",
+        DiagnosticLevel::Debug => "debug",
+        DiagnosticLevel::Info => "info",
+        DiagnosticLevel::Warn => "warn",
+        DiagnosticLevel::Error => "error",
     }
 }
 
 /// The level code names, None for a word that is none.
-pub fn level(word: &str) -> Option<Level> {
-    [Level::Debug, Level::Info, Level::Warn, Level::Error].into_iter().find(|l| self::word(*l) == word)
+pub fn level(word: &str) -> Option<DiagnosticLevel> {
+    [DiagnosticLevel::Debug, DiagnosticLevel::Info, DiagnosticLevel::Warn, DiagnosticLevel::Error].into_iter().find(|l| self::word(*l) == word)
 }
 
 fn origin(o: Origin) -> &'static str {
@@ -192,7 +192,7 @@ mod tests {
     use super::*;
     use crate::value::value;
 
-    fn condition(key: &str, level: Level, since_us: u64) -> Condition {
+    fn condition(key: &str, level: DiagnosticLevel, since_us: u64) -> Condition {
         Condition { key: key.into(), level, origin: Origin::App, clearable: true, since_us, text: format!("{key} text") }
     }
 
@@ -200,13 +200,13 @@ mod tests {
     fn the_log_keeps_its_newest_lines() {
         let mut h = Heard::new("hmi");
         for i in 0..LINES + 5 {
-            h.line(Line { node: "plc".into(), level: Level::Info, origin: Origin::App, at_us: i as u64 * 1000, text: format!("line {i}") });
+            h.line(Line { node: "plc".into(), level: DiagnosticLevel::Info, origin: Origin::App, at_us: i as u64 * 1000, text: format!("line {i}") });
         }
         assert!(h.take_lines_moved() && !h.take_lines_moved());
         let Value::List(lines) = h.logs() else { panic!("not a list") };
         assert_eq!(lines.len(), LINES);
         assert_eq!(lines[0], value!({ "node": "plc", "level": "info", "origin": "app", "at": 5.0, "text": "line 5" }));
-        h.own_line(Level::Warn, "from a handler");
+        h.own_line(DiagnosticLevel::Warn, "from a handler");
         let Value::List(lines) = h.logs() else { panic!("not a list") };
         assert_eq!(lines.last().and_then(|l| l.get("node")), Some(&Value::from("hmi")));
     }
@@ -214,9 +214,9 @@ mod tests {
     #[test]
     fn conditions_come_most_serious_first_then_newest() {
         let mut h = Heard::new("hmi");
-        h.status(7, "plc", vec![condition("drive2", Level::Error, 1000), condition("door", Level::Warn, 3000)]);
-        h.status(9, "arm", vec![condition("estop", Level::Error, 2000)]);
-        h.raise("tank", Level::Warn, "tank over 90%", false);
+        h.status(7, "plc", vec![condition("drive2", DiagnosticLevel::Error, 1000), condition("door", DiagnosticLevel::Warn, 3000)]);
+        h.status(9, "arm", vec![condition("estop", DiagnosticLevel::Error, 2000)]);
+        h.raise("tank", DiagnosticLevel::Warn, "tank over 90%", false);
         let keys = |h: &Heard| match h.statuses() {
             Value::List(list) => list.iter().map(|c| c.get("key").and_then(Value::as_str).unwrap_or_default().to_owned()).collect::<Vec<_>>(),
             _ => panic!("not a list"),
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(keys(&h), ["estop", "drive2", "tank", "door"]);
         // an update keeps when it was raised, and a node gone takes its conditions with it
         let since = h.own["tank"].since_us;
-        h.raise("tank", Level::Error, "tank over 95%", false);
+        h.raise("tank", DiagnosticLevel::Error, "tank over 95%", false);
         assert_eq!(h.own["tank"].since_us, since);
         h.status(9, "arm", Vec::new());
         assert_eq!(keys(&h), ["tank", "drive2", "door"]);
@@ -234,10 +234,10 @@ mod tests {
     #[test]
     fn a_condition_is_found_by_its_node_key_and_raise() {
         let mut h = Heard::new("hmi");
-        h.status(7, "plc", vec![condition("drive2", Level::Error, 1000)]);
-        h.raise("tank", Level::Warn, "tank over 90%", true);
+        h.status(7, "plc", vec![condition("drive2", DiagnosticLevel::Error, 1000)]);
+        h.raise("tank", DiagnosticLevel::Warn, "tank over 90%", true);
         let since = h.own["tank"].since_us;
-        assert_eq!(h.find("plc", "drive2", 1000), Some(Holder::Peer(7, condition("drive2", Level::Error, 1000))));
+        assert_eq!(h.find("plc", "drive2", 1000), Some(Holder::Peer(7, condition("drive2", DiagnosticLevel::Error, 1000))));
         assert!(matches!(h.find("hmi", "tank", since), Some(Holder::Own(c)) if c.key == "tank"));
         // a later raise of the key, or another node's, is not the one named
         assert_eq!(h.find("plc", "drive2", 999), None);

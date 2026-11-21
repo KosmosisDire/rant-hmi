@@ -1777,7 +1777,7 @@ impl App {
             }
             FromScript::Log { run, text } => {
                 info!("{}: {text}", self.label(run));
-                self.mesh.log(rant::Level::Info, &text);
+                self.mesh.log(rant::DiagnosticLevel::Info, &text);
             }
             FromScript::SetStatus { run, key, level, text, clearable } => {
                 info!("{} raises {key}: {text}", self.label(run));
@@ -2334,9 +2334,9 @@ impl App {
             if self.raised.get(key) != Some(raised) {
                 let (level, text) = raised;
                 let level = match level {
-                    Level::Info => rant::Level::Info,
-                    Level::Warn => rant::Level::Warn,
-                    Level::Fault => rant::Level::Error,
+                    Level::Info => rant::DiagnosticLevel::Info,
+                    Level::Warn => rant::DiagnosticLevel::Warn,
+                    Level::Fault => rant::DiagnosticLevel::Error,
                 };
                 failed.extend(self.mesh.condition(key, Some((level, text, false))).err());
             }
