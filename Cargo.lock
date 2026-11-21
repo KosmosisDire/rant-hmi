@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "rant-hmi"
-version = "0.0.21"
+version = "0.0.22"
 dependencies = [
  "anyhow",
  "axum",
@@ -2411,8 +2411,8 @@ dependencies = [
 
 [[package]]
 name = "rant-macros"
-version = "0.0.46"
-source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.46#1988a222ff7f240a2aac8d75857c2e90b601dcd8"
+version = "0.0.48"
+source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.48#6dca434dc4f4556b46132b1b4f2c6c852b2c3a39"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2421,8 +2421,8 @@ dependencies = [
 
 [[package]]
 name = "rant-math"
-version = "0.0.7"
-source = "git+https://github.com/KosmosisDire/rant-math?tag=crate-v0.0.7#1badafca4e6619f062db4bb3c9e60b6aaf7d7197"
+version = "0.0.8"
+source = "git+https://github.com/KosmosisDire/rant-math?tag=crate-v0.0.8#4bd53cdabe970ee5133da48996d859d18a293273"
 dependencies = [
  "cc",
  "rant-types",
@@ -2431,8 +2431,8 @@ dependencies = [
 
 [[package]]
 name = "rant-middleware"
-version = "0.0.46"
-source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.46#1988a222ff7f240a2aac8d75857c2e90b601dcd8"
+version = "0.0.48"
+source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.48#6dca434dc4f4556b46132b1b4f2c6c852b2c3a39"
 dependencies = [
  "cc",
  "rant-macros",
@@ -2441,8 +2441,8 @@ dependencies = [
 
 [[package]]
 name = "rant-types"
-version = "0.0.46"
-source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.46#1988a222ff7f240a2aac8d75857c2e90b601dcd8"
+version = "0.0.48"
+source = "git+https://github.com/KosmosisDire/Rant.git?tag=crate-v0.0.48#6dca434dc4f4556b46132b1b4f2c6c852b2c3a39"
 
 [[package]]
 name = "rcgen"
